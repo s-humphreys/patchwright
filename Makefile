@@ -42,3 +42,10 @@ run-profile: ## Profile an export (INPUT=path)
 
 run-assess: ## Assess an export (INPUT=path)
 	go run ./cmd/patchwright assess -i $(INPUT) -c config/
+
+report: build ## Assess your real export in local/ (auto-detects CSV + local/config); pass ARGS='--format json'
+	@csv="$${CSV:-$$(ls local/*.csv 2>/dev/null | head -1)}"; \
+	cfg="$${CONFIG:-$$(test -d local/config && echo local/config || echo config)}"; \
+	if [ -z "$$csv" ]; then echo "No CSV found in local/. Put your export there, or pass CSV=path/to.csv"; exit 1; fi; \
+	echo "» export: $$csv"; echo "» config: $$cfg"; echo; \
+	./bin/patchwright assess -i "$$csv" -c "$$cfg" $(ARGS)
