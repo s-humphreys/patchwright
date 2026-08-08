@@ -8,3 +8,5 @@
 
 # Your real config, scanner exports, and other machine-local data
 /local/
+
+bin/

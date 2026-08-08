@@ -138,6 +138,19 @@ actionable:
     priority: low
 ```
 
+### How "actionable" is decided
+
+Actionability is **purely the policy rules above, evaluated over the data
+patchwright already has** — severity counts, environment (`dimensions`),
+ownership, and liveness. There is **no live registry or CVE lookup today**: a
+finding is "actionable" because it matched an `actionable` rule and no
+`suppress` rule, not because a fix has been confirmed to exist.
+
+The missing signal — *is there a patched image to move to?* — is planned via
+Trivy (or the Rapid7 API), which populates the `vulns` list with `fix_available`
+/ `fixed_version` so rules can require a fix before paging anyone. See
+[docs/design/trivy-integration.md](docs/design/trivy-integration.md).
+
 ### Variables available to rules
 
 **Ownership** (per occurrence): `image` `{registry, repository, tag, digest, ref}`,
@@ -192,6 +205,15 @@ out-of-band until the Rapid7 API provider lands); (2) ownership + policy rules
 `config.policy`); (3) optionally, a kubeconfig Secret for remote clusters. See
 [`values.yaml`](deploy/helm/patchwright/values.yaml).
 
+## Architecture & design
+
+- [`docs/architecture`](docs/architecture) — C4 diagrams (LikeC4): system
+  landscape, containers, the pipeline components, the assess flow, and the
+  deployment topology. `likec4 start docs/architecture` to browse.
+- [`docs/design`](docs/design) — design notes for planned work:
+  [Trivy / fix-availability](docs/design/trivy-integration.md) and the
+  [MCP server](docs/design/mcp-server.md).
+
 ## Roadmap
 
 - **Phase 1** ✅ — noise-killer: CSV in, deduplicated, owner-attributed,
@@ -200,10 +222,13 @@ out-of-band until the Rapid7 API provider lands); (2) ownership + policy rules
   `kube` + offline `file` live sources; drop not-running findings); ✅ ownership
   enrichment from live namespace labels like `team`; ✅ Helm chart + Docker
   image (CronJob, read-only RBAC, multi-cluster); ✅ kind-based e2e suite.
-  Remaining: Rapid7 API provider; registry introspection for a true "fix
-  available" signal.
-- **Phase 3** — Jira sink for actionable findings.
-- **Phase 4** — GitOps/Flux PR automation to roll fixes out.
+  Remaining: Rapid7 API provider.
+- **Phase 3** — [Trivy / per-CVE fix availability](docs/design/trivy-integration.md):
+  scan each unique image once, feed `fix_available` into actionability &
+  prioritisation.
+- **Phase 4** — [MCP server](docs/design/mcp-server.md) for less-technical users
+  (natural-language queries over findings).
+- **Phase 5** — Jira sink, then GitOps/Flux PR automation to roll fixes out.
 
 ## Development
 

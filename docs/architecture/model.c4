@@ -1,0 +1,205 @@
+// patchwright — logical architecture (C4 model, LikeC4).
+// Render/browse with:  likec4 start docs/architecture
+// Validate with:       likec4 validate docs/architecture
+
+specification {
+
+  element actor {
+    style {
+      shape person
+      color muted
+    }
+  }
+  element system
+  element container
+  element component
+  element store {
+    style {
+      shape cylinder
+    }
+  }
+
+  tag future
+  tag cel
+  tag reconciliation
+
+  deploymentNode cluster
+  deploymentNode namespace
+  deploymentNode k8sObject
+}
+
+model {
+
+  //
+  // People
+  //
+  secEng = actor 'Security Engineer' {
+    description 'Owns actionability policy — what is worth acting on and at what priority.'
+  }
+  platEng = actor 'Platform Engineer' {
+    description 'Owns ownership rules and deploys/operates patchwright.'
+  }
+  engTeam = actor 'Engineering Team' {
+    #future
+    description 'Receives the findings it owns (later: as Jira tickets / GitOps PRs).'
+  }
+
+  //
+  // External systems
+  //
+  rapid7 = system 'Rapid7 InsightCloudSec' {
+    description 'Container-vulnerability scanner. Source of scan data (CSV export today, API later).'
+    style {
+      color secondary
+    }
+  }
+  clusters = system 'Kubernetes Clusters' {
+    description 'One or many clusters (AKS today, GCP later). Source of live state: running pods and namespace labels.'
+    style {
+      color secondary
+    }
+  }
+  registries = system 'Container Registries / Trivy' {
+    #future
+    description 'Per-CVE fix availability — is a fixed image/tag actually published? Feeds true actionability.'
+    style {
+      color secondary
+    }
+  }
+  jira = system 'Jira' {
+    #future
+    description 'Ticketing sink for actionable findings.'
+    style {
+      color secondary
+    }
+  }
+  gitops = system 'GitOps Repo (Flux)' {
+    #future
+    description 'Image-bump pull requests to roll fixes out.'
+    style {
+      color secondary
+    }
+  }
+
+  //
+  // patchwright
+  //
+  patchwright = system 'patchwright' {
+    description 'Turns noisy scanner output into a deduplicated, owner-attributed, actionable report.'
+
+    config = store 'Rule Config' {
+      #cel
+      description 'ownership.yaml + policy.yaml — declarative CEL rules. Generic examples in config/, private tuning in local/.'
+      technology 'YAML + CEL'
+    }
+
+    core = container 'Assessment Core' {
+      description 'The library-first pipeline. Driven by the CLI today, an in-cluster CronJob when deployed.'
+      technology 'Go'
+
+      provider = component 'Provider' {
+        description 'Ingests scan data and normalizes it to the generic model. All scanner coupling lives here. rapid7 (csv now, api later).'
+        technology 'Go interface + registry'
+      }
+      enrich = component 'Enrich (Reconciliation)' {
+        #reconciliation
+        description 'Augments occurrences with live signals: Liveness (running?) and NamespaceLabeler (team labels). Sources: kube (client-go), file (offline snapshot).'
+        technology 'client-go'
+      }
+      dedupe = component 'Dedupe' {
+        description 'Collapses many occurrences of an image into one assessed image. The primary noise reducer.'
+      }
+      attribute = component 'Attribution' {
+        #cel
+        description 'Assigns each workload an owner (class + team) via first-match CEL rules over dimensions/labels.'
+      }
+      policy = component 'Policy' {
+        #cel
+        description 'Decides actionable / suppressed / priority via CEL over counts, env, owner, liveness, and (later) CVE fix data.'
+      }
+      pipeline = component 'Pipeline' {
+        description 'Orchestrates the stages and assembles per-(image, owner) findings.'
+      }
+      sink = component 'Sink' {
+        description 'Renders findings. table + JSON today; Jira + GitOps PR later.'
+      }
+    }
+  }
+
+  //
+  // Relationships
+  //
+  secEng -> config 'authors policy rules'
+  platEng -> config 'authors ownership rules'
+  platEng -> core 'deploys & runs'
+
+  rapid7 -> provider 'scan data (CSV / API)'
+  provider -> pipeline 'normalized occurrences'
+  pipeline -> enrich 'reconcile against clusters'
+  enrich -> clusters 'read-only: pods + namespace labels'
+  pipeline -> dedupe 'group by image'
+  dedupe -> attribute 'assessed images'
+  attribute -> policy 'owner-attributed'
+  policy -> sink 'verdict + priority'
+
+  config -> attribute 'ownership rules' {
+    #cel
+  }
+  config -> policy 'policy rules' {
+    #cel
+  }
+  registries -> policy 'fix availability' {
+    #future
+  }
+
+  sink -> secEng 'owner-split report (table / JSON)'
+  sink -> jira 'create tickets' {
+    #future
+  }
+  sink -> gitops 'open image-bump PRs' {
+    #future
+  }
+  jira -> engTeam 'notifies' {
+    #future
+  }
+}
+
+views {
+
+  view index {
+    title 'patchwright — System Landscape'
+    include *
+    autoLayout LeftRight
+  }
+
+  view containers of patchwright {
+    title 'patchwright — Containers'
+    include *
+    autoLayout TopBottom
+  }
+
+  view core of core {
+    title 'Assessment Core — Components & Pipeline'
+    include *
+    autoLayout LeftRight
+  }
+
+  dynamic view assessFlow {
+    title 'Assess — end-to-end flow'
+
+    rapid7 -> provider 'export / API'
+    provider -> pipeline 'occurrences'
+    pipeline -> enrich 'reconcile'
+    enrich -> clusters 'list pods + namespaces (read-only)'
+    clusters -> enrich 'running images + labels'
+    pipeline -> dedupe 'group by image'
+    dedupe -> attribute 'assessed images'
+    config -> attribute 'ownership rules'
+    attribute -> policy 'owners assigned'
+    config -> policy 'policy rules'
+    policy -> sink 'actionable + priority'
+    sink -> secEng 'owner-split report'
+
+    autoLayout TopBottom
+  }
+}

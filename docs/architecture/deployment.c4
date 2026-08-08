@@ -1,0 +1,60 @@
+// patchwright — deployment architecture (Helm CronJob + multi-cluster).
+// Auth is just RBAC: the local cluster is read via the pod's ServiceAccount
+// (a minimal read-only ClusterRole); remote clusters via a read-only kubeconfig.
+
+deployment {
+
+  hub = cluster 'Hub Cluster' {
+    description 'The cluster patchwright is deployed to (AKS today).'
+
+    ns = namespace 'namespace: patchwright' {
+
+      cronjob = instanceOf patchwright.core {
+        description 'CronJob running `patchwright assess` on a schedule (distroless image).'
+      }
+      rules = instanceOf patchwright.config {
+        description 'ConfigMap mounted at /etc/patchwright.'
+      }
+      export = k8sObject 'Secret: scanner export' {
+        description 'The Rapid7 export (csv mode). Refreshed out-of-band until the API provider lands.'
+      }
+      sa = k8sObject 'ServiceAccount + read-only ClusterRole' {
+        description 'get/list on pods + namespaces. No writes, no secrets. This is all local reconciliation needs.'
+      }
+      kubeconfig = k8sObject 'Secret: remote kubeconfig' {
+        description 'Optional. Read-only contexts for remote clusters.'
+      }
+    }
+
+    hubWorkloads = k8sObject 'Workloads (all namespaces)' {
+      description 'The pods and namespaces patchwright reads locally.'
+    }
+  }
+
+  remoteA = cluster 'Remote Cluster A' {
+    description 'Reconciliation target (AKS/GKE). Has the same read-only ClusterRole applied.'
+  }
+  remoteB = cluster 'Remote Cluster B' {
+    description 'Reconciliation target.'
+  }
+
+  // Inputs
+  export -> cronjob 'scanner data (--input)'
+  rules -> cronjob 'ownership + policy rules'
+  sa -> cronjob 'grants read access'
+  kubeconfig -> cronjob 'remote credentials'
+
+  // Reconciliation reads (read-only)
+  cronjob -> hubWorkloads 'local: list pods + namespaces (ServiceAccount RBAC)'
+  cronjob -> remoteA 'remote: list pods + namespaces (kubeconfig)'
+  cronjob -> remoteB 'remote: list pods + namespaces (kubeconfig)'
+}
+
+views {
+
+  deployment view deployment {
+    title 'Deployment — Helm CronJob & multi-cluster reconciliation'
+    include *
+    autoLayout LeftRight
+  }
+}
