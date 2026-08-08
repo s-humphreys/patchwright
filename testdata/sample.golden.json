@@ -1,0 +1,238 @@
+[
+  {
+    "image": "acme.example.com/orders:1.0.381-rc",
+    "registry": "acme.example.com",
+    "repository": "orders",
+    "tag": "1.0.381-rc",
+    "owner": {
+      "class": "engineering",
+      "team": "orders",
+      "rule": "engineering-by-namespace"
+    },
+    "counts": {
+      "critical": 3,
+      "high": 10,
+      "low": 2,
+      "medium": 5
+    },
+    "risk": 700,
+    "actionable": true,
+    "suppressed": false,
+    "priority": "high",
+    "reasons": [
+      "matched actionable rule \"production-critical\""
+    ],
+    "workload_count": 2,
+    "dimensions": {
+      "account": [
+        "Development US",
+        "Production UK"
+      ],
+      "account_id": [
+        "acc-dev-us",
+        "acc-prod-uk"
+      ],
+      "cloud": [
+        "AZURE_ARM"
+      ],
+      "namespace": [
+        "orders"
+      ],
+      "public_accessible": [
+        "0"
+      ],
+      "resource_name": [
+        "rewards"
+      ],
+      "resource_type": [
+        "containerdeployment"
+      ]
+    }
+  },
+  {
+    "image": "ghcr.io/fluxcd/source-controller:v1.8.5",
+    "registry": "ghcr.io",
+    "repository": "fluxcd/source-controller",
+    "tag": "v1.8.5",
+    "owner": {
+      "class": "platform",
+      "team": "platform-engineering",
+      "rule": "platform"
+    },
+    "counts": {
+      "critical": 2,
+      "high": 36,
+      "low": 1,
+      "medium": 10
+    },
+    "risk": 935,
+    "actionable": true,
+    "suppressed": false,
+    "priority": "high",
+    "reasons": [
+      "matched actionable rule \"production-critical\""
+    ],
+    "workload_count": 1,
+    "dimensions": {
+      "account": [
+        "Production UK"
+      ],
+      "account_id": [
+        "acc-prod-uk"
+      ],
+      "cloud": [
+        "AZURE_ARM"
+      ],
+      "namespace": [
+        "flux-system"
+      ],
+      "public_accessible": [
+        "0"
+      ],
+      "resource_name": [
+        "source-controller"
+      ],
+      "resource_type": [
+        "containerdeployment"
+      ]
+    }
+  },
+  {
+    "image": "acme.example.com/signup:1.0.1",
+    "registry": "acme.example.com",
+    "repository": "signup",
+    "tag": "1.0.1",
+    "owner": {
+      "class": "engineering",
+      "team": "signup",
+      "rule": "engineering-by-namespace"
+    },
+    "counts": {
+      "critical": 1,
+      "high": 2
+    },
+    "risk": 400,
+    "actionable": true,
+    "suppressed": false,
+    "priority": "low",
+    "reasons": [
+      "matched actionable rule \"any-critical\""
+    ],
+    "workload_count": 1,
+    "dimensions": {
+      "account": [
+        "Development UK"
+      ],
+      "account_id": [
+        "acc-dev-uk"
+      ],
+      "cloud": [
+        "AZURE_ARM"
+      ],
+      "namespace": [
+        "signup"
+      ],
+      "public_accessible": [
+        "0"
+      ],
+      "resource_name": [
+        "onboarding"
+      ],
+      "resource_type": [
+        "kubernetesjob"
+      ]
+    }
+  },
+  {
+    "image": "mcr.microsoft.com/oss/v2/kubernetes-csi/livenessprobe:v2.18.0",
+    "registry": "mcr.microsoft.com",
+    "repository": "oss/v2/kubernetes-csi/livenessprobe",
+    "tag": "v2.18.0",
+    "owner": {
+      "class": "cloud-provider",
+      "team": "aks",
+      "rule": "cloud"
+    },
+    "counts": {
+      "critical": 1,
+      "high": 5,
+      "medium": 3
+    },
+    "risk": 300,
+    "actionable": false,
+    "suppressed": true,
+    "reasons": [
+      "suppressed by rule \"cloud-provider-managed\""
+    ],
+    "workload_count": 1,
+    "dimensions": {
+      "account": [
+        "Production UK"
+      ],
+      "account_id": [
+        "acc-prod-uk"
+      ],
+      "cloud": [
+        "AZURE_ARM"
+      ],
+      "namespace": [
+        "kube-system"
+      ],
+      "public_accessible": [
+        "0"
+      ],
+      "resource_name": [
+        "livenessprobe"
+      ],
+      "resource_type": [
+        "kubernetesdaemonset"
+      ]
+    }
+  },
+  {
+    "image": "acme.example.com/billing:2.0.353",
+    "registry": "acme.example.com",
+    "repository": "billing",
+    "tag": "2.0.353",
+    "owner": {
+      "class": "engineering",
+      "team": "billing",
+      "rule": "engineering-by-namespace"
+    },
+    "counts": {
+      "high": 5,
+      "low": 1,
+      "medium": 3
+    },
+    "risk": 200,
+    "actionable": false,
+    "suppressed": false,
+    "reasons": [
+      "no actionable rule matched"
+    ],
+    "workload_count": 1,
+    "dimensions": {
+      "account": [
+        "Production UK"
+      ],
+      "account_id": [
+        "acc-prod-uk"
+      ],
+      "cloud": [
+        "AZURE_ARM"
+      ],
+      "namespace": [
+        "billing"
+      ],
+      "public_accessible": [
+        "0"
+      ],
+      "resource_name": [
+        "cards"
+      ],
+      "resource_type": [
+        "containerdeployment"
+      ]
+    }
+  }
+]

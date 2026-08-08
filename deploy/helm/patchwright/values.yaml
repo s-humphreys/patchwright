@@ -1,0 +1,88 @@
+image:
+  repository: ghcr.io/s-humphreys/patchwright
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+# How often the assessment runs.
+schedule: "0 6 * * *"
+# Output format written to the pod log: table or json.
+format: json
+# Extra args appended to `patchwright assess`.
+extraArgs: []
+
+serviceAccount:
+  create: true
+  name: ""          # defaults to the release fullname
+
+rbac:
+  # Create a minimal read-only ClusterRole (list pods + namespaces) and bind it
+  # to the ServiceAccount, so the job can reconcile the LOCAL cluster using only
+  # its ServiceAccount token — no credentials to manage. This is the "simple
+  # auth via RBAC" path.
+  create: true
+
+# Ownership and policy rules, rendered into a ConfigMap mounted at
+# /etc/patchwright. These are examples — replace with your own. See the repo's
+# config/ directory and README for the rule schema.
+config:
+  ownership: |
+    owners:
+      - name: cloud-provider-managed-images
+        match: "image.registry in ['mcr.microsoft.com', 'registry.k8s.io']"
+        class: cloud-provider
+        team: aks
+      - name: platform-system-namespaces
+        match: "dimensions['namespace'] in ['kube-system','flux-system','cert-manager','istio-system','gatekeeper-system']"
+        class: platform
+        team: platform-engineering
+      - name: engineering-by-label
+        match: "'team' in labels"
+        class: engineering
+        teamFrom: "labels['team']"
+      - name: engineering-by-namespace
+        match: "true"
+        class: engineering
+        teamFrom: "dimensions['namespace']"
+  policy: |
+    suppress:
+      - name: cloud-provider-managed
+        when: "owner['class'] == 'cloud-provider'"
+      - name: not-running
+        when: "reconciled && !live"
+    actionable:
+      - name: production-critical
+        when: "counts['critical'] > 0 && dimensions['account'].exists(a, a.startsWith('Production'))"
+        priority: high
+      - name: any-critical
+        when: "counts['critical'] > 0"
+        priority: low
+
+provider:
+  name: rapid7
+  mode: csv
+  # The scanner export must be made available to the job as a Secret. The
+  # secret's `key` is mounted read-only under /data and passed via --input.
+  #
+  # NOTE: until the Rapid7 API provider lands, refresh this Secret out-of-band
+  # (e.g. a separate CronJob that pulls the export and updates the Secret).
+  input:
+    secretName: ""            # REQUIRED for csv mode, e.g. "patchwright-export"
+    key: "export.csv"
+
+reconcile:
+  # Reconcile findings against live clusters (drops not-running workloads and
+  # enriches ownership from namespace labels such as team).
+  enabled: true
+  # Read the local cluster via the pod's ServiceAccount (RBAC only).
+  local: true
+  # Read additional clusters via a kubeconfig Secret with read-only contexts.
+  # Apply deploy/rbac/readonly-clusterrole.yaml in each remote cluster and point
+  # that context's user at the bound identity.
+  remote:
+    kubeconfigSecret: ""      # Secret containing a "kubeconfig" key
+    contexts: []              # context names to read, e.g. [aks-prod-uk, gke-analytics]
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
