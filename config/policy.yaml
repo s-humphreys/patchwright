@@ -1,0 +1,45 @@
+# Policy rules decide what is actionable. Expressions are CEL, evaluated over
+# the finding context (one image, one owner, aggregated across its workloads):
+#
+#   image      map<string,string>        registry, repository, tag, digest, ref
+#   counts     map<string,int>           critical, high, medium, low (always present)
+#   risk       double                    representative risk score
+#   owner      map<string,string>        class, team
+#   dimensions map<string,list<string>>  union of values across workloads
+#   labels     map<string,list<string>>  union of label values across workloads
+#   vulns      list<map>                  per-CVE detail when available:
+#                                         id, severity, cvss, fix_available, fixed_version
+#
+# Suppression is evaluated first and wins over actionability. Among actionable
+# rules the FIRST match wins and sets the priority. Everything here is an
+# EXAMPLE — edit to fit your org's SLAs and risk appetite.
+
+suppress:
+  # Cloud-provider-managed images are not directly patchable by app or platform
+  # teams; keep them out of the actionable queue (a later phase can route them
+  # to a node-image-upgrade workflow instead).
+  - name: cloud-provider-managed
+    when: "owner['class'] == 'cloud-provider'"
+
+  # Not actually running: when reconciliation against live clusters has run
+  # (--live-source) and none of the finding's workloads are live, drop it.
+  # A completed Job or scaled-to-zero workload is not worth paging anyone over.
+  # This rule is inert unless reconciliation ran (reconciled is then false).
+  - name: not-running
+    when: "reconciled && !live"
+
+actionable:
+  # Anything with a critical that runs in a Production account — highest stakes.
+  - name: production-critical
+    when: "counts['critical'] > 0 && dimensions['account'].exists(a, a.startsWith('Production'))"
+    priority: high
+
+  # Criticals in pre-production still warrant action, at lower urgency.
+  - name: preproduction-critical
+    when: "counts['critical'] > 0 && dimensions['account'].exists(a, a.startsWith('PreProduction'))"
+    priority: medium
+
+  # Any remaining critical (e.g. development, shared) — track it, low priority.
+  - name: any-critical
+    when: "counts['critical'] > 0"
+    priority: low

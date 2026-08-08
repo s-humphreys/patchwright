@@ -1,0 +1,5 @@
+.git
+*.csv
+dist/
+patchwright
+test/e2e

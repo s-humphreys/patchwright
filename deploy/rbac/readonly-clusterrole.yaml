@@ -1,0 +1,21 @@
+# Apply this in each REMOTE cluster patchwright should reconcile, then bind the
+# ClusterRole to the identity your kubeconfig context authenticates as (a
+# ServiceAccount, an OIDC user, or a cloud IAM principal). patchwright needs
+# nothing more than read access to pods and namespaces.
+#
+#   kubectl apply -f readonly-clusterrole.yaml
+#   # then create a ServiceAccount + token (or bind your existing identity):
+#   kubectl create serviceaccount patchwright-reader -n kube-system
+#   kubectl create clusterrolebinding patchwright-reader \
+#     --clusterrole=patchwright-reader \
+#     --serviceaccount=kube-system:patchwright-reader
+#   # generate a kubeconfig for that ServiceAccount and add it as a context in
+#   # the kubeconfig Secret referenced by reconcile.remote.kubeconfigSecret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: patchwright-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list"]

@@ -1,1 +1,10 @@
-*.csv
+# Scanner exports at the repo root may contain sensitive data — never commit them.
+# (testdata/*.csv fixtures are intentionally tracked.)
+/*.csv
+
+# Build artifacts
+/patchwright
+/dist/
+
+# Your real config, scanner exports, and other machine-local data
+/local/

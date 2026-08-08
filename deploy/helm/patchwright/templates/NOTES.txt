@@ -1,0 +1,29 @@
+patchwright is installed as a CronJob ({{ .Values.schedule }}) in namespace {{ .Release.Namespace }}.
+
+Reconciliation:
+{{- if .Values.reconcile.enabled }}
+  - local cluster: {{ if .Values.reconcile.local }}enabled (read-only via ServiceAccount RBAC){{ else }}disabled{{ end }}
+  {{- if .Values.reconcile.remote.kubeconfigSecret }}
+  - remote clusters: {{ .Values.reconcile.remote.contexts | default (list "current-context") | join ", " }} (via Secret {{ .Values.reconcile.remote.kubeconfigSecret }})
+  {{- else }}
+  - remote clusters: none configured
+  {{- end }}
+{{- else }}
+  - disabled
+{{- end }}
+
+{{- if eq .Values.provider.mode "csv" }}
+{{- if not .Values.provider.input.secretName }}
+
+WARNING: provider.mode is "csv" but provider.input.secretName is empty. Create a
+Secret containing your scanner export and set provider.input.secretName.
+{{- end }}
+
+Reminder: the csv provider reads a point-in-time export. Refresh the Secret
+"{{ .Values.provider.input.secretName }}" on your own cadence until the Rapid7
+API provider is available.
+{{- end }}
+
+Run the assessment now instead of waiting for the schedule:
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "patchwright.fullname" . }} patchwright-manual
+  kubectl -n {{ .Release.Namespace }} logs -f job/patchwright-manual

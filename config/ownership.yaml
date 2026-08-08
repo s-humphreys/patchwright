@@ -1,0 +1,47 @@
+# Ownership rules attribute each occurrence to an owner. They are evaluated in
+# order against every occurrence; the FIRST match wins. Expressions are CEL,
+# evaluated over the generic occurrence context:
+#
+#   image      map<string,string>  registry, repository, tag, digest, ref
+#   dimensions map<string,string>  cloud, account, namespace, resource_type, ...
+#   labels     map<string,string>  resource/namespace labels (e.g. team)
+#   counts     map<string,int>     critical, high, medium, low (always present)
+#   resource   map<string,string>  id, type, name
+#
+# Everything here is an EXAMPLE tuned to one organization's data. Edit freely —
+# nothing in this file is baked into patchwright.
+owners:
+  # Cloud-provider-managed images first: these ship from the managed control
+  # plane (AKS node images, upstream Kubernetes) and cannot be patched directly
+  # by the team running them, regardless of which namespace they land in.
+  - name: cloud-provider-managed-images
+    match: "image.registry in ['mcr.microsoft.com', 'registry.k8s.io']"
+    class: cloud-provider
+    team: aks
+
+  # Platform-owned shared components, identified by namespace.
+  - name: platform-system-namespaces
+    match: >
+      dimensions['namespace'] in [
+        'kube-system', 'kube-public', 'kube-node-lease',
+        'flux-system', 'crossplane-system', 'cert-manager',
+        'istio-system', 'gatekeeper-system', 'keda',
+        'datadog', 'datadog-operator', 'argo-events',
+        'agentgateway-system', 'monitoring'
+      ]
+    class: platform
+    team: platform-engineering
+
+  # Preferred engineering attribution: an explicit team label. This takes
+  # precedence over namespace heuristics and becomes available once live
+  # cluster reconciliation supplies labels (the CSV export carries none).
+  - name: engineering-by-label
+    match: "'team' in labels"
+    class: engineering
+    teamFrom: "labels['team']"
+
+  # Fallback: attribute to the engineering team implied by the namespace.
+  - name: engineering-by-namespace
+    match: "true"
+    class: engineering
+    teamFrom: "dimensions['namespace']"

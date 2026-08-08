@@ -1,0 +1,142 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    name: build-push-image
+    permissions:
+      contents: write
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare semantic-release config
+        run: |
+          cat <<EOF > .releaserc.json
+          {
+            "branches": [
+              "${RELEASE_BRANCH}"
+            ],
+            "plugins": [
+              [
+                "@semantic-release/commit-analyzer",
+                {
+                  "releaseRules": [
+                    {"type": "feat", "release": "minor"},
+                    {"type": "fix", "release": "patch"},
+                    {"type": "chore", "release": "patch"}
+                  ]
+                }
+              ],
+              [
+                "@semantic-release/release-notes-generator",
+                {
+                  "preset": "conventionalcommits"
+                }
+              ],
+              [
+                "@semantic-release/github",
+                {
+                  "addReleases": "bottom"
+                }
+              ]
+            ]
+          }
+          EOF
+        env:
+          RELEASE_BRANCH: main
+
+      - name: Run Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v6.0.0
+        with:
+          extra_plugins: |
+            conventional-changelog-conventionalcommits@9.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync release body with GitHub auto notes
+        if: steps.semantic.outputs.new_release_published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.semantic.outputs.new_release_git_tag }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${NEW_TAG}$" | head -n 1 || true)
+
+          payload=$(jq -n --arg tag "${NEW_TAG}" --arg prev "${PREV_TAG}" '
+            {tag_name: $tag} + (if $prev | length > 0 then {previous_tag_name: $prev} else {} end)
+          ')
+
+          response=$(curl -sS -X POST \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${REPOSITORY}/releases/generate-notes \
+            -d "${payload}")
+
+          body=$(echo "${response}" | jq -r '.body')
+          if [ -z "${body}" ] || [ "${body}" = "null" ]; then
+            echo "GitHub did not return generated notes. API response:" >&2
+            echo "${response}" >&2
+            exit 1
+          fi
+
+          release_response=$(curl -sS \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${REPOSITORY}/releases/tags/${NEW_TAG})
+
+          release_id=$(echo "${release_response}" | jq -r '.id')
+          if [ -z "${release_id}" ] || [ "${release_id}" = "null" ]; then
+            echo "Unable to find release ID for tag ${NEW_TAG}. API response:" >&2
+            echo "${release_response}" >&2
+            exit 1
+          fi
+
+          curl -sS -X PATCH \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${REPOSITORY}/releases/${release_id} \
+            -d "$(jq -n --arg body "${body}" '{body: $body}')"
+
+      - name: Determine image tags
+        id: meta
+        if: steps.semantic.outputs.new_release_published == 'true'
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern=v{{version}},value=${{ steps.semantic.outputs.new_release_version }}
+            type=semver,pattern=v{{major}}.{{minor}},value=${{ steps.semantic.outputs.new_release_version }}
+            type=semver,pattern=v{{major}},value=${{ steps.semantic.outputs.new_release_version }}
+
+      - name: Build and push image
+        if: steps.semantic.outputs.new_release_published == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}

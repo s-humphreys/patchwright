@@ -1,0 +1,14 @@
+apiVersion: v2
+name: patchwright
+description: Turn noisy container-vulnerability scanner output into an actionable, owner-attributed report, reconciled against live clusters.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - security
+  - vulnerability
+  - kubernetes
+  - cve
+home: https://github.com/s-humphreys/patchwright
+sources:
+  - https://github.com/s-humphreys/patchwright

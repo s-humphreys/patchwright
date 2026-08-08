@@ -1,0 +1,98 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "patchwright.fullname" . }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "patchwright.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "patchwright.serviceAccountName" . }}
+          securityContext:
+            runAsNonRoot: true
+          containers:
+            - name: patchwright
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - assess
+                - "--provider={{ .Values.provider.name }}"
+                - "--mode={{ .Values.provider.mode }}"
+                - "--input=/data/{{ .Values.provider.input.key }}"
+                - "--config=/etc/patchwright"
+                - "--format={{ .Values.format }}"
+                {{- if .Values.reconcile.enabled }}
+                - "--live-source=kube"
+                {{- if .Values.reconcile.local }}
+                - "--live-option=inCluster=true"
+                {{- end }}
+                {{- if .Values.reconcile.remote.kubeconfigSecret }}
+                - "--live-option=kubeconfig=/etc/patchwright-kubeconfig/kubeconfig"
+                {{- if .Values.reconcile.remote.contexts }}
+                - "--live-option=contexts={{ join "," .Values.reconcile.remote.contexts }}"
+                {{- end }}
+                {{- end }}
+                {{- end }}
+                {{- range .Values.extraArgs }}
+                - {{ . | quote }}
+                {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              {{- with .Values.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              volumeMounts:
+                - name: rules
+                  mountPath: /etc/patchwright
+                  readOnly: true
+                {{- if eq .Values.provider.mode "csv" }}
+                - name: export
+                  mountPath: /data
+                  readOnly: true
+                {{- end }}
+                {{- if .Values.reconcile.remote.kubeconfigSecret }}
+                - name: kubeconfig
+                  mountPath: /etc/patchwright-kubeconfig
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: rules
+              configMap:
+                name: {{ include "patchwright.fullname" . }}-rules
+            {{- if eq .Values.provider.mode "csv" }}
+            - name: export
+              secret:
+                secretName: {{ required "provider.input.secretName is required for csv mode" .Values.provider.input.secretName }}
+            {{- end }}
+            {{- if .Values.reconcile.remote.kubeconfigSecret }}
+            - name: kubeconfig
+              secret:
+                secretName: {{ .Values.reconcile.remote.kubeconfigSecret }}
+            {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
