@@ -26,6 +26,29 @@ type Config struct {
 	// risk, known false positive). Suppression takes precedence over
 	// actionability.
 	Suppress []PolicyRule `yaml:"suppress"`
+	// Scan tunes image vulnerability scanning.
+	Scan ScanConfig `yaml:"scan"`
+}
+
+// ScanConfig tunes which images are worth scanning for vulnerabilities.
+type ScanConfig struct {
+	// SkipOwnerClasses lists owner classes whose images are not scanned —
+	// typically ones you can't remediate and already suppress (e.g.
+	// cloud-provider-managed images). An image is skipped only if every one of
+	// its workloads is owned by a skipped class.
+	//
+	// Unset defaults to ["cloud-provider"]; set to [] to scan everything.
+	SkipOwnerClasses []string `yaml:"skipOwnerClasses"`
+}
+
+// EffectiveSkipOwnerClasses returns the configured skip list, or the default
+// (["cloud-provider"]) when the field is unset. An explicit empty list scans
+// everything.
+func (s ScanConfig) EffectiveSkipOwnerClasses() []string {
+	if s.SkipOwnerClasses == nil {
+		return []string{"cloud-provider"}
+	}
+	return s.SkipOwnerClasses
 }
 
 // OwnerRule attributes a resource to an owner. Match is a CEL boolean over the
@@ -69,6 +92,10 @@ func Load(paths ...string) (*Config, error) {
 		cfg.Owners = append(cfg.Owners, part.Owners...)
 		cfg.Actionable = append(cfg.Actionable, part.Actionable...)
 		cfg.Suppress = append(cfg.Suppress, part.Suppress...)
+		// scan is a singleton section; the last file that sets it wins.
+		if part.Scan.SkipOwnerClasses != nil {
+			cfg.Scan = part.Scan
+		}
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, err

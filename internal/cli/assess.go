@@ -60,7 +60,7 @@ func newAssessCmd() *cobra.Command {
 
 			var popts []pipeline.Option
 			if vulnSource != "" {
-				scanner, err := buildScanner(vulnSource, vulnOptions)
+				scanner, err := buildScanner(vulnSource, vulnOptions, cfg.Scan.EffectiveSkipOwnerClasses())
 				if err != nil {
 					return err
 				}
@@ -164,8 +164,10 @@ func joinExploitSources() string {
 	return strings.Join(names, ", ")
 }
 
-// buildScanner constructs the image scanner for the named vuln source.
-func buildScanner(name string, options []string) (*enrich.ImageScanner, error) {
+// buildScanner constructs the image scanner for the named vuln source. Images
+// owned entirely by one of skipClasses are not scanned (config-driven; defaults
+// to cloud-provider).
+func buildScanner(name string, options []string, skipClasses []string) (*enrich.ImageScanner, error) {
 	opts := enrich.Options{}
 	for _, kv := range options {
 		k, v, ok := splitKV(kv)
@@ -179,7 +181,30 @@ func buildScanner(name string, options []string) (*enrich.ImageScanner, error) {
 		return nil, err
 	}
 	scanner := enrich.NewImageScanner(src)
+	if len(skipClasses) > 0 {
+		scanner.Skip = skipByOwnerClass(skipClasses)
+	}
 	return &scanner, nil
+}
+
+// skipByOwnerClass returns a predicate that skips an image only when every one
+// of its workloads is owned by a class in skip.
+func skipByOwnerClass(skip []string) func(model.AssessedImage) bool {
+	set := make(map[string]bool, len(skip))
+	for _, c := range skip {
+		set[c] = true
+	}
+	return func(img model.AssessedImage) bool {
+		if len(img.Occurrences) == 0 {
+			return false
+		}
+		for _, o := range img.Occurrences {
+			if !set[o.Owner.Class] {
+				return false
+			}
+		}
+		return true
+	}
 }
 
 func joinVulnSources() string {

@@ -56,6 +56,10 @@ func VulnSourceNames() []string {
 type ImageScanner struct {
 	Source      VulnSource
 	Concurrency int // scans in flight; defaults to 4
+	// Skip, when set, reports images that should not be scanned (e.g. images
+	// owned entirely by a class that can't be remediated). Skipped images are
+	// left unscanned without being counted as failures.
+	Skip func(model.AssessedImage) bool
 }
 
 // NewImageScanner builds an ImageScanner from a source.
@@ -97,9 +101,14 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	var mu sync.Mutex
 	var firstErr error
 	failures := 0
+	skipped := 0
 
 loop:
 	for i := range images {
+		if s.Skip != nil && s.Skip(images[i]) {
+			skipped++
+			continue
+		}
 		// Acquire a slot, but stop promptly if the context is cancelled even
 		// while concurrency is saturated (a plain send could block forever).
 		select {
@@ -136,12 +145,14 @@ loop:
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Every scan failing usually means a systemic issue (missing binary, bad
-	// config) rather than a handful of unreachable images — surface it.
-	if len(images) > 0 && failures == len(images) {
+	// Every attempted scan failing usually means a systemic issue (missing
+	// binary, bad config) rather than a handful of unreachable images.
+	attempted := len(images) - skipped
+	if attempted > 0 && failures == attempted {
 		return fmt.Errorf("all %d image scans failed: %w", failures, firstErr)
 	}
-	slog.InfoContext(ctx, "image scanning complete", "scanned", len(images)-failures, "failed", failures)
+	slog.InfoContext(ctx, "image scanning complete",
+		"scanned", attempted-failures, "failed", failures, "skipped", skipped)
 	return nil
 }
 

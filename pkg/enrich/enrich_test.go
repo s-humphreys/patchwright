@@ -98,6 +98,35 @@ func (f fakeVulnSource) Scan(_ context.Context, img model.Image) ([]model.Vulner
 	return f.byRef[img.Ref], nil
 }
 
+func TestImageScannerSkipsFilteredImages(t *testing.T) {
+	src := fakeVulnSource{byRef: map[string][]model.Vulnerability{
+		"acr.io/app:1":     {{ID: "CVE-1"}},
+		"acr.io/managed:1": {{ID: "CVE-2"}},
+	}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("acr.io/app:1"), Occurrences: []model.Occurrence{{Owner: model.Owner{Class: "engineering"}}}},
+		{Image: model.ParseImageRef("acr.io/managed:1"), Occurrences: []model.Occurrence{{Owner: model.Owner{Class: "cloud-provider"}}}},
+	}
+	scanner := enrich.NewImageScanner(src)
+	scanner.Skip = func(img model.AssessedImage) bool {
+		for _, o := range img.Occurrences {
+			if o.Owner.Class != "cloud-provider" {
+				return false
+			}
+		}
+		return len(img.Occurrences) > 0
+	}
+	if err := scanner.EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if !images[0].Scanned || len(images[0].Vulns) != 1 {
+		t.Errorf("engineering image should be scanned, got %+v", images[0])
+	}
+	if images[1].Scanned || len(images[1].Vulns) != 0 {
+		t.Errorf("cloud-provider image should be skipped, got %+v", images[1])
+	}
+}
+
 func TestImageScannerPopulatesVulns(t *testing.T) {
 	src := fakeVulnSource{byRef: map[string][]model.Vulnerability{
 		"acr.io/app:1": {{ID: "CVE-1", Severity: model.SeverityCritical, FixAvailable: true, FixedVersion: "1.2"}},
