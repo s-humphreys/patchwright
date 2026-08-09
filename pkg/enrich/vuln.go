@@ -63,8 +63,11 @@ func NewImageScanner(src VulnSource) ImageScanner {
 }
 
 // EnrichImages scans every image concurrently and merges the results into each
-// image's Vulns (deduped by CVE id). It fails on the first scan error so
-// liveness/fix data is never silently partial.
+// image's Vulns (deduped by CVE id). Per-image failures are tolerated — the
+// image is marked with its ScanError and the run continues — so one image
+// patchwright can't pull (e.g. a private registry with no credentials) does not
+// fail the whole assessment. It only returns an error when *every* image failed
+// (a systemic problem, e.g. the trivy binary is missing) or the context is done.
 func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedImage) error {
 	conc := s.Concurrency
 	if conc < 1 {
@@ -74,6 +77,7 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error
+	failures := 0
 
 	for i := range images {
 		if ctx.Err() != nil {
@@ -88,19 +92,28 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
+				failures++
+				images[i].ScanError = err.Error()
 				if firstErr == nil {
 					firstErr = fmt.Errorf("vuln source %q: scan %s: %w", s.Source.Name(), images[i].Image.Ref, err)
 				}
 				return
 			}
+			images[i].Scanned = true
 			images[i].Vulns = mergeVulns(images[i].Vulns, vulns)
 		}(i)
 	}
 	wg.Wait()
-	if firstErr != nil {
-		return firstErr
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return ctx.Err()
+	// Every scan failing usually means a systemic issue (missing binary, bad
+	// config) rather than a handful of unreachable images — surface it.
+	if len(images) > 0 && failures == len(images) {
+		return fmt.Errorf("all %d image scans failed: %w", failures, firstErr)
+	}
+	return nil
 }
 
 // mergeVulns unions vulnerabilities by CVE id, preferring an entry that carries

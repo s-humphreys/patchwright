@@ -159,6 +159,12 @@ type AssessedImage struct {
 	Vulns       []Vulnerability
 	RiskScore   float64
 	Occurrences []Occurrence
+
+	// Scanned is true once a vuln source successfully scanned this image;
+	// ScanError holds the reason when a scan was attempted but failed (e.g. a
+	// private image with no credentials). A failed scan does not fail the run.
+	Scanned   bool
+	ScanError string
 }
 
 // Finding is the output unit: one image, one owner, and the verdict. An image
@@ -182,6 +188,11 @@ type Finding struct {
 	// Live reports whether any of the finding's workloads is actually running.
 	Reconciled bool
 	Live       bool
+
+	// Scanned/ScanError mirror the assessed image: whether a vuln scan
+	// succeeded, and why it didn't when attempted.
+	Scanned   bool
+	ScanError string
 
 	Actionable bool
 	Suppressed bool

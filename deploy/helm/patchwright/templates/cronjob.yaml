@@ -16,6 +16,10 @@ spec:
         metadata:
           labels:
             {{- include "patchwright.labels" . | nindent 12 }}
+            {{- if .Values.registryAuth.workloadIdentity.enabled }}
+            # Required for Azure Workload Identity to inject the projected token.
+            azure.workload.identity/use: "true"
+            {{- end }}
         spec:
           restartPolicy: Never
           serviceAccountName: {{ include "patchwright.serviceAccountName" . }}
@@ -44,9 +48,31 @@ spec:
                 {{- end }}
                 {{- end }}
                 {{- end }}
+                {{- if .Values.scan.enabled }}
+                - "--vuln-source={{ .Values.scan.vulnSource }}"
+                {{- if .Values.scan.exploitSource }}
+                - "--exploit-source={{ .Values.scan.exploitSource }}"
+                {{- end }}
+                {{- end }}
                 {{- range .Values.extraArgs }}
                 - {{ . | quote }}
                 {{- end }}
+              {{- if or .Values.scan.enabled .Values.registryAuth.dockerConfigSecret }}
+              env:
+                {{- if .Values.scan.enabled }}
+                # Trivy needs a writable cache (for its vuln DB) and temp dir,
+                # since the root filesystem is read-only.
+                - name: TRIVY_CACHE_DIR
+                  value: /tmp/trivy-cache
+                - name: TMPDIR
+                  value: /tmp
+                {{- end }}
+                {{- if .Values.registryAuth.dockerConfigSecret }}
+                # Point Trivy at the mounted docker config so it can pull private images.
+                - name: DOCKER_CONFIG
+                  value: /etc/patchwright-dockerconfig
+                {{- end }}
+              {{- end }}
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -70,6 +96,15 @@ spec:
                   mountPath: /etc/patchwright-kubeconfig
                   readOnly: true
                 {{- end }}
+                {{- if .Values.scan.enabled }}
+                - name: tmp
+                  mountPath: /tmp
+                {{- end }}
+                {{- if .Values.registryAuth.dockerConfigSecret }}
+                - name: dockerconfig
+                  mountPath: /etc/patchwright-dockerconfig
+                  readOnly: true
+                {{- end }}
           volumes:
             - name: rules
               configMap:
@@ -83,6 +118,18 @@ spec:
             - name: kubeconfig
               secret:
                 secretName: {{ .Values.reconcile.remote.kubeconfigSecret }}
+            {{- end }}
+            {{- if .Values.scan.enabled }}
+            - name: tmp
+              emptyDir: {}
+            {{- end }}
+            {{- if .Values.registryAuth.dockerConfigSecret }}
+            - name: dockerconfig
+              secret:
+                secretName: {{ .Values.registryAuth.dockerConfigSecret }}
+                items:
+                  - key: {{ .Values.registryAuth.dockerConfigKey | quote }}
+                    path: config.json
             {{- end }}
           {{- with .Values.nodeSelector }}
           nodeSelector:

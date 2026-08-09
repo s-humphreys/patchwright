@@ -85,10 +85,13 @@ func actionableMark(f model.Finding) string {
 	}
 }
 
-// fixMark shows the count of fix-available critical CVEs, or "-" when no vuln
-// scan has run for the image.
+// fixMark shows the count of fix-available critical CVEs, "err" when the scan
+// failed (e.g. private image, no credentials), or "-" when no scan ran.
 func fixMark(f model.Finding) string {
-	if len(f.Vulns) == 0 {
+	if f.ScanError != "" {
+		return "err"
+	}
+	if !f.Scanned && len(f.Vulns) == 0 {
 		return "-"
 	}
 	return fmt.Sprintf("%d", fixableCriticals(f))
@@ -97,7 +100,10 @@ func fixMark(f model.Finding) string {
 // kevMark shows the count of known-exploited (CISA KEV) CVEs, or "-" when no
 // exploit enrichment has run.
 func kevMark(f model.Finding) string {
-	if len(f.Vulns) == 0 {
+	if f.ScanError != "" {
+		return "err"
+	}
+	if !f.Scanned && len(f.Vulns) == 0 {
 		return "-"
 	}
 	n := 0

@@ -32,6 +32,7 @@ type findingView struct {
 	WorkloadCount   int                 `json:"workload_count"`
 	FixableCritical int                 `json:"fixable_critical,omitempty"`
 	KnownExploited  bool                `json:"known_exploited,omitempty"`
+	ScanError       string              `json:"scan_error,omitempty"`
 	Liveness        *livenessView       `json:"liveness,omitempty"`
 	Dimensions      map[string][]string `json:"dimensions"`
 	Vulns           []vulnView          `json:"vulns,omitempty"`
@@ -115,6 +116,7 @@ func toView(f model.Finding) findingView {
 		WorkloadCount:   len(f.Occurrences),
 		FixableCritical: fixableCriticals(f),
 		KnownExploited:  knownExploited,
+		ScanError:       f.ScanError,
 		Liveness:        liveness,
 		Dimensions:      f.Dimensions,
 		Vulns:           vulns,

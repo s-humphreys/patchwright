@@ -24,6 +24,19 @@ Reminder: the csv provider reads a point-in-time export. Refresh the Secret
 API provider is available.
 {{- end }}
 
+{{- if .Values.scan.enabled }}
+
+Image scanning: enabled ({{ .Values.scan.vulnSource }}{{ if .Values.scan.exploitSource }} + {{ .Values.scan.exploitSource }} exploit intel{{ end }}).
+{{- if .Values.registryAuth.workloadIdentity.enabled }}
+  - private registries: Azure Workload Identity (grant the identity AcrPull).
+{{- else if .Values.registryAuth.dockerConfigSecret }}
+  - private registries: docker config Secret {{ .Values.registryAuth.dockerConfigSecret }}.
+{{- else }}
+  - private registries: NO credentials configured — private images will report "unscanned".
+{{- end }}
+  - needs egress to your registries, ghcr.io/aquasecurity/trivy-db{{ if .Values.scan.exploitSource }}, and the CISA/FIRST feeds{{ end }}.
+{{- end }}
+
 Run the assessment now instead of waiting for the schedule:
   kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "patchwright.fullname" . }} patchwright-manual
   kubectl -n {{ .Release.Namespace }} logs -f job/patchwright-manual

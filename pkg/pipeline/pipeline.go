@@ -116,6 +116,8 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				Labels:      aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Labels }),
 				Reconciled:  reconciled,
 				Live:        live,
+				Scanned:     ai.Scanned,
+				ScanError:   ai.ScanError,
 			})
 		}
 	}

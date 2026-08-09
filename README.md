@@ -231,10 +231,35 @@ helm install pw deploy/helm/patchwright \
   --set 'reconcile.remote.contexts={aks-prod-uk,aks-prod-us,gke-analytics}'
 ```
 
+**Scanning (Trivy) & private registries.** Trivy is bundled in the image; set
+`scan.enabled=true` (and `scan.exploitSource=public` for EPSS/KEV) to scan images
+in-cluster. Trivy pulls the images itself, so it needs credentials for **private
+registries** — patchwright delegates to Trivy's standard auth. Two ways:
+
+```sh
+# Azure Workload Identity (recommended on AKS + ACR — no secrets).
+# Grant the managed identity AcrPull; the chart adds the SA client-id annotation
+# AND the pod's `azure.workload.identity/use: "true"` label (both are required).
+helm install pw deploy/helm/patchwright \
+  --set provider.input.secretName=patchwright-export \
+  --set scan.enabled=true \
+  --set registryAuth.workloadIdentity.enabled=true \
+  --set registryAuth.workloadIdentity.clientId=<managed-identity-client-id>
+
+# …or mount an existing imagePullSecret (docker config json):
+#   --set registryAuth.dockerConfigSecret=acr-pull
+```
+
+A per-image scan failure (e.g. a private image with no creds) is **tolerated** —
+that finding is reported unscanned (`err` in the report) and the run continues.
+Trivy also needs egress for its vuln DB (`ghcr.io/aquasecurity/trivy-db`) and, for
+`exploitSource: public`, the CISA/FIRST feeds.
+
 **Required inputs:** (1) the scanner export as a Secret (csv mode — refresh it
 out-of-band until the Rapid7 API provider lands); (2) ownership + policy rules
 (the chart ships editable examples in a ConfigMap via `config.ownership` /
-`config.policy`); (3) optionally, a kubeconfig Secret for remote clusters. See
+`config.policy`); (3) optionally, a kubeconfig Secret for remote clusters, and
+registry credentials if scanning private images. See
 [`values.yaml`](deploy/helm/patchwright/values.yaml).
 
 ## Architecture & design

@@ -2,6 +2,7 @@ package enrich_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -147,6 +148,45 @@ func TestExploitEnricherAnnotatesVulns(t *testing.T) {
 	}
 	if v[1].KEV || v[1].EPSS != 0 {
 		t.Errorf("CVE-2 should be unannotated, got %+v", v[1])
+	}
+}
+
+// erroringVulnSource fails for image refs in failRefs, succeeds otherwise.
+type erroringVulnSource struct{ failRefs map[string]bool }
+
+func (e erroringVulnSource) Name() string { return "erroring" }
+func (e erroringVulnSource) Scan(_ context.Context, img model.Image) ([]model.Vulnerability, error) {
+	if e.failRefs[img.Ref] {
+		return nil, fmt.Errorf("unauthorized: no pull credentials")
+	}
+	return []model.Vulnerability{{ID: "CVE-9"}}, nil
+}
+
+func TestImageScannerToleratesPartialFailures(t *testing.T) {
+	src := erroringVulnSource{failRefs: map[string]bool{"private.io/app:1": true}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("private.io/app:1")}, // fails
+		{Image: model.ParseImageRef("public.io/app:1")},  // succeeds
+	}
+	if err := enrich.NewImageScanner(src).EnrichImages(context.Background(), images); err != nil {
+		t.Fatalf("partial failure should not error, got %v", err)
+	}
+	if images[0].Scanned || images[0].ScanError == "" {
+		t.Errorf("private image should be unscanned with a ScanError, got %+v", images[0])
+	}
+	if !images[1].Scanned || len(images[1].Vulns) != 1 {
+		t.Errorf("public image should be scanned, got %+v", images[1])
+	}
+}
+
+func TestImageScannerFailsWhenAllFail(t *testing.T) {
+	src := erroringVulnSource{failRefs: map[string]bool{"a:1": true, "b:1": true}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("a:1")},
+		{Image: model.ParseImageRef("b:1")},
+	}
+	if err := enrich.NewImageScanner(src).EnrichImages(context.Background(), images); err == nil {
+		t.Error("expected an error when every scan fails (systemic)")
 	}
 }
 
