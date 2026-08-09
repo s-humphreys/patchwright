@@ -47,7 +47,11 @@ func (s *source) Name() string { return "trivy" }
 // concurrent scan loop.
 func (s *source) Prepare(ctx context.Context) error {
 	slog.DebugContext(ctx, "pre-downloading trivy vulnerability DB")
-	cmd := exec.CommandContext(ctx, s.binary, "image", "--quiet", "--download-db-only")
+	args := []string{"image", "--quiet", "--download-db-only"}
+	if s.timeout != "" {
+		args = append(args, "--timeout", s.timeout)
+	}
+	cmd := exec.CommandContext(ctx, s.binary, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

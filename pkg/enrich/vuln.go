@@ -85,8 +85,23 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	if conc < 1 {
 		conc = 1
 	}
+
+	// Count what will actually be scanned so we can no-op (and skip the
+	// potentially expensive Prepare) when everything is filtered out.
+	skipped := 0
+	if s.Skip != nil {
+		for i := range images {
+			if s.Skip(images[i]) {
+				skipped++
+			}
+		}
+	}
+	toScan := len(images) - skipped
 	slog.InfoContext(ctx, "scanning images for vulnerabilities",
-		"source", s.Source.Name(), "images", len(images), "concurrency", conc)
+		"source", s.Source.Name(), "to_scan", toScan, "skipped", skipped, "concurrency", conc)
+	if toScan == 0 {
+		return nil
+	}
 
 	// One-time setup (e.g. warm the vuln DB) before workers start, so they
 	// don't race to populate a shared cache.
@@ -101,13 +116,11 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	var mu sync.Mutex
 	var firstErr error
 	failures := 0
-	skipped := 0
 
 loop:
 	for i := range images {
 		if s.Skip != nil && s.Skip(images[i]) {
-			skipped++
-			continue
+			continue // already counted in skipped
 		}
 		// Acquire a slot, but stop promptly if the context is cancelled even
 		// while concurrency is saturated (a plain send could block forever).
@@ -147,12 +160,11 @@ loop:
 	}
 	// Every attempted scan failing usually means a systemic issue (missing
 	// binary, bad config) rather than a handful of unreachable images.
-	attempted := len(images) - skipped
-	if attempted > 0 && failures == attempted {
+	if failures == toScan {
 		return fmt.Errorf("all %d image scans failed: %w", failures, firstErr)
 	}
 	slog.InfoContext(ctx, "image scanning complete",
-		"scanned", attempted-failures, "failed", failures, "skipped", skipped)
+		"scanned", toScan-failures, "failed", failures, "skipped", skipped)
 	return nil
 }
 
