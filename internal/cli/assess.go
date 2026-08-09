@@ -37,6 +37,7 @@ func newAssessCmd() *cobra.Command {
 		vulnOptions    []string
 		exploitSource  string
 		exploitOptions []string
+		remediation    bool
 	)
 
 	cmd := &cobra.Command{
@@ -59,6 +60,31 @@ func newAssessCmd() *cobra.Command {
 			}
 
 			var popts []pipeline.Option
+
+			// Live source: drives reconciliation (pre-dedupe) and, with
+			// --remediation, upgrade detection (post-dedupe pipeline option).
+			var liveEnrichers []enrich.Enricher
+			if liveSource != "" {
+				src, err := newLiveSource(liveSource, liveOptions)
+				if err != nil {
+					return err
+				}
+				liveEnrichers = append(liveEnrichers, enrich.NewLiveness(src))
+				if ls, ok := src.(enrich.LabelSource); ok {
+					liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
+				}
+				if remediation {
+					us, ok := src.(enrich.UpgradeSource)
+					if !ok {
+						return fmt.Errorf("--remediation is not supported by live source %q", liveSource)
+					}
+					r := enrich.NewRemediationEnricher(us)
+					popts = append(popts, pipeline.WithRemediationEnricher(&r))
+				}
+			} else if remediation {
+				return fmt.Errorf("--remediation requires --live-source kube")
+			}
+
 			if vulnSource != "" {
 				scanner, err := buildScanner(vulnSource, vulnOptions, cfg.Scan.EffectiveSkipOwnerClasses())
 				if err != nil {
@@ -95,13 +121,9 @@ func newAssessCmd() *cobra.Command {
 			}
 			slog.InfoContext(ctx, "fetched scan data", "provider", pf.name, "occurrences", len(occ))
 
-			if liveSource != "" {
-				enrichers, err := buildEnrichers(liveSource, liveOptions)
-				if err != nil {
-					return err
-				}
-				slog.InfoContext(ctx, "reconciling against live clusters", "source", liveSource, "enrichers", len(enrichers))
-				for _, e := range enrichers {
+			if len(liveEnrichers) > 0 {
+				slog.InfoContext(ctx, "reconciling against live clusters", "source", liveSource, "enrichers", len(liveEnrichers))
+				for _, e := range liveEnrichers {
 					if err := e.Enrich(ctx, occ); err != nil {
 						return err
 					}
@@ -135,6 +157,7 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable), e.g. severity=CRITICAL,HIGH")
 	cmd.Flags().StringVar(&exploitSource, "exploit-source", "", "enrich CVEs with exploit intel — EPSS + CISA KEV ("+joinExploitSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
+	cmd.Flags().BoolVar(&remediation, "remediation", false, "detect available upgrades (e.g. a newer Helm chart) for how images are deployed; requires --live-source kube")
 	return cmd
 }
 
@@ -215,10 +238,8 @@ func joinVulnSources() string {
 	return strings.Join(names, ", ")
 }
 
-// buildEnrichers constructs the reconciliation enrichers for the named live
-// source: always liveness, plus namespace-label ownership when the source can
-// provide labels (the kube source can; the file source cannot).
-func buildEnrichers(name string, options []string) ([]enrich.Enricher, error) {
+// newLiveSource constructs the named live source from --live-option key=values.
+func newLiveSource(name string, options []string) (enrich.LiveSource, error) {
 	opts := enrich.Options{}
 	for _, kv := range options {
 		k, v, ok := splitKV(kv)
@@ -227,15 +248,7 @@ func buildEnrichers(name string, options []string) ([]enrich.Enricher, error) {
 		}
 		opts[k] = v
 	}
-	src, err := enrich.NewLiveSource(name, opts)
-	if err != nil {
-		return nil, err
-	}
-	enrichers := []enrich.Enricher{enrich.NewLiveness(src)}
-	if ls, ok := src.(enrich.LabelSource); ok {
-		enrichers = append(enrichers, enrich.NewNamespaceLabeler(ls))
-	}
-	return enrichers, nil
+	return enrich.NewLiveSource(name, opts)
 }
 
 func joinLiveSources() string {

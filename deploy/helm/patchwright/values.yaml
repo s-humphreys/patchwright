@@ -84,6 +84,9 @@ reconcile:
   remote:
     kubeconfigSecret: ""      # Secret containing a "kubeconfig" key
     contexts: []              # context names to read, e.g. [aks-prod-uk, gke-analytics]
+  # Detect available upgrades for how images are deployed (e.g. a newer Helm
+  # chart for Flux HelmReleases). Adds read access to workloads + Flux CRDs.
+  remediation: false
 
 scan:
   # Scan each unique image for per-CVE fix availability (Trivy is bundled in the

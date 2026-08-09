@@ -20,10 +20,11 @@ import (
 // Pipeline holds the compiled ownership and policy engines and optional
 // image-level enrichment.
 type Pipeline struct {
-	attributor *attribute.Attributor
-	evaluator  *policy.Evaluator
-	scanner    *enrich.ImageScanner    // optional: per-CVE scan after dedupe
-	exploit    *enrich.ExploitEnricher // optional: EPSS/KEV enrichment after scan
+	attributor  *attribute.Attributor
+	evaluator   *policy.Evaluator
+	scanner     *enrich.ImageScanner        // optional: per-CVE scan after dedupe
+	exploit     *enrich.ExploitEnricher     // optional: EPSS/KEV enrichment after scan
+	remediation *enrich.RemediationEnricher // optional: deployment upgrade detection
 }
 
 // Option customizes a Pipeline.
@@ -39,6 +40,12 @@ func WithImageScanner(s *enrich.ImageScanner) Option {
 // scanned vulnerabilities, after image scanning and before policy.
 func WithExploitEnricher(e *enrich.ExploitEnricher) Option {
 	return func(p *Pipeline) { p.exploit = e }
+}
+
+// WithRemediationEnricher enables detection of available upgrades (e.g. a newer
+// Helm chart) for how each image is deployed, after dedupe and before policy.
+func WithRemediationEnricher(r *enrich.RemediationEnricher) Option {
+	return func(p *Pipeline) { p.remediation = r }
 }
 
 // New builds a Pipeline from configuration, compiling all rules up front.
@@ -76,6 +83,11 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	}
 	if p.exploit != nil {
 		if err := p.exploit.EnrichImages(ctx, images); err != nil {
+			return nil, err
+		}
+	}
+	if p.remediation != nil {
+		if err := p.remediation.EnrichImages(ctx, images); err != nil {
 			return nil, err
 		}
 	}
@@ -133,6 +145,7 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				Scanned:        ai.Scanned,
 				ScanError:      ai.ScanError,
 				ExploitChecked: ai.ExploitChecked,
+				Upgrade:        ai.Upgrade,
 			})
 		}
 	}

@@ -169,6 +169,24 @@ type AssessedImage struct {
 	// ExploitChecked is true once an exploit source has run, so consumers can
 	// distinguish "0 known-exploited CVEs" from "exploit intel not gathered".
 	ExploitChecked bool
+
+	// Upgrade, when set, describes a newer version available for how this image
+	// is deployed (e.g. a newer Helm chart) — the remediation path. Populated by
+	// remediation detection.
+	Upgrade *Upgrade
+}
+
+// Upgrade describes a newer version available for the artifact that deploys an
+// image — the concrete remediation. Kind is the deployment source that would be
+// bumped ("chart" for Helm today; "image"/"git"/"oci" to follow). Source is
+// where the change lands (the Helm repo URL, git URL, ...).
+type Upgrade struct {
+	Kind      string
+	Name      string // e.g. chart name
+	Current   string // deployed version
+	Latest    string // latest available version
+	Available bool   // Latest is newer than Current
+	Source    string // where to make the change (repo URL)
 }
 
 // Finding is the output unit: one image, one owner, and the verdict. An image
@@ -199,6 +217,10 @@ type Finding struct {
 	Scanned        bool
 	ScanError      string
 	ExploitChecked bool
+
+	// Upgrade, when set, is the newer version available for how this image is
+	// deployed (the remediation path).
+	Upgrade *Upgrade
 
 	Actionable bool
 	Suppressed bool

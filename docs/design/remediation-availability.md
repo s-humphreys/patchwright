@@ -1,6 +1,13 @@
 # Design: remediation availability / upgrade path
 
-Status: **proposed** (not yet built)
+Status: **in progress** — Helm-chart upgrade detection is implemented
+(`--remediation`): patchwright reads Flux `HelmRelease`s, resolves each chart's
+`HelmRepository`, and checks the repo index for a newer chart version, attaching
+`Upgrade{current,latest,available,source}` to the images that release produced.
+Surfaced via the `UPGRADE` column, the JSON `upgrade` object, and the
+`upgrade_available` policy variable. **Remaining:** Flux Git/OCI source revisions,
+direct-image tag checks, direct (non-Flux) Helm releases, and the deployment-
+mechanism labelling described below (helm/flux/argo/manifest).
 
 ## Why this is its own feature
 

@@ -71,6 +71,12 @@ model {
       color secondary
     }
   }
+  helmRepos = system 'Helm Repositories' {
+    description 'Chart repository indexes. Checked for a newer chart version than the one a Flux HelmRelease currently deploys.'
+    style {
+      color secondary
+    }
+  }
   jira = system 'Jira' {
     #future
     description 'Ticketing sink for actionable findings.'
@@ -121,6 +127,10 @@ model {
       exploit = component 'Exploit Intel' {
         description 'Annotates CVEs with EPSS (exploitation probability) + CISA KEV (exploited in the wild). Source: public feeds.'
       }
+      remediation = component 'Remediation (Upgrade Detection)' {
+        #reconciliation
+        description 'Reads Flux HelmReleases and checks their chart repositories for a newer chart version — the remediation path.'
+      }
       attribute = component 'Attribution' {
         #cel
         description 'Assigns each workload an owner (class + team) via first-match CEL rules over dimensions/labels.'
@@ -155,7 +165,10 @@ model {
   vulnscan -> registries 'pull & scan image (Trivy)'
   vulnscan -> exploit 'scanned CVEs'
   exploit -> exploitFeeds 'EPSS + KEV by CVE'
-  exploit -> policy 'findings: owner + fix + exploit signals'
+  exploit -> remediation 'scanned images'
+  remediation -> clusters 'read Flux HelmReleases'
+  remediation -> helmRepos 'check chart index for a newer version'
+  remediation -> policy 'findings: owner + fix + exploit + upgrade signals'
   policy -> sink 'verdict + priority'
 
   config -> attribute 'ownership rules' {
@@ -213,7 +226,9 @@ views {
     vulnscan -> exploit 'per-CVE fix data'
     exploit -> exploitFeeds 'EPSS + KEV lookup'
     config -> policy 'policy rules'
-    exploit -> policy 'findings: owners + vulns + exploit'
+    exploit -> remediation 'check deployment upgrades'
+    remediation -> helmRepos 'newer chart version?'
+    remediation -> policy 'findings: owners + vulns + exploit + upgrade'
     policy -> sink 'actionable + priority'
     sink -> secEng 'owner-split report'
 

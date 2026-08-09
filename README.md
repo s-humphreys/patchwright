@@ -132,6 +132,26 @@ patchwright assess -i export.csv -c config/ \
 The `KEV` column and JSON `known_exploited` / `vulns[].epss` / `vulns[].kev`
 surface it; e.g. `when: "vulns.exists(v, v.fix_available && (v.kev || v.epss > 0.5))"`.
 
+### Remediation — is a newer version available?
+
+Knowing a CVE has a fix is only half the story; the other half is *can you ship
+the fix given how this is deployed*. With `--remediation` (requires
+`--live-source kube`), patchwright reads **Flux `HelmRelease`s**, resolves each
+chart's repository, and checks the repo index for a **newer chart version** —
+the concrete remediation, and the input to later GitOps auto-PRs.
+
+```sh
+patchwright assess -i export.csv -c config/ \
+  --live-source kube --live-option contexts=aks-prod --remediation
+```
+
+The `UPGRADE` column shows `current->latest`; the JSON adds an `upgrade` object
+(`kind`, `current`, `latest`, `available`, `source`); and rules can gate on
+`upgrade_available`, e.g. prioritise fixable, exploited CVEs that also have an
+upgrade ready to ship. Git/OCI source revisions and direct image tags are the
+next remediation kinds — see
+[docs/design/remediation-availability.md](docs/design/remediation-availability.md).
+
 ## Writing rules
 
 Rules are YAML with [CEL](https://github.com/google/cel-go) expressions.
