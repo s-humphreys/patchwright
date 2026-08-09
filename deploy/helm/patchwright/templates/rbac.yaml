@@ -12,7 +12,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "namespaces"]
     verbs: ["get", "list"]
-  {{- if or .Values.reconcile.remediation (and (eq .Values.mode "server") .Values.server.remediation) }}
+  {{- if .Values.reconcile.remediation }}
   # Remediation (upgrade detection): read workloads to map images to their Flux
   # HelmRelease, and read Flux HelmReleases/HelmRepositories to find the chart.
   - apiGroups: ["apps"]

@@ -1,4 +1,5 @@
-patchwright is installed as a CronJob ({{ .Values.schedule }}) in namespace {{ .Release.Namespace }}.
+patchwright is serving the assessment API in namespace {{ .Release.Namespace }}
+(re-assessing every {{ .Values.server.interval }}).
 
 Reconciliation:
 {{- if .Values.reconcile.enabled }}
@@ -41,6 +42,10 @@ Image scanning: enabled ({{ .Values.scan.vulnSource }}{{ if .Values.scan.exploit
   - needs egress to your registries, ghcr.io/aquasecurity/trivy-db{{ if .Values.scan.exploitSource }}, and the CISA/FIRST feeds{{ end }}.
 {{- end }}
 
-Run the assessment now instead of waiting for the schedule:
-  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "patchwright.fullname" . }} patchwright-manual
-  kubectl -n {{ .Release.Namespace }} logs -f job/patchwright-manual
+Query the API (port-forward, then hit an endpoint):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "patchwright.fullname" . }} {{ .Values.server.port }}:{{ .Values.server.port }}
+  curl localhost:{{ .Values.server.port }}/api/v1/summary
+  curl localhost:{{ .Values.server.port }}/api/v1/owners
+
+Trigger a fresh assessment on demand:
+  curl -X POST localhost:{{ .Values.server.port }}/api/v1/assessments

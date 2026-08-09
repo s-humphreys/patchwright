@@ -34,8 +34,8 @@ truth; the CLI, MCP, UI, and Backstage are clients of it.
 
 It takes the same inputs as `assess` (provider, `--config`, `--live-source`,
 `--vuln-source`, `--exploit-source`, `--remediation`) plus `--addr` and
-`--interval`. Deployed as a **Deployment** (a Helm value flips the chart from the
-assessment CronJob to the server), reading clusters exactly as the CronJob does.
+`--interval`. It is the chart's only deployment shape — a long-lived
+**Deployment** (there is no CronJob mode; `assess` remains for local/CI runs).
 
 ## API (v1, read-first)
 

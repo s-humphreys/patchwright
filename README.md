@@ -195,8 +195,8 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 
 Every response carries an `assessment` block (`generated_at`, `running`) so
-clients know how fresh the data is. Deploy it with the Helm chart's server mode
-(`--set mode=server`) — a Deployment + Service instead of the CronJob. See
+clients know how fresh the data is. This is how patchwright is deployed — the
+Helm chart runs it as a Deployment + Service. See
 [docs/design/api-server.md](docs/design/api-server.md).
 
 ## Writing rules
@@ -271,7 +271,8 @@ per-CVE detail).
 ## Deploying
 
 patchwright ships as a container ([`Dockerfile`](Dockerfile)) and a Helm chart
-([`deploy/helm/patchwright`](deploy/helm/patchwright)) that runs it as a CronJob.
+([`deploy/helm/patchwright`](deploy/helm/patchwright)) that runs it as a
+Deployment serving the [assessment API](#serve--the-assessment-as-an-api).
 
 **Auth is just RBAC.** For the cluster patchwright runs in, the chart creates a
 ServiceAccount and a minimal read-only ClusterRole — `get`/`list` on `pods` and
@@ -286,8 +287,9 @@ kubectl create secret generic patchwright-export --from-file=export.csv=./export
 helm install pw deploy/helm/patchwright \
   --set provider.input.secretName=patchwright-export
 
-# 3. run it now instead of waiting for the schedule
-kubectl create job --from=cronjob/pw-patchwright pw-manual && kubectl logs -f job/pw-manual
+# 3. query the API
+kubectl port-forward svc/pw-patchwright 8080:8080 &
+curl localhost:8080/api/v1/summary
 ```
 
 **Multi-cluster.** patchwright deploys to one cluster but reconciles many. Read

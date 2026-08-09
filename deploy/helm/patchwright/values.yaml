@@ -3,33 +3,18 @@ image:
   tag: ""            # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 
-# Deployment mode:
-#   cronjob — run `assess` on a schedule, print the report (default).
-#   server  — run `serve` as a long-lived Deployment exposing the read-only
-#             assessment API (findings/owners/summary), refreshed on an interval.
-mode: cronjob
-
-# CronJob mode: how often the assessment runs.
-schedule: "0 6 * * *"
-
-# Server mode:
+# patchwright runs as a long-lived Deployment (`serve`) exposing the read-only
+# assessment API (findings/owners/summary), refreshed on an interval.
 server:
   # How often the server re-runs the assessment.
   interval: 1h
   port: 8080
-  # Detect available upgrades (adds workload + Flux CRD read RBAC, like the
-  # reconcile.remediation toggle).
-  remediation: false
   service:
     type: ClusterIP
-# Output format for the report (written to stdout): table, json (pretty), or
-# ndjson. ndjson (one finding per line) is recommended in-cluster so log/
-# monitoring pipelines parse each finding as a single record.
-format: ndjson
-# Structured logs (written to stderr / pod logs, separate from the report).
+# Structured logs (written to stderr / pod logs).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)
-# Extra args appended to `patchwright assess`.
+# Extra args appended to `patchwright serve`.
 extraArgs: []
 
 serviceAccount:
