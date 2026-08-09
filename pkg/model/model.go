@@ -187,6 +187,13 @@ type Upgrade struct {
 	Latest    string // latest available version
 	Available bool   // Latest is newer than Current
 	Source    string // where to make the change (repo URL)
+
+	// Actionable reports whether the upgrade can be applied directly at this
+	// level. A newer image tag for a workload managed by a Helm chart or an
+	// operator is Available but NOT Actionable: the version is controlled
+	// elsewhere (bump the chart/operator instead). Managed records why.
+	Actionable bool
+	Managed    string // controller that owns the version ("helm", "operator"), when not actionable
 }
 
 // Finding is the output unit: one image, one owner, and the verdict. An image

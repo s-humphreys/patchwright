@@ -75,16 +75,28 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 	return nil
 }
 
-// upgradeMark shows an available upgrade as "current->latest", "-" when there's
-// no newer version, or "?" when remediation detection didn't run.
+// upgradeMark shows the remediation at a glance:
+//   - "current->latest" when a newer version can be applied directly (actionable)
+//   - "current->latest (managed)" when a newer version exists but is controlled
+//     by a chart/operator (not directly actionable)
+//   - "-" when on the latest version
+//   - "?" when remediation detection didn't run
 func upgradeMark(f model.Finding) string {
-	if f.Upgrade == nil {
+	u := f.Upgrade
+	if u == nil {
 		return "?"
 	}
-	if f.Upgrade.Available {
-		return f.Upgrade.Current + "->" + f.Upgrade.Latest
+	if !u.Available {
+		return "-"
 	}
-	return "-"
+	bump := u.Current + "->" + u.Latest
+	if !u.Actionable {
+		if u.Managed != "" {
+			return bump + " (" + u.Managed + ")"
+		}
+		return bump + " (managed)"
+	}
+	return bump
 }
 
 func actionableMark(f model.Finding) string {

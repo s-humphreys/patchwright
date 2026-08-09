@@ -10,10 +10,29 @@ interface, run in order (deployment-aware first, then fallback):
    Covers workloads not deployed by a Helm chart — plain manifests and Flux
    Kustomizations.
 
-Both attach `Upgrade{kind,current,latest,available,source}`, surfaced via the
-`UPGRADE` column, the JSON `upgrade` object, and the `upgrade_available` policy
-variable. **Remaining:** Flux Git/OCI source revisions (a Kustomization's source
-ref), OCI-type Helm repositories, direct (non-Flux) Helm releases.
+Both attach `Upgrade{kind,current,latest,available,actionable,managed,source}`,
+surfaced via the `UPGRADE` column, the JSON `upgrade` object, and the
+`upgrade_available` policy variable (true only for actionable upgrades).
+
+**Actionability.** A newer image tag is only *directly actionable* when the
+image's version isn't controlled by a chart or operator. The kube source
+classifies each workload (Helm-labelled, or owned by a custom resource =
+operator); the registry source marks upgrades for those images
+`available: true, actionable: false, managed: helm|operator`. Direct
+manifest/Kustomize images are actionable.
+
+**Known refinement — user-owned operators.** A "managed" image whose tag *is* a
+field the user sets in the owning custom resource (e.g. your own `Api` CRD with
+`spec.image`) should be actionable, with the remediation pointing at the CR, not
+a manifest. Detect this by reading the owning CR (dynamic client) and checking
+whether the running image appears in its spec; if so, treat it as actionable and
+set `source` to the CR. Until then such images are reported
+`available: true, actionable: false, managed: operator` — the newer version is
+still surfaced, just flagged as controller-owned.
+
+**Remaining:** the user-owned-operator refinement above; Flux Git/OCI source
+revisions (a Kustomization's source ref); OCI-type Helm repositories; direct
+(non-Flux) Helm releases.
 
 ## Why this is its own feature
 

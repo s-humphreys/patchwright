@@ -6,6 +6,7 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -39,6 +40,11 @@ func (craneLister) Tags(ctx context.Context, repo string) ([]string, error) {
 // Resolver reports a newer semver image tag per image.
 type Resolver struct {
 	Lister TagLister
+	// Managed, when set, returns image NameTag -> controlling mechanism
+	// ("helm"/"operator") for images whose version is controlled by a chart or
+	// operator. Such images are reported as Available (a newer tag exists) but
+	// NOT Actionable — bumping the tag directly would be reverted. Called once.
+	Managed func(ctx context.Context) (map[string]string, error)
 }
 
 // New returns a Resolver backed by the real registry.
@@ -49,6 +55,15 @@ func New() *Resolver { return &Resolver{Lister: craneLister{}} }
 // are repositories that can't be listed (logged, not fatal). Each repository is
 // listed once.
 func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (map[string]model.Upgrade, error) {
+	var managed map[string]string
+	if r.Managed != nil {
+		m, err := r.Managed(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("managed images: %w", err)
+		}
+		managed = m
+	}
+
 	tagCache := map[string][]string{}
 	result := map[string]model.Upgrade{}
 
@@ -75,6 +90,13 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 		if latest != nil {
 			up.Latest = latest.Original()
 			up.Available = true
+			// A newer tag is directly actionable only when the image's version
+			// isn't controlled by a chart or operator.
+			if by := managed[img.NameTag()]; by != "" {
+				up.Managed = by
+			} else {
+				up.Actionable = true
+			}
 		}
 		result[img.NameTag()] = up
 	}

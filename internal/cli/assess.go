@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -66,6 +67,7 @@ func newAssessCmd() *cobra.Command {
 			// --remediation, contributes a deployment-aware upgrade source.
 			var liveEnrichers []enrich.Enricher
 			var upgradeSources []enrich.UpgradeSource
+			var managedImages func(context.Context) (map[string]string, error)
 			if liveSource != "" {
 				src, err := newLiveSource(liveSource, liveOptions)
 				if err != nil {
@@ -75,14 +77,23 @@ func newAssessCmd() *cobra.Command {
 				if ls, ok := src.(enrich.LabelSource); ok {
 					liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
 				}
-				// A deployment-aware source (e.g. kube: Flux HelmReleases) takes
-				// precedence over the registry image-tag fallback.
-				if us, ok := src.(enrich.UpgradeSource); ok && remediation {
-					upgradeSources = append(upgradeSources, us)
+				if remediation {
+					// A deployment-aware source (e.g. kube: Flux HelmReleases)
+					// takes precedence over the registry image-tag fallback.
+					if us, ok := src.(enrich.UpgradeSource); ok {
+						upgradeSources = append(upgradeSources, us)
+					}
+					// The registry fallback uses this to mark image upgrades for
+					// chart/operator-managed images as non-actionable.
+					if mi, ok := src.(enrich.ManagedImageSource); ok {
+						managedImages = mi.ManagedImages
+					}
 				}
 			}
 			if remediation {
-				upgradeSources = append(upgradeSources, registry.New())
+				reg := registry.New()
+				reg.Managed = managedImages
+				upgradeSources = append(upgradeSources, reg)
 				r := enrich.NewRemediationEnricher(upgradeSources...)
 				popts = append(popts, pipeline.WithRemediationEnricher(&r))
 			}
@@ -149,7 +160,7 @@ func newAssessCmd() *cobra.Command {
 	}
 	pf.bind(cmd)
 	cmd.Flags().StringArrayVarP(&configPaths, "config", "c", nil, "config YAML file or directory (repeatable)")
-	cmd.Flags().StringVarP(&format, "format", "f", "table", "output format: table or json")
+	cmd.Flags().StringVarP(&format, "format", "f", "table", "output format: table, json (pretty), or ndjson (one finding per line, log-friendly)")
 	cmd.Flags().StringVar(&ownerClass, "owner", "", "only show findings for this owner class (e.g. platform, engineering)")
 	cmd.Flags().BoolVar(&includeAll, "all", false, "include non-actionable findings")
 	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false, "include suppressed findings")
@@ -290,8 +301,12 @@ func selectSink(format string, showSuppressed bool) (sink.Sink, error) {
 		return sink.Table{ShowSuppressed: showSuppressed}, nil
 	case "json":
 		return sink.JSON{ShowSuppressed: showSuppressed, Indent: true}, nil
+	case "ndjson":
+		// One compact JSON object per line — log/monitoring friendly for
+		// deployed runs (no multi-line records).
+		return sink.NDJSON{ShowSuppressed: showSuppressed}, nil
 	default:
-		return nil, fmt.Errorf("unknown format %q (want table or json)", format)
+		return nil, fmt.Errorf("unknown format %q (want table, json, or ndjson)", format)
 	}
 }
 

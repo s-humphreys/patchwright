@@ -78,6 +78,7 @@ func (c *HelmChecker) Check(ctx context.Context, ref ChartRef) (model.Upgrade, e
 
 	up.Latest = latest.Original()
 	up.Available = curErr == nil && latest.GreaterThan(current)
+	up.Actionable = up.Available // a chart bump is directly actionable
 	return up, nil
 }
 

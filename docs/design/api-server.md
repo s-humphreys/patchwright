@@ -49,7 +49,8 @@ to a `team`. So a plugin maps **Backstage entity owner ↔ patchwright `owner.te
 and, on a service's catalog page, shows that service's actionable findings, fix
 availability, exploitability, and **available upgrades** — the same signals, in
 the place engineers already look. It's a thin frontend (+ a small backend proxy
-for auth) over `GET /api/v1/findings?team=…`.
+for auth) over `GET /api/v1/findings?team=…`. For now we won't implement this, only
+bear it in mind during designs for later implementation.
 
 ## Web UI
 
@@ -68,5 +69,4 @@ share one backend and one freshness guarantee.
 
 1. `serve` with a results cache + read-only `GET` endpoints + OpenAPI.
 2. `POST /assessments` refresh + async status; auth.
-3. Backstage plugin against the API.
-4. Optional fleet-wide web UI; MCP co-hosted.
+3. Optional fleet-wide web UI; MCP co-hosted.

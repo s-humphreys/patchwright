@@ -27,14 +27,39 @@ func TestResolverFindsNewerSemverTag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if u := ups["acme.io/app:1.0.0"]; !u.Available || u.Latest != "1.2.0" || u.Kind != "image" {
-		t.Errorf("1.0.0 should upgrade to 1.2.0, got %+v", u)
+	if u := ups["acme.io/app:1.0.0"]; !u.Available || !u.Actionable || u.Latest != "1.2.0" || u.Kind != "image" {
+		t.Errorf("1.0.0 should upgrade to 1.2.0 (actionable), got %+v", u)
 	}
 	if u := ups["acme.io/app:1.2.0"]; u.Available {
 		t.Errorf("1.2.0 is latest stable (rc ignored); should not be available, got %+v", u)
 	}
 	if _, ok := ups["acme.io/app:918319"]; ok {
 		t.Error("non-semver tag should be skipped, not reported")
+	}
+}
+
+func TestResolverMarksManagedImagesNotActionable(t *testing.T) {
+	r := &Resolver{
+		Lister: stubLister{tags: map[string][]string{"acme.io/app": {"1.0.0", "1.2.0"}}},
+		Managed: func(_ context.Context) (map[string]string, error) {
+			return map[string]string{"acme.io/app:1.0.0": "operator"}, nil
+		},
+	}
+	ups, err := r.Upgrades(context.Background(), []model.AssessedImage{
+		{Image: model.ParseImageRef("acme.io/app:1.0.0")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := ups["acme.io/app:1.0.0"]
+	if !u.Available {
+		t.Errorf("a newer tag exists, should be Available: %+v", u)
+	}
+	if u.Actionable {
+		t.Errorf("operator-managed image should NOT be directly actionable: %+v", u)
+	}
+	if u.Managed != "operator" {
+		t.Errorf("expected Managed=operator, got %q", u.Managed)
 	}
 }
 

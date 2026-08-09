@@ -153,11 +153,17 @@ patchwright assess -i export.csv -c config/ \
 patchwright assess -i export.csv -c config/ --remediation
 ```
 
-The `UPGRADE` column shows `current->latest`; the JSON adds an `upgrade` object
-(`kind`, `current`, `latest`, `available`, `source`); and rules can gate on
-`upgrade_available`, e.g. prioritise fixable, exploited CVEs that also have an
-upgrade ready to ship. Git/OCI source revisions and direct image tags are the
-next remediation kinds — see
+**Actionability.** An upgrade is *directly actionable* only when you can apply it
+at that level. A newer image tag for a workload controlled by a Helm chart or an
+operator is reported as available but **not actionable** — bumping the tag would
+be reverted; the remediation is to upgrade the chart/operator. The `UPGRADE`
+column shows `current->latest` for actionable upgrades and
+`current->latest (helm|operator)` when it's controlled elsewhere; the
+`upgrade_available` policy variable is true only for actionable upgrades, so
+automation acts on the right things. The JSON `upgrade` object carries
+`available`, `actionable`, `managed`, and `source`.
+
+Git/OCI source revisions are the next remediation kind — see
 [docs/design/remediation-availability.md](docs/design/remediation-availability.md).
 
 ## Writing rules

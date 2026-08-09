@@ -19,6 +19,13 @@ type UpgradeSource interface {
 	Upgrades(ctx context.Context, images []model.AssessedImage) (map[string]model.Upgrade, error)
 }
 
+// ManagedImageSource reports which images have their version controlled by a
+// chart or operator (image NameTag -> mechanism), so a directly-applied image
+// upgrade can be marked non-actionable for them.
+type ManagedImageSource interface {
+	ManagedImages(ctx context.Context) (map[string]string, error)
+}
+
 // RemediationEnricher annotates each image with an available upgrade — the
 // concrete remediation path (e.g. "bump chart 1.2 -> 1.5", or a newer image
 // tag). It runs its sources in order and, per image, the first source to report
