@@ -63,6 +63,13 @@ func NewImageScanner(src VulnSource) ImageScanner {
 	return ImageScanner{Source: src, Concurrency: 4}
 }
 
+// Preparer is an optional VulnSource capability for one-time setup before the
+// concurrent scan loop — e.g. warming a shared cache or database so the workers
+// don't race to populate it.
+type Preparer interface {
+	Prepare(ctx context.Context) error
+}
+
 // EnrichImages scans every image concurrently and merges the results into each
 // image's Vulns (deduped by CVE id). Per-image failures are tolerated — the
 // image is marked with its ScanError and the run continues — so one image
@@ -76,6 +83,14 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	}
 	slog.InfoContext(ctx, "scanning images for vulnerabilities",
 		"source", s.Source.Name(), "images", len(images), "concurrency", conc)
+
+	// One-time setup (e.g. warm the vuln DB) before workers start, so they
+	// don't race to populate a shared cache.
+	if p, ok := s.Source.(Preparer); ok {
+		if err := p.Prepare(ctx); err != nil {
+			return fmt.Errorf("vuln source %q: prepare: %w", s.Source.Name(), err)
+		}
+	}
 
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup

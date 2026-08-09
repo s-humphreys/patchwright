@@ -37,12 +37,35 @@ type source struct {
 	binary   string
 	severity string
 	timeout  string
+	prepared bool // true once the DB has been pre-downloaded (see Prepare)
 }
 
 func (s *source) Name() string { return "trivy" }
 
+// Prepare downloads the vulnerability DB once, up front, so concurrent scans
+// don't race to update it. It is called once by the ImageScanner before the
+// concurrent scan loop.
+func (s *source) Prepare(ctx context.Context) error {
+	slog.DebugContext(ctx, "pre-downloading trivy vulnerability DB")
+	cmd := exec.CommandContext(ctx, s.binary, "image", "--quiet", "--download-db-only")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("trivy --download-db-only: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	s.prepared = true
+	return nil
+}
+
 func (s *source) Scan(ctx context.Context, image model.Image) ([]model.Vulnerability, error) {
-	args := []string{"image", "--quiet", "--format", "json", "--scanners", "vuln"}
+	// --cache-backend memory avoids Trivy's on-disk BoltDB cache, whose
+	// exclusive lock makes concurrent `trivy image` processes fail with
+	// "cache may be in use by another process". --skip-db-update (safe once
+	// Prepare has run) avoids concurrent DB downloads.
+	args := []string{"image", "--quiet", "--format", "json", "--scanners", "vuln", "--cache-backend", "memory"}
+	if s.prepared {
+		args = append(args, "--skip-db-update")
+	}
 	if s.severity != "" {
 		args = append(args, "--severity", s.severity)
 	}
