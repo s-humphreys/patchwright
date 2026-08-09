@@ -37,6 +37,10 @@ type Source struct {
 	kubeconfig string   // path to a kubeconfig; empty uses the default loading rules
 	contexts   []string // context names to read; empty uses the current context
 	inCluster  bool     // use the in-cluster service account instead of a kubeconfig
+
+	// resolvers detect available upgrades per deployment system. Nil uses the
+	// defaults (Flux HelmRelease); set for tests or to add resolvers.
+	resolvers []UpgradeResolver
 }
 
 func (s *Source) Name() string { return "kube" }

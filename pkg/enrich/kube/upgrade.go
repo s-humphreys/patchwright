@@ -30,18 +30,19 @@ type chartChecker interface {
 	Check(ctx context.Context, ref upgrade.ChartRef) (model.Upgrade, error)
 }
 
-// Upgrades reads Flux HelmReleases across the configured clusters and reports,
-// per image, the newer chart version available (if any). Clusters without Flux
-// simply contribute nothing.
+// Upgrades runs the configured UpgradeResolvers across every cluster and merges
+// the per-image upgrades they report. The first resolver to report an upgrade
+// for an image wins. Defaults to the Flux HelmRelease resolver.
 func (s *Source) Upgrades(ctx context.Context) (map[string]model.Upgrade, error) {
-	return s.upgradesWith(ctx, upgrade.NewHelmChecker())
-}
-
-func (s *Source) upgradesWith(ctx context.Context, checker chartChecker) (map[string]model.Upgrade, error) {
+	resolvers := s.resolvers
+	if len(resolvers) == 0 {
+		resolvers = defaultResolvers()
+	}
 	configs, err := s.restConfigs()
 	if err != nil {
 		return nil, err
 	}
+
 	result := map[string]model.Upgrade{}
 	for label, cfg := range configs {
 		typed, err := kubernetes.NewForConfig(cfg)
@@ -52,8 +53,16 @@ func (s *Source) upgradesWith(ctx context.Context, checker chartChecker) (map[st
 		if err != nil {
 			return nil, fmt.Errorf("cluster %q: %w", label, err)
 		}
-		if err := clusterUpgrades(ctx, typed, dyn, checker, result); err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", label, err)
+		for _, r := range resolvers {
+			ups, err := r.Resolve(ctx, typed, dyn)
+			if err != nil {
+				return nil, fmt.Errorf("cluster %q: resolver %q: %w", label, r.Name(), err)
+			}
+			for image, up := range ups {
+				if _, exists := result[image]; !exists {
+					result[image] = up
+				}
+			}
 		}
 	}
 	return result, nil
