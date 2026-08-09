@@ -91,28 +91,41 @@ func clusterUpgrades(ctx context.Context, typed kubernetes.Interface, dyn dynami
 		repos = map[string]string{}
 	}
 
-	cache := map[string]model.Upgrade{}
-	for image, releaseKey := range imageToRelease {
+	// Resolve each referenced HelmRelease once, logging why any is skipped so
+	// the "no upgrade shown" case is diagnosable at debug level.
+	needed := map[string]struct{}{}
+	for _, releaseKey := range imageToRelease {
+		needed[releaseKey] = struct{}{}
+	}
+	resolved := make(map[string]model.Upgrade, len(needed))
+	for releaseKey := range needed {
 		rel, ok := releases[releaseKey]
 		if !ok {
-			continue
-		}
-		if up, done := cache[releaseKey]; done {
-			result[image] = up
+			slog.DebugContext(ctx, "workload references an unknown HelmRelease", "release", releaseKey)
 			continue
 		}
 		repoURL := repos[rel.repoKey]
-		if repoURL == "" || rel.chart == "" || rel.version == "" {
+		if repoURL == "" {
+			slog.DebugContext(ctx, "HelmRelease source repository not found", "release", releaseKey, "repo", rel.repoKey)
+			continue
+		}
+		if rel.chart == "" || rel.version == "" {
+			slog.DebugContext(ctx, "HelmRelease missing chart or version", "release", releaseKey, "chart", rel.chart, "version", rel.version)
 			continue
 		}
 		up, err := checker.Check(ctx, upgrade.ChartRef{RepoURL: repoURL, Name: rel.chart, Version: rel.version})
 		if err != nil {
-			slog.WarnContext(ctx, "helm chart upgrade check failed", "chart", rel.chart, "repo", repoURL, "error", err)
+			slog.WarnContext(ctx, "helm chart upgrade check failed", "release", releaseKey, "chart", rel.chart, "repo", repoURL, "error", err)
 			continue
 		}
-		cache[releaseKey] = up
-		result[image] = up
+		resolved[releaseKey] = up
 	}
+	for image, releaseKey := range imageToRelease {
+		if up, ok := resolved[releaseKey]; ok {
+			result[image] = up
+		}
+	}
+	slog.DebugContext(ctx, "resolved helm upgrades", "helmreleases", len(needed), "resolved", len(resolved))
 	return nil
 }
 
