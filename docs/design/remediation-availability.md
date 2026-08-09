@@ -36,8 +36,11 @@ classifying each image's workload:
   managed: operator` — surfaced but flagged as controller-owned.
 - **helm** — chart-managed; the Flux Helm chart source handles the real upgrade.
 
-**Remaining:** OCI-type Helm repositories; direct (non-Flux) Helm releases;
-resolving a Kustomize source to the exact file/path (not just the repo).
+**Remaining:** label-based operator detection (controllers like flux-operator
+manage workloads via `app.kubernetes.io/managed-by` labels with no
+ownerReferences, so they're currently seen as directly-deployed); OCI-type Helm
+repositories; direct (non-Flux) Helm releases; resolving a Kustomize source to
+the exact file/path (not just the repo).
 
 ## Why this is its own feature
 

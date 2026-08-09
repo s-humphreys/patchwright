@@ -88,17 +88,21 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 
 		latest := latestNewer(current, tags)
 		up := model.Upgrade{Kind: "image", Name: repo, Current: img.Tag, Source: repo}
+
+		// Always record how/where the image is deployed, so the report shows
+		// the change target (git repo, CR, ...) even when it's on the latest tag.
+		dc, hasCtx := contexts[img.NameTag()]
+		if hasCtx && dc.Source != "" {
+			up.Source = dc.Source
+		}
+
 		if latest != nil {
 			up.Latest = latest.Original()
 			up.Available = true
-			// Judge actionability and the change target from the deployment
-			// context. No context (e.g. CSV-only run) => assume a directly
-			// deployed image that can be bumped.
-			if dc, ok := contexts[img.NameTag()]; ok {
+			// Judge actionability from the deployment context. No context (e.g.
+			// a CSV-only run) => assume a directly deployed image, bumpable.
+			if hasCtx {
 				up.Actionable = dc.Actionable
-				if dc.Source != "" {
-					up.Source = dc.Source
-				}
 				if !dc.Actionable {
 					up.Managed = dc.Mechanism
 				}
