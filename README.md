@@ -1,4 +1,7 @@
-# patchwright
+<p align="center">
+  <img src="./docs/images/patchwright.png" alt="Logo" width="150" height="auto" />
+</p>
+<h1 align="center">patchwright</h1>
 
 Turn noisy container-vulnerability scanner output into a **deduplicated,
 owner-attributed, actionable** list.
