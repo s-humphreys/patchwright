@@ -21,7 +21,8 @@ import (
 type Pipeline struct {
 	attributor *attribute.Attributor
 	evaluator  *policy.Evaluator
-	scanner    *enrich.ImageScanner // optional: per-CVE scan after dedupe
+	scanner    *enrich.ImageScanner    // optional: per-CVE scan after dedupe
+	exploit    *enrich.ExploitEnricher // optional: EPSS/KEV enrichment after scan
 }
 
 // Option customizes a Pipeline.
@@ -31,6 +32,12 @@ type Option func(*Pipeline)
 // populating each image's vulnerabilities before policy runs.
 func WithImageScanner(s *enrich.ImageScanner) Option {
 	return func(p *Pipeline) { p.scanner = s }
+}
+
+// WithExploitEnricher enables exploit-intelligence (EPSS/KEV) enrichment of the
+// scanned vulnerabilities, after image scanning and before policy.
+func WithExploitEnricher(e *enrich.ExploitEnricher) Option {
+	return func(p *Pipeline) { p.exploit = e }
 }
 
 // New builds a Pipeline from configuration, compiling all rules up front.
@@ -59,6 +66,11 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	images := dedupe.ByImage(occurrences)
 	if p.scanner != nil {
 		if err := p.scanner.EnrichImages(ctx, images); err != nil {
+			return nil, err
+		}
+	}
+	if p.exploit != nil {
+		if err := p.exploit.EnrichImages(ctx, images); err != nil {
 			return nil, err
 		}
 	}

@@ -116,6 +116,40 @@ func TestImageScannerPopulatesVulns(t *testing.T) {
 	}
 }
 
+// fakeExploitSource returns fixed exploit intel per CVE.
+type fakeExploitSource struct{ info map[string]enrich.ExploitInfo }
+
+func (f fakeExploitSource) Name() string { return "fake-exploit" }
+func (f fakeExploitSource) Lookup(_ context.Context, ids []string) (map[string]enrich.ExploitInfo, error) {
+	out := map[string]enrich.ExploitInfo{}
+	for _, id := range ids {
+		if x, ok := f.info[id]; ok {
+			out[id] = x
+		}
+	}
+	return out, nil
+}
+
+func TestExploitEnricherAnnotatesVulns(t *testing.T) {
+	images := []model.AssessedImage{{
+		Image: model.ParseImageRef("acr.io/app:1"),
+		Vulns: []model.Vulnerability{{ID: "CVE-1"}, {ID: "CVE-2"}},
+	}}
+	src := fakeExploitSource{info: map[string]enrich.ExploitInfo{
+		"CVE-1": {EPSS: 0.9, KEV: true},
+	}}
+	if err := enrich.NewExploitEnricher(src).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	v := images[0].Vulns
+	if !v[0].KEV || v[0].EPSS != 0.9 {
+		t.Errorf("CVE-1 should be KEV with EPSS 0.9, got %+v", v[0])
+	}
+	if v[1].KEV || v[1].EPSS != 0 {
+		t.Errorf("CVE-2 should be unannotated, got %+v", v[1])
+	}
+}
+
 func TestFileSourceParsesSnapshotAndNormalizes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "live.txt")

@@ -31,6 +31,7 @@ type findingView struct {
 	Reasons         []string            `json:"reasons"`
 	WorkloadCount   int                 `json:"workload_count"`
 	FixableCritical int                 `json:"fixable_critical,omitempty"`
+	KnownExploited  bool                `json:"known_exploited,omitempty"`
 	Liveness        *livenessView       `json:"liveness,omitempty"`
 	Dimensions      map[string][]string `json:"dimensions"`
 	Vulns           []vulnView          `json:"vulns,omitempty"`
@@ -54,6 +55,8 @@ type vulnView struct {
 	CVSS         float64 `json:"cvss,omitempty"`
 	FixAvailable bool    `json:"fix_available"`
 	FixedVersion string  `json:"fixed_version,omitempty"`
+	EPSS         float64 `json:"epss,omitempty"`
+	KEV          bool    `json:"kev,omitempty"`
 }
 
 // Emit implements Sink.
@@ -77,13 +80,19 @@ func (j JSON) Emit(w io.Writer, findings []model.Finding) error {
 
 func toView(f model.Finding) findingView {
 	vulns := make([]vulnView, 0, len(f.Vulns))
+	knownExploited := false
 	for _, v := range f.Vulns {
+		if v.KEV {
+			knownExploited = true
+		}
 		vulns = append(vulns, vulnView{
 			ID:           v.ID,
 			Severity:     v.Severity,
 			CVSS:         v.CVSS,
 			FixAvailable: v.FixAvailable,
 			FixedVersion: v.FixedVersion,
+			EPSS:         v.EPSS,
+			KEV:          v.KEV,
 		})
 	}
 	var liveness *livenessView
@@ -105,6 +114,7 @@ func toView(f model.Finding) findingView {
 		Reasons:         f.Reasons,
 		WorkloadCount:   len(f.Occurrences),
 		FixableCritical: fixableCriticals(f),
+		KnownExploited:  knownExploited,
 		Liveness:        liveness,
 		Dimensions:      f.Dimensions,
 		Vulns:           vulns,

@@ -113,6 +113,20 @@ The report's `FIXCRIT` column shows fix-available critical CVEs; the JSON adds
 `fixable_critical` and the full `vulns` array. Example rule:
 `when: "vulns.exists(v, v.severity == 'critical' && v.fix_available)"`.
 
+**Exploitability** — layer `--exploit-source public` on top to annotate each CVE
+with its [EPSS](https://www.first.org/epss/) score (predicted exploitation
+probability) and [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
+membership (exploited in the wild), from public feeds. Rules can then require a
+CVE that is *both fixable and being/likely exploited* before paging:
+
+```sh
+patchwright assess -i export.csv -c config/ \
+  --vuln-source trivy --exploit-source public
+```
+
+The `KEV` column and JSON `known_exploited` / `vulns[].epss` / `vulns[].kev`
+surface it; e.g. `when: "vulns.exists(v, v.fix_available && (v.kev || v.epss > 0.5))"`.
+
 ## Writing rules
 
 Rules are YAML with [CEL](https://github.com/google/cel-go) expressions.
@@ -228,9 +242,10 @@ out-of-band until the Rapid7 API provider lands); (2) ownership + policy rules
 - [`docs/architecture`](docs/architecture) — C4 diagrams (LikeC4): system
   landscape, containers, the pipeline components, the assess flow, and the
   deployment topology. `likec4 start docs/architecture` to browse.
-- [`docs/design`](docs/design) — design notes for planned work:
-  [Trivy / fix-availability](docs/design/trivy-integration.md) and the
-  [MCP server](docs/design/mcp-server.md).
+- [`docs/design`](docs/design) — design notes:
+  [Trivy / fix-availability & exploitability](docs/design/trivy-integration.md),
+  [remediation availability / upgrade path](docs/design/remediation-availability.md),
+  and the [MCP server](docs/design/mcp-server.md).
 
 ## Roadmap
 
@@ -241,14 +256,18 @@ out-of-band until the Rapid7 API provider lands); (2) ownership + policy rules
   enrichment from live namespace labels like `team`; ✅ Helm chart + Docker
   image (CronJob, read-only RBAC, multi-cluster); ✅ kind-based e2e suite.
   Remaining: Rapid7 API provider.
-- **Phase 3** — [Trivy / per-CVE fix availability](docs/design/trivy-integration.md).
-  ✅ image scanning wired (`--vuln-source trivy`): each unique image is scanned
-  once after dedupe, populating `vulns` with `fix_available` / `fixed_version`
-  so rules can require a fix before paging (the `FIXCRIT` column / `vulns` JSON).
-  Remaining: digest cache, Trivy server mode, Rapid7-API vuln source.
-- **Phase 4** — [MCP server](docs/design/mcp-server.md) for less-technical users
+- **Phase 3** — vulnerability intelligence.
+  ✅ [fix availability](docs/design/trivy-integration.md) (`--vuln-source trivy`):
+  scan each image once, populate `vulns` with `fix_available` / `fixed_version`.
+  ✅ **exploitability** (`--exploit-source public`): annotate CVEs with EPSS +
+  CISA KEV so rules require a fixable *and* exploited/likely CVE. Remaining:
+  digest cache, VEX, `govulncheck`-style reachability, Rapid7-API vuln source.
+- **Phase 4** — [remediation availability / upgrade path](docs/design/remediation-availability.md):
+  detect deployment mechanism (Helm/Flux/Argo/manifest) and whether a newer
+  version is available — the bridge to auto-remediation.
+- **Phase 5** — [MCP server](docs/design/mcp-server.md) for less-technical users
   (natural-language queries over findings).
-- **Phase 5** — Jira sink, then GitOps/Flux PR automation to roll fixes out.
+- **Phase 6** — Jira sink, then GitOps/Flux PR automation to roll fixes out.
 
 ## Development
 

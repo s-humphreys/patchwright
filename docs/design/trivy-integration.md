@@ -84,3 +84,21 @@ which is a much better proxy for "cheap, high-impact work".
 2. `trivy` source (CLI shell-out) + digest cache.
 3. Example rules using `fix_available`; prioritise by fixable criticals.
 4. Optional: Trivy server mode; `rapid7` api `VulnSource`.
+
+## Exploitability & reachability
+
+Fix availability tells you a patch exists; it does not tell you the CVE is worth
+acting on. That is layered on separately, in tiers of accuracy/cost:
+
+- **EPSS + KEV — implemented** (`--exploit-source public`): each CVE is annotated
+  with its FIRST EPSS score and CISA KEV membership, exposed to rules as
+  `vulns[].epss` / `vulns[].kev`. Cheap (CVE-id lookups), no code analysis.
+- **VEX — future:** consume producer VEX documents (Trivy supports this) to
+  suppress "not affected" CVEs authoritatively.
+- **Reachability — future, opt-in, language-scoped:** determine whether the
+  vulnerable *symbol* is actually reachable in the image (e.g. `govulncheck` for
+  Go binaries drops most unreachable "criticals"). High accuracy, high effort,
+  per-language — a distinct enricher, not part of the base scan.
+
+See also [remediation-availability.md](remediation-availability.md) for the
+separate question of whether a fix is reachable via how the image is deployed.

@@ -16,8 +16,9 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 
-	// Register the built-in live sources and vuln sources.
+	// Register the built-in live, vuln, and exploit sources.
 	_ "github.com/s-humphreys/patchwright/pkg/enrich/file"
+	_ "github.com/s-humphreys/patchwright/pkg/enrich/intel"
 	_ "github.com/s-humphreys/patchwright/pkg/enrich/kube"
 	_ "github.com/s-humphreys/patchwright/pkg/enrich/trivy"
 )
@@ -34,6 +35,8 @@ func newAssessCmd() *cobra.Command {
 		liveOptions    []string
 		vulnSource     string
 		vulnOptions    []string
+		exploitSource  string
+		exploitOptions []string
 	)
 
 	cmd := &cobra.Command{
@@ -62,6 +65,13 @@ func newAssessCmd() *cobra.Command {
 					return err
 				}
 				popts = append(popts, pipeline.WithImageScanner(scanner))
+			}
+			if exploitSource != "" {
+				enricher, err := buildExploitEnricher(exploitSource, exploitOptions)
+				if err != nil {
+					return err
+				}
+				popts = append(popts, pipeline.WithExploitEnricher(enricher))
 			}
 			pl, err := pipeline.New(cfg, popts...)
 			if err != nil {
@@ -113,7 +123,35 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&liveOptions, "live-option", nil, "live source option as key=value (repeatable), e.g. path=live.txt or contexts=c1,c2")
 	cmd.Flags().StringVar(&vulnSource, "vuln-source", "", "scan images for per-CVE fix availability ("+joinVulnSources()+")")
 	cmd.Flags().StringArrayVar(&vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable), e.g. severity=CRITICAL,HIGH")
+	cmd.Flags().StringVar(&exploitSource, "exploit-source", "", "enrich CVEs with exploit intel — EPSS + CISA KEV ("+joinExploitSources()+"); requires --vuln-source")
+	cmd.Flags().StringArrayVar(&exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
 	return cmd
+}
+
+// buildExploitEnricher constructs the exploit enricher for the named source.
+func buildExploitEnricher(name string, options []string) (*enrich.ExploitEnricher, error) {
+	opts := enrich.Options{}
+	for _, kv := range options {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid --exploit-option %q, want key=value", kv)
+		}
+		opts[k] = v
+	}
+	src, err := enrich.NewExploitSource(name, opts)
+	if err != nil {
+		return nil, err
+	}
+	enricher := enrich.NewExploitEnricher(src)
+	return &enricher, nil
+}
+
+func joinExploitSources() string {
+	names := enrich.ExploitSourceNames()
+	if len(names) == 0 {
+		return "none registered"
+	}
+	return strings.Join(names, ", ")
 }
 
 // buildScanner constructs the image scanner for the named vuln source.

@@ -66,6 +66,14 @@ type Vulnerability struct {
 	FixedVersion string
 	Description  string
 	Links        []string
+
+	// Exploitability signals, populated by an exploit-intelligence enricher.
+	// They approximate "is this actually worth acting on" without code-level
+	// reachability analysis. EPSS is the probability of exploitation in the next
+	// 30 days (0..1, FIRST.org); KEV marks membership of CISA's Known Exploited
+	// Vulnerabilities catalog (exploited in the wild).
+	EPSS float64
+	KEV  bool
 }
 
 // Counts holds aggregate vulnerability counts keyed by severity name. A map
