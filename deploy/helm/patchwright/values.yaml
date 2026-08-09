@@ -5,8 +5,11 @@ image:
 
 # How often the assessment runs.
 schedule: "0 6 * * *"
-# Output format written to the pod log: table or json.
+# Output format for the report (written to stdout): table or json.
 format: json
+# Structured logs (written to stderr / pod logs, separate from the report).
+logLevel: info             # debug, info, warn, or error
+logFormat: json            # text or json (json recommended in-cluster)
 # Extra args appended to `patchwright assess`.
 extraArgs: []
 

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -61,11 +62,17 @@ func (p *public) Lookup(ctx context.Context, cveIDs []string) (map[string]enrich
 }
 
 func (p *public) fetchKEV(ctx context.Context) (map[string]bool, error) {
+	slog.DebugContext(ctx, "fetching CISA KEV catalog", "url", p.kevURL)
 	body, err := p.get(ctx, p.kevURL)
 	if err != nil {
 		return nil, err
 	}
-	return parseKEV(body)
+	kev, err := parseKEV(body)
+	if err != nil {
+		return nil, err
+	}
+	slog.DebugContext(ctx, "fetched CISA KEV catalog", "entries", len(kev))
+	return kev, nil
 }
 
 func (p *public) fetchEPSS(ctx context.Context, cveIDs []string) (map[string]float64, error) {

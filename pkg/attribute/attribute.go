@@ -6,6 +6,7 @@ package attribute
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/google/cel-go/cel"
 
@@ -92,12 +93,19 @@ func (a *Attributor) Attribute(o model.Occurrence) (model.Owner, error) {
 // AttributeAll assigns owners to every occurrence in place, returning the same
 // slice for convenience.
 func (a *Attributor) AttributeAll(occ []model.Occurrence) ([]model.Occurrence, error) {
+	unknown := 0
 	for i := range occ {
 		owner, err := a.Attribute(occ[i])
 		if err != nil {
 			return nil, err
 		}
 		occ[i].Owner = owner
+		if owner.Rule == "" {
+			unknown++
+		}
+	}
+	if unknown > 0 {
+		slog.Warn("some occurrences matched no ownership rule", "unattributed", unknown, "total", len(occ))
 	}
 	return occ, nil
 }

@@ -1,8 +1,8 @@
 package cli
 
 import (
-	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -85,17 +85,22 @@ func newAssessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx := context.Background()
+			ctx := cmd.Context()
+			slog.InfoContext(ctx, "starting assessment",
+				"provider", pf.name, "vuln_source", vulnSource, "exploit_source", exploitSource, "live_source", liveSource)
+
 			occ, err := p.Fetch(ctx)
 			if err != nil {
 				return err
 			}
+			slog.InfoContext(ctx, "fetched scan data", "provider", pf.name, "occurrences", len(occ))
 
 			if liveSource != "" {
 				enrichers, err := buildEnrichers(liveSource, liveOptions)
 				if err != nil {
 					return err
 				}
+				slog.InfoContext(ctx, "reconciling against live clusters", "source", liveSource, "enrichers", len(enrichers))
 				for _, e := range enrichers {
 					if err := e.Enrich(ctx, occ); err != nil {
 						return err
@@ -107,7 +112,9 @@ func newAssessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
 			findings = filterFindings(findings, ownerClass, includeAll, showSuppressed)
+			slog.InfoContext(ctx, "assessment complete", "shown", len(findings), "format", format)
 
 			s, err := selectSink(format, showSuppressed)
 			if err != nil {

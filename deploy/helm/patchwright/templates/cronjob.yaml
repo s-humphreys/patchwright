@@ -36,6 +36,8 @@ spec:
                 - "--input=/data/{{ .Values.provider.input.key }}"
                 - "--config=/etc/patchwright"
                 - "--format={{ .Values.format }}"
+                - "--log-level={{ .Values.logLevel }}"
+                - "--log-format={{ .Values.logFormat }}"
                 {{- if .Values.reconcile.enabled }}
                 - "--live-source=kube"
                 {{- if .Values.reconcile.local }}

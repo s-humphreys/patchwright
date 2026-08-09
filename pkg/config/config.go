@@ -7,6 +7,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -72,6 +73,8 @@ func Load(paths ...string) (*Config, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	slog.Debug("loaded config", "files", len(paths),
+		"owner_rules", len(cfg.Owners), "actionable_rules", len(cfg.Actionable), "suppress_rules", len(cfg.Suppress))
 	return cfg, nil
 }
 

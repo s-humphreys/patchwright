@@ -71,7 +71,9 @@ patchwright assess -i export.csv -c config/ --all --show-suppressed
 
 Key flags: `--provider` (default `rapid7`), `-i/--input`, `--mode` (`csv`|`api`),
 `-c/--config` (file or directory, repeatable), `-f/--format` (`table`|`json`),
-`--owner`, `--all`, `--show-suppressed`.
+`--owner`, `--all`, `--show-suppressed`. Global: `--log-level`
+(`debug`|`info`|`warn`|`error`) and `--log-format` (`text`|`json`) — logs go to
+**stderr**, so the report on stdout stays clean (pipe JSON to `jq` freely).
 
 ### Live reconciliation (multi-cluster)
 

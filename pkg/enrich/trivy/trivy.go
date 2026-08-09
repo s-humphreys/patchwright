@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 
@@ -50,6 +51,7 @@ func (s *source) Scan(ctx context.Context, image model.Image) ([]model.Vulnerabi
 	}
 	args = append(args, image.Ref)
 
+	slog.DebugContext(ctx, "running trivy", "image", image.Ref, "severity", s.severity)
 	cmd := exec.CommandContext(ctx, s.binary, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -2,10 +2,16 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
+	"github.com/s-humphreys/patchwright/internal/logging"
 	"github.com/s-humphreys/patchwright/pkg/provider"
 
 	// Register the built-in providers.
@@ -69,18 +75,36 @@ func splitKV(s string) (string, string, bool) {
 }
 
 func newRootCmd() *cobra.Command {
+	var logLevel, logFormat string
+
 	root := &cobra.Command{
-		Use:           "patchwright",
-		Short:         "Turn noisy container-vulnerability scanner output into an actionable, owner-attributed list",
+		Use:   "patchwright",
+		Short: "Turn noisy container-vulnerability scanner output into an actionable, owner-attributed list",
+		// Errors are logged (structured) in Execute rather than printed by cobra.
 		SilenceUsage:  true,
-		SilenceErrors: false,
+		SilenceErrors: true,
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			return logging.Configure(logLevel, logFormat)
+		},
 	}
+	root.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level: debug, info, warn, or error")
+	root.PersistentFlags().StringVar(&logFormat, "log-format", "text", "log format: text or json (logs go to stderr)")
+
 	root.AddCommand(newProfileCmd())
 	root.AddCommand(newAssessCmd())
 	return root
 }
 
-// Execute runs the root command.
+// Execute runs the root command, logging any error before returning it. It
+// installs a signal-cancellable context so SIGINT/SIGTERM propagate into
+// provider fetches, scans, and reconciliation via cmd.Context().
 func Execute() error {
-	return newRootCmd().Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := newRootCmd().ExecuteContext(ctx)
+	if err != nil {
+		slog.Error("command failed", "error", err)
+	}
+	return err
 }
