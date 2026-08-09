@@ -16,7 +16,7 @@ spec:
         metadata:
           labels:
             {{- include "patchwright.labels" . | nindent 12 }}
-            {{- if .Values.registryAuth.workloadIdentity.enabled }}
+            {{- if .Values.registryAuth.azure.workloadIdentity.enabled }}
             # Required for Azure Workload Identity to inject the projected token.
             azure.workload.identity/use: "true"
             {{- end }}

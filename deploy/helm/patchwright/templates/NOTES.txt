@@ -27,8 +27,12 @@ API provider is available.
 {{- if .Values.scan.enabled }}
 
 Image scanning: enabled ({{ .Values.scan.vulnSource }}{{ if .Values.scan.exploitSource }} + {{ .Values.scan.exploitSource }} exploit intel{{ end }}).
-{{- if .Values.registryAuth.workloadIdentity.enabled }}
+{{- if .Values.registryAuth.azure.workloadIdentity.enabled }}
   - private registries: Azure Workload Identity (grant the identity AcrPull).
+{{- else if .Values.registryAuth.gcp.workloadIdentity.enabled }}
+  - private registries: GKE Workload Identity ({{ .Values.registryAuth.gcp.workloadIdentity.serviceAccount }}).
+{{- else if .Values.registryAuth.aws.irsa.enabled }}
+  - private registries: AWS IRSA ({{ .Values.registryAuth.aws.irsa.roleArn }}).
 {{- else if .Values.registryAuth.dockerConfigSecret }}
   - private registries: docker config Secret {{ .Values.registryAuth.dockerConfigSecret }}.
 {{- else }}

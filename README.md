@@ -237,17 +237,20 @@ in-cluster. Trivy pulls the images itself, so it needs credentials for **private
 registries** — patchwright delegates to Trivy's standard auth. Two ways:
 
 ```sh
-# Azure Workload Identity (recommended on AKS + ACR — no secrets).
-# Grant the managed identity AcrPull; the chart adds the SA client-id annotation
-# AND the pod's `azure.workload.identity/use: "true"` label (both are required).
+# Workload identity is provider-scoped (registryAuth.azure|gcp|aws) — no secrets.
+# Azure (AKS + ACR): grant the managed identity AcrPull; the chart adds the SA
+# client-id annotation AND the pod's `azure.workload.identity/use: "true"` label.
 helm install pw deploy/helm/patchwright \
   --set provider.input.secretName=patchwright-export \
   --set scan.enabled=true \
-  --set registryAuth.workloadIdentity.enabled=true \
-  --set registryAuth.workloadIdentity.clientId=<managed-identity-client-id>
+  --set registryAuth.azure.workloadIdentity.enabled=true \
+  --set registryAuth.azure.workloadIdentity.clientId=<managed-identity-client-id>
 
-# …or mount an existing imagePullSecret (docker config json):
-#   --set registryAuth.dockerConfigSecret=acr-pull
+# GKE (Artifact Registry): --set registryAuth.gcp.workloadIdentity.enabled=true \
+#                          --set registryAuth.gcp.workloadIdentity.serviceAccount=<gsa-email>
+# EKS (ECR, IRSA):         --set registryAuth.aws.irsa.enabled=true \
+#                          --set registryAuth.aws.irsa.roleArn=<role-arn>
+# Any registry:            --set registryAuth.dockerConfigSecret=acr-pull  # a docker-config Secret
 ```
 
 A per-image scan failure (e.g. a private image with no creds) is **tolerated** —
