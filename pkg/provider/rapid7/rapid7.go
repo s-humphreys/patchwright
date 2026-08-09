@@ -15,6 +15,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -106,6 +107,7 @@ func parseCSV(ctx context.Context, r io.Reader) ([]model.Occurrence, error) {
 
 		occurrences = append(occurrences, recordToOccurrence(get))
 	}
+	slog.DebugContext(ctx, "parsed rapid7 csv", "occurrences", len(occurrences))
 	return occurrences, nil
 }
 

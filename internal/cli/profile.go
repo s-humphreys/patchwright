@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"text/tabwriter"
 
@@ -28,10 +29,12 @@ func newProfileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			occ, err := p.Fetch(context.Background())
+			ctx := context.Background()
+			occ, err := p.Fetch(ctx)
 			if err != nil {
 				return err
 			}
+			slog.InfoContext(ctx, "profiling scan data", "provider", pf.name, "occurrences", len(occ))
 			printProfile(cmd, occ, dims, topN)
 			return nil
 		},

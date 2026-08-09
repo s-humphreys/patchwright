@@ -6,6 +6,7 @@ package pipeline
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 
 	"github.com/s-humphreys/patchwright/pkg/attribute"
@@ -63,7 +64,11 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	if _, err := p.attributor.AttributeAll(occurrences); err != nil {
 		return nil, err
 	}
+	slog.DebugContext(ctx, "attributed occurrences", "occurrences", len(occurrences))
+
 	images := dedupe.ByImage(occurrences)
+	slog.InfoContext(ctx, "deduplicated to images", "occurrences", len(occurrences), "images", len(images))
+
 	if p.scanner != nil {
 		if err := p.scanner.EnrichImages(ctx, images); err != nil {
 			return nil, err
@@ -74,10 +79,19 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 			return nil, err
 		}
 	}
+
 	findings := buildFindings(images)
 	if err := p.evaluator.EvaluateAll(findings); err != nil {
 		return nil, err
 	}
+
+	actionable := 0
+	for i := range findings {
+		if findings[i].Actionable {
+			actionable++
+		}
+	}
+	slog.InfoContext(ctx, "evaluated findings", "findings", len(findings), "actionable", actionable)
 	return findings, nil
 }
 

@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -73,6 +74,9 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	if conc < 1 {
 		conc = 1
 	}
+	slog.InfoContext(ctx, "scanning images for vulnerabilities",
+		"source", s.Source.Name(), "images", len(images), "concurrency", conc)
+
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -101,10 +105,12 @@ loop:
 				if firstErr == nil {
 					firstErr = fmt.Errorf("vuln source %q: scan %s: %w", s.Source.Name(), images[i].Image.Ref, err)
 				}
+				slog.WarnContext(ctx, "image scan failed (reported unscanned)", "image", images[i].Image.Ref, "error", err)
 				return
 			}
 			images[i].Scanned = true
 			images[i].Vulns = mergeVulns(images[i].Vulns, vulns)
+			slog.DebugContext(ctx, "scanned image", "image", images[i].Image.Ref, "vulns", len(images[i].Vulns))
 		}(i)
 	}
 	wg.Wait()
@@ -117,6 +123,7 @@ loop:
 	if len(images) > 0 && failures == len(images) {
 		return fmt.Errorf("all %d image scans failed: %w", failures, firstErr)
 	}
+	slog.InfoContext(ctx, "image scanning complete", "scanned", len(images)-failures, "failed", failures)
 	return nil
 }
 

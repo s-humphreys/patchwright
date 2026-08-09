@@ -8,6 +8,7 @@ package enrich
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -99,10 +100,16 @@ func (l Liveness) Enrich(ctx context.Context, occurrences []model.Occurrence) er
 	if err != nil {
 		return fmt.Errorf("live source %q: %w", l.Source.Name(), err)
 	}
+	live := 0
 	for i := range occurrences {
 		occurrences[i].Reconciled = true
 		occurrences[i].Live = running[occurrences[i].Image.NameTag()] > 0
+		if occurrences[i].Live {
+			live++
+		}
 	}
+	slog.DebugContext(ctx, "reconciled liveness", "source", l.Source.Name(),
+		"running_images", len(running), "occurrences", len(occurrences), "live", live)
 	return nil
 }
 
@@ -129,6 +136,7 @@ func (n NamespaceLabeler) Enrich(ctx context.Context, occurrences []model.Occurr
 	if err != nil {
 		return fmt.Errorf("namespace labels: %w", err)
 	}
+	slog.DebugContext(ctx, "gathered namespace labels", "namespaces", len(nsLabels))
 	dim := n.Dimension
 	if dim == "" {
 		dim = "namespace"
