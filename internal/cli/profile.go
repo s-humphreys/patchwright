@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -29,7 +28,7 @@ func newProfileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx := context.Background()
+			ctx := cmd.Context()
 			occ, err := p.Fetch(ctx)
 			if err != nil {
 				return err

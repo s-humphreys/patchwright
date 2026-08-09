@@ -2,8 +2,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -91,9 +95,14 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-// Execute runs the root command, logging any error before returning it.
+// Execute runs the root command, logging any error before returning it. It
+// installs a signal-cancellable context so SIGINT/SIGTERM propagate into
+// provider fetches, scans, and reconciliation via cmd.Context().
 func Execute() error {
-	err := newRootCmd().Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := newRootCmd().ExecuteContext(ctx)
 	if err != nil {
 		slog.Error("command failed", "error", err)
 	}

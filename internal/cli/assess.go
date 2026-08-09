@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -86,7 +85,7 @@ func newAssessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx := context.Background()
+			ctx := cmd.Context()
 			slog.InfoContext(ctx, "starting assessment",
 				"provider", pf.name, "vuln_source", vulnSource, "exploit_source", exploitSource, "live_source", liveSource)
 

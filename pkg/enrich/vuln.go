@@ -96,15 +96,18 @@ loop:
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// Each goroutine owns images[i], so those writes need no lock; only
+			// the shared counters do. Keep logging (potential I/O) out of the
+			// critical section so it doesn't serialize concurrent scans.
 			vulns, err := s.Source.Scan(ctx, images[i].Image)
-			mu.Lock()
-			defer mu.Unlock()
 			if err != nil {
-				failures++
 				images[i].ScanError = err.Error()
+				mu.Lock()
+				failures++
 				if firstErr == nil {
 					firstErr = fmt.Errorf("vuln source %q: scan %s: %w", s.Source.Name(), images[i].Image.Ref, err)
 				}
+				mu.Unlock()
 				slog.WarnContext(ctx, "image scan failed (reported unscanned)", "image", images[i].Image.Ref, "error", err)
 				return
 			}
