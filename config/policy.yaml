@@ -14,6 +14,12 @@
 # rules the FIRST match wins and sets the priority. Everything here is an
 # EXAMPLE — edit to fit your org's SLAs and risk appetite.
 
+# Vulnerability scanning (--vuln-source). Skip scanning images you can't
+# remediate — they're suppressed below anyway, so scanning them just wastes time.
+# Unset defaults to [cloud-provider]; set to [] to scan every image.
+scan:
+  skipOwnerClasses: [cloud-provider]
+
 suppress:
   # Cloud-provider-managed images are not directly patchable by app or platform
   # teams; keep them out of the actionable queue (a later phase can route them

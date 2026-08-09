@@ -56,11 +56,22 @@ func VulnSourceNames() []string {
 type ImageScanner struct {
 	Source      VulnSource
 	Concurrency int // scans in flight; defaults to 4
+	// Skip, when set, reports images that should not be scanned (e.g. images
+	// owned entirely by a class that can't be remediated). Skipped images are
+	// left unscanned without being counted as failures.
+	Skip func(model.AssessedImage) bool
 }
 
 // NewImageScanner builds an ImageScanner from a source.
 func NewImageScanner(src VulnSource) ImageScanner {
 	return ImageScanner{Source: src, Concurrency: 4}
+}
+
+// Preparer is an optional VulnSource capability for one-time setup before the
+// concurrent scan loop — e.g. warming a shared cache or database so the workers
+// don't race to populate it.
+type Preparer interface {
+	Prepare(ctx context.Context) error
 }
 
 // EnrichImages scans every image concurrently and merges the results into each
@@ -74,8 +85,31 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	if conc < 1 {
 		conc = 1
 	}
+
+	// Count what will actually be scanned so we can no-op (and skip the
+	// potentially expensive Prepare) when everything is filtered out.
+	skipped := 0
+	if s.Skip != nil {
+		for i := range images {
+			if s.Skip(images[i]) {
+				skipped++
+			}
+		}
+	}
+	toScan := len(images) - skipped
 	slog.InfoContext(ctx, "scanning images for vulnerabilities",
-		"source", s.Source.Name(), "images", len(images), "concurrency", conc)
+		"source", s.Source.Name(), "to_scan", toScan, "skipped", skipped, "concurrency", conc)
+	if toScan == 0 {
+		return nil
+	}
+
+	// One-time setup (e.g. warm the vuln DB) before workers start, so they
+	// don't race to populate a shared cache.
+	if p, ok := s.Source.(Preparer); ok {
+		if err := p.Prepare(ctx); err != nil {
+			return fmt.Errorf("vuln source %q: prepare: %w", s.Source.Name(), err)
+		}
+	}
 
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
@@ -85,6 +119,9 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 
 loop:
 	for i := range images {
+		if s.Skip != nil && s.Skip(images[i]) {
+			continue // already counted in skipped
+		}
 		// Acquire a slot, but stop promptly if the context is cancelled even
 		// while concurrency is saturated (a plain send could block forever).
 		select {
@@ -121,12 +158,13 @@ loop:
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Every scan failing usually means a systemic issue (missing binary, bad
-	// config) rather than a handful of unreachable images — surface it.
-	if len(images) > 0 && failures == len(images) {
+	// Every attempted scan failing usually means a systemic issue (missing
+	// binary, bad config) rather than a handful of unreachable images.
+	if failures == toScan {
 		return fmt.Errorf("all %d image scans failed: %w", failures, firstErr)
 	}
-	slog.InfoContext(ctx, "image scanning complete", "scanned", len(images)-failures, "failed", failures)
+	slog.InfoContext(ctx, "image scanning complete",
+		"scanned", toScan-failures, "failed", failures, "skipped", skipped)
 	return nil
 }
 

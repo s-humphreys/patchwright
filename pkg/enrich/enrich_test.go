@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/s-humphreys/patchwright/pkg/enrich"
@@ -96,6 +97,81 @@ type fakeVulnSource struct {
 func (f fakeVulnSource) Name() string { return "fake-vuln" }
 func (f fakeVulnSource) Scan(_ context.Context, img model.Image) ([]model.Vulnerability, error) {
 	return f.byRef[img.Ref], nil
+}
+
+// preparingSource is a VulnSource that also implements Preparer, tracking calls.
+type preparingSource struct {
+	calls *int
+	err   error
+}
+
+func (p preparingSource) Name() string { return "preparing" }
+func (p preparingSource) Scan(context.Context, model.Image) ([]model.Vulnerability, error) {
+	return []model.Vulnerability{{ID: "CVE-1"}}, nil
+}
+func (p preparingSource) Prepare(context.Context) error { *p.calls++; return p.err }
+
+func TestImageScannerCallsPrepareAndSurfacesErrors(t *testing.T) {
+	images := []model.AssessedImage{{Image: model.ParseImageRef("a:1")}}
+
+	// Prepare is invoked once when there is work.
+	calls := 0
+	if err := enrich.NewImageScanner(preparingSource{calls: &calls}).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("Prepare should be called exactly once, got %d", calls)
+	}
+
+	// A Prepare error is surfaced (not swallowed).
+	calls = 0
+	err := enrich.NewImageScanner(preparingSource{calls: &calls, err: fmt.Errorf("db download failed")}).
+		EnrichImages(context.Background(), images)
+	if err == nil || !strings.Contains(err.Error(), "db download failed") {
+		t.Errorf("expected prepare error surfaced, got %v", err)
+	}
+}
+
+func TestImageScannerSkipsPrepareWhenNothingToScan(t *testing.T) {
+	calls := 0
+	scanner := enrich.NewImageScanner(preparingSource{calls: &calls})
+	scanner.Skip = func(model.AssessedImage) bool { return true } // skip everything
+	images := []model.AssessedImage{{Image: model.ParseImageRef("a:1")}}
+	if err := scanner.EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Errorf("Prepare should not run when there is nothing to scan, got %d calls", calls)
+	}
+}
+
+func TestImageScannerSkipsFilteredImages(t *testing.T) {
+	src := fakeVulnSource{byRef: map[string][]model.Vulnerability{
+		"acr.io/app:1":     {{ID: "CVE-1"}},
+		"acr.io/managed:1": {{ID: "CVE-2"}},
+	}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("acr.io/app:1"), Occurrences: []model.Occurrence{{Owner: model.Owner{Class: "engineering"}}}},
+		{Image: model.ParseImageRef("acr.io/managed:1"), Occurrences: []model.Occurrence{{Owner: model.Owner{Class: "cloud-provider"}}}},
+	}
+	scanner := enrich.NewImageScanner(src)
+	scanner.Skip = func(img model.AssessedImage) bool {
+		for _, o := range img.Occurrences {
+			if o.Owner.Class != "cloud-provider" {
+				return false
+			}
+		}
+		return len(img.Occurrences) > 0
+	}
+	if err := scanner.EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if !images[0].Scanned || len(images[0].Vulns) != 1 {
+		t.Errorf("engineering image should be scanned, got %+v", images[0])
+	}
+	if images[1].Scanned || len(images[1].Vulns) != 0 {
+		t.Errorf("cloud-provider image should be skipped, got %+v", images[1])
+	}
 }
 
 func TestImageScannerPopulatesVulns(t *testing.T) {
