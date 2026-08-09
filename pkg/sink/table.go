@@ -51,15 +51,16 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 		fmt.Fprintf(w, "== owner class: %s (%d findings, %d actionable) ==\n", class, len(group), actionable)
 
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ACT\tPRIORITY\tTEAM\tIMAGE\tCRIT\tHIGH\tRISK\tWORKLOADS\tLIVE\tACCOUNTS")
+		fmt.Fprintln(tw, "ACT\tPRIORITY\tTEAM\tIMAGE\tCRIT\tHIGH\tFIXCRIT\tRISK\tWORKLOADS\tLIVE\tACCOUNTS")
 		for _, f := range group {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%.0f\t%d\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%.0f\t%d\t%s\t%s\n",
 				actionableMark(f),
 				dash(f.Priority),
 				dash(f.Owner.Team),
 				imageLabel(f.Image),
 				f.Counts.Get(model.SeverityCritical),
 				f.Counts.Get(model.SeverityHigh),
+				fixMark(f),
 				f.RiskScore,
 				len(f.Occurrences),
 				liveMark(f),
@@ -81,6 +82,15 @@ func actionableMark(f model.Finding) string {
 	default:
 		return "-"
 	}
+}
+
+// fixMark shows the count of fix-available critical CVEs, or "-" when no vuln
+// scan has run for the image.
+func fixMark(f model.Finding) string {
+	if len(f.Vulns) == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", fixableCriticals(f))
 }
 
 // liveMark reports liveness: yes/no when reconciled, "?" when liveness is

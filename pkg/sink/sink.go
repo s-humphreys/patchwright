@@ -32,6 +32,19 @@ func priorityRank(p string) int {
 	}
 }
 
+// fixableCriticals counts a finding's critical vulnerabilities that have a fix
+// available — the cheapest, highest-impact work. Zero unless a vuln source
+// (e.g. Trivy) has scanned the image.
+func fixableCriticals(f model.Finding) int {
+	n := 0
+	for _, v := range f.Vulns {
+		if v.FixAvailable && v.Severity == model.SeverityCritical {
+			n++
+		}
+	}
+	return n
+}
+
 // SortForReport orders findings for presentation: actionable first, then by
 // priority, then by critical count, then risk, then image reference for
 // stability. It sorts a copy and returns it, leaving the input untouched.

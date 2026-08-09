@@ -87,6 +87,35 @@ func TestNamespaceLabelerDoesNotOverwriteExistingLabel(t *testing.T) {
 	}
 }
 
+// fakeVulnSource returns fixed per-image vulnerabilities.
+type fakeVulnSource struct {
+	byRef map[string][]model.Vulnerability
+}
+
+func (f fakeVulnSource) Name() string { return "fake-vuln" }
+func (f fakeVulnSource) Scan(_ context.Context, img model.Image) ([]model.Vulnerability, error) {
+	return f.byRef[img.Ref], nil
+}
+
+func TestImageScannerPopulatesVulns(t *testing.T) {
+	src := fakeVulnSource{byRef: map[string][]model.Vulnerability{
+		"acr.io/app:1": {{ID: "CVE-1", Severity: model.SeverityCritical, FixAvailable: true, FixedVersion: "1.2"}},
+	}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("acr.io/app:1")},
+		{Image: model.ParseImageRef("acr.io/other:2")},
+	}
+	if err := enrich.NewImageScanner(src).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if len(images[0].Vulns) != 1 || !images[0].Vulns[0].FixAvailable {
+		t.Errorf("app:1 should have 1 fix-available vuln, got %+v", images[0].Vulns)
+	}
+	if len(images[1].Vulns) != 0 {
+		t.Errorf("other:2 should have no vulns, got %+v", images[1].Vulns)
+	}
+}
+
 func TestFileSourceParsesSnapshotAndNormalizes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "live.txt")

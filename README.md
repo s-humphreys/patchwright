@@ -95,6 +95,24 @@ The report's `LIVE` column shows `yes`/`no` (or `?` when reconciliation didn't
 run), and rules can reason over `reconciled` and `live` (see the `not-running`
 rule in `config/policy.yaml`).
 
+### Vulnerability scanning — fix availability
+
+Turn "actionable" from a heuristic into "there's a fix to apply". With
+`--vuln-source trivy`, each unique image is scanned once (after dedupe) and its
+per-CVE detail — including `fix_available` / `fixed_version` — populates the
+`vulns` list, so rules can require a fix before paging anyone. Requires the
+[`trivy`](https://trivy.dev) binary (it pulls images itself, so it needs egress
+and registry credentials for private images).
+
+```sh
+patchwright assess -i export.csv -c config/ \
+  --vuln-source trivy --vuln-option severity=CRITICAL,HIGH
+```
+
+The report's `FIXCRIT` column shows fix-available critical CVEs; the JSON adds
+`fixable_critical` and the full `vulns` array. Example rule:
+`when: "vulns.exists(v, v.severity == 'critical' && v.fix_available)"`.
+
 ## Writing rules
 
 Rules are YAML with [CEL](https://github.com/google/cel-go) expressions.
@@ -223,9 +241,11 @@ out-of-band until the Rapid7 API provider lands); (2) ownership + policy rules
   enrichment from live namespace labels like `team`; ✅ Helm chart + Docker
   image (CronJob, read-only RBAC, multi-cluster); ✅ kind-based e2e suite.
   Remaining: Rapid7 API provider.
-- **Phase 3** — [Trivy / per-CVE fix availability](docs/design/trivy-integration.md):
-  scan each unique image once, feed `fix_available` into actionability &
-  prioritisation.
+- **Phase 3** — [Trivy / per-CVE fix availability](docs/design/trivy-integration.md).
+  ✅ image scanning wired (`--vuln-source trivy`): each unique image is scanned
+  once after dedupe, populating `vulns` with `fix_available` / `fixed_version`
+  so rules can require a fix before paging (the `FIXCRIT` column / `vulns` JSON).
+  Remaining: digest cache, Trivy server mode, Rapid7-API vuln source.
 - **Phase 4** — [MCP server](docs/design/mcp-server.md) for less-technical users
   (natural-language queries over findings).
 - **Phase 5** — Jira sink, then GitOps/Flux PR automation to roll fixes out.

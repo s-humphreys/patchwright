@@ -1,6 +1,9 @@
 # Design: Trivy / per-CVE fix availability
 
-Status: **proposed** (not yet built)
+Status: **core implemented** — `VulnSource` + image-level `ImageScanner` (post
+dedupe) + a `trivy` source are wired through the pipeline, CLI
+(`--vuln-source trivy`), and sinks (`FIXCRIT` / `fixable_critical`). Remaining:
+digest cache, Trivy server mode, and a Rapid7-API vuln source (see "Phasing").
 
 ## Why
 

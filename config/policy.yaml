@@ -29,6 +29,14 @@ suppress:
     when: "reconciled && !live"
 
 actionable:
+  # With `--vuln-source trivy`, the `vulns` list is populated with per-CVE fix
+  # availability. Prefer rules that require a fix, so you only page someone when
+  # there is a patch to move to. (Uncomment; keep above the coarser rules.)
+  #
+  # - name: fixable-production-critical
+  #   when: "dimensions['account'].exists(a, a.startsWith('Production')) && vulns.exists(v, v.severity == 'critical' && v.fix_available)"
+  #   priority: high
+
   # Anything with a critical that runs in a Production account — highest stakes.
   - name: production-critical
     when: "counts['critical'] > 0 && dimensions['account'].exists(a, a.startsWith('Production'))"
