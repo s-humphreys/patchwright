@@ -67,7 +67,7 @@ func newAssessCmd() *cobra.Command {
 			// --remediation, contributes a deployment-aware upgrade source.
 			var liveEnrichers []enrich.Enricher
 			var upgradeSources []enrich.UpgradeSource
-			var managedImages func(context.Context) (map[string]string, error)
+			var deployContexts func(context.Context) (map[string]enrich.DeployContext, error)
 			if liveSource != "" {
 				src, err := newLiveSource(liveSource, liveOptions)
 				if err != nil {
@@ -83,16 +83,16 @@ func newAssessCmd() *cobra.Command {
 					if us, ok := src.(enrich.UpgradeSource); ok {
 						upgradeSources = append(upgradeSources, us)
 					}
-					// The registry fallback uses this to mark image upgrades for
-					// chart/operator-managed images as non-actionable.
-					if mi, ok := src.(enrich.ManagedImageSource); ok {
-						managedImages = mi.ManagedImages
+					// Deployment context makes the registry fallback judge
+					// actionability and the change target per image.
+					if dc, ok := src.(enrich.DeploymentContextSource); ok {
+						deployContexts = dc.ImageDeployments
 					}
 				}
 			}
 			if remediation {
 				reg := registry.New()
-				reg.Managed = managedImages
+				reg.Contexts = deployContexts
 				upgradeSources = append(upgradeSources, reg)
 				r := enrich.NewRemediationEnricher(upgradeSources...)
 				popts = append(popts, pipeline.WithRemediationEnricher(&r))

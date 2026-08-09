@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
 
+	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
@@ -40,11 +41,11 @@ func (craneLister) Tags(ctx context.Context, repo string) ([]string, error) {
 // Resolver reports a newer semver image tag per image.
 type Resolver struct {
 	Lister TagLister
-	// Managed, when set, returns image NameTag -> controlling mechanism
-	// ("helm"/"operator") for images whose version is controlled by a chart or
-	// operator. Such images are reported as Available (a newer tag exists) but
-	// NOT Actionable — bumping the tag directly would be reverted. Called once.
-	Managed func(ctx context.Context) (map[string]string, error)
+	// Contexts, when set, returns the deployment context per image NameTag so a
+	// newer tag can be judged actionable and pointed at the right change target
+	// (a chart/operator-controlled image is available-but-not-actionable; a
+	// Kustomize/operator-set image is actionable with a source). Called once.
+	Contexts func(ctx context.Context) (map[string]enrich.DeployContext, error)
 }
 
 // New returns a Resolver backed by the real registry.
@@ -55,13 +56,13 @@ func New() *Resolver { return &Resolver{Lister: craneLister{}} }
 // are repositories that can't be listed (logged, not fatal). Each repository is
 // listed once.
 func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (map[string]model.Upgrade, error) {
-	var managed map[string]string
-	if r.Managed != nil {
-		m, err := r.Managed(ctx)
+	var contexts map[string]enrich.DeployContext
+	if r.Contexts != nil {
+		c, err := r.Contexts(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("managed images: %w", err)
+			return nil, fmt.Errorf("deployment contexts: %w", err)
 		}
-		managed = m
+		contexts = c
 	}
 
 	tagCache := map[string][]string{}
@@ -90,10 +91,17 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 		if latest != nil {
 			up.Latest = latest.Original()
 			up.Available = true
-			// A newer tag is directly actionable only when the image's version
-			// isn't controlled by a chart or operator.
-			if by := managed[img.NameTag()]; by != "" {
-				up.Managed = by
+			// Judge actionability and the change target from the deployment
+			// context. No context (e.g. CSV-only run) => assume a directly
+			// deployed image that can be bumped.
+			if dc, ok := contexts[img.NameTag()]; ok {
+				up.Actionable = dc.Actionable
+				if dc.Source != "" {
+					up.Source = dc.Source
+				}
+				if !dc.Actionable {
+					up.Managed = dc.Mechanism
+				}
 			} else {
 				up.Actionable = true
 			}

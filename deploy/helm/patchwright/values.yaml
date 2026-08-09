@@ -86,9 +86,15 @@ reconcile:
   remote:
     kubeconfigSecret: ""      # Secret containing a "kubeconfig" key
     contexts: []              # context names to read, e.g. [aks-prod-uk, gke-analytics]
-  # Detect available upgrades for how images are deployed (e.g. a newer Helm
-  # chart for Flux HelmReleases). Adds read access to workloads + Flux CRDs.
+  # Detect available upgrades for how images are deployed (a newer Helm chart
+  # for Flux HelmReleases, a newer image tag for manifest/Kustomize workloads).
+  # Adds read access to workloads + Flux CRDs.
   remediation: false
+  # Additionally grant `get` on ALL custom resources, so operator-deployed
+  # images whose tag is set in the owning CR's spec are treated as directly
+  # actionable (change the CR). Broad read access — leave off unless you want
+  # this refinement, or replace with a scoped role for your operators' groups.
+  remediationReadCRs: false
 
 scan:
   # Scan each unique image for per-CVE fix availability (Trivy is bundled in the

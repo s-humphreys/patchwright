@@ -19,11 +19,26 @@ type UpgradeSource interface {
 	Upgrades(ctx context.Context, images []model.AssessedImage) (map[string]model.Upgrade, error)
 }
 
-// ManagedImageSource reports which images have their version controlled by a
-// chart or operator (image NameTag -> mechanism), so a directly-applied image
-// upgrade can be marked non-actionable for them.
-type ManagedImageSource interface {
-	ManagedImages(ctx context.Context) (map[string]string, error)
+// DeployContext describes how an image is deployed, so a registry image-tag
+// upgrade can be judged actionable and pointed at the right place to change.
+type DeployContext struct {
+	// Mechanism is how the workload is deployed: helm, operator, kustomize, or
+	// manifest.
+	Mechanism string
+	// Actionable reports whether the image tag can be bumped directly at this
+	// level — true for manifest/Kustomize images and for operator images whose
+	// tag is a field in the owning custom resource; false for chart-managed or
+	// operator-derived images (bump the chart/operator instead).
+	Actionable bool
+	// Source is where the change lands: a git repository URL (Kustomize), the
+	// owning custom resource ref (operator, e.g. "Api/ns/name"), or empty.
+	Source string
+}
+
+// DeploymentContextSource reports the deployment context per image NameTag, so
+// the registry upgrade source can set actionability and the change target.
+type DeploymentContextSource interface {
+	ImageDeployments(ctx context.Context) (map[string]DeployContext, error)
 }
 
 // RemediationEnricher annotates each image with an available upgrade — the

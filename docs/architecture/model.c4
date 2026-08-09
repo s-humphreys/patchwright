@@ -129,7 +129,7 @@ model {
       }
       remediation = component 'Remediation (Upgrade Detection)' {
         #reconciliation
-        description 'Reads Flux HelmReleases and checks their chart repositories for a newer chart version — the remediation path.'
+        description 'Finds the newer version available for how each image is deployed: a newer Flux Helm chart, or a newer image tag (registry) — judged actionable by deployment context (helm/operator/kustomize/manifest) with the change target (chart repo, CR, or git source).'
       }
       attribute = component 'Attribution' {
         #cel
@@ -166,8 +166,9 @@ model {
   vulnscan -> exploit 'scanned CVEs'
   exploit -> exploitFeeds 'EPSS + KEV by CVE'
   exploit -> remediation 'scanned images'
-  remediation -> clusters 'read Flux HelmReleases'
+  remediation -> clusters 'read Flux/HelmReleases, Kustomizations, owning CRs'
   remediation -> helmRepos 'check chart index for a newer version'
+  remediation -> registries 'check for a newer image tag'
   remediation -> policy 'findings: owner + fix + exploit + upgrade signals'
   policy -> sink 'verdict + priority'
 

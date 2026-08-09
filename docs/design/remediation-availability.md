@@ -21,18 +21,23 @@ operator); the registry source marks upgrades for those images
 `available: true, actionable: false, managed: helm|operator`. Direct
 manifest/Kustomize images are actionable.
 
-**Known refinement — user-owned operators.** A "managed" image whose tag *is* a
-field the user sets in the owning custom resource (e.g. your own `Api` CRD with
-`spec.image`) should be actionable, with the remediation pointing at the CR, not
-a manifest. Detect this by reading the owning CR (dynamic client) and checking
-whether the running image appears in its spec; if so, treat it as actionable and
-set `source` to the CR. Until then such images are reported
-`available: true, actionable: false, managed: operator` — the newer version is
-still surfaced, just flagged as controller-owned.
+Deployment context is computed once by the kube source (`ImageDeployments`),
+classifying each image's workload:
 
-**Remaining:** the user-owned-operator refinement above; Flux Git/OCI source
-revisions (a Kustomization's source ref); OCI-type Helm repositories; direct
-(non-Flux) Helm releases.
+- **manifest** — directly deployed; image tag actionable.
+- **kustomize** — Flux Kustomize-labelled; actionable, and `source` is resolved
+  to the backing **GitRepository/OCIRepository URL** (the auto-PR target) by
+  following the Kustomization's `sourceRef`.
+- **operator** — owned by a custom resource. The owning CR is read (dynamic
+  client + REST mapper); if the running **image appears in the CR spec** (e.g.
+  your own `Api` CRD with `spec.image`), the bump is **actionable** with `source`
+  set to the CR (`Kind/ns/name`). If the image is *derived* (not in spec, like a
+  third-party operator's proxy), it's `available: true, actionable: false,
+  managed: operator` — surfaced but flagged as controller-owned.
+- **helm** — chart-managed; the Flux Helm chart source handles the real upgrade.
+
+**Remaining:** OCI-type Helm repositories; direct (non-Flux) Helm releases;
+resolving a Kustomize source to the exact file/path (not just the repo).
 
 ## Why this is its own feature
 
