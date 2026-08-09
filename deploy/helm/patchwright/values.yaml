@@ -5,8 +5,10 @@ image:
 
 # How often the assessment runs.
 schedule: "0 6 * * *"
-# Output format for the report (written to stdout): table or json.
-format: json
+# Output format for the report (written to stdout): table, json (pretty), or
+# ndjson. ndjson (one finding per line) is recommended in-cluster so log/
+# monitoring pipelines parse each finding as a single record.
+format: ndjson
 # Structured logs (written to stderr / pod logs, separate from the report).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)
@@ -33,11 +35,11 @@ config:
       - name: cloud-provider-managed-images
         match: "image.registry in ['mcr.microsoft.com', 'registry.k8s.io']"
         class: cloud-provider
-        team: aks
-      - name: platform-system-namespaces
-        match: "dimensions['namespace'] in ['kube-system','flux-system','cert-manager','istio-system','gatekeeper-system']"
+        team: azure
+      - name: platform-namespaces
+        match: "dimensions['namespace'] in ['flux-system','cert-manager','istio-system','gatekeeper-system']"
         class: platform
-        team: platform-engineering
+        team: platform
       - name: engineering-by-label
         match: "'team' in labels"
         class: engineering
@@ -84,6 +86,15 @@ reconcile:
   remote:
     kubeconfigSecret: ""      # Secret containing a "kubeconfig" key
     contexts: []              # context names to read, e.g. [aks-prod-uk, gke-analytics]
+  # Detect available upgrades for how images are deployed (a newer Helm chart
+  # for Flux HelmReleases, a newer image tag for manifest/Kustomize workloads).
+  # Adds read access to workloads + Flux CRDs.
+  remediation: false
+  # Additionally grant `get` on ALL custom resources, so operator-deployed
+  # images whose tag is set in the owning CR's spec are treated as directly
+  # actionable (change the CR). Broad read access — leave off unless you want
+  # this refinement, or replace with a scoped role for your operators' groups.
+  remediationReadCRs: false
 
 scan:
   # Scan each unique image for per-CVE fix availability (Trivy is bundled in the

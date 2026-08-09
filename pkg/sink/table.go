@@ -51,9 +51,9 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 		fmt.Fprintf(w, "== owner class: %s (%d findings, %d actionable) ==\n", class, len(group), actionable)
 
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ACT\tPRIORITY\tTEAM\tIMAGE\tCRIT\tHIGH\tFIXCRIT\tKEV\tRISK\tWORKLOADS\tLIVE\tACCOUNTS")
+		fmt.Fprintln(tw, "ACT\tPRIORITY\tTEAM\tIMAGE\tCRIT\tHIGH\tFIXCRIT\tKEV\tRISK\tWORKLOADS\tLIVE\tUPGRADE\tACCOUNTS")
 		for _, f := range group {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%.0f\t%d\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%.0f\t%d\t%s\t%s\t%s\n",
 				actionableMark(f),
 				dash(f.Priority),
 				dash(f.Owner.Team),
@@ -65,6 +65,7 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 				f.RiskScore,
 				len(f.Occurrences),
 				liveMark(f),
+				upgradeMark(f),
 				joinValues(f.Dimensions["account"]),
 			)
 		}
@@ -72,6 +73,30 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 		fmt.Fprintln(w)
 	}
 	return nil
+}
+
+// upgradeMark shows the remediation at a glance:
+//   - "current->latest" when a newer version can be applied directly (actionable)
+//   - "current->latest (managed)" when a newer version exists but is controlled
+//     by a chart/operator (not directly actionable)
+//   - "-" when on the latest version
+//   - "?" when remediation detection didn't run
+func upgradeMark(f model.Finding) string {
+	u := f.Upgrade
+	if u == nil {
+		return "?"
+	}
+	if !u.Available {
+		return "-"
+	}
+	bump := u.Current + "->" + u.Latest
+	if !u.Actionable {
+		if u.Managed != "" {
+			return bump + " (" + u.Managed + ")"
+		}
+		return bump + " (managed)"
+	}
+	return bump
 }
 
 func actionableMark(f model.Finding) string {

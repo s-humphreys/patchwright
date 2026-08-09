@@ -17,10 +17,10 @@ owners:
   - name: cloud-provider-managed-images
     match: "image.registry in ['mcr.microsoft.com', 'registry.k8s.io']"
     class: cloud-provider
-    team: aks
+    team: azure
 
   # Platform-owned shared components, identified by namespace.
-  - name: platform-system-namespaces
+  - name: platform-namespaces
     match: >
       dimensions['namespace'] in [
         'kube-system', 'kube-public', 'kube-node-lease',
@@ -30,7 +30,7 @@ owners:
         'agentgateway-system', 'monitoring'
       ]
     class: platform
-    team: platform-engineering
+    team: platform
 
   # Preferred engineering attribution: an explicit team label. This takes
   # precedence over namespace heuristics and becomes available once live

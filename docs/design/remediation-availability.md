@@ -1,6 +1,49 @@
 # Design: remediation availability / upgrade path
 
-Status: **proposed** (not yet built)
+Status: **in progress** — two `UpgradeSource`s implemented behind a common
+interface, run in order (deployment-aware first, then fallback):
+
+1. **Flux Helm chart** (cluster) — reads Flux `HelmRelease`s, resolves each
+   chart's `HelmRepository`, and checks the repo index for a newer chart version.
+2. **Registry image tag** (`kind: image`) — for any image with a strict-semver
+   tag, checks its registry for a newer tag (auth via the docker/cloud keychain).
+   Covers workloads not deployed by a Helm chart — plain manifests and Flux
+   Kustomizations.
+
+Both attach `Upgrade{kind,current,latest,available,actionable,managed,source}`,
+surfaced via the `UPGRADE` column, the JSON `upgrade` object, and the
+`upgrade_available` policy variable (true only for actionable upgrades).
+
+**Actionability.** A newer image tag is only *directly actionable* when the
+image's version isn't controlled by a chart or operator. The kube source
+classifies each workload (Helm-labelled, or owned by a custom resource =
+operator); the registry source marks upgrades for those images
+`available: true, actionable: false, managed: helm|operator`. Direct
+manifest/Kustomize images are actionable.
+
+Deployment context is computed once by the kube source (`ImageDeployments`),
+classifying each image's workload:
+
+- **manifest** — directly deployed; image tag actionable.
+- **kustomize** — Flux Kustomize-labelled; actionable, and `source` is resolved
+  to the backing **GitRepository/OCIRepository URL plus the Kustomization's
+  path** (Flux `<url>//<path>` notation — the auto-PR target directory) by
+  following the Kustomization's `sourceRef`.
+- **operator** — owned by a custom resource, or managed by a controller via the
+  `app.kubernetes.io/managed-by` label (e.g. flux-operator, which sets no
+  ownerReferences). For CR-owned workloads the owning CR is read (dynamic client
+  + REST mapper); if the running **image appears in the CR spec** (e.g. your own
+  `Api` CRD with `spec.image`) the bump is **actionable** with `source` set to
+  the CR (`Kind/ns/name`). If the image is *derived* (not in spec, like a
+  third-party operator's proxy) or the workload is only label-managed, it's
+  `available: true, actionable: false, managed: operator` — surfaced but flagged
+  as controller-owned.
+- **helm** — chart-managed; the Flux Helm chart source handles the real upgrade.
+  Both HTTP and **OCI** (`oci://`) Helm repositories are supported (OCI chart
+  versions are read as tags of the OCI artifact).
+
+**Remaining:** direct (non-Flux) Helm releases; Argo CD applications; resolving a
+Kustomize source to the exact file (not just the directory).
 
 ## Why this is its own feature
 

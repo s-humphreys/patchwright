@@ -33,6 +33,7 @@ type findingView struct {
 	FixableCritical int                 `json:"fixable_critical,omitempty"`
 	KnownExploited  bool                `json:"known_exploited,omitempty"`
 	ScanError       string              `json:"scan_error,omitempty"`
+	Upgrade         *upgradeView        `json:"upgrade,omitempty"`
 	Liveness        *livenessView       `json:"liveness,omitempty"`
 	Dimensions      map[string][]string `json:"dimensions"`
 	Vulns           []vulnView          `json:"vulns,omitempty"`
@@ -48,6 +49,17 @@ type ownerView struct {
 	Class string `json:"class"`
 	Team  string `json:"team"`
 	Rule  string `json:"rule,omitempty"`
+}
+
+type upgradeView struct {
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Current    string `json:"current"`
+	Latest     string `json:"latest,omitempty"`
+	Available  bool   `json:"available"`
+	Actionable bool   `json:"actionable"`
+	Managed    string `json:"managed,omitempty"`
+	Source     string `json:"source,omitempty"`
 }
 
 type vulnView struct {
@@ -79,6 +91,31 @@ func (j JSON) Emit(w io.Writer, findings []model.Finding) error {
 	return enc.Encode(views)
 }
 
+// NDJSON renders findings as newline-delimited JSON — one finding object per
+// line. This is the log-friendly format for deployed runs: monitoring/log
+// pipelines parse each line as a self-contained record, unlike the pretty
+// (multi-line) JSON array. Suppressed findings are included only when
+// ShowSuppressed is set.
+type NDJSON struct {
+	ShowSuppressed bool
+}
+
+// Emit implements Sink.
+func (n NDJSON) Emit(w io.Writer, findings []model.Finding) error {
+	findings = SortForReport(findings)
+	enc := json.NewEncoder(w) // Encode writes one compact object + "\n" per call
+	enc.SetEscapeHTML(false)
+	for _, f := range findings {
+		if f.Suppressed && !n.ShowSuppressed {
+			continue
+		}
+		if err := enc.Encode(toView(f)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func toView(f model.Finding) findingView {
 	vulns := make([]vulnView, 0, len(f.Vulns))
 	knownExploited := false
@@ -100,6 +137,15 @@ func toView(f model.Finding) findingView {
 	if f.Reconciled {
 		liveness = &livenessView{Live: f.Live}
 	}
+	var upgrade *upgradeView
+	if f.Upgrade != nil {
+		upgrade = &upgradeView{
+			Kind: f.Upgrade.Kind, Name: f.Upgrade.Name,
+			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
+			Available: f.Upgrade.Available, Actionable: f.Upgrade.Actionable,
+			Managed: f.Upgrade.Managed, Source: f.Upgrade.Source,
+		}
+	}
 	return findingView{
 		Image:           f.Image.Ref,
 		Registry:        f.Image.Registry,
@@ -118,6 +164,7 @@ func toView(f model.Finding) findingView {
 		KnownExploited:  knownExploited,
 		ScanError:       f.ScanError,
 		Liveness:        liveness,
+		Upgrade:         upgrade,
 		Dimensions:      f.Dimensions,
 		Vulns:           vulns,
 	}

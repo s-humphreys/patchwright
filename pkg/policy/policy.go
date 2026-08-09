@@ -41,6 +41,12 @@ func findingEnv() (*cel.Env, error) {
 		// liveness behave unchanged.
 		cel.Variable("reconciled", cel.BoolType),
 		cel.Variable("live", cel.BoolType),
+		// upgrade_available is true when remediation detected a newer version
+		// that can be applied directly (e.g. a newer Helm chart, or a newer
+		// image tag for a directly-deployed workload). It is false for images
+		// whose version is controlled by a chart/operator, since bumping them
+		// directly isn't the remediation.
+		cel.Variable("upgrade_available", cel.BoolType),
 	)
 }
 
@@ -151,13 +157,14 @@ func findingActivation(f model.Finding) map[string]any {
 			"digest":     f.Image.Digest,
 			"ref":        f.Image.Ref,
 		},
-		"counts":     map[string]int(f.Counts.Normalized()),
-		"risk":       f.RiskScore,
-		"owner":      map[string]string{"class": f.Owner.Class, "team": f.Owner.Team},
-		"dimensions": f.Dimensions,
-		"labels":     f.Labels,
-		"vulns":      vulns,
-		"reconciled": f.Reconciled,
-		"live":       live,
+		"counts":            map[string]int(f.Counts.Normalized()),
+		"risk":              f.RiskScore,
+		"owner":             map[string]string{"class": f.Owner.Class, "team": f.Owner.Team},
+		"dimensions":        f.Dimensions,
+		"labels":            f.Labels,
+		"vulns":             vulns,
+		"reconciled":        f.Reconciled,
+		"live":              live,
+		"upgrade_available": f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable,
 	}
 }

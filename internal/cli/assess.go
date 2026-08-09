@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/enrich"
+	"github.com/s-humphreys/patchwright/pkg/enrich/registry"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -37,6 +39,7 @@ func newAssessCmd() *cobra.Command {
 		vulnOptions    []string
 		exploitSource  string
 		exploitOptions []string
+		remediation    bool
 	)
 
 	cmd := &cobra.Command{
@@ -59,6 +62,42 @@ func newAssessCmd() *cobra.Command {
 			}
 
 			var popts []pipeline.Option
+
+			// Live source: drives reconciliation (pre-dedupe) and, with
+			// --remediation, contributes a deployment-aware upgrade source.
+			var liveEnrichers []enrich.Enricher
+			var upgradeSources []enrich.UpgradeSource
+			var deployContexts func(context.Context) (map[string]enrich.DeployContext, error)
+			if liveSource != "" {
+				src, err := newLiveSource(liveSource, liveOptions)
+				if err != nil {
+					return err
+				}
+				liveEnrichers = append(liveEnrichers, enrich.NewLiveness(src))
+				if ls, ok := src.(enrich.LabelSource); ok {
+					liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
+				}
+				if remediation {
+					// A deployment-aware source (e.g. kube: Flux HelmReleases)
+					// takes precedence over the registry image-tag fallback.
+					if us, ok := src.(enrich.UpgradeSource); ok {
+						upgradeSources = append(upgradeSources, us)
+					}
+					// Deployment context makes the registry fallback judge
+					// actionability and the change target per image.
+					if dc, ok := src.(enrich.DeploymentContextSource); ok {
+						deployContexts = dc.ImageDeployments
+					}
+				}
+			}
+			if remediation {
+				reg := registry.New()
+				reg.Contexts = deployContexts
+				upgradeSources = append(upgradeSources, reg)
+				r := enrich.NewRemediationEnricher(upgradeSources...)
+				popts = append(popts, pipeline.WithRemediationEnricher(&r))
+			}
+
 			if vulnSource != "" {
 				scanner, err := buildScanner(vulnSource, vulnOptions, cfg.Scan.EffectiveSkipOwnerClasses())
 				if err != nil {
@@ -95,13 +134,9 @@ func newAssessCmd() *cobra.Command {
 			}
 			slog.InfoContext(ctx, "fetched scan data", "provider", pf.name, "occurrences", len(occ))
 
-			if liveSource != "" {
-				enrichers, err := buildEnrichers(liveSource, liveOptions)
-				if err != nil {
-					return err
-				}
-				slog.InfoContext(ctx, "reconciling against live clusters", "source", liveSource, "enrichers", len(enrichers))
-				for _, e := range enrichers {
+			if len(liveEnrichers) > 0 {
+				slog.InfoContext(ctx, "reconciling against live clusters", "source", liveSource, "enrichers", len(liveEnrichers))
+				for _, e := range liveEnrichers {
 					if err := e.Enrich(ctx, occ); err != nil {
 						return err
 					}
@@ -125,7 +160,7 @@ func newAssessCmd() *cobra.Command {
 	}
 	pf.bind(cmd)
 	cmd.Flags().StringArrayVarP(&configPaths, "config", "c", nil, "config YAML file or directory (repeatable)")
-	cmd.Flags().StringVarP(&format, "format", "f", "table", "output format: table or json")
+	cmd.Flags().StringVarP(&format, "format", "f", "table", "output format: table, json (pretty), or ndjson (one finding per line, log-friendly)")
 	cmd.Flags().StringVar(&ownerClass, "owner", "", "only show findings for this owner class (e.g. platform, engineering)")
 	cmd.Flags().BoolVar(&includeAll, "all", false, "include non-actionable findings")
 	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false, "include suppressed findings")
@@ -135,6 +170,7 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable), e.g. severity=CRITICAL,HIGH")
 	cmd.Flags().StringVar(&exploitSource, "exploit-source", "", "enrich CVEs with exploit intel — EPSS + CISA KEV ("+joinExploitSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
+	cmd.Flags().BoolVar(&remediation, "remediation", false, "detect available upgrades for how images are deployed: a newer Helm chart (Flux, with --live-source kube) or a newer image tag (registry)")
 	return cmd
 }
 
@@ -215,10 +251,8 @@ func joinVulnSources() string {
 	return strings.Join(names, ", ")
 }
 
-// buildEnrichers constructs the reconciliation enrichers for the named live
-// source: always liveness, plus namespace-label ownership when the source can
-// provide labels (the kube source can; the file source cannot).
-func buildEnrichers(name string, options []string) ([]enrich.Enricher, error) {
+// newLiveSource constructs the named live source from --live-option key=values.
+func newLiveSource(name string, options []string) (enrich.LiveSource, error) {
 	opts := enrich.Options{}
 	for _, kv := range options {
 		k, v, ok := splitKV(kv)
@@ -227,15 +261,7 @@ func buildEnrichers(name string, options []string) ([]enrich.Enricher, error) {
 		}
 		opts[k] = v
 	}
-	src, err := enrich.NewLiveSource(name, opts)
-	if err != nil {
-		return nil, err
-	}
-	enrichers := []enrich.Enricher{enrich.NewLiveness(src)}
-	if ls, ok := src.(enrich.LabelSource); ok {
-		enrichers = append(enrichers, enrich.NewNamespaceLabeler(ls))
-	}
-	return enrichers, nil
+	return enrich.NewLiveSource(name, opts)
 }
 
 func joinLiveSources() string {
@@ -275,8 +301,12 @@ func selectSink(format string, showSuppressed bool) (sink.Sink, error) {
 		return sink.Table{ShowSuppressed: showSuppressed}, nil
 	case "json":
 		return sink.JSON{ShowSuppressed: showSuppressed, Indent: true}, nil
+	case "ndjson":
+		// One compact JSON object per line — log/monitoring friendly for
+		// deployed runs (no multi-line records).
+		return sink.NDJSON{ShowSuppressed: showSuppressed}, nil
 	default:
-		return nil, fmt.Errorf("unknown format %q (want table or json)", format)
+		return nil, fmt.Errorf("unknown format %q (want table, json, or ndjson)", format)
 	}
 }
 

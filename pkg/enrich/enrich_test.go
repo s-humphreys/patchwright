@@ -232,6 +232,32 @@ func TestExploitEnricherAnnotatesVulns(t *testing.T) {
 	}
 }
 
+// fakeUpgradeSource returns fixed upgrades per image.
+type fakeUpgradeSource struct{ ups map[string]model.Upgrade }
+
+func (f fakeUpgradeSource) Upgrades(context.Context, []model.AssessedImage) (map[string]model.Upgrade, error) {
+	return f.ups, nil
+}
+
+func TestRemediationEnricherAnnotatesUpgrades(t *testing.T) {
+	src := fakeUpgradeSource{ups: map[string]model.Upgrade{
+		"acr.io/app:1": {Kind: "chart", Name: "app", Current: "1.0.0", Latest: "1.2.0", Available: true},
+	}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("acr.io/app:1")},
+		{Image: model.ParseImageRef("acr.io/other:2")},
+	}
+	if err := enrich.NewRemediationEnricher(src).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if images[0].Upgrade == nil || !images[0].Upgrade.Available || images[0].Upgrade.Latest != "1.2.0" {
+		t.Errorf("app:1 should have an available upgrade, got %+v", images[0].Upgrade)
+	}
+	if images[1].Upgrade != nil {
+		t.Errorf("other:2 should have no upgrade, got %+v", images[1].Upgrade)
+	}
+}
+
 // erroringVulnSource fails for image refs in failRefs, succeeds otherwise.
 type erroringVulnSource struct{ failRefs map[string]bool }
 

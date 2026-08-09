@@ -49,6 +49,9 @@ spec:
                 - "--live-option=contexts={{ join "," .Values.reconcile.remote.contexts }}"
                 {{- end }}
                 {{- end }}
+                {{- if .Values.reconcile.remediation }}
+                - "--remediation"
+                {{- end }}
                 {{- end }}
                 {{- if .Values.scan.enabled }}
                 - "--vuln-source={{ .Values.scan.vulnSource }}"

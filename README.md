@@ -132,6 +132,47 @@ patchwright assess -i export.csv -c config/ \
 The `KEV` column and JSON `known_exploited` / `vulns[].epss` / `vulns[].kev`
 surface it; e.g. `when: "vulns.exists(v, v.fix_available && (v.kev || v.epss > 0.5))"`.
 
+### Remediation — is a newer version available?
+
+Knowing a CVE has a fix is only half the story; the other half is *can you ship
+the fix given how this is deployed*. `--remediation` composes ordered upgrade
+sources, deployment-aware first:
+
+1. **Flux Helm chart** (with `--live-source kube`) — reads Flux `HelmRelease`s,
+   resolves each chart's repository, and checks the index for a **newer chart
+   version**.
+2. **Registry image tag** — for any image on a strict-semver tag, checks its
+   registry for a **newer tag** (auth via the docker/cloud keychain). Covers
+   workloads that aren't Helm charts — plain manifests and Kustomizations.
+
+```sh
+# Flux charts + image tags:
+patchwright assess -i export.csv -c config/ \
+  --live-source kube --live-option contexts=aks-prod --remediation
+# image tags only (no cluster needed):
+patchwright assess -i export.csv -c config/ --remediation
+```
+
+**Actionability.** An upgrade is *directly actionable* only when you can apply it
+at that level. A newer image tag for a workload controlled by a Helm chart or an
+operator is reported as available but **not actionable** — bumping the tag would
+be reverted; the remediation is to upgrade the chart/operator. The
+`upgrade_available` policy variable is true only for actionable upgrades, so
+automation acts on the right things, and the JSON `upgrade` object carries
+`available`, `actionable`, `managed`, and `source`.
+
+The `UPGRADE` column reads:
+
+| Shown | Meaning |
+|---|---|
+| `current->latest` | a newer version you can apply directly |
+| `current->latest (helm\|operator)` | a newer version exists but is controlled elsewhere (upgrade the chart/operator) |
+| `-` | on the latest version |
+| `?` | remediation detection didn't run (no `--remediation`) |
+
+Git/OCI source revisions are the next remediation kind — see
+[docs/design/remediation-availability.md](docs/design/remediation-availability.md).
+
 ## Writing rules
 
 Rules are YAML with [CEL](https://github.com/google/cel-go) expressions.
@@ -278,7 +319,8 @@ registry credentials if scanning private images. See
 - [`docs/design`](docs/design) — design notes:
   [Trivy / fix-availability & exploitability](docs/design/trivy-integration.md),
   [remediation availability / upgrade path](docs/design/remediation-availability.md),
-  and the [MCP server](docs/design/mcp-server.md).
+  the [MCP server](docs/design/mcp-server.md), and the
+  [API-first server / Backstage](docs/design/api-server.md).
 
 ## Roadmap
 

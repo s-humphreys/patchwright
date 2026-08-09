@@ -37,6 +37,10 @@ type Source struct {
 	kubeconfig string   // path to a kubeconfig; empty uses the default loading rules
 	contexts   []string // context names to read; empty uses the current context
 	inCluster  bool     // use the in-cluster service account instead of a kubeconfig
+
+	// resolvers detect available upgrades per deployment system. Nil uses the
+	// defaults (Flux HelmRelease); set for tests or to add resolvers.
+	resolvers []UpgradeResolver
 }
 
 func (s *Source) Name() string { return "kube" }
@@ -110,24 +114,20 @@ func collectRunningImages(ctx context.Context, client kubernetes.Interface, runn
 	return nil
 }
 
-// clients builds a Kubernetes client per configured cluster, keyed by a label
+// restConfigs builds a *rest.Config per configured cluster, keyed by a label
 // for error messages. It supports reading the local cluster via the in-cluster
 // service account and/or remote clusters via kubeconfig contexts, so a single
 // deployment can reconcile the cluster it runs in (RBAC only, no credentials)
 // alongside remote clusters (read-only kubeconfig).
-func (s *Source) clients() (map[string]kubernetes.Interface, error) {
-	out := map[string]kubernetes.Interface{}
+func (s *Source) restConfigs() (map[string]*rest.Config, error) {
+	out := map[string]*rest.Config{}
 
 	if s.inCluster {
 		cfg, err := rest.InClusterConfig()
 		if err != nil {
 			return nil, fmt.Errorf("in-cluster config: %w", err)
 		}
-		cs, err := kubernetes.NewForConfig(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("in-cluster client: %w", err)
-		}
-		out["in-cluster"] = cs
+		out["in-cluster"] = cfg
 	}
 
 	// Load kubeconfig contexts when explicitly requested, or as the default
@@ -149,20 +149,33 @@ func (s *Source) clients() (map[string]kubernetes.Interface, error) {
 			if err != nil {
 				return nil, fmt.Errorf("build config for context %q: %w", ctxName, err)
 			}
-			cs, err := kubernetes.NewForConfig(cfg)
-			if err != nil {
-				return nil, fmt.Errorf("build client for context %q: %w", ctxName, err)
-			}
 			label := ctxName
 			if label == "" {
 				label = "current-context"
 			}
-			out[label] = cs
+			out[label] = cfg
 		}
 	}
 
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no clusters configured")
+	}
+	return out, nil
+}
+
+// clients builds a typed Kubernetes client per configured cluster.
+func (s *Source) clients() (map[string]kubernetes.Interface, error) {
+	configs, err := s.restConfigs()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]kubernetes.Interface, len(configs))
+	for label, cfg := range configs {
+		cs, err := kubernetes.NewForConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("build client for %q: %w", label, err)
+		}
+		out[label] = cs
 	}
 	return out, nil
 }
