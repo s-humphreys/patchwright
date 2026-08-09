@@ -17,22 +17,25 @@ type JSON struct {
 }
 
 type findingView struct {
-	Image         string              `json:"image"`
-	Registry      string              `json:"registry"`
-	Repository    string              `json:"repository"`
-	Tag           string              `json:"tag,omitempty"`
-	Digest        string              `json:"digest,omitempty"`
-	Owner         ownerView           `json:"owner"`
-	Counts        map[string]int      `json:"counts"`
-	Risk          float64             `json:"risk"`
-	Actionable    bool                `json:"actionable"`
-	Suppressed    bool                `json:"suppressed"`
-	Priority      string              `json:"priority,omitempty"`
-	Reasons       []string            `json:"reasons"`
-	WorkloadCount int                 `json:"workload_count"`
-	Liveness      *livenessView       `json:"liveness,omitempty"`
-	Dimensions    map[string][]string `json:"dimensions"`
-	Vulns         []vulnView          `json:"vulns,omitempty"`
+	Image           string              `json:"image"`
+	Registry        string              `json:"registry"`
+	Repository      string              `json:"repository"`
+	Tag             string              `json:"tag,omitempty"`
+	Digest          string              `json:"digest,omitempty"`
+	Owner           ownerView           `json:"owner"`
+	Counts          map[string]int      `json:"counts"`
+	Risk            float64             `json:"risk"`
+	Actionable      bool                `json:"actionable"`
+	Suppressed      bool                `json:"suppressed"`
+	Priority        string              `json:"priority,omitempty"`
+	Reasons         []string            `json:"reasons"`
+	WorkloadCount   int                 `json:"workload_count"`
+	FixableCritical int                 `json:"fixable_critical,omitempty"`
+	KnownExploited  bool                `json:"known_exploited,omitempty"`
+	ScanError       string              `json:"scan_error,omitempty"`
+	Liveness        *livenessView       `json:"liveness,omitempty"`
+	Dimensions      map[string][]string `json:"dimensions"`
+	Vulns           []vulnView          `json:"vulns,omitempty"`
 }
 
 // livenessView is emitted only when reconciliation ran, so output for
@@ -53,6 +56,8 @@ type vulnView struct {
 	CVSS         float64 `json:"cvss,omitempty"`
 	FixAvailable bool    `json:"fix_available"`
 	FixedVersion string  `json:"fixed_version,omitempty"`
+	EPSS         float64 `json:"epss,omitempty"`
+	KEV          bool    `json:"kev,omitempty"`
 }
 
 // Emit implements Sink.
@@ -76,13 +81,19 @@ func (j JSON) Emit(w io.Writer, findings []model.Finding) error {
 
 func toView(f model.Finding) findingView {
 	vulns := make([]vulnView, 0, len(f.Vulns))
+	knownExploited := false
 	for _, v := range f.Vulns {
+		if v.KEV {
+			knownExploited = true
+		}
 		vulns = append(vulns, vulnView{
 			ID:           v.ID,
 			Severity:     v.Severity,
 			CVSS:         v.CVSS,
 			FixAvailable: v.FixAvailable,
 			FixedVersion: v.FixedVersion,
+			EPSS:         v.EPSS,
+			KEV:          v.KEV,
 		})
 	}
 	var liveness *livenessView
@@ -90,21 +101,24 @@ func toView(f model.Finding) findingView {
 		liveness = &livenessView{Live: f.Live}
 	}
 	return findingView{
-		Image:         f.Image.Ref,
-		Registry:      f.Image.Registry,
-		Repository:    f.Image.Repository,
-		Tag:           f.Image.Tag,
-		Digest:        f.Image.Digest,
-		Owner:         ownerView{Class: f.Owner.Class, Team: f.Owner.Team, Rule: f.Owner.Rule},
-		Counts:        map[string]int(f.Counts),
-		Risk:          f.RiskScore,
-		Actionable:    f.Actionable,
-		Suppressed:    f.Suppressed,
-		Priority:      f.Priority,
-		Reasons:       f.Reasons,
-		WorkloadCount: len(f.Occurrences),
-		Liveness:      liveness,
-		Dimensions:    f.Dimensions,
-		Vulns:         vulns,
+		Image:           f.Image.Ref,
+		Registry:        f.Image.Registry,
+		Repository:      f.Image.Repository,
+		Tag:             f.Image.Tag,
+		Digest:          f.Image.Digest,
+		Owner:           ownerView{Class: f.Owner.Class, Team: f.Owner.Team, Rule: f.Owner.Rule},
+		Counts:          map[string]int(f.Counts),
+		Risk:            f.RiskScore,
+		Actionable:      f.Actionable,
+		Suppressed:      f.Suppressed,
+		Priority:        f.Priority,
+		Reasons:         f.Reasons,
+		WorkloadCount:   len(f.Occurrences),
+		FixableCritical: fixableCriticals(f),
+		KnownExploited:  knownExploited,
+		ScanError:       f.ScanError,
+		Liveness:        liveness,
+		Dimensions:      f.Dimensions,
+		Vulns:           vulns,
 	}
 }

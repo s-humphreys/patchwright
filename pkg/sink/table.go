@@ -51,15 +51,17 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 		fmt.Fprintf(w, "== owner class: %s (%d findings, %d actionable) ==\n", class, len(group), actionable)
 
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ACT\tPRIORITY\tTEAM\tIMAGE\tCRIT\tHIGH\tRISK\tWORKLOADS\tLIVE\tACCOUNTS")
+		fmt.Fprintln(tw, "ACT\tPRIORITY\tTEAM\tIMAGE\tCRIT\tHIGH\tFIXCRIT\tKEV\tRISK\tWORKLOADS\tLIVE\tACCOUNTS")
 		for _, f := range group {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%.0f\t%d\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%.0f\t%d\t%s\t%s\n",
 				actionableMark(f),
 				dash(f.Priority),
 				dash(f.Owner.Team),
 				imageLabel(f.Image),
 				f.Counts.Get(model.SeverityCritical),
 				f.Counts.Get(model.SeverityHigh),
+				fixMark(f),
+				kevMark(f),
 				f.RiskScore,
 				len(f.Occurrences),
 				liveMark(f),
@@ -81,6 +83,36 @@ func actionableMark(f model.Finding) string {
 	default:
 		return "-"
 	}
+}
+
+// fixMark shows the count of fix-available critical CVEs, "err" when the scan
+// failed (e.g. private image, no credentials), or "-" when no scan ran.
+func fixMark(f model.Finding) string {
+	if f.ScanError != "" {
+		return "err"
+	}
+	if !f.Scanned && len(f.Vulns) == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", fixableCriticals(f))
+}
+
+// kevMark shows the count of known-exploited (CISA KEV) CVEs, or "-" when
+// exploit enrichment has not run (so "0" always means "checked, none").
+func kevMark(f model.Finding) string {
+	if f.ScanError != "" {
+		return "err"
+	}
+	if !f.ExploitChecked {
+		return "-"
+	}
+	n := 0
+	for _, v := range f.Vulns {
+		if v.KEV {
+			n++
+		}
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // liveMark reports liveness: yes/no when reconciled, "?" when liveness is

@@ -66,6 +66,14 @@ type Vulnerability struct {
 	FixedVersion string
 	Description  string
 	Links        []string
+
+	// Exploitability signals, populated by an exploit-intelligence enricher.
+	// They approximate "is this actually worth acting on" without code-level
+	// reachability analysis. EPSS is the probability of exploitation in the next
+	// 30 days (0..1, FIRST.org); KEV marks membership of CISA's Known Exploited
+	// Vulnerabilities catalog (exploited in the wild).
+	EPSS float64
+	KEV  bool
 }
 
 // Counts holds aggregate vulnerability counts keyed by severity name. A map
@@ -151,6 +159,16 @@ type AssessedImage struct {
 	Vulns       []Vulnerability
 	RiskScore   float64
 	Occurrences []Occurrence
+
+	// Scanned is true once a vuln source successfully scanned this image;
+	// ScanError holds the reason when a scan was attempted but failed (e.g. a
+	// private image with no credentials). A failed scan does not fail the run.
+	Scanned   bool
+	ScanError string
+
+	// ExploitChecked is true once an exploit source has run, so consumers can
+	// distinguish "0 known-exploited CVEs" from "exploit intel not gathered".
+	ExploitChecked bool
 }
 
 // Finding is the output unit: one image, one owner, and the verdict. An image
@@ -174,6 +192,13 @@ type Finding struct {
 	// Live reports whether any of the finding's workloads is actually running.
 	Reconciled bool
 	Live       bool
+
+	// Scanned/ScanError mirror the assessed image: whether a vuln scan
+	// succeeded, and why it didn't when attempted. ExploitChecked reports
+	// whether exploit intel (EPSS/KEV) was gathered.
+	Scanned        bool
+	ScanError      string
+	ExploitChecked bool
 
 	Actionable bool
 	Suppressed bool

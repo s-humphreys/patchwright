@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -15,9 +16,11 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 
-	// Register the built-in live sources.
+	// Register the built-in live, vuln, and exploit sources.
 	_ "github.com/s-humphreys/patchwright/pkg/enrich/file"
+	_ "github.com/s-humphreys/patchwright/pkg/enrich/intel"
 	_ "github.com/s-humphreys/patchwright/pkg/enrich/kube"
+	_ "github.com/s-humphreys/patchwright/pkg/enrich/trivy"
 )
 
 func newAssessCmd() *cobra.Command {
@@ -30,6 +33,10 @@ func newAssessCmd() *cobra.Command {
 		showSuppressed bool
 		liveSource     string
 		liveOptions    []string
+		vulnSource     string
+		vulnOptions    []string
+		exploitSource  string
+		exploitOptions []string
 	)
 
 	cmd := &cobra.Command{
@@ -50,7 +57,26 @@ func newAssessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pl, err := pipeline.New(cfg)
+
+			var popts []pipeline.Option
+			if vulnSource != "" {
+				scanner, err := buildScanner(vulnSource, vulnOptions)
+				if err != nil {
+					return err
+				}
+				popts = append(popts, pipeline.WithImageScanner(scanner))
+			}
+			if exploitSource != "" {
+				if vulnSource == "" {
+					return fmt.Errorf("--exploit-source requires --vuln-source: there are no vulnerabilities to annotate with EPSS/KEV otherwise")
+				}
+				enricher, err := buildExploitEnricher(exploitSource, exploitOptions)
+				if err != nil {
+					return err
+				}
+				popts = append(popts, pipeline.WithExploitEnricher(enricher))
+			}
+			pl, err := pipeline.New(cfg, popts...)
 			if err != nil {
 				return err
 			}
@@ -77,7 +103,7 @@ func newAssessCmd() *cobra.Command {
 				}
 			}
 
-			findings, err := pl.Run(occ)
+			findings, err := pl.Run(ctx, occ)
 			if err != nil {
 				return err
 			}
@@ -98,7 +124,63 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false, "include suppressed findings")
 	cmd.Flags().StringVar(&liveSource, "live-source", "", "reconcile against live clusters using a source ("+joinLiveSources()+")")
 	cmd.Flags().StringArrayVar(&liveOptions, "live-option", nil, "live source option as key=value (repeatable), e.g. path=live.txt or contexts=c1,c2")
+	cmd.Flags().StringVar(&vulnSource, "vuln-source", "", "scan images for per-CVE fix availability ("+joinVulnSources()+")")
+	cmd.Flags().StringArrayVar(&vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable), e.g. severity=CRITICAL,HIGH")
+	cmd.Flags().StringVar(&exploitSource, "exploit-source", "", "enrich CVEs with exploit intel — EPSS + CISA KEV ("+joinExploitSources()+"); requires --vuln-source")
+	cmd.Flags().StringArrayVar(&exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
 	return cmd
+}
+
+// buildExploitEnricher constructs the exploit enricher for the named source.
+func buildExploitEnricher(name string, options []string) (*enrich.ExploitEnricher, error) {
+	opts := enrich.Options{}
+	for _, kv := range options {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid --exploit-option %q, want key=value", kv)
+		}
+		opts[k] = v
+	}
+	src, err := enrich.NewExploitSource(name, opts)
+	if err != nil {
+		return nil, err
+	}
+	enricher := enrich.NewExploitEnricher(src)
+	return &enricher, nil
+}
+
+func joinExploitSources() string {
+	names := enrich.ExploitSourceNames()
+	if len(names) == 0 {
+		return "none registered"
+	}
+	return strings.Join(names, ", ")
+}
+
+// buildScanner constructs the image scanner for the named vuln source.
+func buildScanner(name string, options []string) (*enrich.ImageScanner, error) {
+	opts := enrich.Options{}
+	for _, kv := range options {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid --vuln-option %q, want key=value", kv)
+		}
+		opts[k] = v
+	}
+	src, err := enrich.NewVulnSource(name, opts)
+	if err != nil {
+		return nil, err
+	}
+	scanner := enrich.NewImageScanner(src)
+	return &scanner, nil
+}
+
+func joinVulnSources() string {
+	names := enrich.VulnSourceNames()
+	if len(names) == 0 {
+		return "none registered"
+	}
+	return strings.Join(names, ", ")
 }
 
 // buildEnrichers constructs the reconciliation enrichers for the named live

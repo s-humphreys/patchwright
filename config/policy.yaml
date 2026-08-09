@@ -29,6 +29,22 @@ suppress:
     when: "reconciled && !live"
 
 actionable:
+  # With `--vuln-source trivy`, the `vulns` list is populated with per-CVE fix
+  # availability. Prefer rules that require a fix, so you only page someone when
+  # there is a patch to move to. (Uncomment; keep above the coarser rules.)
+  #
+  # - name: fixable-production-critical
+  #   when: "dimensions['account'].exists(a, a.startsWith('Production')) && vulns.exists(v, v.severity == 'critical' && v.fix_available)"
+  #   priority: high
+
+  # With `--exploit-source public`, each CVE also gets EPSS (predicted
+  # exploitation probability) and KEV (CISA known-exploited). Prioritise fixable
+  # criticals that are actually being exploited or likely to be.
+  #
+  # - name: exploited-fixable-critical
+  #   when: "vulns.exists(v, v.severity == 'critical' && v.fix_available && (v.kev || v.epss > 0.5))"
+  #   priority: high
+
   # Anything with a critical that runs in a Production account — highest stakes.
   - name: production-critical
     when: "counts['critical'] > 0 && dimensions['account'].exists(a, a.startsWith('Production'))"

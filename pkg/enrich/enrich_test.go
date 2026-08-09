@@ -2,6 +2,7 @@ package enrich_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,6 +85,113 @@ func TestNamespaceLabelerDoesNotOverwriteExistingLabel(t *testing.T) {
 	}
 	if got := occurrences[0].Resource.Labels["team"]; got != "from-workload" {
 		t.Errorf("existing label should win, got %q", got)
+	}
+}
+
+// fakeVulnSource returns fixed per-image vulnerabilities.
+type fakeVulnSource struct {
+	byRef map[string][]model.Vulnerability
+}
+
+func (f fakeVulnSource) Name() string { return "fake-vuln" }
+func (f fakeVulnSource) Scan(_ context.Context, img model.Image) ([]model.Vulnerability, error) {
+	return f.byRef[img.Ref], nil
+}
+
+func TestImageScannerPopulatesVulns(t *testing.T) {
+	src := fakeVulnSource{byRef: map[string][]model.Vulnerability{
+		"acr.io/app:1": {{ID: "CVE-1", Severity: model.SeverityCritical, FixAvailable: true, FixedVersion: "1.2"}},
+	}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("acr.io/app:1")},
+		{Image: model.ParseImageRef("acr.io/other:2")},
+	}
+	if err := enrich.NewImageScanner(src).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if len(images[0].Vulns) != 1 || !images[0].Vulns[0].FixAvailable {
+		t.Errorf("app:1 should have 1 fix-available vuln, got %+v", images[0].Vulns)
+	}
+	if len(images[1].Vulns) != 0 {
+		t.Errorf("other:2 should have no vulns, got %+v", images[1].Vulns)
+	}
+}
+
+// fakeExploitSource returns fixed exploit intel per CVE.
+type fakeExploitSource struct{ info map[string]enrich.ExploitInfo }
+
+func (f fakeExploitSource) Name() string { return "fake-exploit" }
+func (f fakeExploitSource) Lookup(_ context.Context, ids []string) (map[string]enrich.ExploitInfo, error) {
+	out := map[string]enrich.ExploitInfo{}
+	for _, id := range ids {
+		if x, ok := f.info[id]; ok {
+			out[id] = x
+		}
+	}
+	return out, nil
+}
+
+func TestExploitEnricherAnnotatesVulns(t *testing.T) {
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("acr.io/app:1"), Vulns: []model.Vulnerability{{ID: "CVE-1"}, {ID: "CVE-2"}}},
+		{Image: model.ParseImageRef("acr.io/clean:1")}, // no CVEs
+	}
+	src := fakeExploitSource{info: map[string]enrich.ExploitInfo{
+		"CVE-1": {EPSS: 0.9, KEV: true},
+	}}
+	if err := enrich.NewExploitEnricher(src).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	v := images[0].Vulns
+	if !v[0].KEV || v[0].EPSS != 0.9 {
+		t.Errorf("CVE-1 should be KEV with EPSS 0.9, got %+v", v[0])
+	}
+	if v[1].KEV || v[1].EPSS != 0 {
+		t.Errorf("CVE-2 should be unannotated, got %+v", v[1])
+	}
+	// Both images must be marked checked — even the one with no CVEs — so the
+	// report can tell "0 known-exploited" from "not checked".
+	if !images[0].ExploitChecked || !images[1].ExploitChecked {
+		t.Errorf("all images should be ExploitChecked, got %v / %v", images[0].ExploitChecked, images[1].ExploitChecked)
+	}
+}
+
+// erroringVulnSource fails for image refs in failRefs, succeeds otherwise.
+type erroringVulnSource struct{ failRefs map[string]bool }
+
+func (e erroringVulnSource) Name() string { return "erroring" }
+func (e erroringVulnSource) Scan(_ context.Context, img model.Image) ([]model.Vulnerability, error) {
+	if e.failRefs[img.Ref] {
+		return nil, fmt.Errorf("unauthorized: no pull credentials")
+	}
+	return []model.Vulnerability{{ID: "CVE-9"}}, nil
+}
+
+func TestImageScannerToleratesPartialFailures(t *testing.T) {
+	src := erroringVulnSource{failRefs: map[string]bool{"private.io/app:1": true}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("private.io/app:1")}, // fails
+		{Image: model.ParseImageRef("public.io/app:1")},  // succeeds
+	}
+	if err := enrich.NewImageScanner(src).EnrichImages(context.Background(), images); err != nil {
+		t.Fatalf("partial failure should not error, got %v", err)
+	}
+	if images[0].Scanned || images[0].ScanError == "" {
+		t.Errorf("private image should be unscanned with a ScanError, got %+v", images[0])
+	}
+	if !images[1].Scanned || len(images[1].Vulns) != 1 {
+		t.Errorf("public image should be scanned, got %+v", images[1])
+	}
+}
+
+func TestImageScannerFailsWhenAllFail(t *testing.T) {
+	src := erroringVulnSource{failRefs: map[string]bool{"a:1": true, "b:1": true}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("a:1")},
+		{Image: model.ParseImageRef("b:1")},
+	}
+	if err := enrich.NewImageScanner(src).EnrichImages(context.Background(), images); err == nil {
+		t.Error("expected an error when every scan fails (systemic)")
 	}
 }
 

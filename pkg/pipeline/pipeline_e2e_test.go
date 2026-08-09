@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
+	"github.com/s-humphreys/patchwright/pkg/enrich"
+	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/provider"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -16,6 +18,59 @@ import (
 	// Register the rapid7 provider.
 	_ "github.com/s-humphreys/patchwright/pkg/provider/rapid7"
 )
+
+// stubVulnSource returns fixed vulnerabilities per image ref.
+type stubVulnSource struct {
+	byRef map[string][]model.Vulnerability
+}
+
+func (s stubVulnSource) Name() string { return "stub" }
+func (s stubVulnSource) Scan(_ context.Context, img model.Image) ([]model.Vulnerability, error) {
+	return s.byRef[img.Ref], nil
+}
+
+// TestImageScanFeedsActionability shows a policy that only fires when a fix is
+// available, driven by the (stubbed) image scan.
+func TestImageScanFeedsActionability(t *testing.T) {
+	occ := []model.Occurrence{{
+		Image:    model.ParseImageRef("acr.io/app:1"),
+		Resource: model.Resource{Dimensions: map[string]string{"namespace": "team-a", "account": "Production"}},
+		Counts:   model.Counts{model.SeverityCritical: 1},
+	}}
+	cfg := &config.Config{
+		Owners:     []config.OwnerRule{{Name: "eng", Match: "true", Class: "engineering", TeamFrom: "dimensions['namespace']"}},
+		Actionable: []config.PolicyRule{{Name: "fixable-critical", When: "vulns.exists(v, v.severity == 'critical' && v.fix_available)", Priority: "high"}},
+	}
+
+	scan := func(fixAvailable bool) []model.Finding {
+		t.Helper()
+		src := stubVulnSource{byRef: map[string][]model.Vulnerability{
+			"acr.io/app:1": {{ID: "CVE-1", Severity: model.SeverityCritical, FixAvailable: fixAvailable}},
+		}}
+		scanner := enrich.NewImageScanner(src)
+		pl, err := pipeline.New(cfg, pipeline.WithImageScanner(&scanner))
+		if err != nil {
+			t.Fatal(err)
+		}
+		findings, err := pl.Run(context.Background(), append([]model.Occurrence(nil), occ...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return findings
+	}
+
+	// A fixable critical is actionable.
+	f := scan(true)
+	if len(f) != 1 || !f[0].Actionable {
+		t.Fatalf("fixable critical should be actionable, got %+v", f)
+	}
+
+	// The same critical with no fix does not match the fix-requiring rule.
+	f = scan(false)
+	if len(f) != 1 || f[0].Actionable {
+		t.Errorf("critical without a fix should not match the fixable rule, got actionable=%v", f[0].Actionable)
+	}
+}
 
 var update = flag.Bool("update", false, "update golden files")
 
@@ -52,7 +107,7 @@ func TestAssessGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pipeline.New: %v", err)
 	}
-	findings, err := pl.Run(occ)
+	findings, err := pl.Run(context.Background(), occ)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

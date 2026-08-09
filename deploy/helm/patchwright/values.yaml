@@ -82,6 +82,47 @@ reconcile:
     kubeconfigSecret: ""      # Secret containing a "kubeconfig" key
     contexts: []              # context names to read, e.g. [aks-prod-uk, gke-analytics]
 
+scan:
+  # Scan each unique image for per-CVE fix availability (Trivy is bundled in the
+  # image). Trivy pulls the images itself and downloads its vuln DB, so the job
+  # needs egress to your registries and to ghcr.io/aquasecurity/trivy-db.
+  # A per-image scan failure (e.g. a private image with no creds) is tolerated —
+  # that finding is reported "unscanned", the run does not fail.
+  enabled: false
+  vulnSource: trivy
+  # Also annotate CVEs with EPSS + CISA KEV (needs egress to first.org + cisa.gov).
+  exploitSource: ""          # set to "public" to enable
+
+registryAuth:
+  # Credentials for Trivy to pull PRIVATE images. Use your cloud's workload
+  # identity (no secrets to manage) or mount a docker config Secret. Enable at
+  # most one cloud identity. Trivy resolves the rest via its native keychains.
+  azure:
+    # AKS + ACR. Federate the ServiceAccount to a managed identity with AcrPull.
+    # The SA gets the client-id annotation AND the pod gets the required
+    # `azure.workload.identity/use: "true"` label. Needs the workload-identity
+    # webhook and an OIDC-enabled cluster.
+    workloadIdentity:
+      enabled: false
+      clientId: ""           # the managed identity's client id
+      tenantId: ""           # optional
+  gcp:
+    # GKE + Artifact Registry / GCR. Bind this KSA to a Google service account
+    # with reader access (Workload Identity).
+    workloadIdentity:
+      enabled: false
+      serviceAccount: ""     # <gsa>@<project>.iam.gserviceaccount.com
+  aws:
+    # EKS + ECR (IRSA). The pod-identity webhook injects credentials from the
+    # annotated role.
+    irsa:
+      enabled: false
+      roleArn: ""            # arn:aws:iam::<account>:role/<role>
+  # Any registry: mount a docker config json Secret (e.g. an existing
+  # imagePullSecret). Its key is mounted as config.json; DOCKER_CONFIG points at it.
+  dockerConfigSecret: ""
+  dockerConfigKey: ".dockerconfigjson"
+
 resources: {}
 nodeSelector: {}
 tolerations: []

@@ -80,7 +80,7 @@ var _ = Describe("full pipeline with live reconciliation", func() {
 
 		pl, err := pipeline.New(reconcilingConfig())
 		Expect(err).NotTo(HaveOccurred())
-		findings, err := pl.Run(occ)
+		findings, err := pl.Run(context.Background(), occ)
 		Expect(err).NotTo(HaveOccurred())
 
 		byImage := map[string]model.Finding{}
@@ -133,7 +133,7 @@ var _ = Describe("namespace-label ownership", func() {
 		}
 		pl, err := pipeline.New(cfg)
 		Expect(err).NotTo(HaveOccurred())
-		findings, err := pl.Run(occ)
+		findings, err := pl.Run(context.Background(), occ)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(findings).To(HaveLen(1))

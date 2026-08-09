@@ -5,23 +5,43 @@
 package pipeline
 
 import (
+	"context"
 	"sort"
 
 	"github.com/s-humphreys/patchwright/pkg/attribute"
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/dedupe"
+	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/policy"
 )
 
-// Pipeline holds the compiled ownership and policy engines.
+// Pipeline holds the compiled ownership and policy engines and optional
+// image-level enrichment.
 type Pipeline struct {
 	attributor *attribute.Attributor
 	evaluator  *policy.Evaluator
+	scanner    *enrich.ImageScanner    // optional: per-CVE scan after dedupe
+	exploit    *enrich.ExploitEnricher // optional: EPSS/KEV enrichment after scan
+}
+
+// Option customizes a Pipeline.
+type Option func(*Pipeline)
+
+// WithImageScanner enables per-CVE image scanning (e.g. Trivy) after dedupe,
+// populating each image's vulnerabilities before policy runs.
+func WithImageScanner(s *enrich.ImageScanner) Option {
+	return func(p *Pipeline) { p.scanner = s }
+}
+
+// WithExploitEnricher enables exploit-intelligence (EPSS/KEV) enrichment of the
+// scanned vulnerabilities, after image scanning and before policy.
+func WithExploitEnricher(e *enrich.ExploitEnricher) Option {
+	return func(p *Pipeline) { p.exploit = e }
 }
 
 // New builds a Pipeline from configuration, compiling all rules up front.
-func New(cfg *config.Config) (*Pipeline, error) {
+func New(cfg *config.Config, opts ...Option) (*Pipeline, error) {
 	a, err := attribute.New(cfg.Owners)
 	if err != nil {
 		return nil, err
@@ -30,16 +50,30 @@ func New(cfg *config.Config) (*Pipeline, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Pipeline{attributor: a, evaluator: e}, nil
+	p := &Pipeline{attributor: a, evaluator: e}
+	for _, o := range opts {
+		o(p)
+	}
+	return p, nil
 }
 
 // Run executes the full assessment over raw occurrences and returns findings.
 // The input slice is mutated in place by the attribution stage.
-func (p *Pipeline) Run(occurrences []model.Occurrence) ([]model.Finding, error) {
+func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]model.Finding, error) {
 	if _, err := p.attributor.AttributeAll(occurrences); err != nil {
 		return nil, err
 	}
 	images := dedupe.ByImage(occurrences)
+	if p.scanner != nil {
+		if err := p.scanner.EnrichImages(ctx, images); err != nil {
+			return nil, err
+		}
+	}
+	if p.exploit != nil {
+		if err := p.exploit.EnrichImages(ctx, images); err != nil {
+			return nil, err
+		}
+	}
 	findings := buildFindings(images)
 	if err := p.evaluator.EvaluateAll(findings); err != nil {
 		return nil, err
@@ -72,16 +106,19 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 			g := groups[key]
 			reconciled, live := aggregateLiveness(g.occurrences)
 			findings = append(findings, model.Finding{
-				Image:       ai.Image,
-				Counts:      ai.Counts,
-				Vulns:       ai.Vulns,
-				RiskScore:   ai.RiskScore,
-				Owner:       g.owner,
-				Occurrences: g.occurrences,
-				Dimensions:  aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Dimensions }),
-				Labels:      aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Labels }),
-				Reconciled:  reconciled,
-				Live:        live,
+				Image:          ai.Image,
+				Counts:         ai.Counts,
+				Vulns:          ai.Vulns,
+				RiskScore:      ai.RiskScore,
+				Owner:          g.owner,
+				Occurrences:    g.occurrences,
+				Dimensions:     aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Dimensions }),
+				Labels:         aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Labels }),
+				Reconciled:     reconciled,
+				Live:           live,
+				Scanned:        ai.Scanned,
+				ScanError:      ai.ScanError,
+				ExploitChecked: ai.ExploitChecked,
 			})
 		}
 	}

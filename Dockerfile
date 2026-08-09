@@ -10,7 +10,12 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/patchwright ./cmd/patchwright
 
+# Bundle the Trivy binary so in-cluster vulnerability scanning works out of the
+# box (Trivy is a static binary and runs on distroless).
+FROM aquasec/trivy:0.73.0 AS trivy
+
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/patchwright /usr/local/bin/patchwright
+COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/patchwright"]
