@@ -298,7 +298,8 @@ registry credentials if scanning private images. See
 - [`docs/design`](docs/design) — design notes:
   [Trivy / fix-availability & exploitability](docs/design/trivy-integration.md),
   [remediation availability / upgrade path](docs/design/remediation-availability.md),
-  and the [MCP server](docs/design/mcp-server.md).
+  the [MCP server](docs/design/mcp-server.md), and the
+  [API-first server / Backstage](docs/design/api-server.md).
 
 ## Roadmap
 
