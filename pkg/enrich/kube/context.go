@@ -179,6 +179,19 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 		}
 		return enrich.DeployContext{Mechanism: "operator", Actionable: false, Source: crRef(ref.Kind, meta.Namespace, ref.Name)}, true
 	}
+	// Label-based controller ownership: some operators (e.g. flux-operator)
+	// manage workloads via app.kubernetes.io/managed-by with no ownerReferences.
+	// A direct image bump would be reverted, so treat these as controller-owned.
+	if by := meta.Labels["app.kubernetes.io/managed-by"]; by != "" {
+		switch strings.ToLower(by) {
+		case "helm":
+			return enrich.DeployContext{Mechanism: "helm", Actionable: false}, true
+		case "kubectl", "kustomize":
+			// applied directly — treat as manifest below.
+		default:
+			return enrich.DeployContext{Mechanism: "operator", Actionable: false, Source: by}, true
+		}
+	}
 	return enrich.DeployContext{Mechanism: "manifest", Actionable: true}, true
 }
 
@@ -235,9 +248,16 @@ func kustomizationSources(ctx context.Context, dyn dynamic.Interface) map[string
 		if srcKind == "OCIRepository" {
 			url = oci[srcKey]
 		}
-		if url != "" {
-			out[ns+"/"+name] = url
+		if url == "" {
+			continue
 		}
+		// Narrow the change target to the Kustomization's path within the repo
+		// (Flux "<url>//<path>" notation), so remediation points at the right
+		// directory rather than just the repo root.
+		if path, _, _ := unstructured.NestedString(k.Object, "spec", "path"); path != "" {
+			url = strings.TrimRight(url, "/") + "//" + strings.TrimPrefix(path, "./")
+		}
+		out[ns+"/"+name] = url
 	}
 	return out
 }

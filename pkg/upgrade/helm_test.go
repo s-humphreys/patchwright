@@ -74,6 +74,24 @@ func TestCheckIncludesPrereleaseWhenCurrentIsPrerelease(t *testing.T) {
 	}
 }
 
+func TestCheckOCIRepository(t *testing.T) {
+	c := NewHelmChecker()
+	// Stub the OCI tag lister instead of hitting a real registry.
+	c.ociTags = func(_ context.Context, repo string) ([]string, error) {
+		if repo != "ghcr.io/acme/charts/app" {
+			t.Errorf("unexpected OCI repo %q", repo)
+		}
+		return []string{"1.0.0", "1.3.0", "1.1.0", "1.4.0-rc.1"}, nil
+	}
+	up, err := c.Check(context.Background(), ChartRef{RepoURL: "oci://ghcr.io/acme/charts", Name: "app", Version: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.Latest != "1.3.0" || !up.Available || !up.Actionable {
+		t.Errorf("OCI chart 1.0.0 should upgrade to 1.3.0 (rc ignored), got %+v", up)
+	}
+}
+
 func TestCheckChartNotFound(t *testing.T) {
 	srv := serveIndex(t)
 	defer srv.Close()

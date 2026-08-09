@@ -76,12 +76,17 @@ func TestClusterImageDeployments(t *testing.T) {
 		deployment("apps", "proxy", nil, []metav1.OwnerReference{
 			{APIVersion: "example.com/v1", Kind: "Proxy", Name: "my-proxy"},
 		}, "acme.io/proxy:1.0.0"),
+		// label-based controller ownership (no ownerRefs), e.g. flux-operator
+		deployment("apps", "ctrl", map[string]string{"app.kubernetes.io/managed-by": "flux-operator"}, nil, "acme.io/ctrl:1.0.0"),
 	)
 
 	kust := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization",
 		"metadata": map[string]interface{}{"namespace": "flux-system", "name": "apps"},
-		"spec":     map[string]interface{}{"sourceRef": map[string]interface{}{"kind": "GitRepository", "name": "repo"}},
+		"spec": map[string]interface{}{
+			"path":      "./apps",
+			"sourceRef": map[string]interface{}{"kind": "GitRepository", "name": "repo"},
+		},
 	}}
 	git := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "GitRepository",
@@ -119,7 +124,9 @@ func TestClusterImageDeployments(t *testing.T) {
 		}
 	}
 	check("acme.io/plain:1.0.0", "manifest", true, "")
-	check("acme.io/kust:1.0.0", "kustomize", true, "https://github.com/acme/infra")
+	// Kustomize source resolves to the git repo AND the Kustomization path.
+	check("acme.io/kust:1.0.0", "kustomize", true, "https://github.com/acme/infra//apps")
 	check("acme.io/api:1.0.0", "operator", true, "Api/apps/my-api") // image in CR spec
 	check("acme.io/proxy:1.0.0", "operator", false, "")             // derived
+	check("acme.io/ctrl:1.0.0", "operator", false, "flux-operator") // label-based controller
 }

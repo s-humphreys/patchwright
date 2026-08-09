@@ -26,21 +26,24 @@ classifying each image's workload:
 
 - **manifest** — directly deployed; image tag actionable.
 - **kustomize** — Flux Kustomize-labelled; actionable, and `source` is resolved
-  to the backing **GitRepository/OCIRepository URL** (the auto-PR target) by
+  to the backing **GitRepository/OCIRepository URL plus the Kustomization's
+  path** (Flux `<url>//<path>` notation — the auto-PR target directory) by
   following the Kustomization's `sourceRef`.
-- **operator** — owned by a custom resource. The owning CR is read (dynamic
-  client + REST mapper); if the running **image appears in the CR spec** (e.g.
-  your own `Api` CRD with `spec.image`), the bump is **actionable** with `source`
-  set to the CR (`Kind/ns/name`). If the image is *derived* (not in spec, like a
-  third-party operator's proxy), it's `available: true, actionable: false,
-  managed: operator` — surfaced but flagged as controller-owned.
+- **operator** — owned by a custom resource, or managed by a controller via the
+  `app.kubernetes.io/managed-by` label (e.g. flux-operator, which sets no
+  ownerReferences). For CR-owned workloads the owning CR is read (dynamic client
+  + REST mapper); if the running **image appears in the CR spec** (e.g. your own
+  `Api` CRD with `spec.image`) the bump is **actionable** with `source` set to
+  the CR (`Kind/ns/name`). If the image is *derived* (not in spec, like a
+  third-party operator's proxy) or the workload is only label-managed, it's
+  `available: true, actionable: false, managed: operator` — surfaced but flagged
+  as controller-owned.
 - **helm** — chart-managed; the Flux Helm chart source handles the real upgrade.
+  Both HTTP and **OCI** (`oci://`) Helm repositories are supported (OCI chart
+  versions are read as tags of the OCI artifact).
 
-**Remaining:** label-based operator detection (controllers like flux-operator
-manage workloads via `app.kubernetes.io/managed-by` labels with no
-ownerReferences, so they're currently seen as directly-deployed); OCI-type Helm
-repositories; direct (non-Flux) Helm releases; resolving a Kustomize source to
-the exact file/path (not just the repo).
+**Remaining:** direct (non-Flux) Helm releases; Argo CD applications; resolving a
+Kustomize source to the exact file (not just the directory).
 
 ## Why this is its own feature
 
