@@ -156,12 +156,19 @@ patchwright assess -i export.csv -c config/ --remediation
 **Actionability.** An upgrade is *directly actionable* only when you can apply it
 at that level. A newer image tag for a workload controlled by a Helm chart or an
 operator is reported as available but **not actionable** — bumping the tag would
-be reverted; the remediation is to upgrade the chart/operator. The `UPGRADE`
-column shows `current->latest` for actionable upgrades and
-`current->latest (helm|operator)` when it's controlled elsewhere; the
+be reverted; the remediation is to upgrade the chart/operator. The
 `upgrade_available` policy variable is true only for actionable upgrades, so
-automation acts on the right things. The JSON `upgrade` object carries
+automation acts on the right things, and the JSON `upgrade` object carries
 `available`, `actionable`, `managed`, and `source`.
+
+The `UPGRADE` column reads:
+
+| Shown | Meaning |
+|---|---|
+| `current->latest` | a newer version you can apply directly |
+| `current->latest (helm\|operator)` | a newer version exists but is controlled elsewhere (upgrade the chart/operator) |
+| `-` | on the latest version |
+| `?` | remediation detection didn't run (no `--remediation`) |
 
 Git/OCI source revisions are the next remediation kind — see
 [docs/design/remediation-availability.md](docs/design/remediation-availability.md).

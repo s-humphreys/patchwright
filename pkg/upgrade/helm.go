@@ -141,13 +141,15 @@ func (c *HelmChecker) fetchIndex(ctx context.Context, repoURL string) (*helmInde
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	// Stream-decode rather than buffering the whole index (Helm indexes can be
+	// large), and cap the read so a huge/hostile response can't exhaust memory.
 	var idx helmIndex
-	if err := yaml.Unmarshal(body, &idx); err != nil {
+	dec := yaml.NewDecoder(io.LimitReader(resp.Body, maxIndexBytes))
+	if err := dec.Decode(&idx); err != nil {
 		return nil, fmt.Errorf("parse index.yaml: %w", err)
 	}
 	return &idx, nil
 }
+
+// maxIndexBytes caps how much of a Helm repository index.yaml we read (256 MiB).
+const maxIndexBytes = 256 << 20

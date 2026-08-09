@@ -145,7 +145,13 @@ func helmWorkloadImages(ctx context.Context, client kubernetes.Interface) (map[s
 		}
 		key := ns + "/" + name
 		for _, c := range podContainers(spec) {
-			out[model.ParseImageRef(c.Image).NameTag()] = key
+			nt := model.ParseImageRef(c.Image).NameTag()
+			// An image can appear in several HelmReleases (shared base images).
+			// Pick deterministically (smallest release key) so attribution is
+			// stable regardless of list order.
+			if existing, ok := out[nt]; !ok || key < existing {
+				out[nt] = key
+			}
 		}
 	}
 
