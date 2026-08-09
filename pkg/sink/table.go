@@ -97,13 +97,13 @@ func fixMark(f model.Finding) string {
 	return fmt.Sprintf("%d", fixableCriticals(f))
 }
 
-// kevMark shows the count of known-exploited (CISA KEV) CVEs, or "-" when no
-// exploit enrichment has run.
+// kevMark shows the count of known-exploited (CISA KEV) CVEs, or "-" when
+// exploit enrichment has not run (so "0" always means "checked, none").
 func kevMark(f model.Finding) string {
 	if f.ScanError != "" {
 		return "err"
 	}
-	if !f.Scanned && len(f.Vulns) == 0 {
+	if !f.ExploitChecked {
 		return "-"
 	}
 	n := 0

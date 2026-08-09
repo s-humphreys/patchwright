@@ -132,10 +132,10 @@ func (f fakeExploitSource) Lookup(_ context.Context, ids []string) (map[string]e
 }
 
 func TestExploitEnricherAnnotatesVulns(t *testing.T) {
-	images := []model.AssessedImage{{
-		Image: model.ParseImageRef("acr.io/app:1"),
-		Vulns: []model.Vulnerability{{ID: "CVE-1"}, {ID: "CVE-2"}},
-	}}
+	images := []model.AssessedImage{
+		{Image: model.ParseImageRef("acr.io/app:1"), Vulns: []model.Vulnerability{{ID: "CVE-1"}, {ID: "CVE-2"}}},
+		{Image: model.ParseImageRef("acr.io/clean:1")}, // no CVEs
+	}
 	src := fakeExploitSource{info: map[string]enrich.ExploitInfo{
 		"CVE-1": {EPSS: 0.9, KEV: true},
 	}}
@@ -148,6 +148,11 @@ func TestExploitEnricherAnnotatesVulns(t *testing.T) {
 	}
 	if v[1].KEV || v[1].EPSS != 0 {
 		t.Errorf("CVE-2 should be unannotated, got %+v", v[1])
+	}
+	// Both images must be marked checked — even the one with no CVEs — so the
+	// report can tell "0 known-exploited" from "not checked".
+	if !images[0].ExploitChecked || !images[1].ExploitChecked {
+		t.Errorf("all images should be ExploitChecked, got %v / %v", images[0].ExploitChecked, images[1].ExploitChecked)
 	}
 }
 

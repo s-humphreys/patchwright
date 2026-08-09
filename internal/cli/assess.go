@@ -67,6 +67,9 @@ func newAssessCmd() *cobra.Command {
 				popts = append(popts, pipeline.WithImageScanner(scanner))
 			}
 			if exploitSource != "" {
+				if vulnSource == "" {
+					return fmt.Errorf("--exploit-source requires --vuln-source: there are no vulnerabilities to annotate with EPSS/KEV otherwise")
+				}
 				enricher, err := buildExploitEnricher(exploitSource, exploitOptions)
 				if err != nil {
 					return err

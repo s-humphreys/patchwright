@@ -26,8 +26,9 @@ likec4 export png docs/architecture -o docs/architecture/images   # static image
 - **`containers` — Containers.** The two containers inside patchwright: the
   declarative rule **config** (CEL) and the **assessment core**.
 - **`core` — Components & Pipeline.** The pipeline stages —
-  `provider → enrich → dedupe → vulnscan → exploit → attribute → policy → sink` —
-  and how config feeds the CEL-driven attribute and policy stages.
+  `provider → enrich → attribute → dedupe → vulnscan → exploit → policy → sink`
+  (attribution is per-workload, so it runs before dedupe) — and how config feeds
+  the CEL-driven attribute and policy stages.
 - **`assessFlow` — Assess flow (dynamic).** A step-by-step trace of a single
   assessment: reconciliation against clusters, Trivy scan, EPSS/KEV enrichment,
   ownership, and policy.

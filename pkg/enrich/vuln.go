@@ -79,11 +79,15 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 	var firstErr error
 	failures := 0
 
+loop:
 	for i := range images {
-		if ctx.Err() != nil {
-			break
+		// Acquire a slot, but stop promptly if the context is cancelled even
+		// while concurrency is saturated (a plain send could block forever).
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break loop
 		}
-		sem <- struct{}{}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

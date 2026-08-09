@@ -165,6 +165,10 @@ type AssessedImage struct {
 	// private image with no credentials). A failed scan does not fail the run.
 	Scanned   bool
 	ScanError string
+
+	// ExploitChecked is true once an exploit source has run, so consumers can
+	// distinguish "0 known-exploited CVEs" from "exploit intel not gathered".
+	ExploitChecked bool
 }
 
 // Finding is the output unit: one image, one owner, and the verdict. An image
@@ -190,9 +194,11 @@ type Finding struct {
 	Live       bool
 
 	// Scanned/ScanError mirror the assessed image: whether a vuln scan
-	// succeeded, and why it didn't when attempted.
-	Scanned   bool
-	ScanError string
+	// succeeded, and why it didn't when attempted. ExploitChecked reports
+	// whether exploit intel (EPSS/KEV) was gathered.
+	Scanned        bool
+	ScanError      string
+	ExploitChecked bool
 
 	Actionable bool
 	Suppressed bool
