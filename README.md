@@ -135,14 +135,22 @@ surface it; e.g. `when: "vulns.exists(v, v.fix_available && (v.kev || v.epss > 0
 ### Remediation — is a newer version available?
 
 Knowing a CVE has a fix is only half the story; the other half is *can you ship
-the fix given how this is deployed*. With `--remediation` (requires
-`--live-source kube`), patchwright reads **Flux `HelmRelease`s**, resolves each
-chart's repository, and checks the repo index for a **newer chart version** —
-the concrete remediation, and the input to later GitOps auto-PRs.
+the fix given how this is deployed*. `--remediation` composes ordered upgrade
+sources, deployment-aware first:
+
+1. **Flux Helm chart** (with `--live-source kube`) — reads Flux `HelmRelease`s,
+   resolves each chart's repository, and checks the index for a **newer chart
+   version**.
+2. **Registry image tag** — for any image on a strict-semver tag, checks its
+   registry for a **newer tag** (auth via the docker/cloud keychain). Covers
+   workloads that aren't Helm charts — plain manifests and Kustomizations.
 
 ```sh
+# Flux charts + image tags:
 patchwright assess -i export.csv -c config/ \
   --live-source kube --live-option contexts=aks-prod --remediation
+# image tags only (no cluster needed):
+patchwright assess -i export.csv -c config/ --remediation
 ```
 
 The `UPGRADE` column shows `current->latest`; the JSON adds an `upgrade` object

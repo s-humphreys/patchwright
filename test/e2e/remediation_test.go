@@ -72,7 +72,7 @@ spec:
 		us, ok := src.(enrich.UpgradeSource)
 		Expect(ok).To(BeTrue(), "kube source should implement UpgradeSource")
 
-		upgrades, err := us.Upgrades(context.Background())
+		upgrades, err := us.Upgrades(context.Background(), nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		// The podinfo image (deployed from chart 6.5.0) should map to its

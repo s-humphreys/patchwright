@@ -32,8 +32,9 @@ type chartChecker interface {
 
 // Upgrades runs the configured UpgradeResolvers across every cluster and merges
 // the per-image upgrades they report. The first resolver to report an upgrade
-// for an image wins. Defaults to the Flux HelmRelease resolver.
-func (s *Source) Upgrades(ctx context.Context) (map[string]model.Upgrade, error) {
+// for an image wins. Defaults to the Flux HelmRelease resolver. It enumerates
+// from the cluster, so the images argument is unused.
+func (s *Source) Upgrades(ctx context.Context, _ []model.AssessedImage) (map[string]model.Upgrade, error) {
 	resolvers := s.resolvers
 	if len(resolvers) == 0 {
 		resolvers = defaultResolvers()

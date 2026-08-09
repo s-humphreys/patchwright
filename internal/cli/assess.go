@@ -12,6 +12,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/enrich"
+	"github.com/s-humphreys/patchwright/pkg/enrich/registry"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -62,8 +63,9 @@ func newAssessCmd() *cobra.Command {
 			var popts []pipeline.Option
 
 			// Live source: drives reconciliation (pre-dedupe) and, with
-			// --remediation, upgrade detection (post-dedupe pipeline option).
+			// --remediation, contributes a deployment-aware upgrade source.
 			var liveEnrichers []enrich.Enricher
+			var upgradeSources []enrich.UpgradeSource
 			if liveSource != "" {
 				src, err := newLiveSource(liveSource, liveOptions)
 				if err != nil {
@@ -73,16 +75,16 @@ func newAssessCmd() *cobra.Command {
 				if ls, ok := src.(enrich.LabelSource); ok {
 					liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
 				}
-				if remediation {
-					us, ok := src.(enrich.UpgradeSource)
-					if !ok {
-						return fmt.Errorf("--remediation is not supported by live source %q", liveSource)
-					}
-					r := enrich.NewRemediationEnricher(us)
-					popts = append(popts, pipeline.WithRemediationEnricher(&r))
+				// A deployment-aware source (e.g. kube: Flux HelmReleases) takes
+				// precedence over the registry image-tag fallback.
+				if us, ok := src.(enrich.UpgradeSource); ok && remediation {
+					upgradeSources = append(upgradeSources, us)
 				}
-			} else if remediation {
-				return fmt.Errorf("--remediation requires --live-source kube")
+			}
+			if remediation {
+				upgradeSources = append(upgradeSources, registry.New())
+				r := enrich.NewRemediationEnricher(upgradeSources...)
+				popts = append(popts, pipeline.WithRemediationEnricher(&r))
 			}
 
 			if vulnSource != "" {
@@ -157,7 +159,7 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable), e.g. severity=CRITICAL,HIGH")
 	cmd.Flags().StringVar(&exploitSource, "exploit-source", "", "enrich CVEs with exploit intel — EPSS + CISA KEV ("+joinExploitSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
-	cmd.Flags().BoolVar(&remediation, "remediation", false, "detect available upgrades (e.g. a newer Helm chart) for how images are deployed; requires --live-source kube")
+	cmd.Flags().BoolVar(&remediation, "remediation", false, "detect available upgrades for how images are deployed: a newer Helm chart (Flux, with --live-source kube) or a newer image tag (registry)")
 	return cmd
 }
 

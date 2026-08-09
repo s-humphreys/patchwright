@@ -235,7 +235,7 @@ func TestExploitEnricherAnnotatesVulns(t *testing.T) {
 // fakeUpgradeSource returns fixed upgrades per image.
 type fakeUpgradeSource struct{ ups map[string]model.Upgrade }
 
-func (f fakeUpgradeSource) Upgrades(context.Context) (map[string]model.Upgrade, error) {
+func (f fakeUpgradeSource) Upgrades(context.Context, []model.AssessedImage) (map[string]model.Upgrade, error) {
 	return f.ups, nil
 }
 
