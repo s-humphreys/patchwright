@@ -1,0 +1,65 @@
+{{- if eq .Values.mode "server" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "patchwright.fullname" . }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "patchwright.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "patchwright.labels" . | nindent 8 }}
+        {{- if .Values.registryAuth.azure.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "patchwright.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        {{- include "patchwright.container" (dict "root" . "command" "serve" "remediation" .Values.server.remediation "ports" true "modeArgs" (list (printf "--addr=:%v" .Values.server.port) (printf "--interval=%s" .Values.server.interval))) | nindent 8 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        {{- include "patchwright.volumes" (dict "root" .) | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "patchwright.fullname" . }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.server.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "patchwright.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.server.port }}
+      targetPort: http
+{{- end }}

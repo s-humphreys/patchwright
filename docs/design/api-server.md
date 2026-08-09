@@ -1,72 +1,86 @@
-# Design: API-first server (frontend, Backstage)
+# Design: API-first server (frontend, Backstage, Jira)
 
-Status: **proposed** (planned for later — agreed)
+Status: **building** — `patchwright serve` (read-only API) is the current work.
 
 ## Why
 
-The assessment output is valuable to people who won't touch a CLI — engineering
-leads, service owners, risk. They want a **live view** of what their team owns
-and needs to act on. And it should be consumable by other tools, e.g. a
-**Backstage plugin** that shows a service's actionable findings on its catalog
-page.
+A CronJob that logs findings is write-only: nobody can *ask* it anything, and
+stateful actions (like Jira ticketing without duplicates) are painful from a
+fresh process each run. Turning patchwright into a **service with an API** is the
+unlock:
 
-The unlock is to be **API-first**: a stable, documented HTTP/JSON API is the
-source of truth, and everything else — the CLI, the [MCP server](mcp-server.md),
-a web UI, a Backstage plugin — is a client of that same API. Nothing bypasses it.
+- Security/engineering can query "what's actionable for team X right now?".
+- Jira actioning becomes stateful and idempotent (reconcile findings ↔ tickets).
+- A web UI, Backstage plugin, and the MCP server all become clients of one API.
+
+The principle is **API-first**: one documented HTTP/JSON API is the source of
+truth; the CLI, MCP, UI, and Backstage are clients of it.
+
+## Decisions
+
+- **No GitOps PR sink.** Flux + Renovate already own "newer version → PR". Our
+  value is deciding *what's worth changing* and routing it; we hand the
+  remediation `source` (chart repo / CR / git path) to a human or to Renovate,
+  not open PRs ourselves.
+- **Jira is the first action**, built on the API, next after `serve`.
 
 ## The server
 
-A `patchwright serve` mode built on the **same pipeline library** the CLI uses.
-It runs assessments on a schedule (and on demand), caches the latest result, and
-serves it. Deployed as a Deployment (a Helm value flips the chart from the
-assessment CronJob to a long-running server), reading clusters exactly as the
-CronJob does.
+`patchwright serve` runs the **same pipeline library** the CLI uses. It:
 
-## API (read-first, versioned `/api/v1`)
+1. runs an assessment on a schedule and on demand,
+2. caches the latest result (findings + timestamp + run status) in memory,
+3. serves it over HTTP.
 
-Returns the existing finding view (the JSON the CLI already emits), so the model
-is already defined.
+It takes the same inputs as `assess` (provider, `--config`, `--live-source`,
+`--vuln-source`, `--exploit-source`, `--remediation`) plus `--addr` and
+`--interval`. Deployed as a **Deployment** (a Helm value flips the chart from the
+assessment CronJob to the server), reading clusters exactly as the CronJob does.
 
-| Endpoint | Purpose |
+## API (v1, read-first)
+
+All responses carry an `assessment` block: `{ generated_at, running, error }`,
+so clients know how fresh the data is.
+
+| Method & path | Purpose |
 |---|---|
-| `GET /api/v1/findings` | Findings, filterable: `owner`, `team`, `priority`, `actionable`, `live`, `upgrade_available`, `known_exploited`. |
-| `GET /api/v1/findings/{image}` | One image: verdict, reasons, workloads, CVEs, upgrade. |
-| `GET /api/v1/owners` | Per owner class / team: counts of actionable / fixable / upgradable — a triage leaderboard. |
-| `GET /api/v1/summary` | Totals + the noise-reduction headline. |
-| `GET /api/v1/profile` | The raw-data profile. |
-| `POST /api/v1/assessments` | Trigger a refresh; results are async, polled via a status field. |
-| `GET /healthz` `GET /readyz` | Health. |
+| `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`. |
+| `GET /api/v1/findings/{image}` | One image (path-escaped ref): verdict, reasons, workloads, CVEs, upgrade. |
+| `GET /api/v1/owners` | Per owner class/team: counts of total / actionable / fixable / upgradable — a triage leaderboard. |
+| `GET /api/v1/summary` | Totals + the noise-reduction headline + the freshness block. |
+| `POST /api/v1/assessments` | Trigger a refresh; returns 202 and the run status (async). |
+| `GET /healthz`, `GET /readyz` | Liveness / readiness (ready once a first assessment has completed). |
 
-Every response carries the **assessment timestamp** so clients can show how
-current the data is. A published **OpenAPI** spec makes client generation
-(including the Backstage plugin) trivial. Auth: bearer token / OIDC, with
-per-team scoping later.
+Findings use the same JSON shape the CLI already emits (`sink.FindingView`), so
+the schema is defined. An OpenAPI spec follows once the shape settles, to make
+client generation (incl. the Backstage plugin) trivial. Auth (bearer/OIDC, then
+per-team scoping) is a later phase; start bound to the cluster network.
 
-## Backstage plugin
+## State — deliberately stateless to start
 
-Backstage models ownership as groups; patchwright already attributes each finding
-to a `team`. So a plugin maps **Backstage entity owner ↔ patchwright `owner.team`**
-and, on a service's catalog page, shows that service's actionable findings, fix
-availability, exploitability, and **available upgrades** — the same signals, in
-the place engineers already look. It's a thin frontend (+ a small backend proxy
-for auth) over `GET /api/v1/findings?team=…`. For now we won't implement this, only
-bear it in mind during designs for later implementation.
+The server holds only the **latest assessment in memory** (a cache, rebuilt each
+refresh). No database.
 
-## Web UI
+For **Jira reconciliation** (next feature), durable "finding → ticket" mapping is
+needed to avoid duplicates. Approach, cheapest first:
 
-Optional and secondary to the API: a lightweight owner-split dashboard (live
-view, filters, the priority queue) served by the server. Given Backstage covers
-the per-team view, a standalone UI is mainly for security's fleet-wide view.
+1. **Stateless reconcile-from-Jira** (default): give each finding a **stable key**
+   (e.g. `image + owner.team`), stamp it on the Jira issue (a label or a custom
+   field), and each run query Jira by that key to decide create/update/close. No
+   DB to operate; state lives in Jira.
+2. Add a small persistent store (SQLite/Postgres) only if reconcile-from-Jira
+   proves too slow or limited.
 
 ## Relationship to the MCP server
 
 The [MCP server](mcp-server.md) and this REST API are two adapters over the same
-pipeline + results cache. The `serve` process can host both (REST for
-apps/Backstage, MCP for LLM clients), so natural-language and programmatic access
-share one backend and one freshness guarantee.
+pipeline + results cache; `serve` can host both, so natural-language and
+programmatic access share one backend and one freshness guarantee.
 
 ## Phasing
 
-1. `serve` with a results cache + read-only `GET` endpoints + OpenAPI.
-2. `POST /assessments` refresh + async status; auth.
-3. Optional fleet-wide web UI; MCP co-hosted.
+1. **`serve` + read-only API** over an in-memory results cache (this work):
+   findings/owners/summary + refresh + health; Helm Deployment mode.
+2. **Jira sink** as an API-driven, stateless reconcile (stable finding key ↔
+   issue label).
+3. Auth; OpenAPI; Backstage plugin; optional web UI; MCP co-hosted.

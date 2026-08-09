@@ -173,6 +173,32 @@ The `UPGRADE` column reads:
 Git/OCI source revisions are the next remediation kind — see
 [docs/design/remediation-availability.md](docs/design/remediation-availability.md).
 
+### Serve — the assessment as an API
+
+A CronJob that logs findings is write-only. `patchwright serve` runs the same
+assessment on a schedule, caches the latest result, and exposes it over a
+read-only HTTP/JSON API so people and tools can *query* current findings — the
+foundation for a UI, a Backstage plugin, and (next) Jira actioning.
+
+```sh
+patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
+  --live-source kube --live-option contexts=aks-prod --remediation
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`. |
+| `GET /api/v1/finding?image=<ref>` | A single image's finding. |
+| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable. |
+| `GET /api/v1/summary` | Fleet-wide headline. |
+| `POST /api/v1/assessments` | Trigger a refresh (async). |
+| `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
+
+Every response carries an `assessment` block (`generated_at`, `running`) so
+clients know how fresh the data is. Deploy it with the Helm chart's server mode
+(`--set mode=server`) — a Deployment + Service instead of the CronJob. See
+[docs/design/api-server.md](docs/design/api-server.md).
+
 ## Writing rules
 
 Rules are YAML with [CEL](https://github.com/google/cel-go) expressions.

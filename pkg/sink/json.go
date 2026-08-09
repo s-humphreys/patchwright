@@ -16,7 +16,7 @@ type JSON struct {
 	Indent         bool
 }
 
-type findingView struct {
+type FindingView struct {
 	Image           string              `json:"image"`
 	Registry        string              `json:"registry"`
 	Repository      string              `json:"repository"`
@@ -75,12 +75,12 @@ type vulnView struct {
 // Emit implements Sink.
 func (j JSON) Emit(w io.Writer, findings []model.Finding) error {
 	findings = SortForReport(findings)
-	views := make([]findingView, 0, len(findings))
+	views := make([]FindingView, 0, len(findings))
 	for _, f := range findings {
 		if f.Suppressed && !j.ShowSuppressed {
 			continue
 		}
-		views = append(views, toView(f))
+		views = append(views, ToFindingView(f))
 	}
 
 	enc := json.NewEncoder(w)
@@ -109,14 +109,14 @@ func (n NDJSON) Emit(w io.Writer, findings []model.Finding) error {
 		if f.Suppressed && !n.ShowSuppressed {
 			continue
 		}
-		if err := enc.Encode(toView(f)); err != nil {
+		if err := enc.Encode(ToFindingView(f)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func toView(f model.Finding) findingView {
+func ToFindingView(f model.Finding) FindingView {
 	vulns := make([]vulnView, 0, len(f.Vulns))
 	knownExploited := false
 	for _, v := range f.Vulns {
@@ -146,7 +146,7 @@ func toView(f model.Finding) findingView {
 			Managed: f.Upgrade.Managed, Source: f.Upgrade.Source,
 		}
 	}
-	return findingView{
+	return FindingView{
 		Image:           f.Image.Ref,
 		Registry:        f.Image.Registry,
 		Repository:      f.Image.Repository,
