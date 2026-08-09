@@ -26,13 +26,15 @@ likec4 export png docs/architecture -o docs/architecture/images   # static image
 - **`containers` — Containers.** The two containers inside patchwright: the
   declarative rule **config** (CEL) and the **assessment core**.
 - **`core` — Components & Pipeline.** The pipeline stages —
-  `provider → enrich → dedupe → attribute → policy → sink` — and how config feeds
-  the CEL-driven attribute and policy stages.
+  `provider → enrich → dedupe → vulnscan → exploit → attribute → policy → sink` —
+  and how config feeds the CEL-driven attribute and policy stages.
 - **`assessFlow` — Assess flow (dynamic).** A step-by-step trace of a single
-  assessment, including the read-only reconciliation against clusters.
+  assessment: reconciliation against clusters, Trivy scan, EPSS/KEV enrichment,
+  ownership, and policy.
 - **`deployment` — Deployment.** The Helm CronJob in a hub cluster, its
   ServiceAccount/ClusterRole, config and secret mounts, and read-only reads of
   the local and remote clusters.
 
 Elements tagged **`future`** (amber) are planned, not yet built: the Rapid7 API
-provider, Trivy/registry CVE fix-availability, and the Jira / GitOps sinks.
+provider, the Jira / GitOps sinks, and (see [`docs/design`](../design)) VEX /
+reachability and remediation-availability.
