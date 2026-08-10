@@ -77,6 +77,7 @@ type UpgradeView struct {
 	Resolved   bool   `json:"resolved"`
 	Actionable bool   `json:"actionable"`
 	Managed    string `json:"managed,omitempty"`
+	Manager    string `json:"manager,omitempty"`
 	Source     string `json:"source,omitempty"`
 	SourcePath string `json:"source_path,omitempty"`
 }
@@ -164,8 +165,8 @@ func ToFindingView(f model.Finding) FindingView {
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
 			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
 			Actionable: f.Upgrade.Actionable,
-			Managed:    f.Upgrade.Managed,
-			Source:     f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,
+			Managed:    f.Upgrade.Managed, Manager: f.Upgrade.Manager,
+			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,
 		}
 	}
 	return FindingView{

@@ -33,6 +33,13 @@ type DeployContext struct {
 	// Source is where the change lands: a git repository URL (Kustomize), the
 	// owning custom resource ref (operator, e.g. "Api/ns/name"), or empty.
 	Source string
+	// Manager is the bare name of the component that controls this workload's
+	// version, when known (e.g. "flux-operator", "kiali-operator"). It answers a
+	// different question from Source: Source is WHERE a change lands, Manager is
+	// WHAT owns the version. For a controller-managed workload the version cannot
+	// be changed in place at all, so the remediation is to upgrade the manager —
+	// which is usually its own finding.
+	Manager string
 	// SourcePath is the directory within Source, when Source is a repository.
 	// Kept separate from the URL rather than joined with kustomize's "//"
 	// notation: the joined form is not a resolvable link, and anything that

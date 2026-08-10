@@ -202,25 +202,20 @@ func mergeChains(groups []ticketGroup) []ticketGroup {
 	return out
 }
 
-// managedBy returns the bare component name that owns every finding's version in
-// the group, or "" when there is not exactly one such name.
+// managedBy returns the component that owns every finding's version in the
+// group, or "" when there is not exactly one. It reads the Manager the live
+// source resolved rather than inferring anything from a source string.
 func managedBy(findings []sink.FindingView) string {
 	name := ""
 	for _, f := range findings {
 		u := f.Upgrade
-		if u == nil || u.Managed == "" || u.Source == "" {
+		if u == nil || u.Manager == "" {
 			return ""
 		}
-		// Only a bare name identifies a component unambiguously; a URL is a
-		// repository and an object reference is a resource, neither of which names
-		// the thing that would be upgraded.
-		if strings.Contains(u.Source, "/") || strings.Contains(u.Source, "://") {
+		if name != "" && u.Manager != name {
 			return ""
 		}
-		if name != "" && u.Source != name {
-			return ""
-		}
-		name = u.Source
+		name = u.Manager
 	}
 	return name
 }
@@ -250,7 +245,16 @@ func group(findings []sink.FindingView) []ticketGroup {
 }
 
 func groupKey(f sink.FindingView) string {
-	if f.Upgrade == nil || f.Upgrade.Source == "" {
+	if f.Upgrade == nil {
+		return f.Repository
+	}
+	// A managed workload's version lives with its manager, so everything under one
+	// manager is one change. This also keeps controller sets together now that the
+	// manager name is no longer stuffed into Source.
+	if f.Upgrade.Manager != "" {
+		return f.Upgrade.Manager
+	}
+	if f.Upgrade.Source == "" {
 		return f.Repository
 	}
 	key := collapseObjectRef(f.Upgrade.Source)

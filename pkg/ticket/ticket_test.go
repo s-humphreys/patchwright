@@ -145,7 +145,7 @@ func TestPlanIgnoresSuppressedAndNonActionable(t *testing.T) {
 // on one ticket.
 func TestPlanGroupsBySharedSource(t *testing.T) {
 	shared := func(f *sink.FindingView) {
-		f.Upgrade.Source = "flux-operator"
+		f.Upgrade.Manager = "flux-operator"
 		f.Upgrade.Actionable = false
 		f.Upgrade.Managed = "operator"
 	}
@@ -183,7 +183,7 @@ func TestGroupedTicketDoesNotClaimOneImagesVersion(t *testing.T) {
 	p := newTestPlanner(t, "")
 	mk := func(repo, latest string) sink.FindingView {
 		return finding(repo, func(f *sink.FindingView) {
-			f.Upgrade.Source = "flux-operator"
+			f.Upgrade.Manager = "flux-operator"
 			f.Upgrade.Latest = latest
 			f.Upgrade.Actionable = false
 			f.Upgrade.Managed = "operator"
@@ -580,7 +580,7 @@ func TestMergeChainsFoldsManagedImagesIntoTheirManager(t *testing.T) {
 
 	controller := func(repo, latest string) sink.FindingView {
 		return finding(repo, func(f *sink.FindingView) {
-			f.Upgrade.Source = "flux-operator" // bare component name
+			f.Upgrade.Manager = "flux-operator"
 			f.Upgrade.Managed = "operator"
 			f.Upgrade.Actionable = false
 			f.Upgrade.Latest = latest
@@ -623,9 +623,9 @@ func TestMergeChainsFoldsManagedImagesIntoTheirManager(t *testing.T) {
 	}
 }
 
-// Inferring a manager from an object reference or a URL would be guessing: a
-// "Kiali" custom resource does not tell us its operator is called kiali-operator.
-// A wrong merge writes a ticket asking for the wrong change, so decline instead.
+// With no Manager resolved there is nothing to merge on. The live source names
+// the manager from a label or the CR's own labels; where it cannot, the tool must
+// not invent one from a Kind or a URL, so the groups stay separate.
 func TestMergeChainsDeclinesWhenTheManagerIsNotNamed(t *testing.T) {
 	p := newTestPlanner(t, "")
 	for name, source := range map[string]string{
@@ -634,7 +634,7 @@ func TestMergeChainsDeclinesWhenTheManagerIsNotNamed(t *testing.T) {
 		"registry path":    "ghcr.io/org/thing",
 	} {
 		managed := finding("kiali/kiali", func(f *sink.FindingView) {
-			f.Upgrade.Source = source
+			f.Upgrade.Source = source // no Manager resolved
 			f.Upgrade.Managed = "operator"
 			f.Upgrade.Actionable = false
 		})
@@ -644,8 +644,39 @@ func TestMergeChainsDeclinesWhenTheManagerIsNotNamed(t *testing.T) {
 			t.Fatalf("%s: Plan: %v", name, err)
 		}
 		if len(plan.Drafts) != 2 {
-			t.Errorf("%s: got %d drafts, want 2 (no merge from an unnamed manager)", name, len(plan.Drafts))
+			t.Errorf("%s: got %d drafts, want 2 (no merge without a named manager)", name, len(plan.Drafts))
 		}
+	}
+}
+
+// The Kiali case the Manager field exists for: the CR labels name the operator,
+// so the two tickets become one asking for the operator upgrade.
+func TestMergeChainsUsesManagerFromCustomResourceLabels(t *testing.T) {
+	p := newTestPlanner(t, "Summary: Upgrade {{ .ServiceName }} to {{ if .Upgrade }}{{ .Upgrade.Latest }}{{ else }}latest{{ end }}\n\napply={{ len .Upgrades }} fixes={{ len .Fixes }}\n")
+	managed := finding("kiali/kiali", func(f *sink.FindingView) {
+		f.Upgrade.Source = "Kiali/istio-monitoring/kiali"
+		f.Upgrade.Manager = "kiali-operator" // resolved from the CR's labels
+		f.Upgrade.Managed = "operator"
+		f.Upgrade.Actionable = false
+	})
+	operator := finding("kiali/kiali-operator", func(f *sink.FindingView) {
+		f.Upgrade.Kind = "chart"
+		f.Upgrade.Name = "kiali-operator"
+		f.Upgrade.Latest = "2.30.0"
+		f.Upgrade.Source = "https://kiali.org/helm-charts"
+	})
+	plan, err := p.Plan([]sink.FindingView{managed, operator})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1: %v", len(plan.Drafts), summaries(plan.Drafts))
+	}
+	if want := "Upgrade kiali-operator to 2.30.0"; plan.Drafts[0].Summary != want {
+		t.Errorf("summary = %q, want %q", plan.Drafts[0].Summary, want)
+	}
+	if !strings.Contains(plan.Drafts[0].Description, "fixes=1") {
+		t.Errorf("the kiali image should be listed as a consequence: %s", plan.Drafts[0].Description)
 	}
 }
 
@@ -655,7 +686,7 @@ func TestMergeChainsKeepsGroupWhenManagerIsAbsent(t *testing.T) {
 	p := newTestPlanner(t, "")
 	plan, err := p.Plan([]sink.FindingView{
 		finding("fluxcd/source-controller", func(f *sink.FindingView) {
-			f.Upgrade.Source = "flux-operator"
+			f.Upgrade.Manager = "flux-operator"
 			f.Upgrade.Managed = "operator"
 			f.Upgrade.Actionable = false
 		}),

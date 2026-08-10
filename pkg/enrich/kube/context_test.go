@@ -78,6 +78,11 @@ func TestClusterImageDeployments(t *testing.T) {
 		}, "acme.io/proxy:1.0.0"),
 		// label-based controller ownership (no ownerRefs), e.g. flux-operator
 		deployment("apps", "ctrl", map[string]string{"app.kubernetes.io/managed-by": "flux-operator"}, nil, "acme.io/ctrl:1.0.0"),
+		// operator-owned via a CR whose own labels name the operator, as a real
+		// Kiali CR does (app.kubernetes.io/part-of=kiali-operator).
+		deployment("apps", "dash", map[string]string{"app.kubernetes.io/name": "dash"}, []metav1.OwnerReference{
+			{APIVersion: "example.com/v1", Kind: "Dash", Name: "my-dash"},
+		}, "acme.io/dash:1.0.0"),
 	)
 
 	kust := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -106,7 +111,13 @@ func TestClusterImageDeployments(t *testing.T) {
 		if kind == "Api" {
 			spec["image"] = "acme.io/api:1.0.0"
 		}
-		return &unstructured.Unstructured{Object: map[string]interface{}{"spec": spec}}, nil
+		meta := map[string]interface{}{}
+		if kind == "Dash" {
+			meta["labels"] = map[string]interface{}{"app.kubernetes.io/part-of": "dash-operator"}
+		}
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"metadata": meta, "spec": spec,
+		}}, nil
 	}
 
 	out := map[string]enrich.DeployContext{}
@@ -114,23 +125,29 @@ func TestClusterImageDeployments(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := func(nametag, mech string, actionable bool, source, sourcePath string) {
+	check := func(nametag, mech string, actionable bool, source, sourcePath, manager string) {
 		dc, ok := out[nametag]
 		if !ok {
 			t.Fatalf("%s: no context", nametag)
 		}
 		if dc.Mechanism != mech || dc.Actionable != actionable ||
-			(source != "" && dc.Source != source) || dc.SourcePath != sourcePath {
-			t.Errorf("%s: got %+v, want mechanism=%s actionable=%v source=%s path=%s",
-				nametag, dc, mech, actionable, source, sourcePath)
+			(source != "" && dc.Source != source) || dc.SourcePath != sourcePath ||
+			dc.Manager != manager {
+			t.Errorf("%s: got %+v, want mechanism=%s actionable=%v source=%s path=%s manager=%s",
+				nametag, dc, mech, actionable, source, sourcePath, manager)
 		}
 	}
-	check("acme.io/plain:1.0.0", "manifest", true, "", "")
+	check("acme.io/plain:1.0.0", "manifest", true, "", "", "")
 	// The Kustomization's repo and path are reported SEPARATELY. Joining them
 	// with kustomize's "//" notation yields a string that looks like a URL and is
 	// not one, which matters wherever a change target gets rendered as a link.
-	check("acme.io/kust:1.0.0", "kustomize", true, "https://github.com/acme/infra", "apps")
-	check("acme.io/api:1.0.0", "operator", true, "Api/apps/my-api", "") // image in CR spec
-	check("acme.io/proxy:1.0.0", "operator", false, "", "")             // derived
-	check("acme.io/ctrl:1.0.0", "operator", false, "flux-operator", "") // label-based controller
+	check("acme.io/kust:1.0.0", "kustomize", true, "https://github.com/acme/infra", "apps", "")
+	check("acme.io/api:1.0.0", "operator", true, "Api/apps/my-api", "", "") // image in CR spec
+	check("acme.io/proxy:1.0.0", "operator", false, "", "", "")             // derived
+	// A controller named by a label is a Manager, not a change location: the
+	// version cannot be edited in place, so the remediation is to upgrade it.
+	check("acme.io/ctrl:1.0.0", "operator", false, "", "", "flux-operator")
+	// And a CR that labels itself with its operator names that operator, rather
+	// than the Kind being guessed into a name.
+	check("acme.io/dash:1.0.0", "operator", false, "Dash/apps/my-dash", "", "dash-operator")
 }

@@ -223,6 +223,11 @@ type Upgrade struct {
 	Latest    string // latest available version
 	Available bool   // Latest is newer than Current
 	Source    string // where to make the change (repo URL, or an owning CR ref)
+	// Manager is the bare name of the component that owns this image's version
+	// (e.g. "flux-operator"), when known. Distinct from Managed, which says only
+	// what KIND of thing owns it ("helm", "operator"): Manager names it, which is
+	// what lets a report or a ticket point at the component to upgrade.
+	Manager string
 	// SourcePath is the directory within Source when Source is a repository.
 	// Separate from the URL so consumers can render a clickable link; joining
 	// them with kustomize's "//" notation produces a string that looks like a
