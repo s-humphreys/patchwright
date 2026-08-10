@@ -26,8 +26,11 @@ type compiledRule struct {
 	prg  cel.Program
 }
 
-// findingEnv builds the CEL environment for finding-level rules.
-func findingEnv() (*cel.Env, error) {
+// FindingEnv builds the CEL environment for finding-level rules. It is exported
+// so other rule surfaces (e.g. ticket exclusions) evaluate the SAME variables:
+// a second, subtly different expression language would be a needless thing for a
+// user to learn and get wrong.
+func FindingEnv() (*cel.Env, error) {
 	return cel.NewEnv(
 		cel.Variable("image", cel.MapType(cel.StringType, cel.StringType)),
 		cel.Variable("counts", cel.MapType(cel.StringType, cel.IntType)),
@@ -52,7 +55,7 @@ func findingEnv() (*cel.Env, error) {
 
 // New compiles actionable and suppress rules into an Evaluator.
 func New(actionable, suppress []config.PolicyRule) (*Evaluator, error) {
-	env, err := findingEnv()
+	env, err := FindingEnv()
 	if err != nil {
 		return nil, fmt.Errorf("build cel env: %w", err)
 	}

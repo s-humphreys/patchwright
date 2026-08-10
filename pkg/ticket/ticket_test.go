@@ -448,3 +448,126 @@ func TestSourcePathStaysSeparateFromURL(t *testing.T) {
 		t.Errorf("SourcePath = %q, want bases/app", d.SourcePath)
 	}
 }
+
+// Exclusions keep work out of ticket creation without hiding it: excluded
+// findings are reported as skipped, with the configured reason, so "why was this
+// not ticketed?" is answerable from the output rather than from the config file.
+func TestPlanExclusions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: Upgrade {{ .ServiceName }}\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(config.JiraConfig{
+		Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+		Exclude: []config.ExcludeRule{{
+			Name:   "crossplane",
+			When:   "dimensions['namespace'].exists(n, n == 'crossplane-system')",
+			Reason: "upgraded on their own cadence",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+
+	inNS := finding("contrib/provider-azuread", func(f *sink.FindingView) {
+		f.Dimensions["namespace"] = []string{"crossplane-system"}
+	})
+	elsewhere := finding("acme/app", func(f *sink.FindingView) {
+		f.Dimensions["namespace"] = []string{"apps"}
+	})
+
+	plan, err := p.Plan([]sink.FindingView{inNS, elsewhere})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 || plan.Drafts[0].Images[0] != "acme/app" {
+		t.Fatalf("got %d drafts (%v), want only the non-excluded one", len(plan.Drafts), plan.Drafts)
+	}
+	if len(plan.Skips) != 1 {
+		t.Fatalf("got %d skips, want 1", len(plan.Skips))
+	}
+	if got := plan.Skips[0].Reason; !strings.Contains(got, `"crossplane"`) || !strings.Contains(got, "own cadence") {
+		t.Errorf("skip reason %q should name the rule and its reason", got)
+	}
+}
+
+// An excluded finding must report exclusion, not "nothing to upgrade to": the
+// second is a statement about the world and would be the wrong explanation.
+func TestExclusionTakesPrecedenceOverUpgradeCheck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(config.JiraConfig{
+		Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+		Exclude: []config.ExcludeRule{{Name: "all", When: "true"}},
+	})
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	plan, err := p.Plan([]sink.FindingView{
+		finding("acme/app", func(f *sink.FindingView) { f.Upgrade.Available = false }),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Skips) != 1 {
+		t.Fatalf("got %d skips, want 1", len(plan.Skips))
+	}
+	if got := plan.Skips[0].Reason; !strings.Contains(got, "excluded") {
+		t.Errorf("reason %q should report exclusion, not the upgrade state", got)
+	}
+}
+
+// Exclusions evaluate the same variables as policy rules, so an expression a
+// user already knows works here too.
+func TestExclusionSharesThePolicyVocabulary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, expr := range []string{
+		"image.registry == 'xpkg.crossplane.io'",
+		"owner['team'] == 'cpo'",
+		"counts['critical'] > 100",
+		"labels.exists(k, k == 'nope')",
+		"vulns.exists(v, v.kev)",
+		"risk > 10000.0",
+		"live && reconciled",
+		"upgrade_available",
+	} {
+		p, err := NewPlanner(config.JiraConfig{
+			Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+			Exclude: []config.ExcludeRule{{Name: "r", When: expr}},
+		})
+		if err != nil {
+			t.Errorf("expression %q rejected: %v", expr, err)
+			continue
+		}
+		if _, err := p.Plan([]sink.FindingView{finding("acme/app")}); err != nil {
+			t.Errorf("expression %q failed to evaluate: %v", expr, err)
+		}
+	}
+}
+
+func TestExclusionRejectsBadRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, rule := range map[string]config.ExcludeRule{
+		"no name":     {When: "true"},
+		"no when":     {Name: "r"},
+		"not boolean": {Name: "r", When: "image.registry"},
+		"bad syntax":  {Name: "r", When: "dimensions['ns' =="},
+		"unknown var": {Name: "r", When: "nonesuch == 1"},
+	} {
+		_, err := NewPlanner(config.JiraConfig{
+			Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+			Exclude: []config.ExcludeRule{rule},
+		})
+		if err == nil {
+			t.Errorf("%s: want error, got nil", name)
+		}
+	}
+}

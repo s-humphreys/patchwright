@@ -46,8 +46,9 @@ type Plan struct {
 
 // Planner renders drafts from findings according to the Jira config.
 type Planner struct {
-	cfg  config.JiraConfig
-	tmpl *template.Template
+	cfg      config.JiraConfig
+	tmpl     *template.Template
+	excluded *exclusions
 }
 
 // NewPlanner loads and parses the configured ticket template.
@@ -63,7 +64,11 @@ func NewPlanner(cfg config.JiraConfig) (*Planner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.Template, err)
 	}
-	return &Planner{cfg: cfg, tmpl: tmpl}, nil
+	excluded, err := newExclusions(cfg.Exclude)
+	if err != nil {
+		return nil, err
+	}
+	return &Planner{cfg: cfg, tmpl: tmpl, excluded: excluded}, nil
 }
 
 // Plan decides which findings become tickets, groups them, and renders each.
@@ -77,6 +82,21 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 	var eligible []sink.FindingView
 	for _, f := range findings {
 		if !f.Actionable || f.Suppressed {
+			continue
+		}
+		// Exclusions first: an excluded finding is out of scope here regardless of
+		// whether it has an upgrade, and reporting it as "nothing to upgrade to"
+		// would be the wrong explanation.
+		name, why, excluded, err := p.excluded.match(f)
+		if err != nil {
+			return nil, err
+		}
+		if excluded {
+			reason := fmt.Sprintf("excluded by rule %q", name)
+			if why != "" {
+				reason += ": " + why
+			}
+			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
 			continue
 		}
 		if reason, ok := p.skipReason(f); ok {

@@ -67,6 +67,15 @@ type JiraConfig struct {
 	// Labels are added to every ticket, alongside any image labels.
 	Labels []string `yaml:"labels"`
 
+	// Exclude lists CEL rules for findings that should not be ticketed here.
+	//
+	// Distinct from policy suppression: a suppressed finding is one nobody should
+	// act on and it leaves the assessment entirely, whereas an excluded one is
+	// real work simply tracked elsewhere (a team with its own upgrade cadence, a
+	// component under a different process). It stays in the report and the queue
+	// and is listed as skipped, so excluding something never hides it.
+	Exclude []ExcludeRule `yaml:"exclude"`
+
 	// RequireUpgrade, when unset, defaults to true: no ticket is raised for a
 	// finding with nothing to upgrade to. A ticket saying "upgrade to the latest
 	// version" for an image already on the latest wastes the assignee's time,
@@ -79,7 +88,8 @@ type JiraConfig struct {
 func (j JiraConfig) isSet() bool {
 	return j.Board != 0 || j.Project != "" || j.Template != "" ||
 		j.ImageField != "" || j.ImageLabel || j.Epic != "" || j.IssueType != "" ||
-		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil
+		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil ||
+		len(j.Exclude) > 0
 }
 
 // EffectiveRequireUpgrade reports whether findings with no available upgrade
@@ -119,6 +129,17 @@ func (j JiraConfig) Validate() error {
 		return fmt.Errorf("jira config sets both imageField and imageLabel; pick one so the idempotency key is unambiguous")
 	}
 	return nil
+}
+
+// ExcludeRule keeps matching findings out of ticket creation. When is a CEL
+// boolean over the same variables as policy rules (image, counts, owner,
+// dimensions, labels, vulns, ...), so one expression language covers both.
+// Reason is shown in the skip report, because "why is this not ticketed?" should
+// be answerable from the output rather than by reading config.
+type ExcludeRule struct {
+	Name   string `yaml:"name"`
+	When   string `yaml:"when"`
+	Reason string `yaml:"reason"`
 }
 
 // ScanConfig tunes which images are worth scanning for vulnerabilities.

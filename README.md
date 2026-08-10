@@ -287,6 +287,23 @@ distinct on purpose: "already on the latest version" is a resolved question,
 while "versions could not be resolved" is one to chase. Set
 `requireUpgrade: false` to raise them anyway.
 
+**Exclusions keep work out of ticket creation without hiding it.** `exclude` is a
+list of CEL rules over the *same* variables as the policy rules above, so there
+is one expression language to learn rather than a second matching syntax:
+
+```yaml
+jira:
+  exclude:
+    - name: crossplane
+      when: "dimensions['namespace'].exists(n, n == 'crossplane-system')"
+      reason: upgraded together on their own cadence
+```
+
+This is deliberately not `suppress`. A suppressed finding is one nobody should
+act on and it leaves the assessment entirely; an excluded one is real work simply
+tracked elsewhere, so it stays in the report and the queue and is listed as
+skipped with the rule name and reason. Excluding something never makes it quiet.
+
 **Duplicates are prevented by asking Jira, not by local state.** Before creating,
 it searches for open tickets carrying the image in `imageField` (or the label),
 and skips when one exists. A state file would drift the moment someone closed a
