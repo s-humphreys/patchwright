@@ -136,7 +136,7 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 		"project":     map[string]string{"key": j.cfg.Project},
 		"summary":     d.Summary,
 		"issuetype":   map[string]string{"name": j.cfg.EffectiveIssueType()},
-		"description": adfParagraphs(d.Description),
+		"description": ADFDocument(d.Description),
 	}
 	if j.cfg.Epic != "" {
 		fields["parent"] = map[string]string{"key": j.cfg.Epic}
@@ -164,27 +164,6 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 		return "", fmt.Errorf("create ticket %q: %w", d.Summary, err)
 	}
 	return resp.Key, nil
-}
-
-// adfParagraphs wraps plain text as an Atlassian Document Format document.
-// Blank-line-separated blocks become paragraphs, which is enough fidelity for a
-// templated ticket body without pulling in a Markdown-to-ADF converter.
-func adfParagraphs(text string) map[string]any {
-	var content []any
-	for _, block := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n\n") {
-		block = strings.TrimSpace(block)
-		if block == "" {
-			continue
-		}
-		content = append(content, map[string]any{
-			"type":    "paragraph",
-			"content": []any{map[string]any{"type": "text", "text": block}},
-		})
-	}
-	if len(content) == 0 {
-		content = []any{map[string]any{"type": "paragraph"}}
-	}
-	return map[string]any{"type": "doc", "version": 1, "content": content}
 }
 
 func (j *Jira) do(ctx context.Context, method, path string, body, out any) error {
