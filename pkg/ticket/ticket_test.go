@@ -244,7 +244,7 @@ func TestTemplateDataDeduplicatesCVEsAndOrdersByEPSS(t *testing.T) {
 			f.Vulns = vulns
 		})
 	}
-	d := newTemplateData([]sink.FindingView{mk("a/one"), mk("b/two")})
+	d := newTemplateData(ticketGroup{primary: []sink.FindingView{mk("a/one"), mk("b/two")}})
 
 	if len(d.FixableCriticals) != 2 {
 		t.Fatalf("got %d fixable criticals, want 2 (deduped, fix-available criticals only): %+v", len(d.FixableCriticals), d.FixableCriticals)
@@ -260,13 +260,13 @@ func TestTemplateDataDeduplicatesCVEsAndOrdersByEPSS(t *testing.T) {
 // A template must not present zero counts as evidence when the provider never
 // assessed the images, so the flag has to reach the template data.
 func TestTemplateDataCarriesProviderAssessed(t *testing.T) {
-	unassessed := newTemplateData([]sink.FindingView{finding("a/one")})
+	unassessed := newTemplateData(ticketGroup{primary: []sink.FindingView{finding("a/one")}})
 	if unassessed.ProviderAssessed {
 		t.Error("provider_assessed false in findings should stay false")
 	}
-	assessed := newTemplateData([]sink.FindingView{
+	assessed := newTemplateData(ticketGroup{primary: []sink.FindingView{
 		finding("a/one", func(f *sink.FindingView) { f.ProviderAssessed = true; f.Counts["critical"] = 3 }),
-	})
+	}})
 	if !assessed.ProviderAssessed || assessed.CriticalCount != 3 {
 		t.Errorf("assessed=%v criticals=%d, want true/3", assessed.ProviderAssessed, assessed.CriticalCount)
 	}
@@ -405,10 +405,10 @@ func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
 			f.Upgrade.Source = "ProviderRevision/crossplane-system/" + obj
 		})
 	}
-	collapsed := newTemplateData([]sink.FindingView{
+	collapsed := newTemplateData(ticketGroup{primary: []sink.FindingView{
 		mkObj("contrib/provider-a", "provider-a-aaa"),
 		mkObj("contrib/provider-b", "provider-b-bbb"),
-	})
+	}})
 	if collapsed.Source != "" {
 		t.Errorf("Source = %q, want empty: the group's members have different targets", collapsed.Source)
 	}
@@ -426,7 +426,7 @@ func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
 			f.Upgrade.SourcePath = "bases/argo-events/event-bus"
 		})
 	}
-	shared := newTemplateData([]sink.FindingView{mkShared("natsio/a"), mkShared("natsio/b")})
+	shared := newTemplateData(ticketGroup{primary: []sink.FindingView{mkShared("natsio/a"), mkShared("natsio/b")}})
 	if shared.Source != "https://dev.example.com/_git/infra" || shared.SourcePath != "bases/argo-events/event-bus" {
 		t.Errorf("shared target not surfaced: source=%q path=%q", shared.Source, shared.SourcePath)
 	}
@@ -435,12 +435,12 @@ func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
 // The repository URL and the path must stay separate all the way to the template:
 // joined with kustomize's "//" the result looks like a link and is not one.
 func TestSourcePathStaysSeparateFromURL(t *testing.T) {
-	d := newTemplateData([]sink.FindingView{
+	d := newTemplateData(ticketGroup{primary: []sink.FindingView{
 		finding("acme/app", func(f *sink.FindingView) {
 			f.Upgrade.Source = "https://dev.example.com/_git/infra"
 			f.Upgrade.SourcePath = "bases/app"
 		}),
-	})
+	}})
 	if strings.Contains(d.Source, "//bases") {
 		t.Errorf("Source %q has the path joined into it", d.Source)
 	}
