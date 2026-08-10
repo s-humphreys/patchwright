@@ -208,3 +208,46 @@ func configForBundledTemplate() config.JiraConfig {
 		Template: filepath.Join("..", "..", "config", "templates", "container-vuln.md.tmpl"),
 	}
 }
+
+// A duplicate check that silently matches nothing is worse than none: it reports
+// "would create" for tickets that exist, and a batch run then raises the lot
+// again. The "~" operator does exactly that against a multi-value field, so the
+// clause must use exact equality.
+func TestImageClauseUsesEqualityNotContains(t *testing.T) {
+	j := &Jira{cfg: config.JiraConfig{Project: "PROJ", ImageField: "customfield_20983"}}
+	got := j.imageClause([]string{"natsio/prometheus-nats-exporter", "nats"})
+
+	if strings.Contains(got, "~") {
+		t.Errorf("clause uses the contains operator, which matches nothing on a multi-value field: %s", got)
+	}
+	if !strings.Contains(got, "cf[20983] IN (") {
+		t.Errorf("clause should query the custom field by id with IN: %s", got)
+	}
+	// Every image in one query: an open ticket on any of them suppresses the group.
+	for _, img := range []string{"natsio/prometheus-nats-exporter", "nats"} {
+		if !strings.Contains(got, `"`+img+`"`) {
+			t.Errorf("clause is missing %q: %s", img, got)
+		}
+	}
+}
+
+func TestImageClauseLabelFallback(t *testing.T) {
+	j := &Jira{cfg: config.JiraConfig{Project: "PROJ", ImageLabel: true}}
+	got := j.imageClause([]string{"fluxcd/source-controller"})
+	if !strings.Contains(got, "labels IN (") {
+		t.Errorf("label mode should query labels: %s", got)
+	}
+	if !strings.Contains(got, ImageLabel("fluxcd/source-controller")) {
+		t.Errorf("label value not sanitised into the clause: %s", got)
+	}
+}
+
+// An odd image name must not be able to break the query or change its meaning.
+func TestQuoteJQLEscapes(t *testing.T) {
+	if got := quoteJQL(`we"ird`); !strings.Contains(got, `\"`) {
+		t.Errorf("quote not escaped: %s", got)
+	}
+	if got := quoteJQL(`back\slash`); !strings.Contains(got, `\\`) {
+		t.Errorf("backslash not escaped: %s", got)
+	}
+}

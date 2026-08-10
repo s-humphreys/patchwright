@@ -71,12 +71,19 @@ type Existing struct {
 	Done bool
 }
 
-// FindOpen returns open (not Done) tickets already covering the image. This is
-// the idempotency check, and it queries Jira rather than any local state:
+// FindOpen returns open (not Done) tickets already covering any of the images.
+// This is the idempotency check, and it queries Jira rather than any local state:
 // a state file would drift the moment someone closed a ticket by hand.
-func (j *Jira) FindOpen(ctx context.Context, image string) ([]Existing, error) {
+//
+// All of a ticket's images go in one query. An open ticket on any single image
+// suppresses the whole group, so asking per image would be extra round trips for
+// the same answer.
+func (j *Jira) FindOpen(ctx context.Context, images []string) ([]Existing, error) {
+	if len(images) == 0 {
+		return nil, nil
+	}
 	jql := fmt.Sprintf(`project = %q AND issuetype = %q AND %s AND statusCategory != Done`,
-		j.cfg.Project, j.cfg.EffectiveIssueType(), j.imageClause(image))
+		j.cfg.Project, j.cfg.EffectiveIssueType(), j.imageClause(images))
 
 	var resp struct {
 		Issues []struct {
@@ -110,16 +117,35 @@ func (j *Jira) FindOpen(ctx context.Context, image string) ([]Existing, error) {
 	return out, nil
 }
 
-// imageClause builds the JQL predicate matching a ticket to an image, from
-// whichever mechanism is configured. Custom-field JQL (cf[NNNNN]) is not
-// supported uniformly on team-managed projects, which is why the label form
-// exists as a fallback.
-func (j *Jira) imageClause(image string) string {
+// imageClause builds the JQL predicate matching a ticket to any of its images.
+//
+// Uses IN, i.e. exact equality, NOT the "~" contains operator: a multi-value
+// custom field (and a label) is matched by equality, and "~" silently returns
+// nothing against one. Silently, which is the dangerous part — a duplicate check
+// that always finds nothing reports "would create" for a ticket that already
+// exists, and a batch run then raises the lot again.
+func (j *Jira) imageClause(images []string) string {
+	values := make([]string, 0, len(images))
+	for _, img := range images {
+		v := img
+		if j.cfg.ImageLabel {
+			v = ImageLabel(v)
+		}
+		values = append(values, quoteJQL(v))
+	}
+	list := strings.Join(values, ", ")
 	if j.cfg.ImageLabel {
-		return fmt.Sprintf("labels = %q", ImageLabel(image))
+		return "labels IN (" + list + ")"
 	}
 	id := strings.TrimPrefix(j.cfg.ImageField, "customfield_")
-	return fmt.Sprintf("cf[%s] ~ %q", id, image)
+	return "cf[" + id + "] IN (" + list + ")"
+}
+
+// quoteJQL renders a JQL string literal, escaping backslashes and quotes so an
+// unusual image name cannot break the query or alter its meaning.
+func quoteJQL(s string) string {
+	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
+	return `"` + esc + `"`
 }
 
 // ImageLabel converts an image repository into a Jira-safe label. Jira labels

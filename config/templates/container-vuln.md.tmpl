@@ -14,7 +14,9 @@
     .Upgrade  - the single version move, or NIL when the grouped images do not
                 share one target version (.Kind .Name .Current .Latest .Managed
                 .Source .SourcePath .Direct)
-    .Upgrades - always populated, one entry per image
+    .Fixes    - images updated as a CONSEQUENCE of .Upgrades, not work in
+                themselves (chain-merged tickets only)
+    .Upgrades - the version move(s) to apply, one entry per image
                 (.Ref .Repo .Current .Latest .Source .SourcePath .Managed .Direct)
 
   This is an EXAMPLE. Edit it to match how your teams actually work.
@@ -35,8 +37,14 @@ Upgrade the {{ .ImageCount }} images below to clear known container vulnerabilit
 
 **Technical Requirements & Actions**
 
-{{ range .Upgrades }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}{{ if not .Direct }} (version owned by the {{ .Managed }}){{ end }}{{ if and (not $.Source) .Source }}, change in {{ .Source }}{{ if .SourcePath }} path {{ .SourcePath }}{{ end }}{{ end }}
+{{ range .Upgrades }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}{{ if not .Direct }} ({{ if eq .Managed "helm" }}version owned by its Helm chart, so bump it there{{ else }}version owned by the {{ .Managed }}, so bump it there{{ end }}){{ end }}{{ if and (not $.Source) .Source }}, change in {{ .Source }}{{ if .SourcePath }} path {{ .SourcePath }}{{ end }}{{ end }}
 {{ end -}}
+{{- with .Fixes }}
+This also updates the following, which are not bumped directly:
+
+{{ range . }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}
+{{ end -}}
+{{- end }}
 {{- if .Source }}* Change target: {{ .Source }}{{ if .SourcePath }} (path: {{ .SourcePath }}){{ end }}
 {{ end -}}
 * Workloads affected: {{ .WorkloadCount }}{{ if .Namespaces }} in namespace(s) {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }}{{ end }}

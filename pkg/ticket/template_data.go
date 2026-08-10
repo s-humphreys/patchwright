@@ -31,9 +31,14 @@ type TemplateData struct {
 	// controllers cannot honestly say "upgrade to 1.6.3" when that is one
 	// controller's version. Use Upgrades in that case.
 	Upgrade *UpgradeData
-	// Upgrades is the per-image version move, always populated. For a
-	// single-image ticket it has one entry matching Upgrade.
+	// Upgrades is the version move(s) to APPLY. For a chain-merged ticket this is
+	// the managing component only, since bumping it is the whole action.
 	Upgrades []ImageUpgrade
+	// Fixes are images updated as a consequence of Upgrades, listed for context
+	// rather than as work. Empty on an ordinary ticket. A template should not
+	// present these as things to bump: nobody can, which is why they were merged
+	// into this ticket in the first place.
+	Fixes []ImageUpgrade
 
 	// Source and SourcePath are the change target shared by everything on this
 	// ticket: the repository (or owning custom resource) and the directory within
@@ -122,7 +127,8 @@ type UpgradeData struct {
 	Direct bool
 }
 
-func newTemplateData(group []sink.FindingView) TemplateData {
+func newTemplateData(tg ticketGroup) TemplateData {
+	group := tg.all()
 	d := TemplateData{}
 
 	accounts, namespaces, teams := &set{}, &set{}, &set{}
@@ -182,16 +188,8 @@ func newTemplateData(group []sink.FindingView) TemplateData {
 		return d.FixableCriticals[i].ID < d.FixableCriticals[j].ID
 	})
 
-	for _, f := range group {
-		if u := f.Upgrade; u != nil {
-			d.Upgrades = append(d.Upgrades, ImageUpgrade{
-				Ref: f.Image, Repo: f.Repository, Current: u.Current, Latest: u.Latest,
-				Source: u.Source, SourcePath: u.SourcePath,
-				Managed: u.Managed, Direct: u.Actionable,
-			})
-		}
-	}
-	sort.Slice(d.Upgrades, func(i, j int) bool { return d.Upgrades[i].Ref < d.Upgrades[j].Ref })
+	d.Upgrades = imageUpgrades(tg.primary)
+	d.Fixes = imageUpgrades(tg.dependents)
 
 	// Only claim a single target version when every image in the group actually
 	// shares it. Otherwise leave Upgrade nil so a template cannot state one
@@ -242,6 +240,22 @@ func serviceName(f sink.FindingView, u *UpgradeData, imageCount int) string {
 		return repo
 	}
 	return f.Image
+}
+
+// imageUpgrades converts findings to their version moves, in a stable order.
+func imageUpgrades(findings []sink.FindingView) []ImageUpgrade {
+	out := make([]ImageUpgrade, 0, len(findings))
+	for _, f := range findings {
+		if u := f.Upgrade; u != nil {
+			out = append(out, ImageUpgrade{
+				Ref: f.Image, Repo: f.Repository, Current: u.Current, Latest: u.Latest,
+				Source: u.Source, SourcePath: u.SourcePath,
+				Managed: u.Managed, Direct: u.Actionable,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
+	return out
 }
 
 // sharesOneTarget reports whether every image moves to the same version, which

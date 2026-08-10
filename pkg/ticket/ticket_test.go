@@ -571,3 +571,107 @@ func TestExclusionRejectsBadRules(t *testing.T) {
 		}
 	}
 }
+
+// Six Flux controllers are owned by flux-operator, whose own tag is owned by its
+// chart. Left alone that is two tickets, neither actionable. The ticket must ask
+// for the one change a human can make, and list the rest as consequences.
+func TestMergeChainsFoldsManagedImagesIntoTheirManager(t *testing.T) {
+	p := newTestPlanner(t, "Summary: Upgrade {{ .ServiceName }} to {{ if .Upgrade }}{{ .Upgrade.Latest }}{{ else }}latest{{ end }}\n\napply={{ len .Upgrades }} fixes={{ len .Fixes }}\n")
+
+	controller := func(repo, latest string) sink.FindingView {
+		return finding(repo, func(f *sink.FindingView) {
+			f.Upgrade.Source = "flux-operator" // bare component name
+			f.Upgrade.Managed = "operator"
+			f.Upgrade.Actionable = false
+			f.Upgrade.Latest = latest
+		})
+	}
+	operator := finding("controlplaneio-fluxcd/flux-operator", func(f *sink.FindingView) {
+		f.Upgrade.Source = "ghcr.io/controlplaneio-fluxcd/flux-operator"
+		f.Upgrade.Managed = "helm"
+		f.Upgrade.Actionable = false
+		f.Upgrade.Current = "v0.33.0"
+		f.Upgrade.Latest = "0.58.0"
+	})
+
+	plan, err := p.Plan([]sink.FindingView{
+		controller("fluxcd/helm-controller", "1.6.3"),
+		controller("fluxcd/source-controller", "1.9.4"),
+		operator,
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1 merged ticket: %v", len(plan.Drafts), summaries(plan.Drafts))
+	}
+	d := plan.Drafts[0]
+
+	// The ticket asks for the operator bump, not the controllers'.
+	if want := "Upgrade flux-operator to 0.58.0"; d.Summary != want {
+		t.Errorf("summary = %q, want %q", d.Summary, want)
+	}
+	if !strings.Contains(d.Description, "apply=1") {
+		t.Errorf("should apply exactly one upgrade (the manager): %s", d.Description)
+	}
+	if !strings.Contains(d.Description, "fixes=2") {
+		t.Errorf("should list both controllers as consequences: %s", d.Description)
+	}
+	// Idempotency must still cover every image the ticket accounts for.
+	if len(d.Images) != 3 {
+		t.Errorf("got %d images, want 3 so the duplicate check covers them all: %v", len(d.Images), d.Images)
+	}
+}
+
+// Inferring a manager from an object reference or a URL would be guessing: a
+// "Kiali" custom resource does not tell us its operator is called kiali-operator.
+// A wrong merge writes a ticket asking for the wrong change, so decline instead.
+func TestMergeChainsDeclinesWhenTheManagerIsNotNamed(t *testing.T) {
+	p := newTestPlanner(t, "")
+	for name, source := range map[string]string{
+		"object reference": "Kiali/istio-monitoring/kiali",
+		"repository URL":   "https://kiali.org/helm-charts",
+		"registry path":    "ghcr.io/org/thing",
+	} {
+		managed := finding("kiali/kiali", func(f *sink.FindingView) {
+			f.Upgrade.Source = source
+			f.Upgrade.Managed = "operator"
+			f.Upgrade.Actionable = false
+		})
+		candidate := finding("kiali/kiali-operator")
+		plan, err := p.Plan([]sink.FindingView{managed, candidate})
+		if err != nil {
+			t.Fatalf("%s: Plan: %v", name, err)
+		}
+		if len(plan.Drafts) != 2 {
+			t.Errorf("%s: got %d drafts, want 2 (no merge from an unnamed manager)", name, len(plan.Drafts))
+		}
+	}
+}
+
+// With the manager absent from the finding set there is nothing to merge into,
+// and the managed group must still produce its own ticket rather than vanishing.
+func TestMergeChainsKeepsGroupWhenManagerIsAbsent(t *testing.T) {
+	p := newTestPlanner(t, "")
+	plan, err := p.Plan([]sink.FindingView{
+		finding("fluxcd/source-controller", func(f *sink.FindingView) {
+			f.Upgrade.Source = "flux-operator"
+			f.Upgrade.Managed = "operator"
+			f.Upgrade.Actionable = false
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1", len(plan.Drafts))
+	}
+}
+
+func summaries(ds []Draft) []string {
+	out := make([]string, len(ds))
+	for i, d := range ds {
+		out[i] = d.Summary
+	}
+	return out
+}
