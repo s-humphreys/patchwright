@@ -173,6 +173,32 @@ The `UPGRADE` column reads:
 Git/OCI source revisions are the next remediation kind — see
 [docs/design/remediation-availability.md](docs/design/remediation-availability.md).
 
+### Serve — the assessment as an API
+
+A CronJob that logs findings is write-only. `patchwright serve` runs the same
+assessment on a schedule, caches the latest result, and exposes it over a
+read-only HTTP/JSON API so people and tools can *query* current findings — the
+foundation for a UI, a Backstage plugin, and (next) Jira actioning.
+
+```sh
+patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
+  --live-source kube --live-option contexts=aks-prod --remediation
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`. |
+| `GET /api/v1/finding?image=<ref>` | A single image's finding. |
+| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable. |
+| `GET /api/v1/summary` | Fleet-wide headline. |
+| `POST /api/v1/assessments` | Trigger a refresh (async). |
+| `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
+
+Every response carries an `assessment` block (`generated_at`, `running`) so
+clients know how fresh the data is. This is how patchwright is deployed — the
+Helm chart runs it as a Deployment + Service. See
+[docs/design/api-server.md](docs/design/api-server.md).
+
 ## Writing rules
 
 Rules are YAML with [CEL](https://github.com/google/cel-go) expressions.
@@ -245,7 +271,8 @@ per-CVE detail).
 ## Deploying
 
 patchwright ships as a container ([`Dockerfile`](Dockerfile)) and a Helm chart
-([`deploy/helm/patchwright`](deploy/helm/patchwright)) that runs it as a CronJob.
+([`deploy/helm/patchwright`](deploy/helm/patchwright)) that runs it as a
+Deployment serving the [assessment API](#serve--the-assessment-as-an-api).
 
 **Auth is just RBAC.** For the cluster patchwright runs in, the chart creates a
 ServiceAccount and a minimal read-only ClusterRole — `get`/`list` on `pods` and
@@ -260,8 +287,9 @@ kubectl create secret generic patchwright-export --from-file=export.csv=./export
 helm install pw deploy/helm/patchwright \
   --set provider.input.secretName=patchwright-export
 
-# 3. run it now instead of waiting for the schedule
-kubectl create job --from=cronjob/pw-patchwright pw-manual && kubectl logs -f job/pw-manual
+# 3. query the API
+kubectl port-forward svc/pw-patchwright 8080:8080 &
+curl localhost:8080/api/v1/summary
 ```
 
 **Multi-cluster.** patchwright deploys to one cluster but reconciles many. Read

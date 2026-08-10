@@ -3,16 +3,18 @@ image:
   tag: ""            # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 
-# How often the assessment runs.
-schedule: "0 6 * * *"
-# Output format for the report (written to stdout): table, json (pretty), or
-# ndjson. ndjson (one finding per line) is recommended in-cluster so log/
-# monitoring pipelines parse each finding as a single record.
-format: ndjson
-# Structured logs (written to stderr / pod logs, separate from the report).
+# patchwright runs as a long-lived Deployment (`serve`) exposing the read-only
+# assessment API (findings/owners/summary), refreshed on an interval.
+server:
+  # How often the server re-runs the assessment.
+  interval: 1h
+  port: 8080
+  service:
+    type: ClusterIP
+# Structured logs (written to stderr / pod logs).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)
-# Extra args appended to `patchwright assess`.
+# Extra args appended to `patchwright serve`.
 extraArgs: []
 
 serviceAccount:

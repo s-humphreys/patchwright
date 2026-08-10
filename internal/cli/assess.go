@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,11 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/enrich"
-	"github.com/s-humphreys/patchwright/pkg/enrich/registry"
 	"github.com/s-humphreys/patchwright/pkg/model"
-	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 
 	// Register the built-in live, vuln, and exploit sources.
@@ -49,101 +45,23 @@ func newAssessCmd() *cobra.Command {
 			"workload to an owner, and applies policy rules to decide what is actionable. By default\n" +
 			"it prints only actionable findings; use --all to see everything.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			paths, err := expandConfigPaths(configPaths)
-			if err != nil {
-				return err
-			}
-			if len(paths) == 0 {
-				return fmt.Errorf("no config provided: pass --config with one or more YAML files or directories")
-			}
-			cfg, err := config.Load(paths...)
-			if err != nil {
-				return err
-			}
-
-			var popts []pipeline.Option
-
-			// Live source: drives reconciliation (pre-dedupe) and, with
-			// --remediation, contributes a deployment-aware upgrade source.
-			var liveEnrichers []enrich.Enricher
-			var upgradeSources []enrich.UpgradeSource
-			var deployContexts func(context.Context) (map[string]enrich.DeployContext, error)
-			if liveSource != "" {
-				src, err := newLiveSource(liveSource, liveOptions)
-				if err != nil {
-					return err
-				}
-				liveEnrichers = append(liveEnrichers, enrich.NewLiveness(src))
-				if ls, ok := src.(enrich.LabelSource); ok {
-					liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
-				}
-				if remediation {
-					// A deployment-aware source (e.g. kube: Flux HelmReleases)
-					// takes precedence over the registry image-tag fallback.
-					if us, ok := src.(enrich.UpgradeSource); ok {
-						upgradeSources = append(upgradeSources, us)
-					}
-					// Deployment context makes the registry fallback judge
-					// actionability and the change target per image.
-					if dc, ok := src.(enrich.DeploymentContextSource); ok {
-						deployContexts = dc.ImageDeployments
-					}
-				}
-			}
-			if remediation {
-				reg := registry.New()
-				reg.Contexts = deployContexts
-				upgradeSources = append(upgradeSources, reg)
-				r := enrich.NewRemediationEnricher(upgradeSources...)
-				popts = append(popts, pipeline.WithRemediationEnricher(&r))
-			}
-
-			if vulnSource != "" {
-				scanner, err := buildScanner(vulnSource, vulnOptions, cfg.Scan.EffectiveSkipOwnerClasses())
-				if err != nil {
-					return err
-				}
-				popts = append(popts, pipeline.WithImageScanner(scanner))
-			}
-			if exploitSource != "" {
-				if vulnSource == "" {
-					return fmt.Errorf("--exploit-source requires --vuln-source: there are no vulnerabilities to annotate with EPSS/KEV otherwise")
-				}
-				enricher, err := buildExploitEnricher(exploitSource, exploitOptions)
-				if err != nil {
-					return err
-				}
-				popts = append(popts, pipeline.WithExploitEnricher(enricher))
-			}
-			pl, err := pipeline.New(cfg, popts...)
+			a, err := newAssessor(assessInputs{
+				provider:       pf,
+				configPaths:    configPaths,
+				liveSource:     liveSource,
+				liveOptions:    liveOptions,
+				vulnSource:     vulnSource,
+				vulnOptions:    vulnOptions,
+				exploitSource:  exploitSource,
+				exploitOptions: exploitOptions,
+				remediation:    remediation,
+			})
 			if err != nil {
 				return err
 			}
 
-			p, err := pf.build()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			slog.InfoContext(ctx, "starting assessment",
-				"provider", pf.name, "vuln_source", vulnSource, "exploit_source", exploitSource, "live_source", liveSource)
-
-			occ, err := p.Fetch(ctx)
-			if err != nil {
-				return err
-			}
-			slog.InfoContext(ctx, "fetched scan data", "provider", pf.name, "occurrences", len(occ))
-
-			if len(liveEnrichers) > 0 {
-				slog.InfoContext(ctx, "reconciling against live clusters", "source", liveSource, "enrichers", len(liveEnrichers))
-				for _, e := range liveEnrichers {
-					if err := e.Enrich(ctx, occ); err != nil {
-						return err
-					}
-				}
-			}
-
-			findings, err := pl.Run(ctx, occ)
+			findings, err := a.Run(ctx)
 			if err != nil {
 				return err
 			}

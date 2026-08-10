@@ -143,7 +143,11 @@ model {
         description 'Orchestrates the stages and assembles per-(image, owner) findings.'
       }
       sink = component 'Sink' {
-        description 'Renders findings. table + JSON today; Jira + GitOps PR later.'
+        description 'Renders findings. table / JSON / NDJSON; Jira next.'
+      }
+      api = component 'API Server (serve)' {
+        description 'Runs the pipeline on a schedule, caches the latest result, and serves it over a read-only HTTP/JSON API (findings/owners/summary). The deployment mode; foundation for UI, Backstage, Jira, MCP.'
+        technology 'Go net/http'
       }
     }
   }
@@ -179,6 +183,11 @@ model {
     #cel
   }
 
+  pipeline -> api 'findings (cached)'
+  api -> secEng 'query findings / owners / summary (HTTP)'
+  api -> engTeam 'per-team view' {
+    #future
+  }
   sink -> secEng 'owner-split report (table / JSON)'
   sink -> jira 'create tickets' {
     #future
