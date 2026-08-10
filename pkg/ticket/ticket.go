@@ -1,0 +1,216 @@
+// Package ticket turns assessed findings into ticket drafts. It is deliberately
+// free of any Jira client: planning what to raise is pure, deterministic, and
+// testable, and only the separate transport applies it. That split is what makes
+// a trustworthy dry run possible.
+package ticket
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"text/template"
+
+	"github.com/s-humphreys/patchwright/pkg/config"
+	"github.com/s-humphreys/patchwright/pkg/sink"
+)
+
+// Draft is one ticket to raise: what it says, and which images it covers.
+type Draft struct {
+	Summary     string
+	Description string
+	// Images are bare repositories (no registry, no tag), the form the image
+	// field/label carries and the key an existing ticket is found by.
+	Images []string
+	// Findings are the assessed findings this draft covers, for reporting.
+	Findings []sink.FindingView
+	// Key is the grouping key that produced this draft (a deployment source
+	// where known, else the repository), surfaced for explainability.
+	Key string
+}
+
+// Skip records a finding that will not be ticketed, and why. Skips are reported
+// rather than silently dropped: "criticals with nowhere to go" is exactly what
+// someone should look at by hand.
+type Skip struct {
+	Image  string
+	Reason string
+}
+
+// Plan is the outcome of planning: what to raise, and what was left out.
+type Plan struct {
+	Drafts []Draft
+	Skips  []Skip
+}
+
+// Planner renders drafts from findings according to the Jira config.
+type Planner struct {
+	cfg  config.JiraConfig
+	tmpl *template.Template
+}
+
+// NewPlanner loads and parses the configured ticket template.
+func NewPlanner(cfg config.JiraConfig) (*Planner, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(cfg.Template)
+	if err != nil {
+		return nil, fmt.Errorf("read ticket template %s: %w", cfg.Template, err)
+	}
+	tmpl, err := template.New("ticket").Parse(string(raw))
+	if err != nil {
+		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.Template, err)
+	}
+	return &Planner{cfg: cfg, tmpl: tmpl}, nil
+}
+
+// Plan decides which findings become tickets, groups them, and renders each.
+//
+// Only actionable, unsuppressed findings are considered: a suppressed finding is
+// one policy has already decided not to act on, and ticketing it would undo that
+// decision.
+func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
+	out := &Plan{}
+
+	var eligible []sink.FindingView
+	for _, f := range findings {
+		if !f.Actionable || f.Suppressed {
+			continue
+		}
+		if reason, ok := p.skipReason(f); ok {
+			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
+			continue
+		}
+		eligible = append(eligible, f)
+	}
+
+	for _, g := range group(eligible) {
+		d, err := p.render(g)
+		if err != nil {
+			return nil, err
+		}
+		out.Drafts = append(out.Drafts, d)
+	}
+	return out, nil
+}
+
+// skipReason reports why a finding should not be ticketed, if it should not.
+//
+// The distinction between "on the latest version" and "we could not resolve the
+// versions" matters here more than anywhere else: skipping the first is correct,
+// while silently skipping the second would mean never raising a ticket for an
+// image whose registry we simply cannot read, and never learning that.
+func (p *Planner) skipReason(f sink.FindingView) (string, bool) {
+	if !p.cfg.EffectiveRequireUpgrade() {
+		return "", false
+	}
+	switch {
+	case f.Upgrade == nil && !f.RemediationChecked:
+		return "upgrade detection did not run (no --remediation), so it is unknown whether a fix exists", true
+	case f.Upgrade == nil:
+		return "upgrade detection ran but could not resolve any version for this image (needs investigation, not a ticket)", true
+	case !f.Upgrade.Resolved:
+		return "available versions could not be resolved (e.g. private registry tags unreadable), so 'no upgrade' is unproven", true
+	case !f.Upgrade.Available:
+		return "already on the latest available version; nothing to upgrade to", true
+	}
+	return "", false
+}
+
+// group collects findings that a single change would fix. Findings sharing a
+// deployment source (a chart, a GitOps path) are fixed by one edit, so they
+// belong on one ticket; anything else stands alone. Keys are sorted so output is
+// stable across runs.
+func group(findings []sink.FindingView) [][]sink.FindingView {
+	byKey := map[string][]sink.FindingView{}
+	for _, f := range findings {
+		byKey[groupKey(f)] = append(byKey[groupKey(f)], f)
+	}
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([][]sink.FindingView, 0, len(keys))
+	for _, k := range keys {
+		g := byKey[k]
+		sort.Slice(g, func(i, j int) bool { return g[i].Image < g[j].Image })
+		out = append(out, g)
+	}
+	return out
+}
+
+func groupKey(f sink.FindingView) string {
+	if f.Upgrade != nil && f.Upgrade.Source != "" {
+		return collapseObjectRef(f.Upgrade.Source)
+	}
+	return f.Repository
+}
+
+// collapseObjectRef reduces a Kubernetes object reference ("Kind/namespace/name")
+// to "Kind/namespace".
+//
+// Some controllers give each managed package its own object, so the source is
+// unique per package: every Crossplane provider has its own ProviderRevision.
+// Grouping on the raw source would then produce one ticket per package, which is
+// literally correct and practically useless, since they live in one place and get
+// bumped in one sitting. Anything that is not an object reference (a chart repo
+// URL, a GitOps path, a bare name) is returned unchanged.
+func collapseObjectRef(source string) string {
+	if strings.Contains(source, "://") {
+		return source
+	}
+	parts := strings.Split(source, "/")
+	if len(parts) != 3 {
+		return source
+	}
+	// A Kubernetes Kind is UpperCamelCase, which is what separates
+	// "ProviderRevision/ns/name" from a registry path like "ghcr.io/org/image".
+	if kind := parts[0]; kind == "" || kind[0] < 'A' || kind[0] > 'Z' {
+		return source
+	}
+	return parts[0] + "/" + parts[1]
+}
+
+// render executes the template for one group of findings.
+func (p *Planner) render(group []sink.FindingView) (Draft, error) {
+	data := newTemplateData(group)
+	var buf bytes.Buffer
+	if err := p.tmpl.Execute(&buf, data); err != nil {
+		return Draft{}, fmt.Errorf("render ticket template for %s: %w", data.ServiceName, err)
+	}
+	summary, description, err := splitSummary(buf.String())
+	if err != nil {
+		return Draft{}, fmt.Errorf("ticket template for %s: %w", data.ServiceName, err)
+	}
+	return Draft{
+		Summary:     summary,
+		Description: description,
+		Images:      data.Images,
+		Findings:    group,
+		Key:         groupKey(group[0]),
+	}, nil
+}
+
+// splitSummary separates the rendered "Summary: ..." first line from the
+// description body. Keeping both in one file means the wording of a ticket lives
+// in one place rather than split across a template and a config string.
+func splitSummary(rendered string) (summary, description string, err error) {
+	trimmed := strings.TrimLeft(rendered, "\r\n \t")
+	line, rest, found := strings.Cut(trimmed, "\n")
+	if !found {
+		return "", "", fmt.Errorf("template produced no description: expected %q on the first line, then a blank line, then the body", "Summary: ...")
+	}
+	const prefix = "Summary:"
+	if !strings.HasPrefix(line, prefix) {
+		return "", "", fmt.Errorf("template must start with %q, got %q", prefix+" ...", strings.TrimSpace(line))
+	}
+	summary = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if summary == "" {
+		return "", "", fmt.Errorf("template produced an empty summary")
+	}
+	return summary, strings.TrimSpace(rest), nil
+}

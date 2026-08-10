@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,6 +29,96 @@ type Config struct {
 	Suppress []PolicyRule `yaml:"suppress"`
 	// Scan tunes image vulnerability scanning.
 	Scan ScanConfig `yaml:"scan"`
+	// Jira configures ticket creation (the `ticket` command). Optional; only
+	// validated when that command runs.
+	Jira JiraConfig `yaml:"jira"`
+}
+
+// JiraConfig describes where tickets go and what they look like. Everything
+// organization-specific (project, issue type, the custom field holding the
+// image) is configuration, so no Jira schema is baked into the tool.
+type JiraConfig struct {
+	// Board is the board id tickets are raised against. Required.
+	Board int `yaml:"board"`
+	// Project key, e.g. "PROJ". Required.
+	Project string `yaml:"project"`
+	// Template is a path to the ticket template (Go text/template). Its first
+	// line must be "Summary: ...", then a blank line, then the description.
+	// Required.
+	Template string `yaml:"template"`
+
+	// ImageField is a custom field id (e.g. "customfield_12345") holding the
+	// image repositories a ticket covers. It doubles as the idempotency key: it
+	// is how an existing ticket for an image is found without local state.
+	// Exactly one of ImageField or ImageLabel is required.
+	ImageField string `yaml:"imageField"`
+	// ImageLabel puts the images in labels instead, for projects with no such
+	// custom field. Labels are always JQL-queryable, so this is the fallback
+	// when a team-managed project will not filter on cf[NNNNN].
+	ImageLabel bool `yaml:"imageLabel"`
+
+	// Epic, when set, becomes each ticket's parent.
+	Epic string `yaml:"epic"`
+	// IssueType defaults to "Task".
+	IssueType string `yaml:"issueType"`
+	// Priority is the Jira priority name, e.g. "Highest". Left to Jira's default
+	// when empty.
+	Priority string `yaml:"priority"`
+	// Labels are added to every ticket, alongside any image labels.
+	Labels []string `yaml:"labels"`
+
+	// RequireUpgrade, when unset, defaults to true: no ticket is raised for a
+	// finding with nothing to upgrade to. A ticket saying "upgrade to the latest
+	// version" for an image already on the latest wastes the assignee's time,
+	// which is how a vulnerability queue loses credibility.
+	RequireUpgrade *bool `yaml:"requireUpgrade"`
+}
+
+// isSet reports whether a config file actually defined a jira section, so an
+// empty one does not clobber a section defined in an earlier file.
+func (j JiraConfig) isSet() bool {
+	return j.Board != 0 || j.Project != "" || j.Template != "" ||
+		j.ImageField != "" || j.ImageLabel || j.Epic != "" || j.IssueType != "" ||
+		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil
+}
+
+// EffectiveRequireUpgrade reports whether findings with no available upgrade
+// should be skipped. Defaults to true when unset.
+func (j JiraConfig) EffectiveRequireUpgrade() bool {
+	return j.RequireUpgrade == nil || *j.RequireUpgrade
+}
+
+// EffectiveIssueType returns the configured issue type, or "Task".
+func (j JiraConfig) EffectiveIssueType() string {
+	if j.IssueType == "" {
+		return "Task"
+	}
+	return j.IssueType
+}
+
+// Validate checks the Jira config is usable. Called by the ticket command
+// rather than at load time, so an assess-only config need not define it.
+func (j JiraConfig) Validate() error {
+	var missing []string
+	if j.Board == 0 {
+		missing = append(missing, "board")
+	}
+	if j.Project == "" {
+		missing = append(missing, "project")
+	}
+	if j.Template == "" {
+		missing = append(missing, "template")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("jira config missing required field(s): %s", strings.Join(missing, ", "))
+	}
+	if j.ImageField == "" && !j.ImageLabel {
+		return fmt.Errorf("jira config needs imageField or imageLabel: without one there is no way to find an existing ticket for an image, so every run would raise duplicates")
+	}
+	if j.ImageField != "" && j.ImageLabel {
+		return fmt.Errorf("jira config sets both imageField and imageLabel; pick one so the idempotency key is unambiguous")
+	}
+	return nil
 }
 
 // ScanConfig tunes which images are worth scanning for vulnerabilities.
@@ -107,6 +198,10 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Scan.SkipRegistries != nil {
 			cfg.Scan.SkipRegistries = part.Scan.SkipRegistries
+		}
+		// jira is a singleton section; the last file that sets it wins.
+		if part.Jira.isSet() {
+			cfg.Jira = part.Jira
 		}
 	}
 	if err := cfg.validate(); err != nil {

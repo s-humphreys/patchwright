@@ -237,6 +237,75 @@ and an unowned row is a prompt to label the namespace at source.
 Git/OCI source revisions are the next remediation kind — see
 [docs/design/remediation-availability.md](docs/design/remediation-availability.md).
 
+### Ticket — raise the work
+
+`patchwright ticket` turns actionable findings into tickets from a template you
+supply. It reads the JSON an assess run already produced rather than re-running
+the assessment: a full run reconciles every cluster and rescans every image, and
+ticket creation should act on output you have already looked at.
+
+```sh
+patchwright assess -i export.csv -c config/ --remediation \
+  --output json:full=findings.json
+patchwright ticket -i findings.json -c config/          # dry run, changes nothing
+patchwright ticket -i findings.json -c config/ --confirm  # actually create
+```
+
+**Dry run is the default.** It prints every ticket in full, and (given
+credentials) tells you which would be skipped as already open, so the answer to
+"would this create anything?" comes before anything is created.
+
+Credentials come from the environment, never the config file, which is committed:
+
+```sh
+export JIRA_BASE_URL=https://your-site.atlassian.net
+export JIRA_EMAIL=you@example.com
+export JIRA_API_TOKEN=...
+```
+
+Configuration lives in a `jira:` block. `board`, `project`, `template`, and one
+of `imageField`/`imageLabel` are required; the rest is optional:
+
+```yaml
+jira:
+  board: 100
+  project: PROJ
+  template: config/templates/container-vuln.md.tmpl
+  imageField: customfield_XXXXX   # array-of-strings field holding the images
+  # imageLabel: true              # or use labels, when no such field exists
+  epic: PROJ-100
+  issueType: Container Vulnerability
+  priority: Highest
+  requireUpgrade: true            # default
+```
+
+**No ticket is raised for a finding with nothing to upgrade to.** A ticket saying
+"upgrade to the latest version" for an image already on the latest wastes the
+assignee's time, which is how a vulnerability queue loses credibility. Skipped
+findings are printed with the reason rather than dropped, and the reasons are
+distinct on purpose: "already on the latest version" is a resolved question,
+while "versions could not be resolved" is one to chase. Set
+`requireUpgrade: false` to raise them anyway.
+
+**Duplicates are prevented by asking Jira, not by local state.** Before creating,
+it searches for open tickets carrying the image in `imageField` (or the label),
+and skips when one exists. A state file would drift the moment someone closed a
+ticket by hand. Tickets in a Done status do not suppress a new one: a recurrence
+after a completed upgrade is genuinely new work.
+
+**Findings that one change would fix share a ticket.** Grouping is by deployment
+source, so a set of controllers owned by one operator becomes a single ticket.
+Where a controller gives each package its own object (every Crossplane provider
+has its own `ProviderRevision`), the object name is collapsed so a family groups
+rather than producing a ticket each. A grouped ticket never claims a single
+target version unless every image really shares one, and is never titled after
+one of its images.
+
+The template is Go `text/template`, first line `Summary: ...`, then a blank line,
+then the description. See
+[config/templates/container-vuln.md.tmpl](config/templates/container-vuln.md.tmpl)
+for the available fields; it is an example, meant to be edited.
+
 ### Serve — the assessment as an API
 
 A CronJob that logs findings is write-only. `patchwright serve` runs the same
