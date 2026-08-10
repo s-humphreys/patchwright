@@ -129,8 +129,17 @@ patchwright assess -i export.csv -c config/ \
   --vuln-source trivy --exploit-source public
 ```
 
-The `KEV` column and JSON `known_exploited` / `vulns[].epss` / `vulns[].kev`
-surface it; e.g. `when: "vulns.exists(v, v.fix_available && (v.kev || v.epss > 0.5))"`.
+The `KEV` and `EPSS` columns and JSON `known_exploited` / `vulns[].epss` /
+`vulns[].kev` surface it; e.g.
+`when: "vulns.exists(v, v.fix_available && (v.kev || v.epss > 0.5))"`.
+
+`EPSS` is the **highest** score across the image's CVEs, since one CVE at 0.93
+makes the image urgent however many quiet ones sit beside it. Both columns show
+`-` until exploit enrichment runs, so `0`/`0.00` always means "checked, nothing".
+
+Note that severity and exploitability diverge sharply in practice: a CVSS 10.0
+at EPSS 0.008 is a poorer use of an afternoon than a CVSS 5 at EPSS 0.93. Rules
+that gate on `epss`/`kev` are what stop the queue being sorted by fear.
 
 ### Remediation — is a newer version available?
 
@@ -166,9 +175,64 @@ The `UPGRADE` column reads:
 | Shown | Meaning |
 |---|---|
 | `current->latest` | a newer version you can apply directly |
+| `chart current->latest` | a newer **chart** version — these are chart versions, not the image tag in the IMAGE column |
 | `current->latest (helm\|operator)` | a newer version exists but is controlled elsewhere (upgrade the chart/operator) |
 | `-` | on the latest version |
 | `?` | remediation detection didn't run (no `--remediation`) |
+
+`CRIT`/`HIGH` show `?` when the provider **never assessed** the image. A provider
+that cannot reach a registry still emits a row, with zero counts and severity
+`UNKNOWN` — and printing that as `0` is the most misleading thing a
+vulnerability report can do. JSON carries it as `provider_assessed`, and the run
+logs a warning with the count.
+
+This is deliberately about the *provider*, not scanning: a vuln source is
+optional and off by default, so `--vuln-source` not having run says nothing about
+whether data exists. Unassessed findings are **not** excluded from the queue —
+they simply can never match a count-based rule, which is a coverage gap to close
+rather than a verdict to hide.
+
+The `FIX` column condenses that into the remediation *path* — "can I act, and
+how?", which is what a queue is read to answer:
+
+| Shown | Meaning |
+|---|---|
+| `direct` | a newer version this image can move to now |
+| `managed` | a newer version exists, but a chart/operator owns the tag — fix it there |
+| `none` | already on the latest version; nothing to upgrade to |
+| `unknown` | detection ran but could not resolve a version (e.g. a private registry whose tags we cannot list) |
+| `?` | detection didn't run at all (no `--remediation`) |
+
+`none` is deliberately visible rather than hidden. Criticals with nowhere to go
+need a human decision (wait for upstream, rebuild, or accept the risk), and that
+is a different conversation from "bump the tag".
+
+`unknown` and `?` are kept apart because they demand opposite responses: `?` is
+"you didn't ask", while `unknown` is a coverage gap to chase. JSON carries this
+as `remediation_checked`, and anything that skips findings without an upgrade
+**must** check it, or it will silently skip images whose versions merely could
+not be resolved.
+
+`PRIORITY` carries the policy verdict, including `supp` for suppressed findings
+in `--show-suppressed` views.
+
+The table prints a `LEGEND` above the data explaining every mark. It is worth the
+dozen lines: the report carries four separate unknown-states (`CRIT ?`, `FIX ?`,
+`FIX unknown`, `UPGRADE ?`) that mean different things, and unexplained they all
+read as "probably fine" — the exact reading the marks exist to prevent.
+
+The group header adds the same breakdown, because "32 actionable" of which only
+9 are `direct` is a materially different day's work from 32 direct bumps:
+
+```
+== owner class: platform (32 findings, 32 actionable: 9 direct, 20 managed, 3 none) ==
+```
+
+`TEAM` shows `-` when no ownership rule could attribute the workload to a real
+team. Resist the temptation to fall back to the namespace name in `teamFrom`: it
+renders identically to a genuine team and quietly launders "we don't know" into
+a confident-looking answer. `NAMESPACE` already shows where the workload runs,
+and an unowned row is a prompt to label the namespace at source.
 
 Git/OCI source revisions are the next remediation kind — see
 [docs/design/remediation-availability.md](docs/design/remediation-availability.md).
@@ -234,6 +298,11 @@ suppress:
   - name: cloud-provider-managed
     when: "owner['class'] == 'cloud-provider'"   # can't patch these directly
 actionable:
+  # With --vuln-source + --exploit-source, exploitation pressure can outrank
+  # environment: a fixable bug being exploited now beats an unexploited critical.
+  - name: exploited-fixable-critical
+    when: "vulns.exists(v, v.severity == 'critical' && v.fix_available && (v.kev || v.epss > 0.5))"
+    priority: urgent
   - name: production-critical
     when: "counts['critical'] > 0 && dimensions['account'].exists(a, a.startsWith('Production'))"
     priority: high
@@ -241,6 +310,11 @@ actionable:
     when: "counts['critical'] > 0"
     priority: low
 ```
+
+`priority` is free-form, but only `urgent` > `high` > `medium` > `low` are
+**ranked** for report ordering — any other label sorts after all of them. Add a
+new tier to `priorityRank` (`pkg/sink/sink.go`) rather than inventing one in
+config alone, or it lands at the bottom of the queue.
 
 ### How "actionable" is decided
 
@@ -375,6 +449,7 @@ registry credentials if scanning private images. See
 ## Development
 
 ```sh
+make build             # build all packages + the binary into bin/patchwright
 make check             # fmt + vet (incl. e2e build tag) + unit/golden tests
 make test              # unit + golden tests (no cluster required)
 make deps              # install kind + ginkgo for integration tests
@@ -383,6 +458,39 @@ make test-integration  # kind-based e2e suite (requires docker + kind)
 # refresh the golden file after an intended output change
 go test ./pkg/pipeline -run TestAssessGolden -update
 ```
+
+### Running against your own data
+
+Put your scanner export and (optionally) your own rules in `local/` — the whole
+directory is gitignored:
+
+```sh
+make report       # assess local/*.csv with local/config, print to stdout
+make report-live  # + reconcile against every kubeconfig context, + remediation,
+                  #   saved to local/out/{findings.json,actionable.txt,run.log}
+```
+
+`report-live` defaults `CONTEXTS` to every kubeconfig context except local
+`kind-*` clusters. Override any of it:
+
+```sh
+make report-live CONTEXTS=aks-prod-uk,aks-prod-us OUT=local/prod-only
+make report-live SCAN=1          # add Trivy fix-availability + EPSS/KEV
+```
+
+Both files come from a **single** assessment, via repeatable `--output`:
+
+```sh
+patchwright assess ... \
+  --output json:full=findings.json \    # everything, suppressed included
+  --output table:queue=actionable.txt   # actionable only
+```
+
+`format[:view]=path` — the view is `full` (every finding, suppressed included)
+or `queue` (actionable only); omit it to inherit `--all`/`--show-suppressed`.
+Use `-` as the path for stdout. This matters once scanning is on: rendering two
+formats with two commands re-runs the whole pipeline, re-reconciling every
+cluster and re-scanning every image, for output that is already in hand.
 
 The e2e suite (`test/e2e`, `//go:build e2e`) stands up a real kind cluster,
 deploys a running Deployment and a completed Job, and asserts that the

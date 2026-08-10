@@ -23,6 +23,10 @@
       "matched actionable rule \"production-critical\""
     ],
     "workload_count": 2,
+    "provider_assessed": true,
+    "scanned": false,
+    "exploit_checked": false,
+    "remediation_checked": false,
     "dimensions": {
       "account": [
         "Development US",
@@ -73,6 +77,10 @@
       "matched actionable rule \"production-critical\""
     ],
     "workload_count": 1,
+    "provider_assessed": true,
+    "scanned": false,
+    "exploit_checked": false,
+    "remediation_checked": false,
     "dimensions": {
       "account": [
         "Production UK"
@@ -119,6 +127,10 @@
       "matched actionable rule \"any-critical\""
     ],
     "workload_count": 1,
+    "provider_assessed": true,
+    "scanned": false,
+    "exploit_checked": false,
+    "remediation_checked": false,
     "dimensions": {
       "account": [
         "Development UK"
@@ -165,6 +177,10 @@
       "suppressed by rule \"cloud-provider-managed\""
     ],
     "workload_count": 1,
+    "provider_assessed": true,
+    "scanned": false,
+    "exploit_checked": false,
+    "remediation_checked": false,
     "dimensions": {
       "account": [
         "Production UK"
@@ -211,6 +227,10 @@
       "no actionable rule matched"
     ],
     "workload_count": 1,
+    "provider_assessed": true,
+    "scanned": false,
+    "exploit_checked": false,
+    "remediation_checked": false,
     "dimensions": {
       "account": [
         "Production UK"

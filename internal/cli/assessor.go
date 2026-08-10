@@ -89,7 +89,8 @@ func newAssessor(in assessInputs) (*assessor, error) {
 	}
 
 	if in.vulnSource != "" {
-		scanner, err := buildScanner(in.vulnSource, in.vulnOptions, cfg.Scan.EffectiveSkipOwnerClasses())
+		scanner, err := buildScanner(in.vulnSource, in.vulnOptions,
+			cfg.Scan.EffectiveSkipOwnerClasses(), cfg.Scan.SkipRegistries)
 		if err != nil {
 			return nil, err
 		}
@@ -146,5 +147,30 @@ func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 			}
 		}
 	}
-	return a.pipeline.Run(ctx, occ)
+	findings, err := a.pipeline.Run(ctx, occ)
+	if err != nil {
+		return nil, err
+	}
+	warnUnassessed(ctx, findings)
+	return findings, nil
+}
+
+// warnUnassessed reports images the scan provider never assessed. Their zero
+// counts are ignorance, not health, so a silent report would overstate coverage
+// — and since they can never match a count-based policy rule, they are absent
+// from the actionable queue for a reason that has nothing to do with risk.
+func warnUnassessed(ctx context.Context, findings []model.Finding) {
+	unassessed := map[string]bool{}
+	total := map[string]bool{}
+	for _, f := range findings {
+		total[f.Image.Key()] = true
+		if !f.ProviderAssessed() {
+			unassessed[f.Image.Key()] = true
+		}
+	}
+	if len(unassessed) == 0 {
+		return
+	}
+	slog.WarnContext(ctx, "provider never assessed some images — their zero counts are absence of data, not a clean result",
+		"unassessed_images", len(unassessed), "total_images", len(total))
 }

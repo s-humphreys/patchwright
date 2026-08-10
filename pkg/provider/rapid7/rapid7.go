@@ -139,8 +139,13 @@ func recordToOccurrence(get func(string) string) model.Occurrence {
 		}
 	}
 
+	// An empty last_assessment means InsightCloudSec never assessed this image
+	// (it reports severity UNKNOWN and zero counts for these). That is a
+	// coverage gap, not a clean bill of health, so record it explicitly.
 	var lastSeen time.Time
+	assessed := false
 	if ts := get("last_assessment"); ts != "" {
+		assessed = true
 		if t, err := time.Parse(lastAssessmentLayout, ts); err == nil {
 			lastSeen = t
 		}
@@ -158,6 +163,7 @@ func recordToOccurrence(get func(string) string) model.Occurrence {
 		Counts:    counts,
 		RiskScore: atof(get("riskscore")),
 		LastSeen:  lastSeen,
+		Assessed:  assessed,
 	}
 }
 

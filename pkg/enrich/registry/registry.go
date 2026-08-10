@@ -66,6 +66,9 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 	}
 
 	tagCache := map[string][]string{}
+	// Whether the tag listing for a repo succeeded, cached alongside the tags so
+	// a failed lookup is never mistaken for "no newer versions exist".
+	resolvedCache := map[string]bool{}
 	result := map[string]model.Upgrade{}
 
 	for i := range images {
@@ -77,17 +80,20 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 		repo := img.Registry + "/" + img.Repository
 
 		tags, ok := tagCache[repo]
-		if !ok {
+		resolved, okResolved := resolvedCache[repo]
+		if !ok || !okResolved {
 			tags, err = r.Lister.Tags(ctx, repo)
+			resolved = err == nil
 			if err != nil {
 				slog.DebugContext(ctx, "could not list registry tags", "repo", repo, "error", err)
 				tags = nil
 			}
 			tagCache[repo] = tags
+			resolvedCache[repo] = resolved
 		}
 
 		latest := latestNewer(current, tags)
-		up := model.Upgrade{Kind: "image", Name: repo, Current: img.Tag, Source: repo}
+		up := model.Upgrade{Kind: "image", Name: repo, Current: img.Tag, Source: repo, Resolved: resolved}
 
 		// Always record how/where the image is deployed, so the report shows
 		// the change target (git repo, CR, ...) even when it's on the latest tag.

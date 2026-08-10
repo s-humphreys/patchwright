@@ -63,6 +63,9 @@ func (c *HelmChecker) Check(ctx context.Context, ref ChartRef) (model.Upgrade, e
 	if err != nil {
 		return up, err
 	}
+	// Versions were obtained, so "no newer version" below is a real finding
+	// rather than a failed lookup.
+	up.Resolved = true
 
 	current, curErr := semver.NewVersion(ref.Version)
 	allowPre := curErr == nil && current.Prerelease() != ""

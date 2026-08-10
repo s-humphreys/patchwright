@@ -46,8 +46,11 @@ const (
 
 // Conventional priority labels. Finding.Priority is free-form and defined by
 // policy config; these are merely the values the bundled example rules and the
-// report ordering understand. Any string is valid.
+// report ordering understand. Any string is valid, but a label not listed here
+// is unranked and sorts after all of these — so a custom tier needs adding to
+// priorityRank too, or it lands at the bottom of the report.
 const (
+	PriorityUrgent = "urgent"
 	PriorityHigh   = "high"
 	PriorityMedium = "medium"
 	PriorityLow    = "low"
@@ -145,6 +148,14 @@ type Occurrence struct {
 	LastSeen  time.Time
 	Owner     Owner // assigned by the attribution stage
 
+	// Assessed reports whether the scan provider actually assessed this
+	// workload's image. It is NOT the same as "has no vulnerabilities": a
+	// provider that never scanned an image (e.g. a private registry it has no
+	// credentials for) reports zero counts, which is indistinguishable from a
+	// clean result unless this is carried through. Deliberately independent of
+	// vuln-source scanning, which is optional and off by default.
+	Assessed bool
+
 	// Reconciled is set once a live-reconciliation enricher has run against
 	// this occurrence; Live then reports whether the image is actually running
 	// in a cluster right now. When Reconciled is false, liveness is unknown.
@@ -173,7 +184,13 @@ type AssessedImage struct {
 	// Upgrade, when set, describes a newer version available for how this image
 	// is deployed (e.g. a newer Helm chart) — the remediation path. Populated by
 	// remediation detection.
-	Upgrade *Upgrade
+	//
+	// RemediationChecked reports whether that detection ran. A nil Upgrade with
+	// RemediationChecked true means detection ran and could not resolve a
+	// version (e.g. tags unlistable in a private registry), which is a coverage
+	// gap rather than "already on the latest".
+	Upgrade            *Upgrade
+	RemediationChecked bool
 }
 
 // Upgrade describes a newer version available for the artifact that deploys an
@@ -187,6 +204,13 @@ type Upgrade struct {
 	Latest    string // latest available version
 	Available bool   // Latest is newer than Current
 	Source    string // where to make the change (repo URL)
+
+	// Resolved reports whether the source actually obtained the list of
+	// available versions. When false, Available being false means "we could not
+	// find out" (e.g. a private registry whose tags we cannot list) and MUST NOT
+	// be read as "already on the latest version" — an unreachable registry
+	// otherwise reports every image it holds as up to date.
+	Resolved bool
 
 	// Actionable reports whether the upgrade can be applied directly at this
 	// level. A newer image tag for a workload managed by a Helm chart or an
@@ -226,11 +250,29 @@ type Finding struct {
 	ExploitChecked bool
 
 	// Upgrade, when set, is the newer version available for how this image is
-	// deployed (the remediation path).
-	Upgrade *Upgrade
+	// deployed (the remediation path). RemediationChecked reports whether
+	// detection ran, so a nil Upgrade can be told apart from an unresolved one.
+	Upgrade            *Upgrade
+	RemediationChecked bool
 
 	Actionable bool
 	Suppressed bool
 	Priority   string   // free-form, defined by policy config
 	Reasons    []string // human-readable explanation of the verdict
+}
+
+// ProviderAssessed reports whether the scan provider assessed any of this
+// finding's workloads. When false, Counts being zero reflects ignorance rather
+// than health, and the report must not present it as a clean result.
+//
+// This is separate from Scanned (an optional vuln source) on purpose: a vuln
+// source is off by default, so its absence says nothing about whether data
+// exists, while a provider that never assessed an image is a real coverage gap.
+func (f Finding) ProviderAssessed() bool {
+	for _, o := range f.Occurrences {
+		if o.Assessed {
+			return true
+		}
+	}
+	return false
 }

@@ -39,6 +39,14 @@ type ScanConfig struct {
 	//
 	// Unset defaults to ["cloud-provider"]; set to [] to scan everything.
 	SkipOwnerClasses []string `yaml:"skipOwnerClasses"`
+
+	// SkipRegistries lists image registry hosts whose images are not scanned,
+	// regardless of owner — typically private registries you have no pull
+	// credentials for locally, where every scan would fail anyway. Matched
+	// exactly against the image registry host (e.g. "acme.azurecr.io").
+	//
+	// Unset means scan every registry.
+	SkipRegistries []string `yaml:"skipRegistries"`
 }
 
 // EffectiveSkipOwnerClasses returns the configured skip list, or the default
@@ -92,9 +100,13 @@ func Load(paths ...string) (*Config, error) {
 		cfg.Owners = append(cfg.Owners, part.Owners...)
 		cfg.Actionable = append(cfg.Actionable, part.Actionable...)
 		cfg.Suppress = append(cfg.Suppress, part.Suppress...)
-		// scan is a singleton section; the last file that sets it wins.
+		// scan is a singleton section; for each field, the last file that sets
+		// it wins (so the two knobs can live in different files).
 		if part.Scan.SkipOwnerClasses != nil {
-			cfg.Scan = part.Scan
+			cfg.Scan.SkipOwnerClasses = part.Scan.SkipOwnerClasses
+		}
+		if part.Scan.SkipRegistries != nil {
+			cfg.Scan.SkipRegistries = part.Scan.SkipRegistries
 		}
 	}
 	if err := cfg.validate(); err != nil {
