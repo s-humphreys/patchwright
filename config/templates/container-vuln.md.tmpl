@@ -1,0 +1,77 @@
+{{/*
+  Ticket template. Go text/template over pkg/ticket.TemplateData.
+
+  The FIRST line must be "Summary: ..."; then a blank line; then the description
+  body. Keeping both in one file means the whole wording of a ticket lives in one
+  place, editable by whoever owns the process rather than in Go.
+
+  Available:
+    .ServiceName .Images .ImageCount .GroupNoun .Refs .Priority
+    .Accounts .Namespaces .Teams .WorkloadCount
+    .CriticalCount .HighCount .ProviderAssessed
+    .FixableCriticals (.ID .CVSS .EPSS .FixedVersion .KEV) .MaxEPSS .KnownExploited
+    .Upgrade  - the single version move, or NIL when the grouped images do not
+                share one target version (.Kind .Name .Current .Latest .Managed
+                .Source .Direct)
+    .Upgrades - always populated, one entry per image
+                (.Ref .Repo .Current .Latest .Managed .Direct)
+
+  This is an EXAMPLE. Edit it to match how your teams actually work.
+*/ -}}
+{{- if .Upgrade -}}
+Summary: Upgrade {{ .ServiceName }} to {{ .Upgrade.Latest }}
+{{- else -}}
+Summary: Upgrade {{ .ServiceName }} {{ .GroupNoun }} ({{ .ImageCount }}) to their latest versions
+{{- end }}
+
+**Business objective/requirements**
+
+{{ if .Upgrade -}}
+Upgrade {{ .ServiceName }} from {{ .Upgrade.Current }} to {{ .Upgrade.Latest }} to clear known container vulnerabilities.
+{{- else -}}
+Upgrade the {{ .ImageCount }} images below to clear known container vulnerabilities. They are grouped because one change covers them all.
+{{- end }}
+
+**Technical Requirements & Actions**
+
+{{ range .Upgrades }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}{{ if not .Direct }} (version owned by the {{ .Managed }}, so bump it there rather than the image){{ end }}
+{{ end -}}
+{{- if and .Upgrade .Upgrade.Source }}* Change target: {{ .Upgrade.Source }}
+{{ end -}}
+* Workloads affected: {{ .WorkloadCount }}{{ if .Namespaces }} in namespace(s) {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }}{{ end }}
+{{ if .Accounts }}* Environments: {{ range $i, $a := .Accounts }}{{ if $i }}, {{ end }}{{ $a }}{{ end }}
+{{ end }}
+**Why this is prioritised**
+
+{{ if .ProviderAssessed -}}
+Scanner counts: {{ .CriticalCount }} critical, {{ .HighCount }} high. Assessment priority: {{ .Priority }}.
+{{- else -}}
+NOTE: the scan provider has not assessed these images, so severity counts are unavailable rather than zero. Assessment priority: {{ .Priority }}.
+{{- end }}
+{{- if .KnownExploited }}
+
+This image carries a CVE in CISA's Known Exploited Vulnerabilities catalogue (confirmed exploitation in the wild).
+{{- else if gt .MaxEPSS 0.5 }}
+
+Highest EPSS across its CVEs is {{ printf "%.2f" .MaxEPSS }}: a high predicted probability of exploitation in the next 30 days.
+{{- end }}
+{{- with .FixableCriticals }}
+
+Fixable critical CVEs, most exploitable first:
+
+{{ range . }}* {{ .ID }} (CVSS {{ printf "%.1f" .CVSS }}, EPSS {{ printf "%.3f" .EPSS }}){{ if .FixedVersion }} fixed in {{ .FixedVersion }}{{ end }}{{ if .KEV }} - KNOWN EXPLOITED{{ end }}
+{{ end -}}
+{{- end }}
+
+**Test Strategies**
+
+* Confirm functionality is unchanged after the upgrade.
+* Roll to lower environments before production where applicable.
+
+**Acceptance Criteria**
+
+{{ if .Upgrade -}}
+{{ .ServiceName }} is running {{ .Upgrade.Latest }} in all environments listed above.
+{{- else -}}
+Every image listed above is running its latest version in all environments listed above.
+{{- end }}

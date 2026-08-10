@@ -93,6 +93,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newProfileCmd())
 	root.AddCommand(newAssessCmd())
 	root.AddCommand(newServeCmd())
+	root.AddCommand(newTicketCmd())
 	return root
 }
 

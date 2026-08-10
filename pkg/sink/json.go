@@ -22,7 +22,7 @@ type FindingView struct {
 	Repository      string         `json:"repository"`
 	Tag             string         `json:"tag,omitempty"`
 	Digest          string         `json:"digest,omitempty"`
-	Owner           ownerView      `json:"owner"`
+	Owner           OwnerView      `json:"owner"`
 	Counts          map[string]int `json:"counts"`
 	Risk            float64        `json:"risk"`
 	Actionable      bool           `json:"actionable"`
@@ -47,26 +47,28 @@ type FindingView struct {
 	// A consumer that skips findings without an upgrade MUST check this, or it
 	// will silently skip images whose versions simply could not be resolved.
 	RemediationChecked bool                `json:"remediation_checked"`
-	Upgrade            *upgradeView        `json:"upgrade,omitempty"`
-	Liveness           *livenessView       `json:"liveness,omitempty"`
+	Upgrade            *UpgradeView        `json:"upgrade,omitempty"`
+	Liveness           *LivenessView       `json:"liveness,omitempty"`
 	Dimensions         map[string][]string `json:"dimensions"`
 	Labels             map[string][]string `json:"labels,omitempty"`
-	Vulns              []vulnView          `json:"vulns,omitempty"`
+	Vulns              []VulnView          `json:"vulns,omitempty"`
 }
 
-// livenessView is emitted only when reconciliation ran, so output for
+// LivenessView is emitted only when reconciliation ran, so output for
 // un-reconciled runs is unchanged.
-type livenessView struct {
+type LivenessView struct {
 	Live bool `json:"live"`
 }
 
-type ownerView struct {
+// OwnerView is the attributed owner of a finding.
+type OwnerView struct {
 	Class string `json:"class"`
 	Team  string `json:"team"`
 	Rule  string `json:"rule,omitempty"`
 }
 
-type upgradeView struct {
+// UpgradeView is the newer version available for how an image is deployed.
+type UpgradeView struct {
 	Kind       string `json:"kind"`
 	Name       string `json:"name"`
 	Current    string `json:"current"`
@@ -78,7 +80,8 @@ type upgradeView struct {
 	Source     string `json:"source,omitempty"`
 }
 
-type vulnView struct {
+// VulnView is one CVE affecting an image.
+type VulnView struct {
 	ID           string  `json:"id"`
 	Severity     string  `json:"severity"`
 	CVSS         float64 `json:"cvss,omitempty"`
@@ -133,13 +136,13 @@ func (n NDJSON) Emit(w io.Writer, findings []model.Finding) error {
 }
 
 func ToFindingView(f model.Finding) FindingView {
-	vulns := make([]vulnView, 0, len(f.Vulns))
+	vulns := make([]VulnView, 0, len(f.Vulns))
 	knownExploited := false
 	for _, v := range f.Vulns {
 		if v.KEV {
 			knownExploited = true
 		}
-		vulns = append(vulns, vulnView{
+		vulns = append(vulns, VulnView{
 			ID:           v.ID,
 			Severity:     v.Severity,
 			CVSS:         v.CVSS,
@@ -149,13 +152,13 @@ func ToFindingView(f model.Finding) FindingView {
 			KEV:          v.KEV,
 		})
 	}
-	var liveness *livenessView
+	var liveness *LivenessView
 	if f.Reconciled {
-		liveness = &livenessView{Live: f.Live}
+		liveness = &LivenessView{Live: f.Live}
 	}
-	var upgrade *upgradeView
+	var upgrade *UpgradeView
 	if f.Upgrade != nil {
-		upgrade = &upgradeView{
+		upgrade = &UpgradeView{
 			Kind: f.Upgrade.Kind, Name: f.Upgrade.Name,
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
 			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
@@ -169,7 +172,7 @@ func ToFindingView(f model.Finding) FindingView {
 		Repository:         f.Image.Repository,
 		Tag:                f.Image.Tag,
 		Digest:             f.Image.Digest,
-		Owner:              ownerView{Class: f.Owner.Class, Team: f.Owner.Team, Rule: f.Owner.Rule},
+		Owner:              OwnerView{Class: f.Owner.Class, Team: f.Owner.Team, Rule: f.Owner.Rule},
 		Counts:             map[string]int(f.Counts),
 		Risk:               f.RiskScore,
 		Actionable:         f.Actionable,

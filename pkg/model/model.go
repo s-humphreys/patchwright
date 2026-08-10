@@ -56,6 +56,25 @@ const (
 	PriorityLow    = "low"
 )
 
+// PriorityRank orders the conventional priority labels for display and
+// comparison; unknown labels rank 0 and therefore sort after all of them. This
+// is the single definition: a second copy elsewhere would let the two ladders
+// drift, and a tier missing from the ladder silently sinks to the bottom.
+func PriorityRank(p string) int {
+	switch p {
+	case PriorityUrgent:
+		return 4
+	case PriorityHigh:
+		return 3
+	case PriorityMedium:
+		return 2
+	case PriorityLow:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // Vulnerability is a single CVE/advisory affecting an image. It is populated
 // when a provider exposes per-CVE detail (e.g. the Rapid7 API, Trivy, Grype).
 // Aggregate-only sources (such as the Rapid7 InsightCloudSec CSV export) leave

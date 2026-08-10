@@ -16,26 +16,6 @@ type Sink interface {
 	Emit(w io.Writer, findings []model.Finding) error
 }
 
-// priorityRank orders the conventional priority labels; unknown labels sort
-// last. Priorities are free-form in config, so this is a best-effort ordering
-// for display only.
-func priorityRank(p string) int {
-	switch p {
-	case model.PriorityUrgent:
-		// Reserved for exploitation pressure (KEV/EPSS), not just severity: a
-		// fixable bug being exploited now outranks an unexploited critical.
-		return 4
-	case model.PriorityHigh:
-		return 3
-	case model.PriorityMedium:
-		return 2
-	case model.PriorityLow:
-		return 1
-	default:
-		return 0
-	}
-}
-
 // fixableCriticals counts a finding's critical vulnerabilities that have a fix
 // available — the cheapest, highest-impact work. Zero unless a vuln source
 // (e.g. Trivy) has scanned the image.
@@ -60,7 +40,7 @@ func SortForReport(findings []model.Finding) []model.Finding {
 		if a.Actionable != b.Actionable {
 			return a.Actionable // actionable first
 		}
-		if ra, rb := priorityRank(a.Priority), priorityRank(b.Priority); ra != rb {
+		if ra, rb := model.PriorityRank(a.Priority), model.PriorityRank(b.Priority); ra != rb {
 			return ra > rb
 		}
 		if ca, cb := a.Counts.Get(model.SeverityCritical), b.Counts.Get(model.SeverityCritical); ca != cb {
