@@ -26,6 +26,7 @@ func newAssessCmd() *cobra.Command {
 		pf             providerFlags
 		configPaths    []string
 		format         string
+		outputs        []string
 		ownerClass     string
 		includeAll     bool
 		showSuppressed bool
@@ -45,6 +46,16 @@ func newAssessCmd() *cobra.Command {
 			"workload to an owner, and applies policy rules to decide what is actionable. By default\n" +
 			"it prints only actionable findings; use --all to see everything.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Parse outputs before any work so a bad spec fails immediately
+			// rather than after a long scan.
+			specs, err := parseOutputs(outputs)
+			if err != nil {
+				return err
+			}
+			if len(specs) > 0 && cmd.Flags().Changed("format") {
+				return fmt.Errorf("--format and --output are mutually exclusive: --output already names a format per destination")
+			}
+
 			a, err := newAssessor(assessInputs{
 				provider:       pf,
 				configPaths:    configPaths,
@@ -66,6 +77,14 @@ func newAssessCmd() *cobra.Command {
 				return err
 			}
 
+			// One assessment, many destinations: --output renders the same run
+			// into each, so the queue view and the full record don't cost two
+			// full passes over the clusters and scanner.
+			if len(specs) > 0 {
+				slog.InfoContext(ctx, "assessment complete", "findings", len(findings), "outputs", len(specs))
+				return emitOutputs(specs, findings, cmd.OutOrStdout(), ownerClass, includeAll, showSuppressed)
+			}
+
 			findings = filterFindings(findings, ownerClass, includeAll, showSuppressed)
 			slog.InfoContext(ctx, "assessment complete", "shown", len(findings), "format", format)
 
@@ -79,6 +98,8 @@ func newAssessCmd() *cobra.Command {
 	pf.bind(cmd)
 	cmd.Flags().StringArrayVarP(&configPaths, "config", "c", nil, "config YAML file or directory (repeatable)")
 	cmd.Flags().StringVarP(&format, "format", "f", "table", "output format: table, json (pretty), or ndjson (one finding per line, log-friendly)")
+	cmd.Flags().StringArrayVar(&outputs, "output", nil,
+		"write a result to a file as format[:view]=path (repeatable, '-' for stdout); view is queue (actionable only) or full (everything, suppressed included), defaulting to --all/--show-suppressed. One run, many outputs — e.g. --output json:full=findings.json --output table:queue=actionable.txt")
 	cmd.Flags().StringVar(&ownerClass, "owner", "", "only show findings for this owner class (e.g. platform, engineering)")
 	cmd.Flags().BoolVar(&includeAll, "all", false, "include non-actionable findings")
 	cmd.Flags().BoolVar(&showSuppressed, "show-suppressed", false, "include suppressed findings")
@@ -120,8 +141,8 @@ func joinExploitSources() string {
 
 // buildScanner constructs the image scanner for the named vuln source. Images
 // owned entirely by one of skipClasses are not scanned (config-driven; defaults
-// to cloud-provider).
-func buildScanner(name string, options []string, skipClasses []string) (*enrich.ImageScanner, error) {
+// to cloud-provider), as are images from any registry in skipRegistries.
+func buildScanner(name string, options []string, skipClasses, skipRegistries []string) (*enrich.ImageScanner, error) {
 	opts := enrich.Options{}
 	for _, kv := range options {
 		k, v, ok := splitKV(kv)
@@ -135,15 +156,55 @@ func buildScanner(name string, options []string, skipClasses []string) (*enrich.
 		return nil, err
 	}
 	scanner := enrich.NewImageScanner(src)
-	if len(skipClasses) > 0 {
-		scanner.Skip = skipByOwnerClass(skipClasses)
+	if skip := anySkip(skipByOwnerClass(skipClasses), skipByRegistry(skipRegistries)); skip != nil {
+		scanner.Skip = skip
 	}
 	return &scanner, nil
 }
 
+// anySkip combines skip predicates, ignoring nil ones, and returns nil when
+// none are active so the scanner keeps its default (scan everything).
+func anySkip(preds ...func(model.AssessedImage) bool) func(model.AssessedImage) bool {
+	active := preds[:0]
+	for _, p := range preds {
+		if p != nil {
+			active = append(active, p)
+		}
+	}
+	if len(active) == 0 {
+		return nil
+	}
+	return func(img model.AssessedImage) bool {
+		for _, p := range active {
+			if p(img) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// skipByRegistry returns a predicate that skips images from any of the named
+// registry hosts, or nil when the list is empty.
+func skipByRegistry(skip []string) func(model.AssessedImage) bool {
+	if len(skip) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(skip))
+	for _, r := range skip {
+		set[r] = true
+	}
+	return func(img model.AssessedImage) bool {
+		return set[img.Image.Registry]
+	}
+}
+
 // skipByOwnerClass returns a predicate that skips an image only when every one
-// of its workloads is owned by a class in skip.
+// of its workloads is owned by a class in skip, or nil when the list is empty.
 func skipByOwnerClass(skip []string) func(model.AssessedImage) bool {
+	if len(skip) == 0 {
+		return nil
+	}
 	set := make(map[string]bool, len(skip))
 	for _, c := range skip {
 		set[c] = true

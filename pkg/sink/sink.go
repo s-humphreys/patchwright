@@ -21,6 +21,10 @@ type Sink interface {
 // for display only.
 func priorityRank(p string) int {
 	switch p {
+	case model.PriorityUrgent:
+		// Reserved for exploitation pressure (KEV/EPSS), not just severity: a
+		// fixable bug being exploited now outranks an unexploited critical.
+		return 4
 	case model.PriorityHigh:
 		return 3
 	case model.PriorityMedium:

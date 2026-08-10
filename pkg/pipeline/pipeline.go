@@ -132,20 +132,21 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 			g := groups[key]
 			reconciled, live := aggregateLiveness(g.occurrences)
 			findings = append(findings, model.Finding{
-				Image:          ai.Image,
-				Counts:         ai.Counts,
-				Vulns:          ai.Vulns,
-				RiskScore:      ai.RiskScore,
-				Owner:          g.owner,
-				Occurrences:    g.occurrences,
-				Dimensions:     aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Dimensions }),
-				Labels:         aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Labels }),
-				Reconciled:     reconciled,
-				Live:           live,
-				Scanned:        ai.Scanned,
-				ScanError:      ai.ScanError,
-				ExploitChecked: ai.ExploitChecked,
-				Upgrade:        ai.Upgrade,
+				Image:              ai.Image,
+				Counts:             ai.Counts,
+				Vulns:              ai.Vulns,
+				RiskScore:          ai.RiskScore,
+				Owner:              g.owner,
+				Occurrences:        g.occurrences,
+				Dimensions:         aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Dimensions }),
+				Labels:             aggregate(g.occurrences, func(o model.Occurrence) map[string]string { return o.Resource.Labels }),
+				Reconciled:         reconciled,
+				Live:               live,
+				Scanned:            ai.Scanned,
+				ScanError:          ai.ScanError,
+				ExploitChecked:     ai.ExploitChecked,
+				Upgrade:            ai.Upgrade,
+				RemediationChecked: ai.RemediationChecked,
 			})
 		}
 	}

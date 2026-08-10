@@ -17,26 +17,41 @@ type JSON struct {
 }
 
 type FindingView struct {
-	Image           string              `json:"image"`
-	Registry        string              `json:"registry"`
-	Repository      string              `json:"repository"`
-	Tag             string              `json:"tag,omitempty"`
-	Digest          string              `json:"digest,omitempty"`
-	Owner           ownerView           `json:"owner"`
-	Counts          map[string]int      `json:"counts"`
-	Risk            float64             `json:"risk"`
-	Actionable      bool                `json:"actionable"`
-	Suppressed      bool                `json:"suppressed"`
-	Priority        string              `json:"priority,omitempty"`
-	Reasons         []string            `json:"reasons"`
-	WorkloadCount   int                 `json:"workload_count"`
-	FixableCritical int                 `json:"fixable_critical,omitempty"`
-	KnownExploited  bool                `json:"known_exploited,omitempty"`
-	ScanError       string              `json:"scan_error,omitempty"`
-	Upgrade         *upgradeView        `json:"upgrade,omitempty"`
-	Liveness        *livenessView       `json:"liveness,omitempty"`
-	Dimensions      map[string][]string `json:"dimensions"`
-	Vulns           []vulnView          `json:"vulns,omitempty"`
+	Image           string         `json:"image"`
+	Registry        string         `json:"registry"`
+	Repository      string         `json:"repository"`
+	Tag             string         `json:"tag,omitempty"`
+	Digest          string         `json:"digest,omitempty"`
+	Owner           ownerView      `json:"owner"`
+	Counts          map[string]int `json:"counts"`
+	Risk            float64        `json:"risk"`
+	Actionable      bool           `json:"actionable"`
+	Suppressed      bool           `json:"suppressed"`
+	Priority        string         `json:"priority,omitempty"`
+	Reasons         []string       `json:"reasons"`
+	WorkloadCount   int            `json:"workload_count"`
+	FixableCritical int            `json:"fixable_critical,omitempty"`
+	KnownExploited  bool           `json:"known_exploited,omitempty"`
+	// ProviderAssessed is false when the scan provider never assessed the image,
+	// making Counts zero through ignorance rather than health. Consumers MUST
+	// check this before treating zero counts as a clean result.
+	ProviderAssessed bool `json:"provider_assessed"`
+	// Scanned and ExploitChecked are always emitted (no omitempty): false is
+	// the meaningful value. Without them an empty vulns list is ambiguous —
+	// a consumer cannot tell "scanned, nothing found" from "never scanned"
+	// (skipped by config, or no --vuln-source at all).
+	Scanned        bool   `json:"scanned"`
+	ExploitChecked bool   `json:"exploit_checked"`
+	ScanError      string `json:"scan_error,omitempty"`
+	// RemediationChecked distinguishes "no upgrade found" from "we never looked".
+	// A consumer that skips findings without an upgrade MUST check this, or it
+	// will silently skip images whose versions simply could not be resolved.
+	RemediationChecked bool                `json:"remediation_checked"`
+	Upgrade            *upgradeView        `json:"upgrade,omitempty"`
+	Liveness           *livenessView       `json:"liveness,omitempty"`
+	Dimensions         map[string][]string `json:"dimensions"`
+	Labels             map[string][]string `json:"labels,omitempty"`
+	Vulns              []vulnView          `json:"vulns,omitempty"`
 }
 
 // livenessView is emitted only when reconciliation ran, so output for
@@ -57,6 +72,7 @@ type upgradeView struct {
 	Current    string `json:"current"`
 	Latest     string `json:"latest,omitempty"`
 	Available  bool   `json:"available"`
+	Resolved   bool   `json:"resolved"`
 	Actionable bool   `json:"actionable"`
 	Managed    string `json:"managed,omitempty"`
 	Source     string `json:"source,omitempty"`
@@ -142,30 +158,36 @@ func ToFindingView(f model.Finding) FindingView {
 		upgrade = &upgradeView{
 			Kind: f.Upgrade.Kind, Name: f.Upgrade.Name,
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
-			Available: f.Upgrade.Available, Actionable: f.Upgrade.Actionable,
-			Managed: f.Upgrade.Managed, Source: f.Upgrade.Source,
+			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
+			Actionable: f.Upgrade.Actionable,
+			Managed:    f.Upgrade.Managed, Source: f.Upgrade.Source,
 		}
 	}
 	return FindingView{
-		Image:           f.Image.Ref,
-		Registry:        f.Image.Registry,
-		Repository:      f.Image.Repository,
-		Tag:             f.Image.Tag,
-		Digest:          f.Image.Digest,
-		Owner:           ownerView{Class: f.Owner.Class, Team: f.Owner.Team, Rule: f.Owner.Rule},
-		Counts:          map[string]int(f.Counts),
-		Risk:            f.RiskScore,
-		Actionable:      f.Actionable,
-		Suppressed:      f.Suppressed,
-		Priority:        f.Priority,
-		Reasons:         f.Reasons,
-		WorkloadCount:   len(f.Occurrences),
-		FixableCritical: fixableCriticals(f),
-		KnownExploited:  knownExploited,
-		ScanError:       f.ScanError,
-		Liveness:        liveness,
-		Upgrade:         upgrade,
-		Dimensions:      f.Dimensions,
-		Vulns:           vulns,
+		Image:              f.Image.Ref,
+		Registry:           f.Image.Registry,
+		Repository:         f.Image.Repository,
+		Tag:                f.Image.Tag,
+		Digest:             f.Image.Digest,
+		Owner:              ownerView{Class: f.Owner.Class, Team: f.Owner.Team, Rule: f.Owner.Rule},
+		Counts:             map[string]int(f.Counts),
+		Risk:               f.RiskScore,
+		Actionable:         f.Actionable,
+		Suppressed:         f.Suppressed,
+		Priority:           f.Priority,
+		Reasons:            f.Reasons,
+		WorkloadCount:      len(f.Occurrences),
+		FixableCritical:    fixableCriticals(f),
+		KnownExploited:     knownExploited,
+		ProviderAssessed:   f.ProviderAssessed(),
+		Scanned:            f.Scanned,
+		ExploitChecked:     f.ExploitChecked,
+		ScanError:          f.ScanError,
+		RemediationChecked: f.RemediationChecked,
+		Liveness:           liveness,
+		Upgrade:            upgrade,
+		Dimensions:         f.Dimensions,
+		Labels:             f.Labels,
+		Vulns:              vulns,
 	}
 }

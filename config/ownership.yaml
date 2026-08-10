@@ -40,8 +40,11 @@ owners:
     class: engineering
     teamFrom: "labels['team']"
 
-  # Fallback: attribute to the engineering team implied by the namespace.
-  - name: engineering-by-namespace
+  # Fallback for occurrences with no team label. Deliberately sets no team: a
+  # namespace name in the TEAM column reads as a real owner and is
+  # indistinguishable from a genuine label value, so "-" is the honest answer.
+  # The NAMESPACE column still shows where the workload runs, and an unowned row
+  # is a prompt to label the namespace at source.
+  - name: engineering-unlabelled
     match: "true"
     class: engineering
-    teamFrom: "dimensions['namespace']"

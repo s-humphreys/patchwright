@@ -17,8 +17,13 @@
 # Vulnerability scanning (--vuln-source). Skip scanning images you can't
 # remediate — they're suppressed below anyway, so scanning them just wastes time.
 # Unset defaults to [cloud-provider]; set to [] to scan every image.
+#
+# skipRegistries additionally skips whole registries regardless of owner — use
+# it for private registries you have no pull credentials for, where every scan
+# would fail anyway. Unset means scan every registry.
 scan:
   skipOwnerClasses: [cloud-provider]
+  # skipRegistries: [acme.azurecr.io]
 
 suppress:
   # Cloud-provider-managed images are not directly patchable by app or platform
@@ -49,7 +54,10 @@ actionable:
   #
   # - name: exploited-fixable-critical
   #   when: "vulns.exists(v, v.severity == 'critical' && v.fix_available && (v.kev || v.epss > 0.5))"
-  #   priority: high
+  #   priority: urgent
+  #
+  # "urgent" outranks "high" in report ordering. Only urgent/high/medium/low are
+  # ranked; any other label sorts last, so add new tiers to priorityRank too.
 
   # Anything with a critical that runs in a Production account — highest stakes.
   - name: production-critical

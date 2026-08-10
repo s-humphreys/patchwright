@@ -72,6 +72,13 @@ func (r RemediationEnricher) EnrichImages(ctx context.Context, images []model.As
 
 	matched, available := 0, 0
 	for i := range images {
+		// Record that detection ran for every image, whether or not a version
+		// was resolved. Without this, an unset Upgrade means both "we never
+		// looked" and "we looked and could not tell" — and the second is a gap
+		// to chase (e.g. a private registry whose tags we cannot list), not a
+		// clean "nothing to upgrade".
+		images[i].RemediationChecked = true
+
 		up, ok := merged[images[i].Image.NameTag()]
 		if !ok {
 			continue
