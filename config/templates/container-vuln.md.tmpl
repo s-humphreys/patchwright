@@ -7,14 +7,15 @@
 
   Available:
     .ServiceName .Images .ImageCount .GroupNoun .Refs .Priority
+    .Source .SourcePath - the shared change target, present on grouped tickets too
     .Accounts .Namespaces .Teams .WorkloadCount
     .CriticalCount .HighCount .ProviderAssessed
     .FixableCriticals (.ID .CVSS .EPSS .FixedVersion .KEV) .MaxEPSS .KnownExploited
     .Upgrade  - the single version move, or NIL when the grouped images do not
                 share one target version (.Kind .Name .Current .Latest .Managed
-                .Source .Direct)
+                .Source .SourcePath .Direct)
     .Upgrades - always populated, one entry per image
-                (.Ref .Repo .Current .Latest .Managed .Direct)
+                (.Ref .Repo .Current .Latest .Source .SourcePath .Managed .Direct)
 
   This is an EXAMPLE. Edit it to match how your teams actually work.
 */ -}}
@@ -29,14 +30,14 @@ Summary: Upgrade {{ .ServiceName }} {{ .GroupNoun }} ({{ .ImageCount }}) to thei
 {{ if .Upgrade -}}
 Upgrade {{ .ServiceName }} from {{ .Upgrade.Current }} to {{ .Upgrade.Latest }} to clear known container vulnerabilities.
 {{- else -}}
-Upgrade the {{ .ImageCount }} images below to clear known container vulnerabilities. They are grouped because one change covers them all.
+Upgrade the {{ .ImageCount }} images below to clear known container vulnerabilities. {{ if .Source }}They are grouped because one change covers them all.{{ else }}They are grouped because they are managed together; each is bumped in its own place, listed below.{{ end }}
 {{- end }}
 
 **Technical Requirements & Actions**
 
-{{ range .Upgrades }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}{{ if not .Direct }} (version owned by the {{ .Managed }}, so bump it there rather than the image){{ end }}
+{{ range .Upgrades }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}{{ if not .Direct }} (version owned by the {{ .Managed }}){{ end }}{{ if and (not $.Source) .Source }}, change in {{ .Source }}{{ if .SourcePath }} path {{ .SourcePath }}{{ end }}{{ end }}
 {{ end -}}
-{{- if and .Upgrade .Upgrade.Source }}* Change target: {{ .Upgrade.Source }}
+{{- if .Source }}* Change target: {{ .Source }}{{ if .SourcePath }} (path: {{ .SourcePath }}){{ end }}
 {{ end -}}
 * Workloads affected: {{ .WorkloadCount }}{{ if .Namespaces }} in namespace(s) {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }}{{ end }}
 {{ if .Accounts }}* Environments: {{ range $i, $a := .Accounts }}{{ if $i }}, {{ end }}{{ $a }}{{ end }}

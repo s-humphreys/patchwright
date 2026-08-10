@@ -78,6 +78,7 @@ type UpgradeView struct {
 	Actionable bool   `json:"actionable"`
 	Managed    string `json:"managed,omitempty"`
 	Source     string `json:"source,omitempty"`
+	SourcePath string `json:"source_path,omitempty"`
 }
 
 // VulnView is one CVE affecting an image.
@@ -163,7 +164,8 @@ func ToFindingView(f model.Finding) FindingView {
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
 			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
 			Actionable: f.Upgrade.Actionable,
-			Managed:    f.Upgrade.Managed, Source: f.Upgrade.Source,
+			Managed:    f.Upgrade.Managed,
+			Source:     f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,
 		}
 	}
 	return FindingView{

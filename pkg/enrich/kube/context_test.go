@@ -114,19 +114,23 @@ func TestClusterImageDeployments(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	check := func(nametag, mech string, actionable bool, source string) {
+	check := func(nametag, mech string, actionable bool, source, sourcePath string) {
 		dc, ok := out[nametag]
 		if !ok {
 			t.Fatalf("%s: no context", nametag)
 		}
-		if dc.Mechanism != mech || dc.Actionable != actionable || (source != "" && dc.Source != source) {
-			t.Errorf("%s: got %+v, want mechanism=%s actionable=%v source=%s", nametag, dc, mech, actionable, source)
+		if dc.Mechanism != mech || dc.Actionable != actionable ||
+			(source != "" && dc.Source != source) || dc.SourcePath != sourcePath {
+			t.Errorf("%s: got %+v, want mechanism=%s actionable=%v source=%s path=%s",
+				nametag, dc, mech, actionable, source, sourcePath)
 		}
 	}
-	check("acme.io/plain:1.0.0", "manifest", true, "")
-	// Kustomize source resolves to the git repo AND the Kustomization path.
-	check("acme.io/kust:1.0.0", "kustomize", true, "https://github.com/acme/infra//apps")
-	check("acme.io/api:1.0.0", "operator", true, "Api/apps/my-api") // image in CR spec
-	check("acme.io/proxy:1.0.0", "operator", false, "")             // derived
-	check("acme.io/ctrl:1.0.0", "operator", false, "flux-operator") // label-based controller
+	check("acme.io/plain:1.0.0", "manifest", true, "", "")
+	// The Kustomization's repo and path are reported SEPARATELY. Joining them
+	// with kustomize's "//" notation yields a string that looks like a URL and is
+	// not one, which matters wherever a change target gets rendered as a link.
+	check("acme.io/kust:1.0.0", "kustomize", true, "https://github.com/acme/infra", "apps")
+	check("acme.io/api:1.0.0", "operator", true, "Api/apps/my-api", "") // image in CR spec
+	check("acme.io/proxy:1.0.0", "operator", false, "", "")             // derived
+	check("acme.io/ctrl:1.0.0", "operator", false, "flux-operator", "") // label-based controller
 }

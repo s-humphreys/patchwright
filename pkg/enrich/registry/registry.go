@@ -100,6 +100,7 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 		dc, hasCtx := contexts[img.NameTag()]
 		if hasCtx && dc.Source != "" {
 			up.Source = dc.Source
+			up.SourcePath = dc.SourcePath
 		}
 
 		if latest != nil {

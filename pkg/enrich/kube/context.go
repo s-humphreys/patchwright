@@ -150,7 +150,7 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 // workloadContext classifies a workload's deployment mechanism and, for
 // non-operator cases, its actionability/source. The operator case is refined
 // per-image by operatorContextForImage.
-func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources map[string]string, fetch crFetcher, crCache map[string]*unstructured.Unstructured) (enrich.DeployContext, bool) {
+func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources map[string]kustSource, fetch crFetcher, crCache map[string]*unstructured.Unstructured) (enrich.DeployContext, bool) {
 	for _, l := range helmToolkitLabels {
 		if meta.Labels[l] != "" {
 			return enrich.DeployContext{Mechanism: "helm", Actionable: false}, true
@@ -161,7 +161,11 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 		if ns == "" {
 			ns = meta.Namespace
 		}
-		return enrich.DeployContext{Mechanism: "kustomize", Actionable: true, Source: kustSources[ns+"/"+name]}, true
+		src := kustSources[ns+"/"+name]
+		return enrich.DeployContext{
+			Mechanism: "kustomize", Actionable: true,
+			Source: src.URL, SourcePath: src.Path,
+		}, true
 	}
 	for _, ref := range meta.OwnerReferences {
 		if !ownerGroupIsCustom(ref.APIVersion) {
@@ -222,18 +226,25 @@ func preferContext(candidate, existing enrich.DeployContext) bool {
 	return existing.Source == "" && candidate.Source != ""
 }
 
+// kustSource is a Flux Kustomization's change target: the repository and the
+// directory within it, kept apart so a consumer can render a working link.
+type kustSource struct {
+	URL  string
+	Path string
+}
+
 // kustomizationSources maps "<ns>/<name>" of each Flux Kustomization to its
-// source repository URL (GitRepository or OCIRepository). Best-effort: clusters
-// without Flux Kustomize contribute nothing.
-func kustomizationSources(ctx context.Context, dyn dynamic.Interface) map[string]string {
+// source repository (GitRepository or OCIRepository) and path. Best-effort:
+// clusters without Flux Kustomize contribute nothing.
+func kustomizationSources(ctx context.Context, dyn dynamic.Interface) map[string]kustSource {
 	git := listSourceURLs(ctx, dyn, gitRepositoryGVR)
 	oci := listSourceURLs(ctx, dyn, ociRepositoryGVR)
 
 	list, err := dyn.Resource(kustomizationGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return map[string]string{}
+		return map[string]kustSource{}
 	}
-	out := map[string]string{}
+	out := map[string]kustSource{}
 	for i := range list.Items {
 		k := &list.Items[i]
 		ns, name := k.GetNamespace(), k.GetName()
@@ -251,13 +262,15 @@ func kustomizationSources(ctx context.Context, dyn dynamic.Interface) map[string
 		if url == "" {
 			continue
 		}
-		// Narrow the change target to the Kustomization's path within the repo
-		// (Flux "<url>//<path>" notation), so remediation points at the right
-		// directory rather than just the repo root.
+		// Record the Kustomization's path within the repo, so remediation points
+		// at the right directory rather than just the repo root. Deliberately NOT
+		// joined into the URL with kustomize's "//" notation: the result looks
+		// like a link and is not one.
+		src := kustSource{URL: strings.TrimRight(url, "/")}
 		if path, _, _ := unstructured.NestedString(k.Object, "spec", "path"); path != "" {
-			url = strings.TrimRight(url, "/") + "//" + strings.TrimPrefix(path, "./")
+			src.Path = strings.TrimPrefix(strings.TrimPrefix(path, "./"), "/")
 		}
-		out[ns+"/"+name] = url
+		out[ns+"/"+name] = src
 	}
 	return out
 }

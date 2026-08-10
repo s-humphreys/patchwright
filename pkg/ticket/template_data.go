@@ -35,6 +35,15 @@ type TemplateData struct {
 	// single-image ticket it has one entry matching Upgrade.
 	Upgrades []ImageUpgrade
 
+	// Source and SourcePath are the change target shared by everything on this
+	// ticket: the repository (or owning custom resource) and the directory within
+	// it. They sit at the top level, not under Upgrade, because grouping is BY
+	// source — so a grouped ticket has one even when its images move to different
+	// versions, and that is precisely the ticket where "where do I make the
+	// change?" matters most.
+	Source     string
+	SourcePath string
+
 	// Priority is the highest policy priority across the grouped findings.
 	Priority string
 	// Accounts and Namespaces are the sorted, de-duplicated places this runs.
@@ -82,6 +91,12 @@ type ImageUpgrade struct {
 	Repo    string
 	Current string
 	Latest  string
+	// Source and SourcePath are this image's own change target. They matter on a
+	// grouped ticket whose members each have their own (every Crossplane package
+	// has its own ProviderRevision), where a single ticket-level target would name
+	// one member and mislead about the rest.
+	Source     string
+	SourcePath string
 	// Managed names the controller owning the version; empty means direct.
 	Managed string
 	Direct  bool
@@ -97,8 +112,12 @@ type UpgradeData struct {
 	// Managed names the controller that owns the version ("helm", "operator")
 	// when the bump is not applied to the image directly. Empty means direct.
 	Managed string
-	// Source is where to make the change (chart repo, GitOps path).
+	// Source is where to make the change: a repository URL, or the owning custom
+	// resource when an operator holds the version.
 	Source string
+	// SourcePath is the directory within Source, stated separately so Source
+	// stays a usable link.
+	SourcePath string
 	// Direct reports whether this is applied to the image itself.
 	Direct bool
 }
@@ -167,6 +186,7 @@ func newTemplateData(group []sink.FindingView) TemplateData {
 		if u := f.Upgrade; u != nil {
 			d.Upgrades = append(d.Upgrades, ImageUpgrade{
 				Ref: f.Image, Repo: f.Repository, Current: u.Current, Latest: u.Latest,
+				Source: u.Source, SourcePath: u.SourcePath,
 				Managed: u.Managed, Direct: u.Actionable,
 			})
 		}
@@ -176,10 +196,18 @@ func newTemplateData(group []sink.FindingView) TemplateData {
 	// Only claim a single target version when every image in the group actually
 	// shares it. Otherwise leave Upgrade nil so a template cannot state one
 	// image's version as if it were the ticket's.
+	// Only state a ticket-level change target when every image really shares it.
+	// Grouping collapses per-object sources into a family, so the members of a
+	// collapsed group each have their own; naming the first would misdescribe the
+	// rest. Their individual targets are on .Upgrades instead.
+	if u := group[0].Upgrade; u != nil && sharesOneSource(d.Upgrades) {
+		d.Source, d.SourcePath = u.Source, u.SourcePath
+	}
 	if u := group[0].Upgrade; u != nil && sharesOneTarget(d.Upgrades) {
 		d.Upgrade = &UpgradeData{
 			Kind: u.Kind, Name: u.Name, Current: u.Current, Latest: u.Latest,
-			Managed: u.Managed, Source: u.Source, Direct: u.Actionable,
+			Managed: u.Managed, Source: u.Source, SourcePath: u.SourcePath,
+			Direct: u.Actionable,
 		}
 	}
 	d.ServiceName = serviceName(group[0], d.Upgrade, d.ImageCount)
@@ -245,6 +273,19 @@ func groupNoun(key string) string {
 		return "images"
 	}
 	return strings.ToLower(noun) + "s"
+}
+
+// sharesOneSource reports whether every image has the same change target.
+func sharesOneSource(ups []ImageUpgrade) bool {
+	if len(ups) == 0 {
+		return false
+	}
+	for _, u := range ups[1:] {
+		if u.Source != ups[0].Source || u.SourcePath != ups[0].SourcePath {
+			return false
+		}
+	}
+	return true
 }
 
 // lastSegment returns the final path-ish component of a grouping key, which for

@@ -144,10 +144,16 @@ func group(findings []sink.FindingView) [][]sink.FindingView {
 }
 
 func groupKey(f sink.FindingView) string {
-	if f.Upgrade != nil && f.Upgrade.Source != "" {
-		return collapseObjectRef(f.Upgrade.Source)
+	if f.Upgrade == nil || f.Upgrade.Source == "" {
+		return f.Repository
 	}
-	return f.Repository
+	key := collapseObjectRef(f.Upgrade.Source)
+	// The path is part of the identity: two Kustomizations in one repo are two
+	// separate changes, so they must not collapse into one ticket.
+	if f.Upgrade.SourcePath != "" {
+		key += " " + f.Upgrade.SourcePath
+	}
+	return key
 }
 
 // collapseObjectRef reduces a Kubernetes object reference ("Kind/namespace/name")

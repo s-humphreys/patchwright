@@ -395,3 +395,56 @@ func TestPlanGroupsPackageFamiliesIntoOneTicket(t *testing.T) {
 		}
 	}
 }
+
+// A ticket-level change target must only appear when every image shares it.
+// Collapsed families do not: each Crossplane package has its own
+// ProviderRevision, so naming the first would misdescribe the other six.
+func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
+	mkObj := func(repo, obj string) sink.FindingView {
+		return finding(repo, func(f *sink.FindingView) {
+			f.Upgrade.Source = "ProviderRevision/crossplane-system/" + obj
+		})
+	}
+	collapsed := newTemplateData([]sink.FindingView{
+		mkObj("contrib/provider-a", "provider-a-aaa"),
+		mkObj("contrib/provider-b", "provider-b-bbb"),
+	})
+	if collapsed.Source != "" {
+		t.Errorf("Source = %q, want empty: the group's members have different targets", collapsed.Source)
+	}
+	// Each member must still carry its own, or the ticket says nothing about where
+	// to make the change.
+	for _, u := range collapsed.Upgrades {
+		if u.Source == "" {
+			t.Errorf("%s has no per-image change target", u.Repo)
+		}
+	}
+
+	mkShared := func(repo string) sink.FindingView {
+		return finding(repo, func(f *sink.FindingView) {
+			f.Upgrade.Source = "https://dev.example.com/_git/infra"
+			f.Upgrade.SourcePath = "bases/argo-events/event-bus"
+		})
+	}
+	shared := newTemplateData([]sink.FindingView{mkShared("natsio/a"), mkShared("natsio/b")})
+	if shared.Source != "https://dev.example.com/_git/infra" || shared.SourcePath != "bases/argo-events/event-bus" {
+		t.Errorf("shared target not surfaced: source=%q path=%q", shared.Source, shared.SourcePath)
+	}
+}
+
+// The repository URL and the path must stay separate all the way to the template:
+// joined with kustomize's "//" the result looks like a link and is not one.
+func TestSourcePathStaysSeparateFromURL(t *testing.T) {
+	d := newTemplateData([]sink.FindingView{
+		finding("acme/app", func(f *sink.FindingView) {
+			f.Upgrade.Source = "https://dev.example.com/_git/infra"
+			f.Upgrade.SourcePath = "bases/app"
+		}),
+	})
+	if strings.Contains(d.Source, "//bases") {
+		t.Errorf("Source %q has the path joined into it", d.Source)
+	}
+	if d.SourcePath != "bases/app" {
+		t.Errorf("SourcePath = %q, want bases/app", d.SourcePath)
+	}
+}

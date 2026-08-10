@@ -222,7 +222,12 @@ type Upgrade struct {
 	Current   string // deployed version
 	Latest    string // latest available version
 	Available bool   // Latest is newer than Current
-	Source    string // where to make the change (repo URL)
+	Source    string // where to make the change (repo URL, or an owning CR ref)
+	// SourcePath is the directory within Source when Source is a repository.
+	// Separate from the URL so consumers can render a clickable link; joining
+	// them with kustomize's "//" notation produces a string that looks like a
+	// URL and is not one.
+	SourcePath string
 
 	// Resolved reports whether the source actually obtained the list of
 	// available versions. When false, Available being false means "we could not

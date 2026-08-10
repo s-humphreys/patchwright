@@ -33,6 +33,12 @@ type DeployContext struct {
 	// Source is where the change lands: a git repository URL (Kustomize), the
 	// owning custom resource ref (operator, e.g. "Api/ns/name"), or empty.
 	Source string
+	// SourcePath is the directory within Source, when Source is a repository.
+	// Kept separate from the URL rather than joined with kustomize's "//"
+	// notation: the joined form is not a resolvable link, and anything that
+	// renders a change target (a ticket, a report) wants a URL someone can click
+	// plus the path stated alongside it.
+	SourcePath string
 }
 
 // DeploymentContextSource reports the deployment context per image NameTag, so
