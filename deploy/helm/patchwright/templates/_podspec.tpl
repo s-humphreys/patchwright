@@ -41,14 +41,28 @@ so they stay in sync. Callers pass a dict:
     - "--exploit-source={{ .root.Values.scan.exploitSource }}"
     {{- end }}
     {{- end }}
+    {{- if and (eq .command "serve") .root.Values.ticketing.autoTicket }}
+    - "--auto-ticket"
+    {{- end }}
     {{- range .modeArgs }}
     - {{ . | quote }}
     {{- end }}
     {{- range .root.Values.extraArgs }}
     - {{ . | quote }}
     {{- end }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName .root.Values.ticketing.credentialsSecretName }}
   env:
+    {{- if .root.Values.ticketing.credentialsSecretName }}
+    - name: JIRA_BASE_URL
+      valueFrom:
+        secretKeyRef: { name: {{ .root.Values.ticketing.credentialsSecretName }}, key: baseUrl }
+    - name: JIRA_EMAIL
+      valueFrom:
+        secretKeyRef: { name: {{ .root.Values.ticketing.credentialsSecretName }}, key: email }
+    - name: JIRA_API_TOKEN
+      valueFrom:
+        secretKeyRef: { name: {{ .root.Values.ticketing.credentialsSecretName }}, key: apiToken }
+    {{- end }}
     {{- if .root.Values.server.auth.secretName }}
     - name: PATCHWRIGHT_API_TOKEN
       valueFrom:

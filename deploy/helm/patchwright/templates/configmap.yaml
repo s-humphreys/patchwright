@@ -9,3 +9,10 @@ data:
     {{- .Values.config.ownership | nindent 4 }}
   policy.yaml: |
     {{- .Values.config.policy | nindent 4 }}
+  {{- if .Values.ticketing.template }}
+  # Mounted at /etc/patchwright/ticket.md.tmpl. Safe to keep beside the rules:
+  # --config only reads *.yaml and *.yml from a directory, so a template in there
+  # is not mistaken for configuration.
+  ticket.md.tmpl: |
+    {{- .Values.ticketing.template | nindent 4 }}
+  {{- end }}

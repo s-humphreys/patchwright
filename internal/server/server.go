@@ -66,6 +66,11 @@ type Server struct {
 	// authentication, which is the historical behaviour and must stay possible for
 	// local runs.
 	tokenDigest []byte
+	// ticketer and autoTicket drive ticket reconciliation. Both optional: without a
+	// ticketer the endpoints report that ticketing is not configured, and without
+	// autoTicket nothing is raised except on request.
+	ticketer   Ticketer
+	autoTicket bool
 
 	mu      sync.RWMutex
 	latest  *snapshot
@@ -131,10 +136,16 @@ func (s *Server) Refresh(ctx context.Context) {
 	s.startedAt = time.Now()
 	s.mu.Unlock()
 
+	// published is set once a successful snapshot is cached, so ticketing reconciles
+	// exactly what the API is serving rather than a half-built or failed cache.
+	published := false
 	defer func() {
 		s.mu.Lock()
 		s.running = false
 		s.mu.Unlock()
+		if published {
+			s.autoReconcile(ctx)
+		}
 	}()
 
 	slog.InfoContext(ctx, "server: running assessment")
@@ -160,6 +171,10 @@ func (s *Server) Refresh(ctx context.Context) {
 		s.latest.generatedAt = snap.generatedAt
 	} else {
 		s.latest = snap
+		// Only reconcile tickets against a successful assessment: raising work from
+		// a failed run would act on whatever the last good data happened to be
+		// while reporting an error.
+		published = snap.err == ""
 	}
 	s.mu.Unlock()
 }

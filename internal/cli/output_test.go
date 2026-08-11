@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
-	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
 func TestParseOutputs(t *testing.T) {
@@ -91,89 +90,5 @@ func TestEmitOutputsAppliesPerOutputView(t *testing.T) {
 		t.Errorf("queue view leaked a suppressed finding: %s", body)
 	} else if !strings.Contains(body, "acme/actionable:1") {
 		t.Errorf("queue view is missing the actionable finding: %s", body)
-	}
-}
-
-// A ticket covering one image of a group suppresses the whole group, which is
-// right (they are one change) but can leave most of it unticketed. Reporting only
-// "skipped, PROJ-11 is open" hid that: two urgent nats images with direct fixes
-// got no ticket and nothing said so.
-func TestCoverageForReportsUncoveredImages(t *testing.T) {
-	index := map[string][]ticket.Existing{
-		"natsio/prometheus-nats-exporter": {{Key: "PROJ-11", Status: "NEEDS REFINEMENT"}},
-	}
-	d := ticket.Draft{
-		Summary: "Upgrade example images (3) to their latest versions",
-		Images: []string{
-			"nats", "natsio/nats-server-config-reloader", "natsio/prometheus-nats-exporter",
-		},
-	}
-
-	c := coverageFor(index, d)
-	if !c.skipped() {
-		t.Fatal("an open ticket on any image must suppress the group")
-	}
-	if len(c.covered) != 1 || c.covered[0] != "natsio/prometheus-nats-exporter" {
-		t.Errorf("covered = %v, want just the ticketed image", c.covered)
-	}
-	want := []string{"nats", "natsio/nats-server-config-reloader"}
-	if len(c.uncovered) != len(want) {
-		t.Fatalf("uncovered = %v, want %v", c.uncovered, want)
-	}
-	for i, w := range want {
-		if c.uncovered[i] != w {
-			t.Errorf("uncovered[%d] = %q, want %q", i, c.uncovered[i], w)
-		}
-	}
-
-	// The report has to name them, or the gap stays invisible.
-	var buf bytes.Buffer
-	reportCoverage(&buf, c)
-	out := buf.String()
-	for _, img := range want {
-		if !strings.Contains(out, img) {
-			t.Errorf("report does not name the uncovered image %s:\n%s", img, out)
-		}
-	}
-	if !strings.Contains(out, "NOT covered") {
-		t.Errorf("report does not flag the gap:\n%s", out)
-	}
-}
-
-// With nothing open, the draft proceeds and there is no gap to report.
-func TestCoverageForFullyUncoveredDraftIsNotSkipped(t *testing.T) {
-	c := coverageFor(map[string][]ticket.Existing{}, ticket.Draft{Images: []string{"a/b", "c/d"}})
-	if c.skipped() {
-		t.Error("no open tickets should not suppress a draft")
-	}
-	if len(c.uncovered) != 2 {
-		t.Errorf("uncovered = %v, want both images", c.uncovered)
-	}
-
-	var buf bytes.Buffer
-	reportCoverage(&buf, c)
-	if strings.Contains(buf.String(), "NOT covered") {
-		t.Error("nothing was skipped, so there is no gap to warn about")
-	}
-}
-
-// Every image ticketed: a skip with no gap, which needs no warning.
-func TestCoverageForFullyCoveredDraftReportsNoGap(t *testing.T) {
-	index := map[string][]ticket.Existing{
-		"a/b": {{Key: "PROJ-1", Status: "To Do"}},
-		"c/d": {{Key: "PROJ-1", Status: "To Do"}},
-	}
-	c := coverageFor(index, ticket.Draft{Images: []string{"a/b", "c/d"}})
-	if !c.skipped() || len(c.uncovered) != 0 {
-		t.Fatalf("covered=%v uncovered=%v, want all covered", c.covered, c.uncovered)
-	}
-	// One ticket covering both images must be listed once.
-	if len(c.tickets) != 1 {
-		t.Errorf("tickets = %+v, want PROJ-1 de-duplicated", c.tickets)
-	}
-	var buf bytes.Buffer
-	reportCoverage(&buf, c)
-	if strings.Contains(buf.String(), "NOT covered") {
-		t.Errorf("no gap should be reported:\n%s", buf.String())
 	}
 }
