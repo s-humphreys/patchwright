@@ -38,10 +38,21 @@
   .tile .n { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
   .tile .l { color: var(--muted); font-size: 0.75rem; text-transform: uppercase;
              letter-spacing: 0.05em; }
-  .scroll { overflow-x: auto; }
+  /* Fixed-height, scrollable table areas. Without a cap, 700 rows push the second
+     table and every summary number off the screen, so the page can only be read
+     top to bottom once. */
+  .scroll { overflow: auto; max-height: 60vh; border: 1px solid var(--line);
+            border-radius: 6px; background: var(--card); }
+  .scroll.short { max-height: 34vh; }
+  .scroll table { margin: 0; }
+  .scroll th { position: sticky; top: 0; z-index: 1; background: var(--card);
+               box-shadow: inset 0 -1px 0 var(--line); }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--fg); }
+  th .arrow { opacity: 0.55; font-size: 0.9em; }
   table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
-  th, td { text-align: left; padding: 0.42rem 0.7rem 0.42rem 0;
-           border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th, td { text-align: left; padding: 0.42rem 0.7rem; white-space: nowrap;
+           border-bottom: 1px solid var(--line); }
   th { color: var(--muted); font-weight: 600; font-size: 0.74rem;
        text-transform: uppercase; letter-spacing: 0.05em; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -83,20 +94,13 @@
   <span id="queueCount"></span>
 </div>
 <div class="scroll"><table id="findings">
-  <thead><tr>
-    <th>Fix</th><th>Priority</th><th>Team</th><th>Namespace</th><th>Image</th>
-    <th class="num">Crit</th><th class="num">Fixcrit</th><th class="num">EPSS</th>
-    <th>Live</th><th>Upgrade</th>
-  </tr></thead>
+  <thead><tr></tr></thead>
   <tbody></tbody>
 </table></div>
 
 <h2>By owner</h2>
-<div class="scroll"><table id="owners">
-  <thead><tr>
-    <th>Class</th><th>Team</th><th class="num">Total</th><th class="num">Actionable</th>
-    <th class="num">Fixable</th><th class="num">Upgradable</th><th class="num">Unassessed</th>
-  </tr></thead>
+<div class="scroll short"><table id="owners">
+  <thead><tr></tr></thead>
   <tbody></tbody>
 </table></div>
 
@@ -126,11 +130,7 @@ function upgradeText(f) {
 
 // Provider counts are only meaningful if the provider actually assessed the image.
 const count = (f, sev) => (f.provider_assessed ? (f.counts?.[sev] ?? 0) : "?");
-const epss = (f) => {
-  if (!f.exploit_checked) return "-";
-  const max = (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0);
-  return max.toFixed(2);
-};
+const epss = (f) => (f.exploit_checked ? maxEPSS(f).toFixed(2) : "-");
 const live = (f) => (f.liveness ? (f.liveness.live ? "yes" : "no") : "?");
 // cell renders a multi-value dimension compactly: the first value, then how many
 // more, with the full list on hover and one click to expand. Joining seven
@@ -212,33 +212,117 @@ function renderTiles(s) {
     `<div class="tile"><div class="n">${n ?? "-"}</div><div class="l">${esc(l)}</div></div>`).join("");
 }
 
+// Column definitions drive both rendering and sorting, so the two cannot disagree
+// about what a column contains.
+//
+// sort is the comparison key, not the displayed text: "urgent" must outrank
+// "high" rather than sorting after it alphabetically, and a "?" count must not
+// sort as if it were a number. Unknowns sort to the bottom in both directions,
+// since "we do not know" is never the answer someone is looking for at the top.
+const UNKNOWN = Number.NEGATIVE_INFINITY;
+
+const FIX_RANK = { direct: 4, managed: 3, none: 2, unknown: 1, "?": 0 };
+const PRI_RANK = { urgent: 4, high: 3, medium: 2, low: 1 };
+
+const FINDING_COLUMNS = [
+  { label: "Fix", get: (f) => fixPath(f), sort: (f) => FIX_RANK[fixPath(f)] ?? 0 },
+  { label: "Priority", cls: (f) => priorityClass(f), get: (f) => priorityText(f),
+    sort: (f) => (f.suppressed ? 0 : PRI_RANK[f.priority] ?? 0) },
+  { label: "Team", get: (f) => esc(f.owner?.team || "-"), sort: (f) => f.owner?.team || "" },
+  { label: "Namespace", td: "clip", get: (f) => cell(f.dimensions?.namespace),
+    sort: (f) => (f.dimensions?.namespace || [])[0] || "" },
+  { label: "Image", td: "clip", title: (f) => f.image,
+    get: (f) => `<code>${esc(f.image)}</code>`, sort: (f) => f.image || "" },
+  { label: "Crit", num: true, get: (f) => esc(count(f, "critical")),
+    sort: (f) => (f.provider_assessed ? f.counts?.critical ?? 0 : UNKNOWN) },
+  { label: "Fixcrit", num: true, get: (f) => esc(fixcrit(f)),
+    sort: (f) => (isScanned(f) ? f.fixable_critical ?? 0 : UNKNOWN) },
+  { label: "EPSS", num: true, get: (f) => esc(epss(f)),
+    sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN) },
+  { label: "Live", get: (f) => esc(live(f)),
+    sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0) },
+  { label: "Upgrade", get: (f) => esc(upgradeText(f)), sort: (f) => upgradeText(f) },
+];
+
+const OWNER_COLUMNS = [
+  { label: "Class", get: (o) => esc(o.class), sort: (o) => o.class || "" },
+  { label: "Team", get: (o) => esc(o.team || "-"), sort: (o) => o.team || "" },
+  { label: "Total", num: true, get: (o) => o.total, sort: (o) => o.total },
+  { label: "Actionable", num: true, get: (o) => o.actionable, sort: (o) => o.actionable },
+  { label: "Fixable", num: true, get: (o) => o.fixable, sort: (o) => o.fixable },
+  { label: "Upgradable", num: true, get: (o) => o.upgradable, sort: (o) => o.upgradable },
+  { label: "Unassessed", num: true, get: (o) => o.unassessed, sort: (o) => o.unassessed },
+];
+
+const isScanned = (f) => f.scanned || (f.vulns || []).length > 0;
+const fixcrit = (f) => (isScanned(f) ? f.fixable_critical ?? 0 : "-");
+const maxEPSS = (f) => (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0);
+const priorityText = (f) => (f.suppressed ? "supp" : f.priority || "-");
+const priorityClass = (f) => {
+  const p = priorityText(f);
+  return PRI_RANK[p] ? p : "unknown";
+};
+
+// One sort state per table. Null means the server's own order, which is already
+// the queue order someone works top-down, so it stays the default.
+const sortState = { findings: null, owners: null };
+
+function compare(col, dir) {
+  return (a, b) => {
+    const x = col.sort(a), y = col.sort(b);
+    if (typeof x === "string" || typeof y === "string") {
+      return dir * String(x).localeCompare(String(y));
+    }
+    // Unknowns sink to the bottom whichever way the column is sorted.
+    if (x === UNKNOWN && y === UNKNOWN) return 0;
+    if (x === UNKNOWN) return 1;
+    if (y === UNKNOWN) return -1;
+    return dir * (x - y);
+  };
+}
+
+function renderTable(id, columns, rows) {
+  const state = sortState[id];
+  let data = rows.slice();
+  if (state) {
+    data.sort(compare(columns[state.index], state.dir));
+  }
+
+  const head = document.querySelector(`#${id} thead tr`);
+  head.innerHTML = columns.map((c, i) => {
+    const active = state && state.index === i;
+    const arrow = active ? `<span class="arrow">${state.dir > 0 ? "▲" : "▼"}</span>` : "";
+    return `<th class="sortable${c.num ? " num" : ""}" data-i="${i}"
+      title="Sort by ${esc(c.label)}">${esc(c.label)} ${arrow}</th>`;
+  }).join("");
+  head.querySelectorAll("th").forEach((th) => {
+    th.onclick = () => {
+      const i = Number(th.dataset.i);
+      // First click on a column sorts descending: for every numeric column here,
+      // the interesting end is the top.
+      sortState[id] = state && state.index === i
+        ? (state.dir < 0 ? { index: i, dir: 1 } : null)
+        : { index: i, dir: -1 };
+      renderTable(id, columns, rows);
+    };
+  });
+
+  document.querySelector(`#${id} tbody`).innerHTML = data.map((row) => "<tr>" +
+    columns.map((c) => {
+      const cls = [c.num ? "num" : "", typeof c.td === "string" ? c.td : "",
+                   c.cls ? c.cls(row) : ""].filter(Boolean).join(" ");
+      const title = c.title ? ` title="${esc(c.title(row))}"` : "";
+      return `<td${cls ? ` class="${cls}"` : ""}${title}>${c.get(row)}</td>`;
+    }).join("") + "</tr>").join("");
+}
+
 function renderOwners(rows) {
-  $("#owners tbody").innerHTML = (rows || []).map((o) => `<tr>
-    <td>${esc(o.class)}</td><td>${esc(o.team || "-")}</td>
-    <td class="num">${o.total}</td><td class="num">${o.actionable}</td>
-    <td class="num">${o.fixable}</td><td class="num">${o.upgradable}</td>
-    <td class="num">${o.unassessed}</td></tr>`).join("");
+  renderTable("owners", OWNER_COLUMNS, rows || []);
 }
 
 function renderFindings(rows) {
   $("#queueCount").textContent = `${rows.length} shown`;
-  $("#findings tbody").innerHTML = rows.map((f) => {
-    const pri = f.suppressed ? "supp" : (f.priority || "-");
-    const cls = ["urgent", "high", "medium", "low"].includes(pri) ? pri : "unknown";
-    const fixcrit = f.scanned || (f.vulns || []).length ? (f.fixable_critical ?? 0) : "-";
-    return `<tr>
-      <td>${esc(fixPath(f))}</td>
-      <td class="${cls}">${esc(pri)}</td>
-      <td>${esc(f.owner?.team || "-")}</td>
-      <td class="clip">${cell(f.dimensions?.namespace)}</td>
-      <td class="clip" title="${esc(f.image)}"><code>${esc(f.image)}</code></td>
-      <td class="num">${esc(count(f, "critical"))}</td>
-      <td class="num">${esc(fixcrit)}</td>
-      <td class="num">${esc(epss(f))}</td>
-      <td>${esc(live(f))}</td>
-      <td>${esc(upgradeText(f))}</td>
-    </tr>`;
-  }).join("");
+  renderTable("findings", FINDING_COLUMNS, rows);
 }
 
 async function loadFindings() {

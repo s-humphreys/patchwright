@@ -312,6 +312,19 @@ func TestUIServesPage(t *testing.T) {
 	if !strings.Contains(body, "provider_unassessed") {
 		t.Error("page does not surface coverage")
 	}
+	// Sorting must respect the domain rather than the alphabet, and unknowns must
+	// sink rather than sort as zero. These assertions only prove the machinery is
+	// present; the ordering itself is JavaScript and is not exercised by Go tests.
+	for _, want := range []string{"FIX_RANK", "PRI_RANK", "UNKNOWN", "sortable"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page is missing sorting machinery: %s", want)
+		}
+	}
+	// Fixed-height scroll areas with a pinned header, so a long queue does not
+	// push the rest of the page out of reach.
+	if !strings.Contains(body, "max-height") || !strings.Contains(body, "position: sticky") {
+		t.Error("tables are not fixed-height with a sticky header")
+	}
 }
 
 // A mistyped API path must not return HTML to a JSON client, which "GET /" as a
