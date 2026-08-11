@@ -325,6 +325,14 @@ func TestUIServesPage(t *testing.T) {
 	}
 	// Actionability is coloured consistently wherever it appears, so Fix and
 	// Upgrade cannot imply different things about the same finding.
+	// Every state that could be misread as "fine" carries an explanation, since
+	// those are exactly the ones mistaken for good news.
+	for _, want := range []string{"FIX_HELP", "absent, not zero", "onlyFixable",
+		"fixFilter", "haystack", `id="search"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page is missing %q", want)
+		}
+	}
 	for _, want := range []string{"act-direct", "act-managed", "act-none", "act-unknown"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page is missing the actionability class %s", want)

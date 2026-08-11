@@ -88,6 +88,9 @@
            border: 1px solid var(--line); background: var(--card); color: var(--fg);
            cursor: pointer; }
   button:hover { border-color: var(--muted); }
+  input[type="search"] { font: inherit; font-size: 0.85rem; padding: 0.25rem 0.45rem;
+    border-radius: 5px; border: 1px solid var(--line); background: var(--card);
+    color: var(--fg); min-width: 17rem; }
   select { font: inherit; font-size: 0.85rem; padding: 0.2rem 0.3rem; border-radius: 5px;
            border: 1px solid var(--line); background: var(--card); color: var(--fg); }
   .err { color: var(--urgent); }
@@ -109,9 +112,13 @@
 
 <h2>Queue</h2>
 <div class="controls">
+  <input type="search" id="search" placeholder="search image, team, namespace, ticket"
+         title="Case-insensitive substring match across the image reference, team, namespaces, the upgrade text and any ticket key.">
   <label>class <select id="classFilter"><option value="">all</option></select></label>
   <label>team <select id="teamFilter"><option value="">all</option></select></label>
-  <label><input type="checkbox" id="onlyActionable" checked> actionable only</label>
+  <label>fix <select id="fixFilter"><option value="">all</option></select></label>
+  <label title="Only findings with a version to move to: a direct image bump, or one applied via a chart or operator. Hides those already on their latest release and those whose versions could not be resolved."><input type="checkbox" id="onlyFixable"> has a fix</label>
+  <label title="Actionable is the policy verdict: this warrants action. It is not the same as having a version to move to, which is the Fix column - an image already on its latest release can still be actionable, and needs a decision rather than a bump."><input type="checkbox" id="onlyActionable" checked> actionable only</label>
   <label><input type="checkbox" id="showSuppressed"> include suppressed</label>
   <span id="queueCount"></span>
 </div>
@@ -256,39 +263,75 @@ const FIX_RANK = { direct: 4, managed: 3, none: 2, unknown: 1, "?": 0 };
 const FIX_CLASS = { direct: "act-direct", managed: "act-managed", none: "act-none",
                     unknown: "act-unknown", "?": "act-unknown" };
 const fixClass = (f) => FIX_CLASS[fixPath(f)] || "act-unknown";
+
+// Every state that could be read as "fine" gets an explanation, because the ones
+// that mean "we do not know" are the ones most easily mistaken for good news.
+const FIX_HELP = {
+  direct: "A newer version this image can move to now.",
+  managed: "A newer version exists, but a chart or operator owns the tag, so the bump is applied there. Still real work.",
+  none: "Already on the latest available version. Nothing to upgrade to, so criticals here need a decision (wait for upstream, rebuild, or accept) rather than a bump.",
+  unknown: "Detection ran but could not resolve the available versions, e.g. a private registry whose tags cannot be listed. NOT a statement that it is up to date.",
+  "?": "Upgrade detection did not run for this assessment.",
+};
 const PRI_RANK = { urgent: 4, high: 3, medium: 2, low: 1 };
 
 const FINDING_COLUMNS = [
   { label: "Priority", cls: (f) => priorityClass(f), get: (f) => priorityText(f),
-    sort: (f) => (f.suppressed ? 0 : PRI_RANK[f.priority] ?? 0) },
-  { label: "Team", get: (f) => esc(f.owner?.team || "-"), sort: (f) => f.owner?.team || "" },
+    sort: (f) => (f.suppressed ? 0 : PRI_RANK[f.priority] ?? 0),
+    help: "The policy verdict, set by your rules. urgent means a fixable CVE that is exploited or likely to be (KEV or high EPSS), which outranks severity alone. This is NOT the same as having something to upgrade to; see Fix.",
+    title: (f) => (f.suppressed
+      ? "Suppressed by policy: " + ((f.reasons || [])[0] || "no reason recorded")
+      : (f.reasons || [])[0] || "") },
+  { label: "Team", get: (f) => esc(f.owner?.team || "-"), sort: (f) => f.owner?.team || "",
+    help: "The attributed owning team. \"-\" means no ownership rule could attribute this workload, which is usually a missing namespace label rather than a vulnerability.",
+    title: (f) => (f.owner?.team ? `owner rule: ${f.owner.rule || "unknown"}` : "No ownership rule matched") },
   { label: "Namespace", td: "clip", get: (f) => cell(f.dimensions?.namespace),
-    sort: (f) => (f.dimensions?.namespace || [])[0] || "" },
+    sort: (f) => (f.dimensions?.namespace || [])[0] || "",
+    help: "Namespaces this image runs in. Click a \"+N\" to expand the full list." },
   { label: "Image", td: "clip", title: (f) => f.image,
-    get: (f) => `<code>${esc(f.image)}</code>`, sort: (f) => f.image || "" },
+    get: (f) => `<code>${esc(f.image)}</code>`, sort: (f) => f.image || "",
+    help: "The image reference as deployed, digest included where pinned." },
   { label: "Crit", num: true, get: (f) => esc(count(f, "critical")),
-    sort: (f) => (f.provider_assessed ? f.counts?.critical ?? 0 : UNKNOWN) },
+    sort: (f) => (f.provider_assessed ? f.counts?.critical ?? 0 : UNKNOWN),
+    help: "Critical count from the scan provider. \"?\" means the provider never assessed this image, so nothing is known about it. That is not the same as zero.",
+    title: (f) => (f.provider_assessed ? "" : "The scan provider never assessed this image; its counts are absent, not zero.") },
   { label: "Fixcrit", num: true, get: (f) => esc(fixcrit(f)),
-    sort: (f) => (isScanned(f) ? f.fixable_critical ?? 0 : UNKNOWN) },
+    sort: (f) => (isScanned(f) ? f.fixable_critical ?? 0 : UNKNOWN),
+    help: "Critical CVEs with a fix available, from the vulnerability scanner. \"-\" means the image was not scanned.",
+    title: (f) => (isScanned(f) ? "" : "Not scanned, so fix availability is unknown.") },
   { label: "EPSS", num: true, get: (f) => esc(epss(f)),
-    sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN) },
+    sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN),
+    help: "Highest EPSS across this image's CVEs: the predicted probability of exploitation in the next 30 days (0-1). A CVSS 10 at EPSS 0.008 is less urgent than a CVSS 5 at 0.93. \"-\" means exploit intel was not gathered." },
   { label: "Live", get: (f) => esc(live(f)),
-    sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0) },
+    sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0),
+    help: "Whether this image is running in a cluster right now. \"?\" means no live reconciliation ran." },
   { label: "Fix", cls: fixClass, get: (f) => fixPath(f),
-    sort: (f) => FIX_RANK[fixPath(f)] ?? 0 },
+    sort: (f) => FIX_RANK[fixPath(f)] ?? 0,
+    help: "Whether there is a version to move to, and where the change is applied: direct, managed (via a chart or operator), none (already latest), unknown (could not resolve), ? (detection did not run).",
+    title: (f) => FIX_HELP[fixPath(f)] || "" },
   { label: "Upgrade", cls: fixClass, get: (f) => esc(upgradeText(f)),
-    sort: (f) => upgradeText(f) },
-  { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f) },
+    sort: (f) => upgradeText(f),
+    help: "The version move available. Chart versions are prefixed \"chart\" because they are the chart's, not the image tag shown in Image.",
+    title: (f) => (f.upgrade?.source ? `change in ${f.upgrade.source}${f.upgrade.source_path ? " path " + f.upgrade.source_path : ""}` : "") },
+  { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f),
+    help: "Open Jira tickets covering this image. \"-\" means no open ticket; \"?\" means Jira is not configured, so ticket state is unknown." },
 ];
 
 const OWNER_COLUMNS = [
-  { label: "Class", get: (o) => esc(o.class), sort: (o) => o.class || "" },
-  { label: "Team", get: (o) => esc(o.team || "-"), sort: (o) => o.team || "" },
-  { label: "Total", num: true, get: (o) => o.total, sort: (o) => o.total },
-  { label: "Actionable", num: true, get: (o) => o.actionable, sort: (o) => o.actionable },
-  { label: "Fixable", num: true, get: (o) => o.fixable, sort: (o) => o.fixable },
-  { label: "Upgradable", num: true, get: (o) => o.upgradable, sort: (o) => o.upgradable },
-  { label: "Unassessed", num: true, get: (o) => o.unassessed, sort: (o) => o.unassessed },
+  { label: "Class", get: (o) => esc(o.class), sort: (o) => o.class || "",
+    help: "Coarse ownership bucket, defined by your ownership rules." },
+  { label: "Team", get: (o) => esc(o.team || "-"), sort: (o) => o.team || "",
+    help: "Owning team. \"-\" means no rule could attribute these workloads." },
+  { label: "Total", num: true, get: (o) => o.total, sort: (o) => o.total,
+    help: "Unsuppressed findings owned by this team." },
+  { label: "Actionable", num: true, get: (o) => o.actionable, sort: (o) => o.actionable,
+    help: "Findings the policy rules marked for action." },
+  { label: "Fixable", num: true, get: (o) => o.fixable, sort: (o) => o.fixable,
+    help: "Findings with at least one critical CVE that has a fix available." },
+  { label: "Upgradable", num: true, get: (o) => o.upgradable, sort: (o) => o.upgradable,
+    help: "Findings with a newer version that can be applied directly." },
+  { label: "Unassessed", num: true, get: (o) => o.unassessed, sort: (o) => o.unassessed,
+    help: "Findings the scan provider never assessed. A team can look quiet simply because nothing scanned its images, which this column exposes." },
 ];
 
 function ticketsFor(f) {
@@ -359,8 +402,9 @@ function renderTable(id, columns, rows) {
   head.innerHTML = columns.map((c, i) => {
     const active = state && state.index === i;
     const arrow = active ? `<span class="arrow">${state.dir > 0 ? "▲" : "▼"}</span>` : "";
+    const help = c.help ? esc(c.help) + " (click to sort)" : `Sort by ${esc(c.label)}`;
     return `<th class="sortable${c.num ? " num" : ""}" data-i="${i}"
-      title="Sort by ${esc(c.label)}">${esc(c.label)} ${arrow}</th>`;
+      title="${help}">${esc(c.label)} ${arrow}</th>`;
   }).join("");
   head.querySelectorAll("th").forEach((th) => {
     th.onclick = () => {
@@ -449,14 +493,52 @@ function populateOwnerFilters(rows) {
   };
   fill(classSel, classes, "all classes", chosenClass);
   fill(teamSel, teams, "all teams", chosenTeam);
+
+  const fixSel = $("#fixFilter");
+  const chosenFix = fixSel.value;
+  const fixCounts = new Map();
+  for (const f of rows) {
+    if (chosenClass && (f.owner?.class || "-") !== chosenClass) continue;
+    const p = fixPath(f);
+    fixCounts.set(p, (fixCounts.get(p) || 0) + 1);
+  }
+  const ordered = ["direct", "managed", "none", "unknown", "?"]
+    .filter((k) => fixCounts.has(k));
+  fixSel.innerHTML = [`<option value="">all fixes (${rows.length})</option>`]
+    .concat(ordered.map((k) => `<option value="${esc(k)}">${esc(k)} (${fixCounts.get(k)})</option>`))
+    .join("");
+  fixSel.value = [...fixSel.options].some((o) => o.value === chosenFix) ? chosenFix : "";
+}
+
+// haystack is what the search box matches against: the fields someone would
+// plausibly type a fragment of. Ticket keys are included so "DVOP-4065" finds
+// every image a grouped ticket covers.
+function haystack(f) {
+  const parts = [
+    f.image, f.repository, f.registry, f.owner?.team, f.owner?.class, f.priority,
+    (f.dimensions?.namespace || []).join(" "),
+    (f.dimensions?.account || []).join(" "),
+    upgradeText(f), fixPath(f),
+    ticketsFor(f).map((t) => `${t.key} ${t.status}`).join(" "),
+  ];
+  return parts.filter(Boolean).join(" ").toLowerCase();
 }
 
 function applyOwnerFilters() {
-  const c = $("#classFilter").value, t = $("#teamFilter").value;
+  const c = $("#classFilter").value, t = $("#teamFilter").value, x = $("#fixFilter").value;
+  const q = $("#search").value.trim().toLowerCase();
   const rows = queueRows.filter((f) => {
     if (c && (f.owner?.class || "-") !== c) return false;
-    if (t === UNATTRIBUTED) return !f.owner?.team;
-    if (t && f.owner?.team !== t) return false;
+    if (t === UNATTRIBUTED && f.owner?.team) return false;
+    if (t && t !== UNATTRIBUTED && f.owner?.team !== t) return false;
+    // Fix is a separate question from actionable: "does policy say act" versus
+    // "is there a version to move to". An image on its latest release can be both
+    // actionable and unfixable, which is a decision rather than a bump.
+    if (x && fixPath(f) !== x) return false;
+    // "Has a fix" is the common case of the dropdown: something to move to,
+    // whether applied here or via a chart or operator.
+    if ($("#onlyFixable").checked && !["direct", "managed"].includes(fixPath(f))) return false;
+    if (q && !haystack(f).includes(q)) return false;
     return true;
   });
   renderFindings(rows);
@@ -499,6 +581,9 @@ $("#classFilter").addEventListener("change", () => {
   applyOwnerFilters();
 });
 $("#teamFilter").addEventListener("change", applyOwnerFilters);
+$("#fixFilter").addEventListener("change", applyOwnerFilters);
+$("#onlyFixable").addEventListener("change", applyOwnerFilters);
+$("#search").addEventListener("input", applyOwnerFilters);
 $("#refresh").addEventListener("click", async () => {
   await fetch("/api/v1/assessments", { method: "POST" });
   // The refresh is asynchronous, so poll until the server stops reporting it.
