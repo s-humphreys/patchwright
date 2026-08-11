@@ -388,7 +388,13 @@ scoping. Put OIDC in front (an ingress authenticator or oauth2-proxy) for anythi
 beyond a trusted network.
 
 Every response carries an `assessment` block (`generated_at`, `running`, and
-`started_at` while a run is in flight) so clients know how fresh the data is. This is how patchwright is deployed — the
+`started_at` while a run is in flight) so clients know how fresh the *assessment*
+is. `summary` separately reports `provider_data_newest` / `provider_data_oldest`,
+which is when the scan provider last looked. The two are different questions: a
+server refreshing hourly over a mounted export reports a fresh assessment forever
+while the vulnerability data underneath it ages, and a week-old export is otherwise
+indistinguishable from a current one. The status page states both, and `assess`
+warns when the export is more than two days old. This is how patchwright is deployed — the
 Helm chart runs it as a Deployment + Service. See
 [docs/design/api-server.md](docs/design/api-server.md).
 

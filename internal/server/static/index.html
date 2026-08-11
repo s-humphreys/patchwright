@@ -102,6 +102,7 @@
 <header>
   <span class="brand"><img class="logo" src="/favicon.png" alt="" width="24" height="24"><h1>patchwright</h1></span>
   <span class="meta" id="freshness">loading…</span>
+  <span class="meta" id="dataAge"></span>
   <span style="flex:1"></span>
   <button id="refresh" title="Ask the server to run a new assessment">Refresh assessment</button>
 </header>
@@ -218,6 +219,27 @@ function renderFreshness(a) {
   if (a.running) text += ` (refresh in progress${elapsed(a)})`;
   el.textContent = text;
   el.className = "meta";
+}
+
+// renderDataAge states when the scan provider last looked, which is a different
+// question from when this pipeline last ran. A server refreshing hourly over a
+// mounted export reports a fresh assessment forever while the data underneath it
+// ages; without this, a week-old export is indistinguishable from a current one.
+function renderDataAge(s) {
+  const el = $("#dataAge");
+  if (!s.provider_data_newest) {
+    el.textContent = "";
+    return;
+  }
+  const newest = new Date(s.provider_data_newest);
+  const days = Math.floor((Date.now() - newest) / 86400000);
+  const age = days < 1 ? "today" : days === 1 ? "1 day old" : `${days} days old`;
+  el.textContent = `· scan data ${newest.toLocaleDateString()} (${age})`;
+  // Older than a couple of days is worth noticing rather than reading past: the
+  // queue is only as current as the export behind it.
+  el.className = days >= 2 ? "meta err" : "meta";
+  el.title = "When the scan provider last assessed these images, as opposed to when"
+    + " this assessment ran. A stale export produces a fresh-looking assessment of old data.";
 }
 
 function renderCoverage(s) {
@@ -568,9 +590,11 @@ async function loadAll() {
       $("#findings tbody").innerHTML = "";
       $("#owners tbody").innerHTML = "";
       $("#queueCount").textContent = "";
+      $("#dataAge").textContent = "";
       return;
     }
     renderCoverage(summary.summary);
+    renderDataAge(summary.summary);
     renderTiles(summary.summary);
     renderOwners(owners.owners);
     await loadFindings();

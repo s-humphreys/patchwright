@@ -356,6 +356,11 @@ func TestUIServesPage(t *testing.T) {
 	if !strings.Contains(body, "actionable_unassessed") {
 		t.Error("page does not report actionable findings the provider never assessed")
 	}
+	// The page must distinguish when the provider last looked from when this
+	// assessment ran, or a stale export looks current.
+	if !strings.Contains(body, "provider_data_newest") {
+		t.Error("page does not surface the age of the provider's data")
+	}
 	// Sorting must respect the domain rather than the alphabet, and unknowns must
 	// sink rather than sort as zero. These assertions only prove the machinery is
 	// present; the ordering itself is JavaScript and is not exercised by Go tests.
@@ -538,5 +543,67 @@ func TestTicketLookupFailureDoesNotFailTheAssessment(t *testing.T) {
 	}
 	if len(body.Tickets) != 0 {
 		t.Errorf("tickets = %+v, want none after a failed lookup", body.Tickets)
+	}
+}
+
+// When the provider last looked is a different question from when this pipeline
+// ran. A server refreshing hourly over a mounted export reports a fresh assessment
+// forever while the data underneath it ages, so the provider's own timestamps have
+// to be surfaced or a week-old export looks current.
+func TestSummaryReportsProviderDataAge(t *testing.T) {
+	older := time.Now().Add(-7 * 24 * time.Hour).Truncate(time.Second)
+	newer := time.Now().Add(-2 * 24 * time.Hour).Truncate(time.Second)
+
+	withSeen := func(image string, seen time.Time) model.Finding {
+		f := finding(image, "platform", "cpo-team", true, false)
+		f.Occurrences = []model.Occurrence{{Assessed: true, LastSeen: seen}}
+		return f
+	}
+	s := New(stubAssessor{findings: []model.Finding{
+		withSeen("acr.io/a:1", older),
+		withSeen("acr.io/b:1", newer),
+		// Never assessed, so it carries no timestamp and must not skew the range.
+		finding("acr.io/c:1", "platform", "cpo-team", false, false),
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+
+	if body.Summary.ProviderDataNewest == nil || body.Summary.ProviderDataOldest == nil {
+		t.Fatalf("provider data range missing: %+v", body.Summary)
+	}
+	if !body.Summary.ProviderDataNewest.Equal(newer) {
+		t.Errorf("newest = %v, want %v", body.Summary.ProviderDataNewest, newer)
+	}
+	if !body.Summary.ProviderDataOldest.Equal(older) {
+		t.Errorf("oldest = %v, want %v", body.Summary.ProviderDataOldest, older)
+	}
+}
+
+// With nothing assessed there is no timestamp to report, and inventing one (the
+// zero time, or now) would be worse than saying nothing.
+func TestSummaryOmitsProviderDataAgeWhenNothingWasAssessed(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		finding("acr.io/a:1", "platform", "cpo-team", true, false),
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	var raw map[string]json.RawMessage
+	decodeInto(t, rec, &raw)
+	var summary map[string]json.RawMessage
+	if err := json.Unmarshal(raw["summary"], &summary); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"provider_data_newest", "provider_data_oldest"} {
+		if _, present := summary[k]; present {
+			t.Errorf("%s should be absent when nothing was assessed", k)
+		}
 	}
 }
