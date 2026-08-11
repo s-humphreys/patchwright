@@ -353,7 +353,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
 | `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed. |
-| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`). |
+| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`, `actionable_unassessed`). |
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 

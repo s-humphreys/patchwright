@@ -231,11 +231,18 @@ function renderCoverage(s) {
     el.innerHTML = "";
     return;
   }
+  // Deliberately does not claim the actionable figure covers only assessed
+  // findings: a vulnerability scanner can find fixable CVEs the provider never
+  // looked for, and on a real estate 14 of 35 actionable findings came from that
+  // alone. Overstating in the other direction would be the same kind of error.
+  const scannerOnly = s.actionable_unassessed
+    ? ` ${s.actionable_unassessed} of the ${s.actionable} actionable findings are on
+        images the provider never assessed, found by the vulnerability scanner alone.`
+    : "";
   el.innerHTML = `<div class="banner"><strong>${s.provider_unassessed} of ${total} findings
     were never assessed by the scan provider</strong> (${pct}% covered). Their severity counts
-    are absent data, not zero, and they cannot match a count-based rule. The actionable
-    figure below describes only the ${s.provider_assessed} that were assessed.
-    ${s.remediation_unresolved ? `${s.remediation_unresolved} also have no resolvable upgrade.` : ""}
+    are absent data rather than zero, so they cannot match a count-based rule.${scannerOnly}
+    ${s.remediation_unresolved ? `${s.remediation_unresolved} findings have no resolvable upgrade.` : ""}
     </div>`;
 }
 
