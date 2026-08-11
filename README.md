@@ -275,7 +275,12 @@ jira:
   # imageLabel: true              # or use labels, when no such field exists
   epic: PROJ-100
   issueType: Container Vulnerability
-  priority: Highest
+  priorityMap:                    # carry the assessment's ordering into Jira
+    urgent: Highest
+    high: High
+    medium: Medium
+    low: Low
+  priority: Medium                # fallback for anything unmapped
   requireUpgrade: true            # default
 ```
 
@@ -303,6 +308,13 @@ This is deliberately not `suppress`. A suppressed finding is one nobody should
 act on and it leaves the assessment entirely; an excluded one is real work simply
 tracked elsewhere, so it stays in the report and the queue and is listed as
 skipped with the rule name and reason. Excluding something never makes it quiet.
+
+**Priority carries across.** Without `priorityMap`, every ticket is raised at the
+single `priority` value, and the tracker cannot tell an urgent, exploited, fixable
+finding from a low one. The map is deliberately not defaulted: priority schemes are
+per-instance, and a name that does not exist fails ticket creation. A dry run prints
+`urgent -> Highest` per ticket so a flattened queue is visible before anything is
+created.
 
 **Duplicates are prevented by asking Jira, not by local state.** Before creating,
 it searches for open tickets carrying the image in `imageField` (or the label),
@@ -337,15 +349,24 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`. |
+| `GET /` | Live-status page: coverage, the queue, per-team triage, open Jira tickets. Embedded in the binary and reads the API below, so the two cannot disagree. |
+| `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
-| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable. |
-| `GET /api/v1/summary` | Fleet-wide headline. |
+| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed. |
+| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`). |
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 
-Every response carries an `assessment` block (`generated_at`, `running`) so
-clients know how fresh the data is. This is how patchwright is deployed — the
+Given a `jira:` config block and `JIRA_*` credentials, `serve` also indexes the
+project's **open** tickets on each refresh (one JQL query for the whole project,
+not one per image) and returns them alongside findings as `tickets`, keyed by image
+repository, so the page can show whether someone is already on a finding. Only
+search is used; `serve` never creates anything. Without the config or the
+credentials the key is absent, which means *unknown* rather than "no ticket
+exists".
+
+Every response carries an `assessment` block (`generated_at`, `running`, and
+`started_at` while a run is in flight) so clients know how fresh the data is. This is how patchwright is deployed — the
 Helm chart runs it as a Deployment + Service. See
 [docs/design/api-server.md](docs/design/api-server.md).
 
@@ -449,7 +470,8 @@ helm install pw deploy/helm/patchwright \
 
 # 3. query the API
 kubectl port-forward svc/pw-patchwright 8080:8080 &
-curl localhost:8080/api/v1/summary
+curl localhost:8080/api/v1/summary        # includes coverage counts
+curl 'localhost:8080/api/v1/findings?provider_assessed=false'   # never scanned
 ```
 
 **Multi-cluster.** patchwright deploys to one cluster but reconciles many. Read

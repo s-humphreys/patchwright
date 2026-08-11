@@ -61,9 +61,19 @@ type JiraConfig struct {
 	Epic string `yaml:"epic"`
 	// IssueType defaults to "Task".
 	IssueType string `yaml:"issueType"`
-	// Priority is the Jira priority name, e.g. "Highest". Left to Jira's default
-	// when empty.
+	// Priority is the Jira priority name used when PriorityMap has nothing for a
+	// finding, e.g. "Highest". Left to Jira's default when empty.
 	Priority string `yaml:"priority"`
+	// PriorityMap translates a finding's priority into a Jira priority name, so
+	// the assessment's ordering survives into the tracker. Without it every ticket
+	// gets the same Priority, which flattens the queue: an urgent, exploited,
+	// fixable finding and a low one become indistinguishable the moment they
+	// become tickets.
+	//
+	// Deliberately not defaulted. Priority schemes are per-instance, and guessing
+	// names that do not exist would fail ticket creation with a Jira field error;
+	// see config/policy.yaml for a worked example.
+	PriorityMap map[string]string `yaml:"priorityMap"`
 	// Labels are added to every ticket, alongside any image labels.
 	Labels []string `yaml:"labels"`
 
@@ -89,7 +99,7 @@ func (j JiraConfig) isSet() bool {
 	return j.Board != 0 || j.Project != "" || j.Template != "" ||
 		j.ImageField != "" || j.ImageLabel || j.Epic != "" || j.IssueType != "" ||
 		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil ||
-		len(j.Exclude) > 0
+		len(j.Exclude) > 0 || len(j.PriorityMap) > 0
 }
 
 // EffectiveRequireUpgrade reports whether findings with no available upgrade
@@ -104,6 +114,15 @@ func (j JiraConfig) EffectiveIssueType() string {
 		return "Task"
 	}
 	return j.IssueType
+}
+
+// JiraPriority maps a finding's priority to a Jira priority name, falling back to
+// the configured default. Returns "" to leave Jira's own default in place.
+func (j JiraConfig) JiraPriority(findingPriority string) string {
+	if v, ok := j.PriorityMap[findingPriority]; ok && v != "" {
+		return v
+	}
+	return j.Priority
 }
 
 // Validate checks the Jira config is usable. Called by the ticket command

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -119,6 +120,21 @@ func readFindings(path string) ([]sink.FindingView, error) {
 	return findings, nil
 }
 
+// describePriority shows the assessment priority and the Jira priority it maps to,
+// so a flattened queue (every ticket at one priority) is visible before creation
+// rather than after.
+func describePriority(cfg config.JiraConfig, findingPriority string) string {
+	assessed := findingPriority
+	if assessed == "" {
+		assessed = "-"
+	}
+	mapped := cfg.JiraPriority(findingPriority)
+	if mapped == "" {
+		return assessed + " -> (Jira default)"
+	}
+	return assessed + " -> " + mapped
+}
+
 func reportSkips(w io.Writer, skips []ticket.Skip) {
 	if len(skips) == 0 {
 		return
@@ -136,6 +152,13 @@ func reportSkips(w io.Writer, skips []ticket.Skip) {
 // credentials it says so rather than implying the answer is no.
 func dryRun(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.Plan) error {
 	jira, jiraErr := ticket.NewJira(cfg)
+	var index map[string][]ticket.Existing
+	if jiraErr == nil {
+		var err error
+		if index, err = jira.OpenByImage(ctx); err != nil {
+			return err
+		}
+	}
 	if jiraErr != nil {
 		fmt.Fprintf(w, "NOTE: %v\n", jiraErr)
 		fmt.Fprintf(w, "      Duplicate detection is part of that check, so the drafts below may\n")
@@ -151,16 +174,15 @@ func dryRun(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticke
 	for i, d := range plan.Drafts {
 		fmt.Fprintf(w, "--- ticket %d of %d ---\n", i+1, len(plan.Drafts))
 		fmt.Fprintf(w, "Summary:  %s\n", d.Summary)
+		fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, d.Priority))
 		fmt.Fprintf(w, "Images:   %v\n", d.Images)
 		fmt.Fprintf(w, "Covers:   %d finding(s), grouped by %s\n", len(d.Findings), d.Key)
 
 		if jiraErr == nil {
-			existing, err := existingFor(ctx, jira, d)
-			if err != nil {
-				return err
-			}
-			if len(existing) > 0 {
-				fmt.Fprintf(w, "Existing: %s — WOULD SKIP (already open)\n", formatExisting(existing))
+			c := coverageFor(index, d)
+			if c.skipped() {
+				fmt.Fprintf(w, "Existing: WOULD SKIP — ")
+				reportCoverage(w, c)
 			} else {
 				fmt.Fprintln(w, "Existing: none — would create")
 			}
@@ -177,15 +199,19 @@ func create(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticke
 		return err
 	}
 
-	created, skipped := 0, 0
+	index, err := jira.OpenByImage(ctx)
+	if err != nil {
+		return err
+	}
+
+	created, skipped, uncovered := 0, 0, 0
 	for _, d := range plan.Drafts {
-		existing, err := existingFor(ctx, jira, d)
-		if err != nil {
-			return err
-		}
-		if len(existing) > 0 {
-			fmt.Fprintf(w, "skip   %s (open: %s)\n", d.Summary, formatExisting(existing))
+		c := coverageFor(index, d)
+		if c.skipped() {
+			fmt.Fprintf(w, "skip   %s\n       ", d.Summary)
+			reportCoverage(w, c)
 			skipped++
+			uncovered += len(c.uncovered)
 			continue
 		}
 		key, err := jira.Create(ctx, d)
@@ -198,15 +224,64 @@ func create(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticke
 		fmt.Fprintf(w, "create %s  %s\n", key, d.Summary)
 		created++
 	}
-	slog.InfoContext(ctx, "ticket run complete", "created", created, "skipped_existing", skipped)
+	slog.InfoContext(ctx, "ticket run complete",
+		"created", created, "skipped_existing", skipped, "images_left_uncovered", uncovered)
 	fmt.Fprintf(w, "\nCreated %d, skipped %d already open.\n", created, skipped)
+	if uncovered > 0 {
+		fmt.Fprintf(w, "%d image(s) in skipped groups have no ticket of their own; see above.\n", uncovered)
+	}
 	return nil
 }
 
-// existingFor checks every image a draft covers in one query, since a grouped
-// ticket should not be raised if any of its images is already being handled.
-func existingFor(ctx context.Context, jira *ticket.Jira, d ticket.Draft) ([]ticket.Existing, error) {
-	return jira.FindOpen(ctx, d.Images)
+// coverage is what open tickets say about one draft: which of its images are
+// already handled, and which are not.
+//
+// The distinction matters. An open ticket on any image suppresses the whole draft,
+// which is right (they are one change), but it can leave most of the group
+// unticketed: a ticket covering one of three nats images stopped the other two
+// being raised at all. Reporting only "skipped, PROJ-11 is open" hides that.
+type coverage struct {
+	tickets   []ticket.Existing
+	covered   []string
+	uncovered []string
+}
+
+func (c coverage) skipped() bool { return len(c.tickets) > 0 }
+
+// coverageFor resolves a draft against the whole project's open tickets. The index
+// is fetched once per run, so this costs nothing per draft.
+func coverageFor(index map[string][]ticket.Existing, d ticket.Draft) coverage {
+	var out coverage
+	seen := map[string]bool{}
+	for _, img := range d.Images {
+		found := index[img]
+		if len(found) == 0 {
+			out.uncovered = append(out.uncovered, img)
+			continue
+		}
+		out.covered = append(out.covered, img)
+		for _, e := range found {
+			if !seen[e.Key] {
+				seen[e.Key] = true
+				out.tickets = append(out.tickets, e)
+			}
+		}
+	}
+	return out
+}
+
+// reportCoverage prints the tickets that caused a skip and, crucially, the images
+// they do not cover. Only meaningful for a skip: uncovered images in a draft that
+// is about to be created are simply the draft's own work, not a gap.
+func reportCoverage(w io.Writer, c coverage) {
+	if !c.skipped() {
+		return
+	}
+	fmt.Fprintf(w, "%s covers %s\n", formatExisting(c.tickets), strings.Join(c.covered, ", "))
+	if len(c.uncovered) > 0 {
+		fmt.Fprintf(w, "       NOT covered by any open ticket: %s\n", strings.Join(c.uncovered, ", "))
+		fmt.Fprintf(w, "       These get no ticket while the above is open. Close it, or add them to it.\n")
+	}
 }
 
 func formatExisting(existing []ticket.Existing) string {

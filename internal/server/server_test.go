@@ -3,12 +3,16 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
+	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
 // stubAssessor returns fixed findings.
@@ -157,5 +161,341 @@ func TestRefreshErrorKeepsLastGood(t *testing.T) {
 	}
 	if s.latest.err == "" {
 		t.Error("the error should be surfaced in the meta")
+	}
+}
+
+// assessedFinding builds a finding the provider actually assessed, with a
+// resolved upgrade. The default `finding` helper has neither, which is itself the
+// point: an unassessed finding is the shape the API must not present as healthy.
+func assessedFinding(image, class, team string, actionable bool) model.Finding {
+	f := finding(image, class, team, actionable, false)
+	f.Occurrences = []model.Occurrence{{Assessed: true}}
+	f.Counts = model.Counts{model.SeverityCritical: 2}
+	f.RemediationChecked = true
+	f.Upgrade = &model.Upgrade{
+		Current: "1.0.0", Latest: "2.0.0", Available: true, Resolved: true, Actionable: true,
+	}
+	return f
+}
+
+// A client reading only the summary must be able to tell a healthy estate from
+// one nothing has looked at. Without coverage counts, "1 actionable" reads the
+// same either way.
+func TestSummaryReportsCoverage(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/seen:1", "engineering", "orders", true),
+		finding("acr.io/unseen:2", "engineering", "orders", false, false),
+		finding("acr.io/unseen:3", "engineering", "orders", false, false),
+		finding("mcr.io/managed:4", "cloud-provider", "aks", false, true),
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+	got := body.Summary
+
+	if got.ProviderAssessed != 1 {
+		t.Errorf("provider_assessed = %d, want 1", got.ProviderAssessed)
+	}
+	if got.ProviderUnassessed != 2 {
+		t.Errorf("provider_unassessed = %d, want 2", got.ProviderUnassessed)
+	}
+	// The documented invariant: the two coverage counts partition Findings, so a
+	// client can check the arithmetic instead of guessing the denominator.
+	if got.ProviderAssessed+got.ProviderUnassessed != got.Findings {
+		t.Errorf("assessed(%d) + unassessed(%d) != findings(%d)",
+			got.ProviderAssessed, got.ProviderUnassessed, got.Findings)
+	}
+	// Only the assessed finding has a resolved upgrade.
+	if got.RemediationUnresolved != 2 {
+		t.Errorf("remediation_unresolved = %d, want 2", got.RemediationUnresolved)
+	}
+}
+
+// Coverage is uneven by team in practice, and a team that looks quiet because
+// nothing scanned its images must not be indistinguishable from a healthy one.
+func TestOwnersReportUnassessed(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/a:1", "platform", "platform-team", true),
+		finding("acr.io/b:2", "engineering", "orders", false, false),
+		finding("acr.io/c:3", "engineering", "orders", false, false),
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+
+	byTeam := map[string]ownerStats{}
+	for _, o := range body.Owners {
+		byTeam[o.Team] = o
+	}
+	if got := byTeam["orders"].Unassessed; got != 2 {
+		t.Errorf("orders unassessed = %d, want 2", got)
+	}
+	if got := byTeam["platform-team"].Unassessed; got != 0 {
+		t.Errorf("platform-team unassessed = %d, want 0", got)
+	}
+}
+
+// "Show me what nothing has looked at" is a first-class question, not something a
+// client should have to derive by fetching everything and filtering locally.
+func TestCoverageFilters(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/seen:1", "engineering", "orders", true),
+		finding("acr.io/unseen:2", "engineering", "orders", false, false),
+	}})
+	s.Refresh(context.Background())
+
+	cases := map[string]int{
+		"provider_assessed=true":    1,
+		"provider_assessed=false":   1,
+		"remediation_checked=true":  1,
+		"remediation_checked=false": 1,
+		"upgrade_resolved=true":     1,
+		"upgrade_resolved=false":    1,
+	}
+	for query, want := range cases {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings?"+query, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", query, rec.Code)
+		}
+		var body struct {
+			Findings []sink.FindingView `json:"findings"`
+		}
+		decodeInto(t, rec, &body)
+		if len(body.Findings) != want {
+			t.Errorf("%s: got %d findings, want %d", query, len(body.Findings), want)
+		}
+	}
+}
+
+func decodeInto(t *testing.T, rec *httptest.ResponseRecorder, v any) {
+	t.Helper()
+	if err := json.NewDecoder(rec.Body).Decode(v); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+}
+
+// The page ships embedded with the binary, so a rollout cannot leave the UI and
+// the API it reads out of step.
+func TestUIServesPage(t *testing.T) {
+	h := newTestServer(t)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+
+	// The page must read the API rather than embed numbers, so the two cannot
+	// disagree about what is true.
+	for _, want := range []string{"/api/v1/summary", "/api/v1/owners", "/api/v1/findings"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page does not call %s", want)
+		}
+	}
+	// It must lead with coverage: a dashboard that renders absent data as zero is
+	// the failure this feature exists to prevent.
+	if !strings.Contains(body, "provider_unassessed") {
+		t.Error("page does not surface coverage")
+	}
+	// Sorting must respect the domain rather than the alphabet, and unknowns must
+	// sink rather than sort as zero. These assertions only prove the machinery is
+	// present; the ordering itself is JavaScript and is not exercised by Go tests.
+	// "?" for unknown ticket state, never "-": absent Jira config is not evidence
+	// that no ticket exists.
+	if !strings.Contains(body, "ticketsByRepo") {
+		t.Error("page does not render ticket state")
+	}
+	// Actionability is coloured consistently wherever it appears, so Fix and
+	// Upgrade cannot imply different things about the same finding.
+	// Every state that could be misread as "fine" carries an explanation, since
+	// those are exactly the ones mistaken for good news.
+	for _, want := range []string{"FIX_HELP", "absent, not zero", "onlyFixable",
+		"fixFilter", "haystack", `id="search"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page is missing %q", want)
+		}
+	}
+	for _, want := range []string{"act-direct", "act-managed", "act-none", "act-unknown"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page is missing the actionability class %s", want)
+		}
+	}
+	for _, want := range []string{"FIX_RANK", "PRI_RANK", "UNKNOWN", "sortable"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page is missing sorting machinery: %s", want)
+		}
+	}
+	// Fixed-height scroll areas with a pinned header, so a long queue does not
+	// push the rest of the page out of reach.
+	if !strings.Contains(body, "max-height") || !strings.Contains(body, "position: sticky") {
+		t.Error("tables are not fixed-height with a sticky header")
+	}
+}
+
+// A mistyped API path must not return HTML to a JSON client, which "GET /" as a
+// catch-all would otherwise do.
+func TestUnknownPathIsNotThePage(t *testing.T) {
+	h := newTestServer(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findingz", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "<!doctype html>") {
+		t.Error("unknown path served the HTML page")
+	}
+}
+
+// A first full run takes minutes. Without knowing when it started, a client can
+// only show an empty page, which is indistinguishable from a broken one.
+func TestAssessmentMetaReportsStartWhileRunning(t *testing.T) {
+	release := make(chan struct{})
+	s := New(blockingAssessor{release: release})
+
+	go s.Refresh(context.Background())
+
+	// Wait for the refresh to be in flight.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if m := s.meta(); m.Running {
+			if m.StartedAt == nil {
+				t.Fatal("running assessment does not report started_at")
+			}
+			if time.Since(*m.StartedAt) > time.Minute {
+				t.Errorf("started_at is not recent: %v", m.StartedAt)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("refresh never reported running")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(release)
+	// Once complete, started_at is dropped: it describes an in-flight run only.
+	for i := 0; i < 200; i++ {
+		if m := s.meta(); !m.Running {
+			if m.StartedAt != nil {
+				t.Error("started_at should be absent when no assessment is running")
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("refresh did not finish")
+}
+
+// blockingAssessor holds a run open until released, so the in-flight state is
+// observable.
+type blockingAssessor struct{ release chan struct{} }
+
+func (b blockingAssessor) Run(context.Context) ([]model.Finding, error) {
+	<-b.release
+	return nil, nil
+}
+
+// stubTickets is a fixed open-ticket index.
+type stubTickets struct {
+	byImage map[string][]ticket.Existing
+	err     error
+}
+
+func (s stubTickets) OpenByImage(context.Context) (map[string][]ticket.Existing, error) {
+	return s.byImage, s.err
+}
+
+// Tickets ride alongside the findings, keyed by repository, so a client can show
+// whether someone is already on a finding.
+func TestFindingsIncludeOpenTickets(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		finding("acr.io/app:1", "engineering", "orders", true, false),
+		finding("acr.io/other:2", "engineering", "orders", true, false),
+	}}).WithTickets(stubTickets{byImage: map[string][]ticket.Existing{
+		"app": {{Key: "PROJ-1", Status: "In Progress", Summary: "Upgrade app",
+			Category: "indeterminate"}},
+	}}, "https://example.atlassian.net/")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings", nil))
+	var body struct {
+		Tickets map[string][]ticketRef `json:"tickets"`
+	}
+	decodeInto(t, rec, &body)
+
+	refs := body.Tickets["app"]
+	if len(refs) != 1 || refs[0].Key != "PROJ-1" {
+		t.Fatalf("tickets = %+v, want PROJ-1 against app", body.Tickets)
+	}
+	// The category travels with the ticket: status names are per-project, so it is
+	// the only portable way to tell "someone is on it" from "raised".
+	if refs[0].Category != "indeterminate" {
+		t.Errorf("category = %q, want indeterminate", refs[0].Category)
+	}
+	// A link is more useful than a key, and the base URL is not a secret.
+	if want := "https://example.atlassian.net/browse/PROJ-1"; refs[0].URL != want {
+		t.Errorf("url = %q, want %q", refs[0].URL, want)
+	}
+	if _, ok := body.Tickets["other"]; ok {
+		t.Error("an image with no ticket must not appear in the index")
+	}
+}
+
+// Without Jira configured the key is absent, which a client must read as "unknown"
+// rather than "no ticket exists". Emitting an empty object would assert the latter.
+func TestFindingsOmitTicketsWhenJiraIsNotConfigured(t *testing.T) {
+	h := newTestServer(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings", nil))
+
+	var raw map[string]json.RawMessage
+	decodeInto(t, rec, &raw)
+	if _, present := raw["tickets"]; present {
+		t.Error("tickets key should be absent when there is no index, not empty")
+	}
+}
+
+// Findings are the point of the service: losing the ticket lookup must not cost
+// the assessment.
+func TestTicketLookupFailureDoesNotFailTheAssessment(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		finding("acr.io/app:1", "engineering", "orders", true, false),
+	}}).WithTickets(stubTickets{err: errors.New("jira unreachable")}, "https://example.atlassian.net")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Count   int                    `json:"count"`
+		Tickets map[string][]ticketRef `json:"tickets"`
+	}
+	decodeInto(t, rec, &body)
+	if body.Count != 1 {
+		t.Errorf("count = %d, want the finding to survive a ticket lookup failure", body.Count)
+	}
+	if len(body.Tickets) != 0 {
+		t.Errorf("tickets = %+v, want none after a failed lookup", body.Tickets)
 	}
 }

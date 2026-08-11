@@ -84,7 +84,7 @@ func (s *source) Scan(ctx context.Context, image model.Image) ([]model.Vulnerabi
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("%w: %s", err, scanFailureReason(stderr.String()))
 	}
 	return parseReport(stdout.Bytes())
 }
@@ -171,4 +171,39 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// scanFailureReason reduces Trivy's stderr to the part that explains the failure.
+//
+// Trivy prefixes a timestamp and the words "FATAL Fatal error", then nests the
+// cause through several layers of wrapping. Reproduced verbatim inside our own
+// WARN line that reads like the tool crashed, rather than one image out of 65
+// failing to scan, which is how a handled timeout gets mistaken for an outage.
+func scanFailureReason(stderr string) string {
+	out := strings.TrimSpace(stderr)
+	if out == "" {
+		return "no output"
+	}
+	// Trivy prints progress above the error; the error itself is the last line,
+	// with its causes appended to it.
+	lines := strings.Split(out, "\n")
+	out = strings.TrimSpace(lines[len(lines)-1])
+	if i := strings.Index(out, "Fatal error"); i >= 0 {
+		out = out[i+len("Fatal error"):]
+	}
+	out = strings.TrimSpace(strings.TrimLeft(out, "\t "))
+	// The innermost cause is the useful half; the wrapping chain above it is noise.
+	if i := strings.LastIndex(out, ": "); i >= 0 && len(out)-i < 120 {
+		return strings.TrimSpace(out[i+2:]) + " (while: " + firstCause(out[:i]) + ")"
+	}
+	return out
+}
+
+// firstCause returns the outermost wrapped context, which names what was being
+// scanned when the innermost error happened.
+func firstCause(s string) string {
+	if i := strings.Index(s, ": "); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
 }

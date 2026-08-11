@@ -162,7 +162,7 @@ func TestBundledTemplateConvertsToStructuredADF(t *testing.T) {
 			f.Counts["critical"] = 6
 			f.Priority = "urgent"
 			f.Upgrade.Source = "https://dev.example.com/_git/infra"
-			f.Upgrade.SourcePath = "bases/argo-events/event-bus"
+			f.Upgrade.SourcePath = "bases/apps/example"
 			f.Vulns = []sink.VulnView{
 				{ID: "CVE-1", Severity: "critical", CVSS: 9.8, FixAvailable: true, FixedVersion: "1.2.3", EPSS: 0.93},
 			}
@@ -214,13 +214,13 @@ func configForBundledTemplate() config.JiraConfig {
 // again. The "~" operator does exactly that against a multi-value field, so the
 // clause must use exact equality.
 func TestImageClauseUsesEqualityNotContains(t *testing.T) {
-	j := &Jira{cfg: config.JiraConfig{Project: "PROJ", ImageField: "customfield_20983"}}
+	j := &Jira{cfg: config.JiraConfig{Project: "PROJ", ImageField: "customfield_12345"}}
 	got := j.imageClause([]string{"natsio/prometheus-nats-exporter", "nats"})
 
 	if strings.Contains(got, "~") {
 		t.Errorf("clause uses the contains operator, which matches nothing on a multi-value field: %s", got)
 	}
-	if !strings.Contains(got, "cf[20983] IN (") {
+	if !strings.Contains(got, "cf[12345] IN (") {
 		t.Errorf("clause should query the custom field by id with IN: %s", got)
 	}
 	// Every image in one query: an open ticket on any of them suppresses the group.

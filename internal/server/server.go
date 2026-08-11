@@ -7,8 +7,11 @@ package server
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/s-humphreys/patchwright/pkg/ticket"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -20,6 +23,13 @@ type Assessor interface {
 	Run(ctx context.Context) ([]model.Finding, error)
 }
 
+// TicketIndex reports the open tickets covering each image repository. It is
+// optional: without Jira configured the server simply has nothing to say about
+// tickets, rather than failing or pretending there are none.
+type TicketIndex interface {
+	OpenByImage(ctx context.Context) (map[string][]ticket.Existing, error)
+}
+
 // snapshot is the cached result of one assessment.
 type snapshot struct {
 	views       []sink.FindingView
@@ -28,15 +38,38 @@ type snapshot struct {
 	byImage     map[string]sink.FindingView
 	generatedAt time.Time
 	err         string
+	// tickets maps an image repository to the open tickets covering it. Kept
+	// beside the findings rather than inside them: a ticket is external state
+	// someone else can change, not a fact the assessment measured.
+	tickets map[string][]ticketRef
+}
+
+// ticketRef is the client-facing shape of an open ticket.
+type ticketRef struct {
+	Key     string `json:"key"`
+	Status  string `json:"status"`
+	Summary string `json:"summary,omitempty"`
+	URL     string `json:"url,omitempty"`
+	// Category is Jira's status category ("new", "indeterminate"), which is the
+	// portable way to distinguish a ticket someone is working on from one merely
+	// raised: status names themselves are per-project.
+	Category string `json:"category,omitempty"`
 }
 
 // Server holds the assessor and the latest cached assessment.
 type Server struct {
 	assessor Assessor
+	// tickets and jiraBaseURL are set only when Jira is configured.
+	tickets     TicketIndex
+	jiraBaseURL string
 
-	mu                sync.RWMutex
-	latest            *snapshot
-	running           bool
+	mu      sync.RWMutex
+	latest  *snapshot
+	running bool
+	// startedAt is when the in-flight assessment began. A first full run takes
+	// minutes (every cluster, every image), and a client showing nothing with no
+	// indication of progress is indistinguishable from one that is broken.
+	startedAt         time.Time
 	includeSuppressed bool // whether the cache retains suppressed findings
 }
 
@@ -44,6 +77,41 @@ type Server struct {
 // can expose them on request.
 func New(a Assessor) *Server {
 	return &Server{assessor: a, includeSuppressed: true}
+}
+
+// WithTickets attaches an open-ticket index, so findings can show whether someone
+// is already on them. baseURL is used to build issue links and is not a secret.
+func (s *Server) WithTickets(idx TicketIndex, baseURL string) *Server {
+	s.tickets = idx
+	s.jiraBaseURL = baseURL
+	return s
+}
+
+// lookupTickets fetches the open-ticket index, if one is configured. A failure is
+// logged and returns nothing: findings are the point of this service, and losing
+// the ability to say "there is already a ticket" must not cost the assessment.
+func (s *Server) lookupTickets(ctx context.Context) map[string][]ticketRef {
+	if s.tickets == nil {
+		return nil
+	}
+	byImage, err := s.tickets.OpenByImage(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "server: could not list open tickets", "error", err)
+		return nil
+	}
+	out := make(map[string][]ticketRef, len(byImage))
+	for image, issues := range byImage {
+		refs := make([]ticketRef, 0, len(issues))
+		for _, i := range issues {
+			ref := ticketRef{Key: i.Key, Status: i.Status, Summary: i.Summary, Category: i.Category}
+			if s.jiraBaseURL != "" {
+				ref.URL = strings.TrimSuffix(s.jiraBaseURL, "/") + "/browse/" + i.Key
+			}
+			refs = append(refs, ref)
+		}
+		out[image] = refs
+	}
+	return out
 }
 
 // Refresh runs an assessment and replaces the cached snapshot. Concurrent
@@ -56,6 +124,7 @@ func (s *Server) Refresh(ctx context.Context) {
 		return
 	}
 	s.running = true
+	s.startedAt = time.Now()
 	s.mu.Unlock()
 
 	defer func() {
@@ -75,7 +144,9 @@ func (s *Server) Refresh(ctx context.Context) {
 		snap.summary = buildSummary(findings)
 		snap.owners = buildOwnerStats(findings)
 		snap.byImage = indexByImage(snap.views)
-		slog.InfoContext(ctx, "server: assessment cached", "findings", len(snap.views))
+		snap.tickets = s.lookupTickets(ctx)
+		slog.InfoContext(ctx, "server: assessment cached",
+			"findings", len(snap.views), "ticketed_images", len(snap.tickets))
 	}
 
 	s.mu.Lock()

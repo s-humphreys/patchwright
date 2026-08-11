@@ -47,3 +47,31 @@ func TestLoadMergesScanFieldsIndependently(t *testing.T) {
 		t.Errorf("skipRegistries: got %v, want [acme.azurecr.io]", got)
 	}
 }
+
+// Without a map every ticket is raised at one priority, which flattens the queue:
+// the tracker cannot then tell an urgent, exploited, fixable finding from a low one.
+func TestJiraPriorityMapping(t *testing.T) {
+	cfg := JiraConfig{
+		Priority:    "Medium",
+		PriorityMap: map[string]string{"urgent": "Highest", "high": "High", "low": "Low"},
+	}
+	cases := map[string]string{
+		"urgent": "Highest",
+		"high":   "High",
+		"low":    "Low",
+		"medium": "Medium", // unmapped, so the configured fallback
+		"":       "Medium", // no priority at all
+	}
+	for in, want := range cases {
+		if got := cfg.JiraPriority(in); got != want {
+			t.Errorf("JiraPriority(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	// With neither a map entry nor a fallback, Jira's own default stands rather
+	// than the tool inventing a priority name that may not exist in the scheme.
+	empty := JiraConfig{}
+	if got := empty.JiraPriority("urgent"); got != "" {
+		t.Errorf("unconfigured: got %q, want empty so Jira decides", got)
+	}
+}
