@@ -47,8 +47,15 @@ so they stay in sync. Callers pass a dict:
     {{- range .root.Values.extraArgs }}
     - {{ . | quote }}
     {{- end }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName }}
   env:
+    {{- if .root.Values.server.auth.secretName }}
+    - name: PATCHWRIGHT_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: {{ .root.Values.server.auth.secretName }}
+          key: {{ .root.Values.server.auth.secretKey }}
+    {{- end }}
     {{- if .root.Values.scan.enabled }}
     - name: TRIVY_CACHE_DIR
       value: /tmp/trivy-cache

@@ -62,6 +62,10 @@ type Server struct {
 	// tickets and jiraBaseURL are set only when Jira is configured.
 	tickets     TicketIndex
 	jiraBaseURL string
+	// tokenDigest is the sha256 of the shared API token. Empty means no
+	// authentication, which is the historical behaviour and must stay possible for
+	// local runs.
+	tokenDigest []byte
 
 	mu      sync.RWMutex
 	latest  *snapshot

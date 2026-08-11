@@ -193,9 +193,17 @@ Once coverage fields and the ticket endpoints settle, generate the spec from the
 Go types and treat it as the contract. This is the prerequisite for the Backstage
 plugin, not the plugin itself.
 
-## 5. Auth
+## 5. Auth — shipped in part
 
-Currently unauthenticated and reachable from the cluster network. That is
+A shared token is now required on the API and the status page when
+`PATCHWRIGHT_API_TOKEN` is set (`Authorization: Bearer` for clients, HTTP Basic for
+browsers, health probes open, an unmissable warning when unset). That satisfies the
+prerequisite for write endpoints. Still open: OIDC, and per-team scoping so a team
+sees only its own findings — `/api/v1/findings` already filters by `team`, so
+scoping is a matter of binding an identity to that filter.
+
+The original note, for context: it was unauthenticated and reachable from the
+cluster network. That is
 defensible while the API is read-only and internal. Two triggers make it urgent:
 
 - exposing it beyond the cluster (a UI or Backstage outside the mesh), or
@@ -243,9 +251,21 @@ the existing API, no separate deployment, no build pipeline, no new auth surface
 It must lead with coverage rather than the actionable count, for exactly the reason
 increment 1 exists.
 
+## Prerequisite for the always-on deployment
+
+The plan above assumes the data being served is worth acting on automatically. On
+the estate this was built against, 88% of findings had never been assessed by the
+scan provider, so before auto-ticketing is switched on it is worth settling whether
+a provider-native API fixes that or merely delivers the same absence faster. The
+check is written up in
+[trivy-integration.md](trivy-integration.md#check-before-replacing-this-with-a-provider-native-vuln-source);
+it takes one API query and it decides whether the optional image scanner stays in
+the deployed configuration.
+
 ## Recommended order
 
-1 ✅ → live-status page → 5 auth → 2 (plan endpoint, then auto-ticket) → 3 → 4 → 6.
+1 ✅ → live-status page ✅ → 5 auth ✅ (shared token; OIDC still open) → 2 (plan
+endpoint, then auto-ticket) → 3 → 4 → 6.
 
 The page moved ahead of the ticket work deliberately: it is read-only, it makes
 the data's trustworthiness visible before anything acts on it automatically, and

@@ -365,6 +365,28 @@ search is used; `serve` never creates anything. Without the config or the
 credentials the key is absent, which means *unknown* rather than "no ticket
 exists".
 
+**Authentication.** Set `PATCHWRIGHT_API_TOKEN` and every request except the health
+probes requires it. Programmatic clients send `Authorization: Bearer <token>`;
+browsers are prompted for HTTP Basic with the token as the password, since a browser
+cannot attach a bearer token when it navigates to the page. The status page is gated
+too: it is a data view, so protecting the API while leaving the page open would
+protect nothing.
+
+```sh
+export PATCHWRIGHT_API_TOKEN="$(openssl rand -base64 32)"
+patchwright serve -i export.csv -c config/
+curl -H "Authorization: Bearer $PATCHWRIGHT_API_TOKEN" localhost:8080/api/v1/summary
+```
+
+Without the variable both are unauthenticated and `serve` warns on every start.
+That is fine on a laptop and is not fine anywhere else: the API serves an estate's
+unpatched criticals. Set `server.auth.secretName` in the chart to wire it from a
+Secret.
+
+This is the floor, not the ceiling — one shared token, no identity, no per-team
+scoping. Put OIDC in front (an ingress authenticator or oauth2-proxy) for anything
+beyond a trusted network.
+
 Every response carries an `assessment` block (`generated_at`, `running`, and
 `started_at` while a run is in flight) so clients know how fresh the data is. This is how patchwright is deployed — the
 Helm chart runs it as a Deployment + Service. See

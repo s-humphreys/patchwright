@@ -5,6 +5,45 @@ dedupe) + a `trivy` source are wired through the pipeline, CLI
 (`--vuln-source trivy`), and sinks (`FIXCRIT` / `fixable_critical`). Remaining:
 digest cache, Trivy server mode, and a Rapid7-API vuln source (see "Phasing").
 
+## Check before replacing this with a provider-native vuln source
+
+**Open question, to be answered with evidence before dropping the scanner.**
+
+The obvious simplification, once a provider exposes per-CVE detail over its API, is
+to drop the separate image scan: the provider has already assessed the images, so
+scanning them again looks like duplicated work. On the estate this was built
+against, that reasoning does not hold, and the numbers are worth recording because
+they are counter-intuitive.
+
+From a real InsightCloudSec export of 4,311 rows covering 815 images:
+
+    provider assessed          98 of 820 findings   (12%)
+    never assessed            722 of 820           (empty last_assessment,
+                                                    severity UNKNOWN, all counts 0)
+
+The gap is not about private-registry access, which is the intuitive explanation.
+Whole public registries were unassessed too: `xpkg.crossplane.io` (143 rows),
+`registry.datadoghq.com`, `registry.istio.io`, `cr.agentgateway.dev`. And where the
+scanner was allowed to look at those same public images, it found real work:
+
+    14 of 35 actionable findings existed ONLY because the scanner ran
+
+All fourteen were Crossplane packages, each with 2-3 fixable criticals, for which
+the provider reported nothing at all.
+
+So before treating a provider-native vuln source as a replacement:
+
+1. Query the provider's API for an image it reported no data for in the export (a
+   public one, to remove registry credentials from the question) and check whether
+   it returns CVE detail and an assessment timestamp.
+2. If it does, the export was the limitation and the API is a genuine coverage fix.
+3. If it does not, the provider simply has not assessed those images, and removing
+   the scanner deletes findings rather than duplicating them.
+
+Either way, keep the scanner for deployments that do not use that provider, and
+consider keeping it as a cross-check: on this estate the two disagreed on critical
+counts in 40 of 68 jointly-covered findings, with the provider lower in 14 of them.
+
 ## Why
 
 Today "actionable" is decided **entirely by policy rules over the data we

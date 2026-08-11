@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,10 @@ import (
 	"github.com/s-humphreys/patchwright/internal/server"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
+
+// envAPIToken is the shared token required by the API and status page. Empty or
+// unset leaves both unauthenticated.
+const envAPIToken = "PATCHWRIGHT_API_TOKEN"
 
 func newServeCmd() *cobra.Command {
 	var (
@@ -24,15 +29,33 @@ func newServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Run patchwright as a service exposing a read-only assessment API",
 		Long: "serve runs the same assessment as `assess` on a schedule, caches the latest result,\n" +
-			"and exposes it over a read-only HTTP/JSON API (findings, owners, summary). It is the\n" +
-			"deployment mode: run it as a Deployment instead of a CronJob so people and tools can\n" +
-			"query current findings.",
+			"and exposes it over a read-only HTTP/JSON API (findings, owners, summary) plus a\n" +
+			"live-status page. It is the deployment mode: run it as a Deployment instead of a\n" +
+			"CronJob so people and tools can query current findings.\n\n" +
+			"Set " + envAPIToken + " to require a token on every request except the health probes.\n" +
+			"Programmatic clients send it as `Authorization: Bearer <token>`; browsers are prompted\n" +
+			"for HTTP Basic with the token as the password. Without it, the API and the page are\n" +
+			"unauthenticated, which is only appropriate locally.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a, err := newAssessor(in)
 			if err != nil {
 				return err
 			}
 			srv := server.New(a)
+
+			// Authentication. The token comes from the environment rather than a
+			// flag so it does not land in a process list or a shell history.
+			token := os.Getenv(envAPIToken)
+			srv = srv.WithAuth(token)
+			if token == "" {
+				// Deliberately a warning on every start: an unauthenticated API
+				// that serves an estate's unpatched criticals is fine on a laptop
+				// and is not fine anywhere else, and silence would let that pass
+				// unnoticed into a deployment.
+				slog.WarnContext(cmd.Context(),
+					"API and status page are UNAUTHENTICATED; set "+envAPIToken+" to require a token",
+					"addr", addr)
+			}
 
 			// Attach the open-ticket index when Jira is configured and credentials
 			// are present, so the API and page can show whether someone is already

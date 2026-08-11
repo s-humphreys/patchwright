@@ -11,6 +11,20 @@ server:
   port: 8080
   service:
     type: ClusterIP
+  # Require a shared token on the API and the status page. Strongly recommended:
+  # without it both are unauthenticated, and they serve the estate's unpatched
+  # criticals to anyone who can reach the Service. Health probes stay open either
+  # way. Create the secret yourself so the token is never in a values file.
+  #
+  #   kubectl create secret generic patchwright-api \
+  #     --from-literal=token="$(openssl rand -base64 32)"
+  #
+  # A single shared token has no identity and no per-team scoping; put OIDC in
+  # front (ingress authenticator or oauth2-proxy) for anything beyond a trusted
+  # network.
+  auth:
+    secretName: ""      # e.g. "patchwright-api"; empty leaves the API open
+    secretKey: token
 # Structured logs (written to stderr / pod logs).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)
