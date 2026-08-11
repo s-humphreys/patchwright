@@ -25,7 +25,7 @@ type assessmentMeta struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// The live-status page is served by the same process as the API it reads, so
-	// there is no second deployment, no build step, and no new auth surface.
+	// there is no second deployment and no build step.
 	mux.HandleFunc("GET /", s.handleUI)
 	mux.HandleFunc("GET /favicon.png", s.handleFavicon)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -35,7 +35,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/owners", s.handleOwners)
 	mux.HandleFunc("GET /api/v1/summary", s.handleSummary)
 	mux.HandleFunc("POST /api/v1/assessments", s.handleRefresh)
-	return mux
+	// Authentication wraps everything, including the page: the page is a data view,
+	// so leaving it open while gating the API would protect nothing.
+	return s.authorize(mux)
 }
 
 func (s *Server) meta() assessmentMeta {
