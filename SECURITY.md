@@ -111,6 +111,14 @@ without them.
   kind-based integration suite, `helm lint`, `govulncheck` over our own modules, and
   a Trivy scan of our own image. A tool that reports other people's vulnerabilities
   should be scanned on the same terms.
+- The image scan gates on the base image and our own binary, and **reports without
+  gating** on the bundled Trivy binary. Trivy's own dependencies are not ours to
+  patch: at the time of writing its latest release carries two fixable HIGHs
+  (go-git CVE-2026-71556, oras-go CVE-2026-50163), so gating on them would block
+  every change until upstream ships a fix, and relaxing the gate for everything to
+  get a green build would hide our own problems too. They remain visible in CI output
+  and Renovate bumps the bundled version. If you would rather not ship a scanner at
+  all, run with `--vuln-source` unset, or point it at a Trivy you provide.
 - release builds publish an SBOM alongside the image
 
 ## Reporting a vulnerability
