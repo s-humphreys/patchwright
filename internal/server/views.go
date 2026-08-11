@@ -31,6 +31,12 @@ type summaryView struct {
 	ProviderAssessed      int `json:"provider_assessed"`
 	ProviderUnassessed    int `json:"provider_unassessed"`
 	RemediationUnresolved int `json:"remediation_unresolved"`
+	// ActionableUnassessed counts actionable findings on images the provider never
+	// assessed: they are actionable only because a vulnerability scanner looked
+	// where the provider did not. Reporting it prevents the opposite error to the
+	// one the coverage counts prevent — concluding that the actionable queue
+	// describes only the assessed findings, when a large share of it does not.
+	ActionableUnassessed int `json:"actionable_unassessed"`
 }
 
 // ownerStats is a per-team triage row.
@@ -72,6 +78,9 @@ func buildSummary(findings []model.Finding) summaryView {
 			s.ProviderAssessed++
 		} else {
 			s.ProviderUnassessed++
+			if f.Actionable {
+				s.ActionableUnassessed++
+			}
 		}
 		if !remediationResolved(f) {
 			s.RemediationUnresolved++

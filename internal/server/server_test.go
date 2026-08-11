@@ -219,6 +219,42 @@ func TestSummaryReportsCoverage(t *testing.T) {
 	}
 }
 
+// The opposite error to the one the coverage counts prevent: concluding that the
+// actionable queue describes only the assessed findings. A vulnerability scanner
+// can find fixable CVEs the provider never looked for, and on a real estate 14 of
+// 35 actionable findings came from that alone, so the figure has to be reported.
+func TestSummaryCountsActionableFoundOnlyByTheScanner(t *testing.T) {
+	scannerOnly := finding("acr.io/scanner-only:1", "platform", "cpo-team", true, false)
+	scannerOnly.Vulns = []model.Vulnerability{
+		{ID: "CVE-1", Severity: model.SeverityCritical, FixAvailable: true},
+	}
+	scannerOnly.Scanned = true // scanned, but the provider never assessed it
+
+	s := New(stubAssessor{findings: []model.Finding{
+		scannerOnly,
+		assessedFinding("acr.io/assessed:1", "platform", "cpo-team", true),
+		finding("acr.io/quiet:1", "platform", "cpo-team", false, false),
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+
+	if body.Summary.ActionableUnassessed != 1 {
+		t.Errorf("actionable_unassessed = %d, want 1", body.Summary.ActionableUnassessed)
+	}
+	// It must be a subset of both, or the banner arithmetic misleads.
+	if body.Summary.ActionableUnassessed > body.Summary.Actionable ||
+		body.Summary.ActionableUnassessed > body.Summary.ProviderUnassessed {
+		t.Errorf("actionable_unassessed=%d must not exceed actionable=%d or unassessed=%d",
+			body.Summary.ActionableUnassessed, body.Summary.Actionable, body.Summary.ProviderUnassessed)
+	}
+}
+
 // Coverage is uneven by team in practice, and a team that looks quiet because
 // nothing scanned its images must not be indistinguishable from a healthy one.
 func TestOwnersReportUnassessed(t *testing.T) {
@@ -314,6 +350,11 @@ func TestUIServesPage(t *testing.T) {
 	// the failure this feature exists to prevent.
 	if !strings.Contains(body, "provider_unassessed") {
 		t.Error("page does not surface coverage")
+	}
+	// The banner must not claim the actionable figure covers only assessed
+	// findings; it reports the scanner-only share instead.
+	if !strings.Contains(body, "actionable_unassessed") {
+		t.Error("page does not report actionable findings the provider never assessed")
 	}
 	// Sorting must respect the domain rather than the alphabet, and unknowns must
 	// sink rather than sort as zero. These assertions only prove the machinery is
