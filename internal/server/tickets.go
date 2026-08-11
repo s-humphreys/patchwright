@@ -95,11 +95,7 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := ticket.Apply(r.Context(), s.ticketer, actions)
-	counts := ticket.Summarize(results)
-	slog.InfoContext(r.Context(), "ticket reconciliation applied",
-		"created", counts[ticket.ActionCreate], "extended", counts[ticket.ActionExtend],
-		"commented", counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone],
-		"unchanged", counts[ticket.ActionSkip])
+	auditWrites(r.Context(), "api", results)
 
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta `json:"assessment"`
@@ -143,14 +139,34 @@ func (s *Server) autoReconcile(ctx context.Context) {
 		return
 	}
 	results := ticket.Apply(ctx, s.ticketer, actions)
+	auditWrites(ctx, "schedule", results)
+}
+
+// auditWrites records every change made to Jira and what triggered it.
+//
+// The shared token carries no identity, so a write cannot be attributed to a person.
+// What can be recorded is whether it came from the refresh schedule or an API call,
+// and exactly which tickets were touched: without the per-ticket lines the only trace
+// of an automated change would be a count, which is not an audit trail.
+func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 	counts := ticket.Summarize(results)
-	var failed int
+	failed := 0
 	for _, r := range results {
+		if r.Action.Kind == ticket.ActionSkip {
+			continue // nothing changed, so there is nothing to record
+		}
 		if r.Err != nil {
 			failed++
+			slog.WarnContext(ctx, "jira write failed",
+				"source", source, "action", r.Action.Kind, "ticket", r.Key, "error", r.Err)
+			continue
 		}
+		slog.InfoContext(ctx, "jira write",
+			"source", source, "action", r.Action.Kind, "ticket", r.Key,
+			"images", r.Action.Images, "why", r.Action.Why)
 	}
-	slog.InfoContext(ctx, "auto-ticketing complete",
+	slog.InfoContext(ctx, "ticket reconciliation complete",
+		"source", source,
 		"created", counts[ticket.ActionCreate], "extended", counts[ticket.ActionExtend],
 		"commented", counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone],
 		"unchanged", counts[ticket.ActionSkip], "failed", failed)
