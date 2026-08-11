@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>patchwright</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
   :root {
     --bg: #fbfbfa; --fg: #1c1c1a; --muted: #6b6b66; --line: #e3e3df;
@@ -44,6 +45,11 @@
   th { color: var(--muted); font-weight: 600; font-size: 0.74rem;
        text-transform: uppercase; letter-spacing: 0.05em; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* One workload in seven namespaces must not push every other column off screen.
+     The full list stays available on hover and via the expander. */
+  td.clip { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+  .more { cursor: pointer; color: var(--muted); border-bottom: 1px dotted var(--muted); }
+  .more:hover { color: var(--fg); }
   code { font: 0.84em ui-monospace, SFMono-Regular, Menlo, monospace; }
   .urgent { color: var(--urgent); font-weight: 600; }
   .high { color: var(--high); font-weight: 600; }
@@ -126,6 +132,18 @@ const epss = (f) => {
   return max.toFixed(2);
 };
 const live = (f) => (f.liveness ? (f.liveness.live ? "yes" : "no") : "?");
+// cell renders a multi-value dimension compactly: the first value, then how many
+// more, with the full list on hover and one click to expand. Joining seven
+// namespaces inline pushed every other column off the screen.
+function cell(values) {
+  const v = values || [];
+  if (!v.length) return "-";
+  const all = esc(v.join(", "));
+  if (v.length === 1) return `<span title="${all}">${esc(v[0])}</span>`;
+  return `<span class="more" title="${all}" data-all="${all}"
+    onclick="this.textContent=this.dataset.all">${esc(v[0])} +${v.length - 1}</span>`;
+}
+
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -135,14 +153,33 @@ async function get(path) {
   return r.json();
 }
 
+// hasAssessment distinguishes "no assessment yet" from a real, empty result. The
+// API answers 200 with zeros before the first run completes, and a zero-value
+// timestamp is the only way to tell them apart.
+function hasAssessment(a) {
+  return !!(a && a.generated_at && !a.generated_at.startsWith("0001-01-01"));
+}
+
 function renderFreshness(a) {
-  if (!a) return;
-  const when = a.generated_at ? new Date(a.generated_at).toLocaleString() : "never";
-  let text = `assessed ${when}`;
+  const el = $("#freshness");
+  if (a && a.error) {
+    el.textContent = `last refresh failed: ${a.error}`;
+    el.className = "meta err";
+    return;
+  }
+  if (!hasAssessment(a)) {
+    // A first full assessment can take many minutes (every cluster, every image),
+    // and showing zeros meanwhile would read as a clean estate.
+    el.textContent = a && a.running
+      ? "first assessment in progress, this can take several minutes"
+      : "no assessment yet";
+    el.className = "meta";
+    return;
+  }
+  let text = `assessed ${new Date(a.generated_at).toLocaleString()}`;
   if (a.running) text += " (refresh in progress)";
-  $("#freshness").textContent = text;
-  $("#freshness").className = a.error ? "meta err" : "meta";
-  if (a.error) $("#freshness").textContent = `last refresh failed: ${a.error}`;
+  el.textContent = text;
+  el.className = "meta";
 }
 
 function renderCoverage(s) {
@@ -193,8 +230,8 @@ function renderFindings(rows) {
       <td>${esc(fixPath(f))}</td>
       <td class="${cls}">${esc(pri)}</td>
       <td>${esc(f.owner?.team || "-")}</td>
-      <td>${esc((f.dimensions?.namespace || []).join(", ") || "-")}</td>
-      <td><code>${esc(f.image)}</code></td>
+      <td class="clip">${cell(f.dimensions?.namespace)}</td>
+      <td class="clip" title="${esc(f.image)}"><code>${esc(f.image)}</code></td>
       <td class="num">${esc(count(f, "critical"))}</td>
       <td class="num">${esc(fixcrit)}</td>
       <td class="num">${esc(epss(f))}</td>
@@ -219,6 +256,17 @@ async function loadAll() {
       get("/api/v1/summary"), get("/api/v1/owners"),
     ]);
     renderFreshness(summary.assessment);
+    if (!hasAssessment(summary.assessment)) {
+      // Show nothing rather than zeros: an empty dashboard is honest, a dashboard
+      // of zeros is a claim.
+      $("#coverage").innerHTML = `<div class="banner">No assessment has completed yet,
+        so there is nothing to report. This page will fill in once the first run finishes.</div>`;
+      $("#tiles").innerHTML = "";
+      $("#findings tbody").innerHTML = "";
+      $("#owners tbody").innerHTML = "";
+      $("#queueCount").textContent = "";
+      return;
+    }
     renderCoverage(summary.summary);
     renderTiles(summary.summary);
     renderOwners(owners.owners);

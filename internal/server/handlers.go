@@ -23,6 +23,7 @@ func (s *Server) Handler() http.Handler {
 	// The live-status page is served by the same process as the API it reads, so
 	// there is no second deployment, no build step, and no new auth surface.
 	mux.HandleFunc("GET /", s.handleUI)
+	mux.HandleFunc("GET /favicon.png", s.handleFavicon)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /api/v1/findings", s.handleFindings)
