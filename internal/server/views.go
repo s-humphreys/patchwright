@@ -2,6 +2,7 @@ package server
 
 import (
 	"sort"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
@@ -37,6 +38,17 @@ type summaryView struct {
 	// one the coverage counts prevent — concluding that the actionable queue
 	// describes only the assessed findings, when a large share of it does not.
 	ActionableUnassessed int `json:"actionable_unassessed"`
+
+	// ProviderDataNewest and ProviderDataOldest are when the scan provider last
+	// looked, taken from the assessment timestamps in its own data.
+	//
+	// This is NOT the same as the assessment's generated_at, which is when this
+	// pipeline last ran. A server refreshing hourly over a mounted export will
+	// report a fresh assessment forever while the vulnerability data underneath it
+	// ages, and a stale export is indistinguishable from a current one unless the
+	// provider's own timestamps are surfaced. Nil when nothing carried one.
+	ProviderDataNewest *time.Time `json:"provider_data_newest,omitempty"`
+	ProviderDataOldest *time.Time `json:"provider_data_oldest,omitempty"`
 }
 
 // ownerStats is a per-team triage row.
@@ -87,7 +99,29 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 	}
 	s.UniqueImages = len(images)
+	s.ProviderDataOldest, s.ProviderDataNewest = providerDataRange(findings)
 	return s
+}
+
+// providerDataRange returns the oldest and newest assessment timestamps the
+// provider supplied. Suppressed findings are included: how old the data is is a
+// fact about the whole export, not about the queue.
+func providerDataRange(findings []model.Finding) (oldest, newest *time.Time) {
+	for i := range findings {
+		for _, o := range findings[i].Occurrences {
+			if o.LastSeen.IsZero() {
+				continue // never assessed, so it carries no timestamp
+			}
+			t := o.LastSeen
+			if oldest == nil || t.Before(*oldest) {
+				oldest = &t
+			}
+			if newest == nil || t.After(*newest) {
+				newest = &t
+			}
+		}
+	}
+	return oldest, newest
 }
 
 func buildOwnerStats(findings []model.Finding) []ownerStats {

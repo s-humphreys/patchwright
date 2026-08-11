@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/enrich"
@@ -152,7 +153,35 @@ func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 		return nil, err
 	}
 	warnUnassessed(ctx, findings)
+	warnStaleProviderData(ctx, findings)
 	return findings, nil
+}
+
+// warnStaleProviderData reports how old the provider's own assessment data is.
+//
+// Distinct from when this run happened: a scheduled run over a stale export
+// produces a current-looking assessment of week-old data, and nothing else in the
+// output would say so.
+func warnStaleProviderData(ctx context.Context, findings []model.Finding) {
+	var newest time.Time
+	for i := range findings {
+		for _, o := range findings[i].Occurrences {
+			if o.LastSeen.After(newest) {
+				newest = o.LastSeen
+			}
+		}
+	}
+	if newest.IsZero() {
+		return // nothing carried a timestamp; the coverage warning covers this
+	}
+	age := time.Since(newest)
+	msg := "scan provider data age"
+	if age > 48*time.Hour {
+		slog.WarnContext(ctx, msg+": the export is not recent, so findings describe an older estate",
+			"newest_assessment", newest.Format(time.RFC3339), "age_hours", int(age.Hours()))
+		return
+	}
+	slog.InfoContext(ctx, msg, "newest_assessment", newest.Format(time.RFC3339), "age_hours", int(age.Hours()))
 }
 
 // warnUnassessed reports images the scan provider never assessed. Their zero
