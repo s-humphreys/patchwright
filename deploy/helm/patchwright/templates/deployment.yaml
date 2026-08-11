@@ -21,6 +21,8 @@ spec:
       serviceAccountName: {{ include "patchwright.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         {{- include "patchwright.container" (dict "root" . "command" "serve" "remediation" .Values.reconcile.remediation "ports" true "modeArgs" (list (printf "--addr=:%v" .Values.server.port) (printf "--interval=%s" .Values.server.interval))) | nindent 8 }}
           livenessProbe:

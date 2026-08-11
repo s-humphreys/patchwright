@@ -1,0 +1,49 @@
+{{- if .Values.networkPolicy.enabled }}
+# Restricts what patchwright can reach. Opt-in because the destinations depend on
+# what you run: image registries and Helm repositories are yours, so the allowlist
+# has to be too. See SECURITY.md for the full list of outbound connections and what
+# enables each of them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "patchwright.fullname" . }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "patchwright.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    {{- with .Values.networkPolicy.ingress }}
+    {{- toYaml . | nindent 4 }}
+    {{- else }}
+    # Default: the API and status page, from anywhere in the cluster. Narrow this to
+    # your ingress controller's namespace in anything resembling production.
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.server.port }}
+    {{- end }}
+  egress:
+    # DNS, or nothing else resolves.
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    {{- with .Values.networkPolicy.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- else }}
+    # Default: HTTPS anywhere. Honest rather than reassuring: registries, chart
+    # repositories, Jira, EPSS and KEV are all HTTPS to destinations that depend on
+    # your estate, and pretending otherwise would mean shipping a policy that
+    # silently breaks assessments. Replace this with specific destinations once you
+    # know which registries you actually pull from.
+    - ports:
+        - { protocol: TCP, port: 443 }
+    # Kubernetes API servers, which are often not on 443.
+    - ports:
+        - { protocol: TCP, port: 6443 }
+    {{- end }}
+{{- end }}

@@ -554,6 +554,14 @@ registry credentials if scanning private images. See
   the [MCP server](docs/design/mcp-server.md), and the
   [API-first server / Backstage](docs/design/api-server.md).
 
+## Security
+
+[SECURITY.md](SECURITY.md) covers what patchwright touches and what it deliberately
+cannot do: the data it handles and how sensitive each kind is, the read-only cluster
+RBAC (no Secrets access, no write verbs), every outbound connection and the flag that
+enables it, the container's hardening, and the known limitations of the shared-token
+authentication. Written for a security review as much as for operators.
+
 ## Roadmap
 
 - **Phase 1** ✅ — noise-killer: CSV in, deduplicated, owner-attributed,
