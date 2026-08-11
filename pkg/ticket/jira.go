@@ -66,6 +66,11 @@ type Existing struct {
 	Key     string
 	Status  string
 	Summary string
+	// Category is Jira's status category key ("new", "indeterminate", "done").
+	// Status names are per-project and unpredictable ("NEEDS REFINEMENT"), so the
+	// category is the only portable way to tell raised-but-untouched from
+	// actively-being-worked.
+	Category string
 	// Done reports whether the ticket is in a completed status category. A
 	// recurrence after a completed upgrade is genuinely new work, so only open
 	// tickets suppress a new one.
@@ -110,9 +115,10 @@ func (j *Jira) FindOpen(ctx context.Context, images []string) ([]Existing, error
 	out := make([]Existing, 0, len(resp.Issues))
 	for _, i := range resp.Issues {
 		out = append(out, Existing{
-			Key:    i.Key,
-			Status: i.Fields.Status.Name,
-			Done:   i.Fields.Status.StatusCategory.Key == "done",
+			Key:      i.Key,
+			Status:   i.Fields.Status.Name,
+			Category: i.Fields.Status.StatusCategory.Key,
+			Done:     i.Fields.Status.StatusCategory.Key == "done",
 		})
 	}
 	return out, nil
@@ -180,10 +186,11 @@ func (j *Jira) OpenByImage(ctx context.Context) (map[string][]Existing, error) {
 
 		for i, issue := range resp.Issues {
 			e := Existing{
-				Key:     issue.Key,
-				Status:  issue.Fields.Status.Name,
-				Summary: issue.Fields.Summary,
-				Done:    issue.Fields.Status.StatusCategory.Key == "done",
+				Key:      issue.Key,
+				Status:   issue.Fields.Status.Name,
+				Summary:  issue.Fields.Summary,
+				Category: issue.Fields.Status.StatusCategory.Key,
+				Done:     issue.Fields.Status.StatusCategory.Key == "done",
 			}
 			for _, img := range j.imagesOf(loose.Issues[i].Fields) {
 				out[img] = append(out[img], e)

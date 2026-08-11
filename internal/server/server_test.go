@@ -323,6 +323,13 @@ func TestUIServesPage(t *testing.T) {
 	if !strings.Contains(body, "ticketsByRepo") {
 		t.Error("page does not render ticket state")
 	}
+	// Actionability is coloured consistently wherever it appears, so Fix and
+	// Upgrade cannot imply different things about the same finding.
+	for _, want := range []string{"act-direct", "act-managed", "act-none", "act-unknown"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page is missing the actionability class %s", want)
+		}
+	}
 	for _, want := range []string{"FIX_RANK", "PRI_RANK", "UNKNOWN", "sortable"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page is missing sorting machinery: %s", want)
@@ -415,7 +422,8 @@ func TestFindingsIncludeOpenTickets(t *testing.T) {
 		finding("acr.io/app:1", "engineering", "orders", true, false),
 		finding("acr.io/other:2", "engineering", "orders", true, false),
 	}}).WithTickets(stubTickets{byImage: map[string][]ticket.Existing{
-		"app": {{Key: "PROJ-1", Status: "In Progress", Summary: "Upgrade app"}},
+		"app": {{Key: "PROJ-1", Status: "In Progress", Summary: "Upgrade app",
+			Category: "indeterminate"}},
 	}}, "https://example.atlassian.net/")
 	s.Refresh(context.Background())
 
@@ -429,6 +437,11 @@ func TestFindingsIncludeOpenTickets(t *testing.T) {
 	refs := body.Tickets["app"]
 	if len(refs) != 1 || refs[0].Key != "PROJ-1" {
 		t.Fatalf("tickets = %+v, want PROJ-1 against app", body.Tickets)
+	}
+	// The category travels with the ticket: status names are per-project, so it is
+	// the only portable way to tell "someone is on it" from "raised".
+	if refs[0].Category != "indeterminate" {
+		t.Errorf("category = %q, want indeterminate", refs[0].Category)
 	}
 	// A link is more useful than a key, and the base URL is not a secret.
 	if want := "https://example.atlassian.net/browse/PROJ-1"; refs[0].URL != want {

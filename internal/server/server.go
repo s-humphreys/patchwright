@@ -50,6 +50,10 @@ type ticketRef struct {
 	Status  string `json:"status"`
 	Summary string `json:"summary,omitempty"`
 	URL     string `json:"url,omitempty"`
+	// Category is Jira's status category ("new", "indeterminate"), which is the
+	// portable way to distinguish a ticket someone is working on from one merely
+	// raised: status names themselves are per-project.
+	Category string `json:"category,omitempty"`
 }
 
 // Server holds the assessor and the latest cached assessment.
@@ -99,7 +103,7 @@ func (s *Server) lookupTickets(ctx context.Context) map[string][]ticketRef {
 	for image, issues := range byImage {
 		refs := make([]ticketRef, 0, len(issues))
 		for _, i := range issues {
-			ref := ticketRef{Key: i.Key, Status: i.Status, Summary: i.Summary}
+			ref := ticketRef{Key: i.Key, Status: i.Status, Summary: i.Summary, Category: i.Category}
 			if s.jiraBaseURL != "" {
 				ref.URL = strings.TrimSuffix(s.jiraBaseURL, "/") + "/browse/" + i.Key
 			}

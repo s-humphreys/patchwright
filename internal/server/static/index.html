@@ -8,12 +8,14 @@
     --bg: #fbfbfa; --fg: #1c1c1a; --muted: #6b6b66; --line: #e3e3df;
     --card: #ffffff; --warn-bg: #fff6e5; --warn-line: #e0b050; --warn-fg: #6b4c00;
     --urgent: #a4262c; --high: #b8590a; --medium: #6b6b00; --low: #4a6b4a;
+    --ok: #1f6b3a; --idle: #6b6b66;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #161615; --fg: #ebebe8; --muted: #9a9a94; --line: #2e2e2b;
       --card: #1e1e1c; --warn-bg: #2d2408; --warn-line: #8a6a1f; --warn-fg: #f0d491;
       --urgent: #f08a8f; --high: #e8a765; --medium: #cfcf7a; --low: #9ec49e;
+      --ok: #7fd39a; --idle: #9a9a94;
     }
   }
   * { box-sizing: border-box; }
@@ -71,8 +73,17 @@
   .medium { color: var(--medium); }
   .low { color: var(--low); }
   .unknown { color: var(--muted); }
+  /* Actionability, coloured consistently across the three columns that describe it:
+     green means someone can do it now, amber means it is real work applied
+     elsewhere, grey means there is nothing to do or nothing known. */
+  .act-direct { color: var(--ok); font-weight: 600; }
+  .act-managed { color: var(--high); }
+  .act-none { color: var(--idle); }
+  .act-unknown { color: var(--muted); font-style: italic; }
+  .ticket-status { color: var(--muted); font-size: 0.9em; }
+  .ticket-active { color: var(--ok); font-size: 0.9em; }
   .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
-              margin-top: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+              margin: 0.4rem 0 0.9rem; font-size: 0.85rem; color: var(--muted); }
   button { font: inherit; padding: 0.35rem 0.7rem; border-radius: 5px;
            border: 1px solid var(--line); background: var(--card); color: var(--fg);
            cursor: pointer; }
@@ -242,6 +253,9 @@ function renderTiles(s) {
 const UNKNOWN = Number.NEGATIVE_INFINITY;
 
 const FIX_RANK = { direct: 4, managed: 3, none: 2, unknown: 1, "?": 0 };
+const FIX_CLASS = { direct: "act-direct", managed: "act-managed", none: "act-none",
+                    unknown: "act-unknown", "?": "act-unknown" };
+const fixClass = (f) => FIX_CLASS[fixPath(f)] || "act-unknown";
 const PRI_RANK = { urgent: 4, high: 3, medium: 2, low: 1 };
 
 const FINDING_COLUMNS = [
@@ -260,8 +274,10 @@ const FINDING_COLUMNS = [
     sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN) },
   { label: "Live", get: (f) => esc(live(f)),
     sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0) },
-  { label: "Fix", get: (f) => fixPath(f), sort: (f) => FIX_RANK[fixPath(f)] ?? 0 },
-  { label: "Upgrade", get: (f) => esc(upgradeText(f)), sort: (f) => upgradeText(f) },
+  { label: "Fix", cls: fixClass, get: (f) => fixPath(f),
+    sort: (f) => FIX_RANK[fixPath(f)] ?? 0 },
+  { label: "Upgrade", cls: fixClass, get: (f) => esc(upgradeText(f)),
+    sort: (f) => upgradeText(f) },
   { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f) },
 ];
 
@@ -286,11 +302,16 @@ function ticketCell(f) {
   const refs = ticketsFor(f);
   if (!refs.length) return "-";
   return refs.map((t) => {
-    const label = esc(t.key);
-    const title = esc(`${t.status}${t.summary ? ": " + t.summary : ""}`);
-    return t.url
-      ? `<a href="${esc(t.url)}" target="_blank" rel="noreferrer" title="${title}">${label}</a>`
-      : `<span title="${title}">${label}</span>`;
+    const title = esc(t.summary || t.status);
+    const key = t.url
+      ? `<a href="${esc(t.url)}" target="_blank" rel="noreferrer" title="${title}">${esc(t.key)}</a>`
+      : `<span title="${title}">${esc(t.key)}</span>`;
+    // "indeterminate" is Jira's category for in-flight work. Status NAMES are
+    // per-project ("NEEDS REFINEMENT"), so the category is what can be relied on
+    // to say whether anyone has actually picked it up.
+    const cls = t.category === "indeterminate" ? "ticket-active" : "ticket-status";
+    const status = t.status ? ` <span class="${cls}">${esc(t.status.toLowerCase())}</span>` : "";
+    return key + status;
   }).join(", ");
 }
 
