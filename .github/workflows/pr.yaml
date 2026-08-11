@@ -94,7 +94,7 @@ jobs:
       # The gate covers the base image and our own binary, which we can fix by
       # bumping a module or a base tag. It fails the build.
       - name: Scan our own image (gate)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: patchwright:scan
           severity: CRITICAL,HIGH
@@ -111,7 +111,7 @@ jobs:
       # problems too. Renovate bumps this image, and the report keeps it visible
       # rather than accepted.
       - name: Scan the bundled scanner (report only)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: patchwright:scan
           severity: CRITICAL,HIGH
