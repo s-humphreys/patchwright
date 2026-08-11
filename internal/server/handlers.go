@@ -142,6 +142,9 @@ func filterViews(views []sink.FindingView, r *http.Request) []sink.FindingView {
 	upgradable, hasUpgradable := boolParam(q.Get("upgradable"))
 	knownExploited, hasKEV := boolParam(q.Get("known_exploited"))
 	suppressed, hasSuppressed := boolParam(q.Get("suppressed"))
+	assessed, hasAssessed := boolParam(q.Get("provider_assessed"))
+	remChecked, hasRemChecked := boolParam(q.Get("remediation_checked"))
+	upResolved, hasUpResolved := boolParam(q.Get("upgrade_resolved"))
 
 	out := make([]sink.FindingView, 0, len(views))
 	for _, v := range views {
@@ -175,6 +178,20 @@ func filterViews(views []sink.FindingView, r *http.Request) []sink.FindingView {
 		if hasUpgradable {
 			up := v.Upgrade != nil && v.Upgrade.Available && v.Upgrade.Actionable
 			if up != upgradable {
+				continue
+			}
+		}
+		// Coverage filters: "show me what nothing has looked at" is a first-class
+		// question, not a detail to derive client-side.
+		if hasAssessed && v.ProviderAssessed != assessed {
+			continue
+		}
+		if hasRemChecked && v.RemediationChecked != remChecked {
+			continue
+		}
+		if hasUpResolved {
+			resolved := v.Upgrade != nil && v.Upgrade.Resolved
+			if resolved != upResolved {
 				continue
 			}
 		}

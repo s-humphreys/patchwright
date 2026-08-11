@@ -159,3 +159,127 @@ func TestRefreshErrorKeepsLastGood(t *testing.T) {
 		t.Error("the error should be surfaced in the meta")
 	}
 }
+
+// assessedFinding builds a finding the provider actually assessed, with a
+// resolved upgrade. The default `finding` helper has neither, which is itself the
+// point: an unassessed finding is the shape the API must not present as healthy.
+func assessedFinding(image, class, team string, actionable bool) model.Finding {
+	f := finding(image, class, team, actionable, false)
+	f.Occurrences = []model.Occurrence{{Assessed: true}}
+	f.Counts = model.Counts{model.SeverityCritical: 2}
+	f.RemediationChecked = true
+	f.Upgrade = &model.Upgrade{
+		Current: "1.0.0", Latest: "2.0.0", Available: true, Resolved: true, Actionable: true,
+	}
+	return f
+}
+
+// A client reading only the summary must be able to tell a healthy estate from
+// one nothing has looked at. Without coverage counts, "1 actionable" reads the
+// same either way.
+func TestSummaryReportsCoverage(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/seen:1", "engineering", "orders", true),
+		finding("acr.io/unseen:2", "engineering", "orders", false, false),
+		finding("acr.io/unseen:3", "engineering", "orders", false, false),
+		finding("mcr.io/managed:4", "cloud-provider", "aks", false, true),
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+	got := body.Summary
+
+	if got.ProviderAssessed != 1 {
+		t.Errorf("provider_assessed = %d, want 1", got.ProviderAssessed)
+	}
+	if got.ProviderUnassessed != 2 {
+		t.Errorf("provider_unassessed = %d, want 2", got.ProviderUnassessed)
+	}
+	// The documented invariant: the two coverage counts partition Findings, so a
+	// client can check the arithmetic instead of guessing the denominator.
+	if got.ProviderAssessed+got.ProviderUnassessed != got.Findings {
+		t.Errorf("assessed(%d) + unassessed(%d) != findings(%d)",
+			got.ProviderAssessed, got.ProviderUnassessed, got.Findings)
+	}
+	// Only the assessed finding has a resolved upgrade.
+	if got.RemediationUnresolved != 2 {
+		t.Errorf("remediation_unresolved = %d, want 2", got.RemediationUnresolved)
+	}
+}
+
+// Coverage is uneven by team in practice, and a team that looks quiet because
+// nothing scanned its images must not be indistinguishable from a healthy one.
+func TestOwnersReportUnassessed(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/a:1", "platform", "cpo", true),
+		finding("acr.io/b:2", "engineering", "orders", false, false),
+		finding("acr.io/c:3", "engineering", "orders", false, false),
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+
+	byTeam := map[string]ownerStats{}
+	for _, o := range body.Owners {
+		byTeam[o.Team] = o
+	}
+	if got := byTeam["orders"].Unassessed; got != 2 {
+		t.Errorf("orders unassessed = %d, want 2", got)
+	}
+	if got := byTeam["cpo"].Unassessed; got != 0 {
+		t.Errorf("cpo unassessed = %d, want 0", got)
+	}
+}
+
+// "Show me what nothing has looked at" is a first-class question, not something a
+// client should have to derive by fetching everything and filtering locally.
+func TestCoverageFilters(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/seen:1", "engineering", "orders", true),
+		finding("acr.io/unseen:2", "engineering", "orders", false, false),
+	}})
+	s.Refresh(context.Background())
+
+	cases := map[string]int{
+		"provider_assessed=true":    1,
+		"provider_assessed=false":   1,
+		"remediation_checked=true":  1,
+		"remediation_checked=false": 1,
+		"upgrade_resolved=true":     1,
+		"upgrade_resolved=false":    1,
+	}
+	for query, want := range cases {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings?"+query, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", query, rec.Code)
+		}
+		var body struct {
+			Findings []sink.FindingView `json:"findings"`
+		}
+		decodeInto(t, rec, &body)
+		if len(body.Findings) != want {
+			t.Errorf("%s: got %d findings, want %d", query, len(body.Findings), want)
+		}
+	}
+}
+
+func decodeInto(t *testing.T, rec *httptest.ResponseRecorder, v any) {
+	t.Helper()
+	if err := json.NewDecoder(rec.Body).Decode(v); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+}

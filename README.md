@@ -337,10 +337,10 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`. |
+| `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
-| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable. |
-| `GET /api/v1/summary` | Fleet-wide headline. |
+| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed. |
+| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`). |
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 
@@ -449,7 +449,8 @@ helm install pw deploy/helm/patchwright \
 
 # 3. query the API
 kubectl port-forward svc/pw-patchwright 8080:8080 &
-curl localhost:8080/api/v1/summary
+curl localhost:8080/api/v1/summary        # includes coverage counts
+curl 'localhost:8080/api/v1/findings?provider_assessed=false'   # never scanned
 ```
 
 **Multi-cluster.** patchwright deploys to one cluster but reconciles many. Read

@@ -7,6 +7,10 @@ import (
 )
 
 // summaryView is the fleet-wide headline.
+//
+// Every count except Suppressed and UniqueImages is over the unsuppressed
+// findings, so ProviderAssessed + ProviderUnassessed == Findings and a client can
+// verify the arithmetic rather than guess at denominators.
 type summaryView struct {
 	Findings       int `json:"findings"`
 	Actionable     int `json:"actionable"`
@@ -14,6 +18,19 @@ type summaryView struct {
 	KnownExploited int `json:"known_exploited"`
 	Upgradable     int `json:"upgradable"` // actionable upgrade available
 	UniqueImages   int `json:"unique_images"`
+
+	// Coverage. Without these, a client reading "N actionable" cannot tell a
+	// healthy estate from one the scan provider never looked at, and every
+	// consumer of this API would have to rediscover that on its own. On a real
+	// estate this was 98 assessed out of 820, so the difference is not academic.
+	//
+	// ProviderAssessed counts findings the scan provider actually assessed;
+	// ProviderUnassessed is the rest, whose zero severity counts mean absence of
+	// data rather than health. RemediationUnresolved counts findings where no
+	// available version could be determined, so "no upgrade" is unproven.
+	ProviderAssessed      int `json:"provider_assessed"`
+	ProviderUnassessed    int `json:"provider_unassessed"`
+	RemediationUnresolved int `json:"remediation_unresolved"`
 }
 
 // ownerStats is a per-team triage row.
@@ -24,6 +41,11 @@ type ownerStats struct {
 	Actionable int    `json:"actionable"`
 	Fixable    int    `json:"fixable"`    // has a fix-available critical
 	Upgradable int    `json:"upgradable"` // has an actionable upgrade
+	// Unassessed counts findings the scan provider never assessed. Coverage is
+	// uneven by team in practice, and a team with few actionable findings because
+	// nothing scanned its images looks identical to a team in good shape unless
+	// this is reported alongside.
+	Unassessed int `json:"unassessed"`
 }
 
 func buildSummary(findings []model.Finding) summaryView {
@@ -45,6 +67,14 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 		if hasActionableUpgrade(f) {
 			s.Upgradable++
+		}
+		if f.ProviderAssessed() {
+			s.ProviderAssessed++
+		} else {
+			s.ProviderUnassessed++
+		}
+		if !remediationResolved(f) {
+			s.RemediationUnresolved++
 		}
 	}
 	s.UniqueImages = len(images)
@@ -76,6 +106,9 @@ func buildOwnerStats(findings []model.Finding) []ownerStats {
 		}
 		if hasActionableUpgrade(f) {
 			st.Upgradable++
+		}
+		if !f.ProviderAssessed() {
+			st.Unassessed++
 		}
 	}
 	out := make([]ownerStats, 0, len(order))
@@ -116,4 +149,12 @@ func hasKnownExploited(f *model.Finding) bool {
 
 func hasActionableUpgrade(f *model.Finding) bool {
 	return f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable
+}
+
+// remediationResolved reports whether the available versions for an image were
+// actually determined. False covers both "detection did not run" and "it ran and
+// could not read the registry", which demand different responses from a human but
+// are equally not a statement that the image is up to date.
+func remediationResolved(f *model.Finding) bool {
+	return f.Upgrade != nil && f.Upgrade.Resolved
 }
