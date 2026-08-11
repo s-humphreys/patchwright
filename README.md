@@ -337,6 +337,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 
 | Endpoint | Purpose |
 |---|---|
+| `GET /` | Live-status page: coverage, the queue, per-team triage. Embedded in the binary and reads the API below, so the two cannot disagree. |
 | `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
 | `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed. |

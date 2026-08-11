@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -281,5 +282,48 @@ func decodeInto(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 	t.Helper()
 	if err := json.NewDecoder(rec.Body).Decode(v); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+}
+
+// The page ships embedded with the binary, so a rollout cannot leave the UI and
+// the API it reads out of step.
+func TestUIServesPage(t *testing.T) {
+	h := newTestServer(t)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+
+	// The page must read the API rather than embed numbers, so the two cannot
+	// disagree about what is true.
+	for _, want := range []string{"/api/v1/summary", "/api/v1/owners", "/api/v1/findings"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page does not call %s", want)
+		}
+	}
+	// It must lead with coverage: a dashboard that renders absent data as zero is
+	// the failure this feature exists to prevent.
+	if !strings.Contains(body, "provider_unassessed") {
+		t.Error("page does not surface coverage")
+	}
+}
+
+// A mistyped API path must not return HTML to a JSON client, which "GET /" as a
+// catch-all would otherwise do.
+func TestUnknownPathIsNotThePage(t *testing.T) {
+	h := newTestServer(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findingz", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "<!doctype html>") {
+		t.Error("unknown path served the HTML page")
 	}
 }

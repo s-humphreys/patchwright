@@ -1,0 +1,246 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>patchwright</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1c1c1a; --muted: #6b6b66; --line: #e3e3df;
+    --card: #ffffff; --warn-bg: #fff6e5; --warn-line: #e0b050; --warn-fg: #6b4c00;
+    --urgent: #a4262c; --high: #b8590a; --medium: #6b6b00; --low: #4a6b4a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161615; --fg: #ebebe8; --muted: #9a9a94; --line: #2e2e2b;
+      --card: #1e1e1c; --warn-bg: #2d2408; --warn-line: #8a6a1f; --warn-fg: #f0d491;
+      --urgent: #f08a8f; --high: #e8a765; --medium: #cfcf7a; --low: #9ec49e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 1.1rem; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
+       color: var(--muted); margin: 2rem 0 0.6rem; font-weight: 600; }
+  header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+           border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; }
+  .meta { color: var(--muted); font-size: 0.82rem; }
+  .banner {
+    margin: 1rem 0 0; padding: 0.7rem 0.9rem; border-radius: 6px;
+    background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg);
+    font-size: 0.88rem;
+  }
+  .tiles { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 1rem; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+          padding: 0.6rem 0.9rem; min-width: 7.5rem; }
+  .tile .n { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 0.75rem; text-transform: uppercase;
+             letter-spacing: 0.05em; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.42rem 0.7rem 0.42rem 0;
+           border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.74rem;
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font: 0.84em ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .urgent { color: var(--urgent); font-weight: 600; }
+  .high { color: var(--high); font-weight: 600; }
+  .medium { color: var(--medium); }
+  .low { color: var(--low); }
+  .unknown { color: var(--muted); }
+  .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+              margin-top: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+  button { font: inherit; padding: 0.35rem 0.7rem; border-radius: 5px;
+           border: 1px solid var(--line); background: var(--card); color: var(--fg);
+           cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  .err { color: var(--urgent); }
+</style>
+
+<header>
+  <h1>patchwright</h1>
+  <span class="meta" id="freshness">loading…</span>
+  <span style="flex:1"></span>
+  <button id="refresh" title="Ask the server to run a new assessment">Refresh assessment</button>
+</header>
+
+<div id="coverage"></div>
+
+<div class="tiles" id="tiles"></div>
+
+<h2>Queue</h2>
+<div class="controls">
+  <label><input type="checkbox" id="onlyActionable" checked> actionable only</label>
+  <label><input type="checkbox" id="showSuppressed"> include suppressed</label>
+  <span id="queueCount"></span>
+</div>
+<div class="scroll"><table id="findings">
+  <thead><tr>
+    <th>Fix</th><th>Priority</th><th>Team</th><th>Namespace</th><th>Image</th>
+    <th class="num">Crit</th><th class="num">Fixcrit</th><th class="num">EPSS</th>
+    <th>Live</th><th>Upgrade</th>
+  </tr></thead>
+  <tbody></tbody>
+</table></div>
+
+<h2>By owner</h2>
+<div class="scroll"><table id="owners">
+  <thead><tr>
+    <th>Class</th><th>Team</th><th class="num">Total</th><th class="num">Actionable</th>
+    <th class="num">Fixable</th><th class="num">Upgradable</th><th class="num">Unassessed</th>
+  </tr></thead>
+  <tbody></tbody>
+</table></div>
+
+<script>
+// The page deliberately mirrors the CLI's vocabulary. Anything the report shows as
+// unknown must show as unknown here too: a dashboard that renders missing data as
+// a zero is the failure mode this whole feature exists to prevent.
+const $ = (sel) => document.querySelector(sel);
+
+function fixPath(f) {
+  const u = f.upgrade;
+  if (!u) return f.remediation_checked ? "unknown" : "?";
+  if (!u.resolved) return "unknown";
+  if (!u.available) return "none";
+  return u.actionable ? "direct" : "managed";
+}
+
+function upgradeText(f) {
+  const u = f.upgrade;
+  if (!u || !u.resolved) return "?";
+  if (!u.available) return "-";
+  let s = `${u.current} -> ${u.latest}`;
+  if (u.kind === "chart") s = "chart " + s;
+  if (!u.actionable) s += ` (${u.managed || "managed"})`;
+  return s;
+}
+
+// Provider counts are only meaningful if the provider actually assessed the image.
+const count = (f, sev) => (f.provider_assessed ? (f.counts?.[sev] ?? 0) : "?");
+const epss = (f) => {
+  if (!f.exploit_checked) return "-";
+  const max = (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0);
+  return max.toFixed(2);
+};
+const live = (f) => (f.liveness ? (f.liveness.live ? "yes" : "no") : "?");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function get(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  return r.json();
+}
+
+function renderFreshness(a) {
+  if (!a) return;
+  const when = a.generated_at ? new Date(a.generated_at).toLocaleString() : "never";
+  let text = `assessed ${when}`;
+  if (a.running) text += " (refresh in progress)";
+  $("#freshness").textContent = text;
+  $("#freshness").className = a.error ? "meta err" : "meta";
+  if (a.error) $("#freshness").textContent = `last refresh failed: ${a.error}`;
+}
+
+function renderCoverage(s) {
+  const total = s.provider_assessed + s.provider_unassessed;
+  if (!total) return;
+  const pct = Math.round((s.provider_assessed / total) * 100);
+  // Lead with coverage, not the actionable count: "N actionable" out of an estate
+  // nobody scanned is not good news, and reading it as such is the mistake.
+  const el = $("#coverage");
+  if (s.provider_unassessed === 0) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = `<div class="banner"><strong>${s.provider_unassessed} of ${total} findings
+    were never assessed by the scan provider</strong> (${pct}% covered). Their severity counts
+    are absent data, not zero, and they cannot match a count-based rule. The actionable
+    figure below describes only the ${s.provider_assessed} that were assessed.
+    ${s.remediation_unresolved ? `${s.remediation_unresolved} also have no resolvable upgrade.` : ""}
+    </div>`;
+}
+
+function renderTiles(s) {
+  const tiles = [
+    ["Findings", s.findings], ["Actionable", s.actionable],
+    ["Assessed", s.provider_assessed], ["Suppressed", s.suppressed],
+    ["Upgradable", s.upgradable], ["Known exploited", s.known_exploited],
+    ["Unique images", s.unique_images],
+  ];
+  $("#tiles").innerHTML = tiles.map(([l, n]) =>
+    `<div class="tile"><div class="n">${n ?? "-"}</div><div class="l">${esc(l)}</div></div>`).join("");
+}
+
+function renderOwners(rows) {
+  $("#owners tbody").innerHTML = (rows || []).map((o) => `<tr>
+    <td>${esc(o.class)}</td><td>${esc(o.team || "-")}</td>
+    <td class="num">${o.total}</td><td class="num">${o.actionable}</td>
+    <td class="num">${o.fixable}</td><td class="num">${o.upgradable}</td>
+    <td class="num">${o.unassessed}</td></tr>`).join("");
+}
+
+function renderFindings(rows) {
+  $("#queueCount").textContent = `${rows.length} shown`;
+  $("#findings tbody").innerHTML = rows.map((f) => {
+    const pri = f.suppressed ? "supp" : (f.priority || "-");
+    const cls = ["urgent", "high", "medium", "low"].includes(pri) ? pri : "unknown";
+    const fixcrit = f.scanned || (f.vulns || []).length ? (f.fixable_critical ?? 0) : "-";
+    return `<tr>
+      <td>${esc(fixPath(f))}</td>
+      <td class="${cls}">${esc(pri)}</td>
+      <td>${esc(f.owner?.team || "-")}</td>
+      <td>${esc((f.dimensions?.namespace || []).join(", ") || "-")}</td>
+      <td><code>${esc(f.image)}</code></td>
+      <td class="num">${esc(count(f, "critical"))}</td>
+      <td class="num">${esc(fixcrit)}</td>
+      <td class="num">${esc(epss(f))}</td>
+      <td>${esc(live(f))}</td>
+      <td>${esc(upgradeText(f))}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadFindings() {
+  const params = new URLSearchParams();
+  if ($("#onlyActionable").checked) params.set("actionable", "true");
+  if ($("#showSuppressed").checked) params.set("suppressed", "true");
+  const d = await get("/api/v1/findings?" + params);
+  renderFindings(d.findings || []);
+  renderFreshness(d.assessment);
+}
+
+async function loadAll() {
+  try {
+    const [summary, owners] = await Promise.all([
+      get("/api/v1/summary"), get("/api/v1/owners"),
+    ]);
+    renderFreshness(summary.assessment);
+    renderCoverage(summary.summary);
+    renderTiles(summary.summary);
+    renderOwners(owners.owners);
+    await loadFindings();
+  } catch (e) {
+    $("#freshness").textContent = `error: ${e.message}`;
+    $("#freshness").className = "meta err";
+  }
+}
+
+$("#onlyActionable").addEventListener("change", loadFindings);
+$("#showSuppressed").addEventListener("change", loadFindings);
+$("#refresh").addEventListener("click", async () => {
+  await fetch("/api/v1/assessments", { method: "POST" });
+  // The refresh is asynchronous, so poll until the server stops reporting it.
+  const poll = setInterval(async () => {
+    const s = await get("/api/v1/summary");
+    if (!s.assessment?.running) { clearInterval(poll); loadAll(); }
+    else renderFreshness(s.assessment);
+  }, 2000);
+});
+
+loadAll();
+setInterval(loadAll, 60000);
+</script>

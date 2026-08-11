@@ -213,9 +213,43 @@ a second adapter, so natural-language and programmatic access share one freshnes
 guarantee. Worth doing after the OpenAPI spec, since the MCP tool definitions and
 the REST schema should not be described twice by hand.
 
+## Decided: always-on, auto-ticketing, and a live-status page
+
+Two decisions taken after increment 1.
+
+**The server acts automatically as new data arrives, by ticketing — not by opening
+PRs.** This keeps the "No GitOps PR sink" decision above, and the evidence
+supports it: on the estate we tested, 20 of 35 actionable findings are
+chart/operator-managed, so patchwright cannot open a meaningful PR for them at all
+(the fix is a chart bump, which Renovate is better placed to raise). Only 9 are
+direct image bumps, which Renovate would also catch. Ticket creation is reversible
+and low-stakes; auto-opening PRs against a GitOps repo from scanner data is a
+different risk class, on data we have repeatedly found unreliable in places.
+
+So on each refresh: plan tickets from the cached assessment, skip images with an
+open ticket, create the rest, and comment on tickets whose target version has
+moved on. Two constraints, both load-bearing:
+
+- **Off by default**, enabled explicitly (`--auto-ticket`, or config). A service
+  that starts raising Jira issues the moment it is deployed is not a good
+  surprise.
+- **Scheduled refreshes only, never an HTTP-triggered one**, until auth exists.
+  `POST /api/v1/assessments` is currently unauthenticated; wiring ticket creation
+  to it would mean an unauthenticated request could create Jira issues. That makes
+  auth (increment 5) a prerequisite for auto-ticketing on demand, not a nicety.
+
+**A live-status page, served by `serve` itself** at `/`: one embedded page calling
+the existing API, no separate deployment, no build pipeline, no new auth surface.
+It must lead with coverage rather than the actionable count, for exactly the reason
+increment 1 exists.
+
 ## Recommended order
 
-1 → 2 (plan-only first) → 5 (auth, before any write endpoint ships) → 3 → 4 → 6.
+1 ✅ → live-status page → 5 auth → 2 (plan endpoint, then auto-ticket) → 3 → 4 → 6.
+
+The page moved ahead of the ticket work deliberately: it is read-only, it makes
+the data's trustworthiness visible before anything acts on it automatically, and
+auto-ticketing needs auth first.
 
 Increment 1 is a couple of hours and improves every existing consumer. Everything
 after it is a real feature, and 2 has a design question to settle first.
