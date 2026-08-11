@@ -34,9 +34,13 @@ type snapshot struct {
 type Server struct {
 	assessor Assessor
 
-	mu                sync.RWMutex
-	latest            *snapshot
-	running           bool
+	mu      sync.RWMutex
+	latest  *snapshot
+	running bool
+	// startedAt is when the in-flight assessment began. A first full run takes
+	// minutes (every cluster, every image), and a client showing nothing with no
+	// indication of progress is indistinguishable from one that is broken.
+	startedAt         time.Time
 	includeSuppressed bool // whether the cache retains suppressed findings
 }
 
@@ -56,6 +60,7 @@ func (s *Server) Refresh(ctx context.Context) {
 		return
 	}
 	s.running = true
+	s.startedAt = time.Now()
 	s.mu.Unlock()
 
 	defer func() {

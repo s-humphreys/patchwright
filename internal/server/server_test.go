@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -339,4 +340,53 @@ func TestUnknownPathIsNotThePage(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "<!doctype html>") {
 		t.Error("unknown path served the HTML page")
 	}
+}
+
+// A first full run takes minutes. Without knowing when it started, a client can
+// only show an empty page, which is indistinguishable from a broken one.
+func TestAssessmentMetaReportsStartWhileRunning(t *testing.T) {
+	release := make(chan struct{})
+	s := New(blockingAssessor{release: release})
+
+	go s.Refresh(context.Background())
+
+	// Wait for the refresh to be in flight.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if m := s.meta(); m.Running {
+			if m.StartedAt == nil {
+				t.Fatal("running assessment does not report started_at")
+			}
+			if time.Since(*m.StartedAt) > time.Minute {
+				t.Errorf("started_at is not recent: %v", m.StartedAt)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("refresh never reported running")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(release)
+	// Once complete, started_at is dropped: it describes an in-flight run only.
+	for i := 0; i < 200; i++ {
+		if m := s.meta(); !m.Running {
+			if m.StartedAt != nil {
+				t.Error("started_at should be absent when no assessment is running")
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("refresh did not finish")
+}
+
+// blockingAssessor holds a run open until released, so the in-flight state is
+// observable.
+type blockingAssessor struct{ release chan struct{} }
+
+func (b blockingAssessor) Run(context.Context) ([]model.Finding, error) {
+	<-b.release
+	return nil, nil
 }

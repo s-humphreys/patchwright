@@ -160,6 +160,15 @@ function hasAssessment(a) {
   return !!(a && a.generated_at && !a.generated_at.startsWith("0001-01-01"));
 }
 
+// elapsed renders how long the in-flight assessment has been running. A full run
+// crosses every cluster and scans every image, so minutes of apparent silence are
+// normal and worth distinguishing from a hang.
+function elapsed(a) {
+  if (!a || !a.started_at) return "";
+  const secs = Math.max(0, Math.round((Date.now() - new Date(a.started_at)) / 1000));
+  return secs < 60 ? ` (${secs}s)` : ` (${Math.floor(secs / 60)}m ${secs % 60}s)`;
+}
+
 function renderFreshness(a) {
   const el = $("#freshness");
   if (a && a.error) {
@@ -171,13 +180,13 @@ function renderFreshness(a) {
     // A first full assessment can take many minutes (every cluster, every image),
     // and showing zeros meanwhile would read as a clean estate.
     el.textContent = a && a.running
-      ? "first assessment in progress, this can take several minutes"
+      ? `first assessment in progress${elapsed(a)}, this can take several minutes`
       : "no assessment yet";
     el.className = "meta";
     return;
   }
   let text = `assessed ${new Date(a.generated_at).toLocaleString()}`;
-  if (a.running) text += " (refresh in progress)";
+  if (a.running) text += ` (refresh in progress${elapsed(a)})`;
   el.textContent = text;
   el.className = "meta";
 }
@@ -344,7 +353,9 @@ async function loadAll() {
       // Show nothing rather than zeros: an empty dashboard is honest, a dashboard
       // of zeros is a claim.
       $("#coverage").innerHTML = `<div class="banner">No assessment has completed yet,
-        so there is nothing to report. This page will fill in once the first run finishes.</div>`;
+        so there is nothing to report. A full run reconciles every cluster and scans every
+        image, which takes several minutes; this page fills in as soon as it finishes.</div>`;
+      if (summary.assessment?.running) setTimeout(loadAll, 5000);
       $("#tiles").innerHTML = "";
       $("#findings tbody").innerHTML = "";
       $("#owners tbody").innerHTML = "";

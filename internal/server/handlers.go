@@ -15,6 +15,10 @@ type assessmentMeta struct {
 	GeneratedAt *time.Time `json:"generated_at"`
 	Running     bool       `json:"running"`
 	Error       string     `json:"error,omitempty"`
+	// StartedAt is set while an assessment is in flight, so a client can say how
+	// long it has been going rather than showing an empty page and leaving the
+	// viewer to guess whether anything is happening.
+	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
 // Handler returns the HTTP handler for the API.
@@ -38,6 +42,10 @@ func (s *Server) meta() assessmentMeta {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	m := assessmentMeta{Running: s.running}
+	if s.running && !s.startedAt.IsZero() {
+		t := s.startedAt
+		m.StartedAt = &t
+	}
 	if s.latest != nil {
 		t := s.latest.generatedAt
 		m.GeneratedAt = &t
