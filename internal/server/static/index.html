@@ -24,8 +24,12 @@
   h1 { font-size: 1.1rem; margin: 0; letter-spacing: -0.01em; }
   h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
        color: var(--muted); margin: 2rem 0 0.6rem; font-weight: 600; }
-  header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+  header { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
            border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; }
+  /* The same asset as the tab icon, 64px served and drawn at 24, so it stays crisp
+     on a high-density display without embedding a second copy. */
+  .brand { display: flex; align-items: center; gap: 0.5rem; }
+  .logo { display: block; }
   .meta { color: var(--muted); font-size: 0.82rem; }
   .banner {
     margin: 1rem 0 0; padding: 0.7rem 0.9rem; border-radius: 6px;
@@ -73,11 +77,13 @@
            border: 1px solid var(--line); background: var(--card); color: var(--fg);
            cursor: pointer; }
   button:hover { border-color: var(--muted); }
+  select { font: inherit; font-size: 0.85rem; padding: 0.2rem 0.3rem; border-radius: 5px;
+           border: 1px solid var(--line); background: var(--card); color: var(--fg); }
   .err { color: var(--urgent); }
 </style>
 
 <header>
-  <h1>patchwright</h1>
+  <span class="brand"><img class="logo" src="/favicon.png" alt="" width="24" height="24"><h1>patchwright</h1></span>
   <span class="meta" id="freshness">loading…</span>
   <span style="flex:1"></span>
   <button id="refresh" title="Ask the server to run a new assessment">Refresh assessment</button>
@@ -89,6 +95,8 @@
 
 <h2>Queue</h2>
 <div class="controls">
+  <label>class <select id="classFilter"><option value="">all</option></select></label>
+  <label>team <select id="teamFilter"><option value="">all</option></select></label>
   <label><input type="checkbox" id="onlyActionable" checked> actionable only</label>
   <label><input type="checkbox" id="showSuppressed"> include suppressed</label>
   <span id="queueCount"></span>
@@ -234,7 +242,6 @@ const FIX_RANK = { direct: 4, managed: 3, none: 2, unknown: 1, "?": 0 };
 const PRI_RANK = { urgent: 4, high: 3, medium: 2, low: 1 };
 
 const FINDING_COLUMNS = [
-  { label: "Fix", get: (f) => fixPath(f), sort: (f) => FIX_RANK[fixPath(f)] ?? 0 },
   { label: "Priority", cls: (f) => priorityClass(f), get: (f) => priorityText(f),
     sort: (f) => (f.suppressed ? 0 : PRI_RANK[f.priority] ?? 0) },
   { label: "Team", get: (f) => esc(f.owner?.team || "-"), sort: (f) => f.owner?.team || "" },
@@ -250,6 +257,7 @@ const FINDING_COLUMNS = [
     sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN) },
   { label: "Live", get: (f) => esc(live(f)),
     sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0) },
+  { label: "Fix", get: (f) => fixPath(f), sort: (f) => FIX_RANK[fixPath(f)] ?? 0 },
   { label: "Upgrade", get: (f) => esc(upgradeText(f)), sort: (f) => upgradeText(f) },
 ];
 
@@ -330,17 +338,73 @@ function renderOwners(rows) {
 }
 
 function renderFindings(rows) {
-  $("#queueCount").textContent = `${rows.length} shown`;
+  $("#queueCount").textContent = rows.length === queueRows.length
+    ? `${rows.length} shown`
+    : `${rows.length} of ${queueRows.length} shown`;
   renderTable("findings", FINDING_COLUMNS, rows);
 }
+
+// UNATTRIBUTED stands for findings no ownership rule could attribute to a team.
+// The API treats an empty team parameter as "no filter", so this case cannot be
+// expressed as a query and is filtered here instead. It is worth having: an
+// unowned finding is a thing to fix in the cluster labels, and being able to list
+// them is how that gets noticed.
+const UNATTRIBUTED = "\u0000unattributed";
+
+let queueRows = [];
 
 async function loadFindings() {
   const params = new URLSearchParams();
   if ($("#onlyActionable").checked) params.set("actionable", "true");
   if ($("#showSuppressed").checked) params.set("suppressed", "true");
   const d = await get("/api/v1/findings?" + params);
-  renderFindings(d.findings || []);
+  queueRows = d.findings || [];
+  populateOwnerFilters(queueRows);
+  applyOwnerFilters();
   renderFreshness(d.assessment);
+}
+
+// Options come from the rows actually present, so the dropdowns can never offer a
+// team with nothing behind it, and each carries its count.
+function populateOwnerFilters(rows) {
+  const classSel = $("#classFilter"), teamSel = $("#teamFilter");
+  const chosenClass = classSel.value, chosenTeam = teamSel.value;
+
+  const classes = new Map();
+  for (const f of rows) {
+    const c = f.owner?.class || "-";
+    classes.set(c, (classes.get(c) || 0) + 1);
+  }
+  const teams = new Map();
+  for (const f of rows) {
+    if (chosenClass && (f.owner?.class || "-") !== chosenClass) continue;
+    const key = f.owner?.team ? f.owner.team : UNATTRIBUTED;
+    teams.set(key, (teams.get(key) || 0) + 1);
+  }
+
+  const fill = (sel, entries, allLabel, keep) => {
+    const opts = [`<option value="">${allLabel} (${rows.length})</option>`];
+    for (const [value, n] of [...entries].sort((a, b) => b[1] - a[1])) {
+      const label = value === UNATTRIBUTED ? "(unattributed)" : value;
+      opts.push(`<option value="${esc(value)}">${esc(label)} (${n})</option>`);
+    }
+    sel.innerHTML = opts.join("");
+    // Keep the selection if it still exists, so a refresh does not reset the view.
+    sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
+  };
+  fill(classSel, classes, "all classes", chosenClass);
+  fill(teamSel, teams, "all teams", chosenTeam);
+}
+
+function applyOwnerFilters() {
+  const c = $("#classFilter").value, t = $("#teamFilter").value;
+  const rows = queueRows.filter((f) => {
+    if (c && (f.owner?.class || "-") !== c) return false;
+    if (t === UNATTRIBUTED) return !f.owner?.team;
+    if (t && f.owner?.team !== t) return false;
+    return true;
+  });
+  renderFindings(rows);
 }
 
 async function loadAll() {
@@ -374,6 +438,12 @@ async function loadAll() {
 
 $("#onlyActionable").addEventListener("change", loadFindings);
 $("#showSuppressed").addEventListener("change", loadFindings);
+$("#classFilter").addEventListener("change", () => {
+  // Team options depend on the chosen class, so rebuild them before filtering.
+  populateOwnerFilters(queueRows);
+  applyOwnerFilters();
+});
+$("#teamFilter").addEventListener("change", applyOwnerFilters);
 $("#refresh").addEventListener("click", async () => {
   await fetch("/api/v1/assessments", { method: "POST" });
   // The refresh is asynchronous, so poll until the server stops reporting it.
