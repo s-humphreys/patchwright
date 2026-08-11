@@ -296,8 +296,10 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 	if j.cfg.Epic != "" {
 		fields["parent"] = map[string]string{"key": j.cfg.Epic}
 	}
-	if j.cfg.Priority != "" {
-		fields["priority"] = map[string]string{"name": j.cfg.Priority}
+	// The assessment already decided how urgent this is; carrying that into Jira is
+	// what stops the queue flattening to one priority.
+	if p := j.cfg.JiraPriority(d.Priority); p != "" {
+		fields["priority"] = map[string]string{"name": p}
 	}
 
 	labels := append([]string{}, j.cfg.Labels...)

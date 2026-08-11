@@ -119,6 +119,21 @@ func readFindings(path string) ([]sink.FindingView, error) {
 	return findings, nil
 }
 
+// describePriority shows the assessment priority and the Jira priority it maps to,
+// so a flattened queue (every ticket at one priority) is visible before creation
+// rather than after.
+func describePriority(cfg config.JiraConfig, findingPriority string) string {
+	assessed := findingPriority
+	if assessed == "" {
+		assessed = "-"
+	}
+	mapped := cfg.JiraPriority(findingPriority)
+	if mapped == "" {
+		return assessed + " -> (Jira default)"
+	}
+	return assessed + " -> " + mapped
+}
+
 func reportSkips(w io.Writer, skips []ticket.Skip) {
 	if len(skips) == 0 {
 		return
@@ -151,6 +166,7 @@ func dryRun(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticke
 	for i, d := range plan.Drafts {
 		fmt.Fprintf(w, "--- ticket %d of %d ---\n", i+1, len(plan.Drafts))
 		fmt.Fprintf(w, "Summary:  %s\n", d.Summary)
+		fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, d.Priority))
 		fmt.Fprintf(w, "Images:   %v\n", d.Images)
 		fmt.Fprintf(w, "Covers:   %d finding(s), grouped by %s\n", len(d.Findings), d.Key)
 

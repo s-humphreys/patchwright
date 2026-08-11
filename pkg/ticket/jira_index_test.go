@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -133,5 +134,48 @@ func TestOpenByImageIgnoresIssuesWithoutTheField(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("got %v, want an empty index", got)
+	}
+}
+
+// Every ticket was being raised at the one configured priority, which threw away
+// the assessment's ordering the moment it reached the tracker.
+func TestCreateUsesTheMappedPriority(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Fields map[string]any `json:"fields"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode create request: %v", err)
+		}
+		got = body.Fields
+		_, _ = w.Write([]byte(`{"key":"PROJ-7"}`))
+	}))
+	defer srv.Close()
+
+	j := &Jira{BaseURL: srv.URL, Client: srv.Client(), cfg: config.JiraConfig{
+		Project: "PROJ", ImageField: "customfield_1", Priority: "Medium",
+		PriorityMap: map[string]string{"urgent": "Highest"},
+	}}
+
+	if _, err := j.Create(context.Background(), Draft{
+		Summary: "x", Description: "y", Images: []string{"a/b"}, Priority: "urgent",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pri, _ := got["priority"].(map[string]any)
+	if pri == nil || pri["name"] != "Highest" {
+		t.Errorf("priority = %v, want Highest for an urgent finding", got["priority"])
+	}
+
+	// An unmapped priority falls back rather than being dropped or guessed.
+	if _, err := j.Create(context.Background(), Draft{
+		Summary: "x", Description: "y", Images: []string{"a/b"}, Priority: "low",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pri, _ = got["priority"].(map[string]any)
+	if pri == nil || pri["name"] != "Medium" {
+		t.Errorf("priority = %v, want the Medium fallback", got["priority"])
 	}
 }

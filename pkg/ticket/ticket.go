@@ -28,6 +28,9 @@ type Draft struct {
 	// Key is the grouping key that produced this draft (a deployment source
 	// where known, else the repository), surfaced for explainability.
 	Key string
+	// Priority is the highest assessment priority across the findings covered, so
+	// the ticket can be raised at a matching Jira priority rather than a fixed one.
+	Priority string
 }
 
 // Skip records a finding that will not be ticketed, and why. Skips are reported
@@ -305,6 +308,7 @@ func (p *Planner) render(group ticketGroup) (Draft, error) {
 	return Draft{
 		Summary:     summary,
 		Description: description,
+		Priority:    data.Priority,
 		Images:      data.Images,
 		Findings:    group.all(),
 		Key:         groupKey(group.primary[0]),

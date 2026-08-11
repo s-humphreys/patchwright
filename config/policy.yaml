@@ -35,7 +35,17 @@ scan:
 #   imageField: customfield_XXXXX
 #   epic: PROJ-100
 #   issueType: Container Vulnerability
-#   priority: Highest
+#
+#   # Carry the assessment's ordering into Jira. Without a map, every ticket is
+#   # raised at `priority` and the tracker cannot tell an urgent, exploited,
+#   # fixable finding from a low one. Not defaulted: priority schemes are
+#   # per-instance, and a name that does not exist fails ticket creation.
+#   priorityMap:
+#     urgent: Highest
+#     high: High
+#     medium: Medium
+#     low: Low
+#   priority: Medium        # fallback for anything unmapped
 #
 #   # Keep findings out of ticket creation without hiding them. Unlike suppress
 #   # below, an excluded finding stays in the assessment and the queue and is

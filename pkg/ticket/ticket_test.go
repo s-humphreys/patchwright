@@ -706,3 +706,28 @@ func summaries(ds []Draft) []string {
 	}
 	return out
 }
+
+// A ticket must be raised at a priority matching the work, so the draft has to
+// carry it. For a grouped ticket that is the highest across its findings: the
+// group is one piece of work, and its urgency is set by its worst member.
+func TestDraftCarriesHighestPriorityInGroup(t *testing.T) {
+	p := newTestPlanner(t, "")
+	mk := func(repo, priority string) sink.FindingView {
+		return finding(repo, func(f *sink.FindingView) {
+			f.Priority = priority
+			f.Upgrade.Source = "https://charts.example.com/thing"
+		})
+	}
+	plan, err := p.Plan([]sink.FindingView{
+		mk("acme/a", "low"), mk("acme/b", "urgent"), mk("acme/c", "medium"),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1", len(plan.Drafts))
+	}
+	if plan.Drafts[0].Priority != "urgent" {
+		t.Errorf("priority = %q, want urgent (the worst in the group)", plan.Drafts[0].Priority)
+	}
+}

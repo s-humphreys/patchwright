@@ -275,7 +275,12 @@ jira:
   # imageLabel: true              # or use labels, when no such field exists
   epic: PROJ-100
   issueType: Container Vulnerability
-  priority: Highest
+  priorityMap:                    # carry the assessment's ordering into Jira
+    urgent: Highest
+    high: High
+    medium: Medium
+    low: Low
+  priority: Medium                # fallback for anything unmapped
   requireUpgrade: true            # default
 ```
 
@@ -303,6 +308,13 @@ This is deliberately not `suppress`. A suppressed finding is one nobody should
 act on and it leaves the assessment entirely; an excluded one is real work simply
 tracked elsewhere, so it stays in the report and the queue and is listed as
 skipped with the rule name and reason. Excluding something never makes it quiet.
+
+**Priority carries across.** Without `priorityMap`, every ticket is raised at the
+single `priority` value, and the tracker cannot tell an urgent, exploited, fixable
+finding from a low one. The map is deliberately not defaulted: priority schemes are
+per-instance, and a name that does not exist fails ticket creation. A dry run prints
+`urgent -> Highest` per ticket so a flattened queue is visible before anything is
+created.
 
 **Duplicates are prevented by asking Jira, not by local state.** Before creating,
 it searches for open tickets carrying the image in `imageField` (or the label),
