@@ -145,7 +145,7 @@ func TestPlanIgnoresSuppressedAndNonActionable(t *testing.T) {
 // on one ticket.
 func TestPlanGroupsBySharedSource(t *testing.T) {
 	shared := func(f *sink.FindingView) {
-		f.Upgrade.Source = "flux-operator"
+		f.Upgrade.Manager = "flux-operator"
 		f.Upgrade.Actionable = false
 		f.Upgrade.Managed = "operator"
 	}
@@ -183,7 +183,7 @@ func TestGroupedTicketDoesNotClaimOneImagesVersion(t *testing.T) {
 	p := newTestPlanner(t, "")
 	mk := func(repo, latest string) sink.FindingView {
 		return finding(repo, func(f *sink.FindingView) {
-			f.Upgrade.Source = "flux-operator"
+			f.Upgrade.Manager = "flux-operator"
 			f.Upgrade.Latest = latest
 			f.Upgrade.Actionable = false
 			f.Upgrade.Managed = "operator"
@@ -244,7 +244,7 @@ func TestTemplateDataDeduplicatesCVEsAndOrdersByEPSS(t *testing.T) {
 			f.Vulns = vulns
 		})
 	}
-	d := newTemplateData([]sink.FindingView{mk("a/one"), mk("b/two")})
+	d := newTemplateData(ticketGroup{primary: []sink.FindingView{mk("a/one"), mk("b/two")}})
 
 	if len(d.FixableCriticals) != 2 {
 		t.Fatalf("got %d fixable criticals, want 2 (deduped, fix-available criticals only): %+v", len(d.FixableCriticals), d.FixableCriticals)
@@ -260,13 +260,13 @@ func TestTemplateDataDeduplicatesCVEsAndOrdersByEPSS(t *testing.T) {
 // A template must not present zero counts as evidence when the provider never
 // assessed the images, so the flag has to reach the template data.
 func TestTemplateDataCarriesProviderAssessed(t *testing.T) {
-	unassessed := newTemplateData([]sink.FindingView{finding("a/one")})
+	unassessed := newTemplateData(ticketGroup{primary: []sink.FindingView{finding("a/one")}})
 	if unassessed.ProviderAssessed {
 		t.Error("provider_assessed false in findings should stay false")
 	}
-	assessed := newTemplateData([]sink.FindingView{
+	assessed := newTemplateData(ticketGroup{primary: []sink.FindingView{
 		finding("a/one", func(f *sink.FindingView) { f.ProviderAssessed = true; f.Counts["critical"] = 3 }),
-	})
+	}})
 	if !assessed.ProviderAssessed || assessed.CriticalCount != 3 {
 		t.Errorf("assessed=%v criticals=%d, want true/3", assessed.ProviderAssessed, assessed.CriticalCount)
 	}
@@ -394,4 +394,315 @@ func TestPlanGroupsPackageFamiliesIntoOneTicket(t *testing.T) {
 			t.Errorf("description missing %q:\n%s", want, d.Description)
 		}
 	}
+}
+
+// A ticket-level change target must only appear when every image shares it.
+// Collapsed families do not: each Crossplane package has its own
+// ProviderRevision, so naming the first would misdescribe the other six.
+func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
+	mkObj := func(repo, obj string) sink.FindingView {
+		return finding(repo, func(f *sink.FindingView) {
+			f.Upgrade.Source = "ProviderRevision/crossplane-system/" + obj
+		})
+	}
+	collapsed := newTemplateData(ticketGroup{primary: []sink.FindingView{
+		mkObj("contrib/provider-a", "provider-a-aaa"),
+		mkObj("contrib/provider-b", "provider-b-bbb"),
+	}})
+	if collapsed.Source != "" {
+		t.Errorf("Source = %q, want empty: the group's members have different targets", collapsed.Source)
+	}
+	// Each member must still carry its own, or the ticket says nothing about where
+	// to make the change.
+	for _, u := range collapsed.Upgrades {
+		if u.Source == "" {
+			t.Errorf("%s has no per-image change target", u.Repo)
+		}
+	}
+
+	mkShared := func(repo string) sink.FindingView {
+		return finding(repo, func(f *sink.FindingView) {
+			f.Upgrade.Source = "https://dev.example.com/_git/infra"
+			f.Upgrade.SourcePath = "bases/argo-events/event-bus"
+		})
+	}
+	shared := newTemplateData(ticketGroup{primary: []sink.FindingView{mkShared("natsio/a"), mkShared("natsio/b")}})
+	if shared.Source != "https://dev.example.com/_git/infra" || shared.SourcePath != "bases/argo-events/event-bus" {
+		t.Errorf("shared target not surfaced: source=%q path=%q", shared.Source, shared.SourcePath)
+	}
+}
+
+// The repository URL and the path must stay separate all the way to the template:
+// joined with kustomize's "//" the result looks like a link and is not one.
+func TestSourcePathStaysSeparateFromURL(t *testing.T) {
+	d := newTemplateData(ticketGroup{primary: []sink.FindingView{
+		finding("acme/app", func(f *sink.FindingView) {
+			f.Upgrade.Source = "https://dev.example.com/_git/infra"
+			f.Upgrade.SourcePath = "bases/app"
+		}),
+	}})
+	if strings.Contains(d.Source, "//bases") {
+		t.Errorf("Source %q has the path joined into it", d.Source)
+	}
+	if d.SourcePath != "bases/app" {
+		t.Errorf("SourcePath = %q, want bases/app", d.SourcePath)
+	}
+}
+
+// Exclusions keep work out of ticket creation without hiding it: excluded
+// findings are reported as skipped, with the configured reason, so "why was this
+// not ticketed?" is answerable from the output rather than from the config file.
+func TestPlanExclusions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: Upgrade {{ .ServiceName }}\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(config.JiraConfig{
+		Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+		Exclude: []config.ExcludeRule{{
+			Name:   "crossplane",
+			When:   "dimensions['namespace'].exists(n, n == 'crossplane-system')",
+			Reason: "upgraded on their own cadence",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+
+	inNS := finding("contrib/provider-azuread", func(f *sink.FindingView) {
+		f.Dimensions["namespace"] = []string{"crossplane-system"}
+	})
+	elsewhere := finding("acme/app", func(f *sink.FindingView) {
+		f.Dimensions["namespace"] = []string{"apps"}
+	})
+
+	plan, err := p.Plan([]sink.FindingView{inNS, elsewhere})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 || plan.Drafts[0].Images[0] != "acme/app" {
+		t.Fatalf("got %d drafts (%v), want only the non-excluded one", len(plan.Drafts), plan.Drafts)
+	}
+	if len(plan.Skips) != 1 {
+		t.Fatalf("got %d skips, want 1", len(plan.Skips))
+	}
+	if got := plan.Skips[0].Reason; !strings.Contains(got, `"crossplane"`) || !strings.Contains(got, "own cadence") {
+		t.Errorf("skip reason %q should name the rule and its reason", got)
+	}
+}
+
+// An excluded finding must report exclusion, not "nothing to upgrade to": the
+// second is a statement about the world and would be the wrong explanation.
+func TestExclusionTakesPrecedenceOverUpgradeCheck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(config.JiraConfig{
+		Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+		Exclude: []config.ExcludeRule{{Name: "all", When: "true"}},
+	})
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	plan, err := p.Plan([]sink.FindingView{
+		finding("acme/app", func(f *sink.FindingView) { f.Upgrade.Available = false }),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Skips) != 1 {
+		t.Fatalf("got %d skips, want 1", len(plan.Skips))
+	}
+	if got := plan.Skips[0].Reason; !strings.Contains(got, "excluded") {
+		t.Errorf("reason %q should report exclusion, not the upgrade state", got)
+	}
+}
+
+// Exclusions evaluate the same variables as policy rules, so an expression a
+// user already knows works here too.
+func TestExclusionSharesThePolicyVocabulary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, expr := range []string{
+		"image.registry == 'xpkg.crossplane.io'",
+		"owner['team'] == 'cpo'",
+		"counts['critical'] > 100",
+		"labels.exists(k, k == 'nope')",
+		"vulns.exists(v, v.kev)",
+		"risk > 10000.0",
+		"live && reconciled",
+		"upgrade_available",
+	} {
+		p, err := NewPlanner(config.JiraConfig{
+			Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+			Exclude: []config.ExcludeRule{{Name: "r", When: expr}},
+		})
+		if err != nil {
+			t.Errorf("expression %q rejected: %v", expr, err)
+			continue
+		}
+		if _, err := p.Plan([]sink.FindingView{finding("acme/app")}); err != nil {
+			t.Errorf("expression %q failed to evaluate: %v", expr, err)
+		}
+	}
+}
+
+func TestExclusionRejectsBadRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tmpl")
+	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, rule := range map[string]config.ExcludeRule{
+		"no name":     {When: "true"},
+		"no when":     {Name: "r"},
+		"not boolean": {Name: "r", When: "image.registry"},
+		"bad syntax":  {Name: "r", When: "dimensions['ns' =="},
+		"unknown var": {Name: "r", When: "nonesuch == 1"},
+	} {
+		_, err := NewPlanner(config.JiraConfig{
+			Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
+			Exclude: []config.ExcludeRule{rule},
+		})
+		if err == nil {
+			t.Errorf("%s: want error, got nil", name)
+		}
+	}
+}
+
+// Six Flux controllers are owned by flux-operator, whose own tag is owned by its
+// chart. Left alone that is two tickets, neither actionable. The ticket must ask
+// for the one change a human can make, and list the rest as consequences.
+func TestMergeChainsFoldsManagedImagesIntoTheirManager(t *testing.T) {
+	p := newTestPlanner(t, "Summary: Upgrade {{ .ServiceName }} to {{ if .Upgrade }}{{ .Upgrade.Latest }}{{ else }}latest{{ end }}\n\napply={{ len .Upgrades }} fixes={{ len .Fixes }}\n")
+
+	controller := func(repo, latest string) sink.FindingView {
+		return finding(repo, func(f *sink.FindingView) {
+			f.Upgrade.Manager = "flux-operator"
+			f.Upgrade.Managed = "operator"
+			f.Upgrade.Actionable = false
+			f.Upgrade.Latest = latest
+		})
+	}
+	operator := finding("controlplaneio-fluxcd/flux-operator", func(f *sink.FindingView) {
+		f.Upgrade.Source = "ghcr.io/controlplaneio-fluxcd/flux-operator"
+		f.Upgrade.Managed = "helm"
+		f.Upgrade.Actionable = false
+		f.Upgrade.Current = "v0.33.0"
+		f.Upgrade.Latest = "0.58.0"
+	})
+
+	plan, err := p.Plan([]sink.FindingView{
+		controller("fluxcd/helm-controller", "1.6.3"),
+		controller("fluxcd/source-controller", "1.9.4"),
+		operator,
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1 merged ticket: %v", len(plan.Drafts), summaries(plan.Drafts))
+	}
+	d := plan.Drafts[0]
+
+	// The ticket asks for the operator bump, not the controllers'.
+	if want := "Upgrade flux-operator to 0.58.0"; d.Summary != want {
+		t.Errorf("summary = %q, want %q", d.Summary, want)
+	}
+	if !strings.Contains(d.Description, "apply=1") {
+		t.Errorf("should apply exactly one upgrade (the manager): %s", d.Description)
+	}
+	if !strings.Contains(d.Description, "fixes=2") {
+		t.Errorf("should list both controllers as consequences: %s", d.Description)
+	}
+	// Idempotency must still cover every image the ticket accounts for.
+	if len(d.Images) != 3 {
+		t.Errorf("got %d images, want 3 so the duplicate check covers them all: %v", len(d.Images), d.Images)
+	}
+}
+
+// With no Manager resolved there is nothing to merge on. The live source names
+// the manager from a label or the CR's own labels; where it cannot, the tool must
+// not invent one from a Kind or a URL, so the groups stay separate.
+func TestMergeChainsDeclinesWhenTheManagerIsNotNamed(t *testing.T) {
+	p := newTestPlanner(t, "")
+	for name, source := range map[string]string{
+		"object reference": "Kiali/istio-monitoring/kiali",
+		"repository URL":   "https://kiali.org/helm-charts",
+		"registry path":    "ghcr.io/org/thing",
+	} {
+		managed := finding("kiali/kiali", func(f *sink.FindingView) {
+			f.Upgrade.Source = source // no Manager resolved
+			f.Upgrade.Managed = "operator"
+			f.Upgrade.Actionable = false
+		})
+		candidate := finding("kiali/kiali-operator")
+		plan, err := p.Plan([]sink.FindingView{managed, candidate})
+		if err != nil {
+			t.Fatalf("%s: Plan: %v", name, err)
+		}
+		if len(plan.Drafts) != 2 {
+			t.Errorf("%s: got %d drafts, want 2 (no merge without a named manager)", name, len(plan.Drafts))
+		}
+	}
+}
+
+// The Kiali case the Manager field exists for: the CR labels name the operator,
+// so the two tickets become one asking for the operator upgrade.
+func TestMergeChainsUsesManagerFromCustomResourceLabels(t *testing.T) {
+	p := newTestPlanner(t, "Summary: Upgrade {{ .ServiceName }} to {{ if .Upgrade }}{{ .Upgrade.Latest }}{{ else }}latest{{ end }}\n\napply={{ len .Upgrades }} fixes={{ len .Fixes }}\n")
+	managed := finding("kiali/kiali", func(f *sink.FindingView) {
+		f.Upgrade.Source = "Kiali/istio-monitoring/kiali"
+		f.Upgrade.Manager = "kiali-operator" // resolved from the CR's labels
+		f.Upgrade.Managed = "operator"
+		f.Upgrade.Actionable = false
+	})
+	operator := finding("kiali/kiali-operator", func(f *sink.FindingView) {
+		f.Upgrade.Kind = "chart"
+		f.Upgrade.Name = "kiali-operator"
+		f.Upgrade.Latest = "2.30.0"
+		f.Upgrade.Source = "https://kiali.org/helm-charts"
+	})
+	plan, err := p.Plan([]sink.FindingView{managed, operator})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1: %v", len(plan.Drafts), summaries(plan.Drafts))
+	}
+	if want := "Upgrade kiali-operator to 2.30.0"; plan.Drafts[0].Summary != want {
+		t.Errorf("summary = %q, want %q", plan.Drafts[0].Summary, want)
+	}
+	if !strings.Contains(plan.Drafts[0].Description, "fixes=1") {
+		t.Errorf("the kiali image should be listed as a consequence: %s", plan.Drafts[0].Description)
+	}
+}
+
+// With the manager absent from the finding set there is nothing to merge into,
+// and the managed group must still produce its own ticket rather than vanishing.
+func TestMergeChainsKeepsGroupWhenManagerIsAbsent(t *testing.T) {
+	p := newTestPlanner(t, "")
+	plan, err := p.Plan([]sink.FindingView{
+		finding("fluxcd/source-controller", func(f *sink.FindingView) {
+			f.Upgrade.Manager = "flux-operator"
+			f.Upgrade.Managed = "operator"
+			f.Upgrade.Actionable = false
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Fatalf("got %d drafts, want 1", len(plan.Drafts))
+	}
+}
+
+func summaries(ds []Draft) []string {
+	out := make([]string, len(ds))
+	for i, d := range ds {
+		out[i] = d.Summary
+	}
+	return out
 }

@@ -150,7 +150,7 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 // workloadContext classifies a workload's deployment mechanism and, for
 // non-operator cases, its actionability/source. The operator case is refined
 // per-image by operatorContextForImage.
-func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources map[string]string, fetch crFetcher, crCache map[string]*unstructured.Unstructured) (enrich.DeployContext, bool) {
+func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources map[string]kustSource, fetch crFetcher, crCache map[string]*unstructured.Unstructured) (enrich.DeployContext, bool) {
 	for _, l := range helmToolkitLabels {
 		if meta.Labels[l] != "" {
 			return enrich.DeployContext{Mechanism: "helm", Actionable: false}, true
@@ -161,7 +161,11 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 		if ns == "" {
 			ns = meta.Namespace
 		}
-		return enrich.DeployContext{Mechanism: "kustomize", Actionable: true, Source: kustSources[ns+"/"+name]}, true
+		src := kustSources[ns+"/"+name]
+		return enrich.DeployContext{
+			Mechanism: "kustomize", Actionable: true,
+			Source: src.URL, SourcePath: src.Path,
+		}, true
 	}
 	for _, ref := range meta.OwnerReferences {
 		if !ownerGroupIsCustom(ref.APIVersion) {
@@ -177,7 +181,11 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 				crCache[key] = nil
 			}
 		}
-		return enrich.DeployContext{Mechanism: "operator", Actionable: false, Source: crRef(ref.Kind, meta.Namespace, ref.Name)}, true
+		return enrich.DeployContext{
+			Mechanism: "operator", Actionable: false,
+			Source:  crRef(ref.Kind, meta.Namespace, ref.Name),
+			Manager: managerFromCR(crCache[key], meta.Labels),
+		}, true
 	}
 	// Label-based controller ownership: some operators (e.g. flux-operator)
 	// manage workloads via app.kubernetes.io/managed-by with no ownerReferences.
@@ -189,10 +197,39 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 		case "kubectl", "kustomize":
 			// applied directly — treat as manifest below.
 		default:
-			return enrich.DeployContext{Mechanism: "operator", Actionable: false, Source: by}, true
+			// The label names WHAT owns the version, not where to change it, so it
+			// is a Manager rather than a Source.
+			return enrich.DeployContext{Mechanism: "operator", Actionable: false, Manager: by}, true
 		}
 	}
 	return enrich.DeployContext{Mechanism: "manifest", Actionable: true}, true
+}
+
+// managerFromCR names the operator that owns a custom resource, from the CR's own
+// standard Kubernetes labels.
+//
+// A CR does not say "my controller is X", but the operator that ships it labels
+// it: a Kiali CR created by the kiali-operator chart carries
+// app.kubernetes.io/part-of=kiali-operator. Reading that is the difference
+// between pointing a ticket at the component to upgrade and guessing a name from
+// the CR's Kind, which would be a fabrication.
+//
+// workloadLabels are the managed workload's own labels, used only to reject a
+// name identical to the workload itself: "kiali is managed by kiali" is no use.
+func managerFromCR(cr *unstructured.Unstructured, workloadLabels map[string]string) string {
+	if cr == nil {
+		return ""
+	}
+	labels := cr.GetLabels()
+	self := workloadLabels["app.kubernetes.io/name"]
+	// part-of before name: for an operator's own resources it names the operator,
+	// where name may be the instance.
+	for _, key := range []string{"app.kubernetes.io/part-of", "app.kubernetes.io/name"} {
+		if v := labels[key]; v != "" && v != self {
+			return v
+		}
+	}
+	return ""
 }
 
 // operatorContextForImage refines an operator workload's context for a specific
@@ -222,18 +259,25 @@ func preferContext(candidate, existing enrich.DeployContext) bool {
 	return existing.Source == "" && candidate.Source != ""
 }
 
+// kustSource is a Flux Kustomization's change target: the repository and the
+// directory within it, kept apart so a consumer can render a working link.
+type kustSource struct {
+	URL  string
+	Path string
+}
+
 // kustomizationSources maps "<ns>/<name>" of each Flux Kustomization to its
-// source repository URL (GitRepository or OCIRepository). Best-effort: clusters
-// without Flux Kustomize contribute nothing.
-func kustomizationSources(ctx context.Context, dyn dynamic.Interface) map[string]string {
+// source repository (GitRepository or OCIRepository) and path. Best-effort:
+// clusters without Flux Kustomize contribute nothing.
+func kustomizationSources(ctx context.Context, dyn dynamic.Interface) map[string]kustSource {
 	git := listSourceURLs(ctx, dyn, gitRepositoryGVR)
 	oci := listSourceURLs(ctx, dyn, ociRepositoryGVR)
 
 	list, err := dyn.Resource(kustomizationGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return map[string]string{}
+		return map[string]kustSource{}
 	}
-	out := map[string]string{}
+	out := map[string]kustSource{}
 	for i := range list.Items {
 		k := &list.Items[i]
 		ns, name := k.GetNamespace(), k.GetName()
@@ -251,13 +295,15 @@ func kustomizationSources(ctx context.Context, dyn dynamic.Interface) map[string
 		if url == "" {
 			continue
 		}
-		// Narrow the change target to the Kustomization's path within the repo
-		// (Flux "<url>//<path>" notation), so remediation points at the right
-		// directory rather than just the repo root.
+		// Record the Kustomization's path within the repo, so remediation points
+		// at the right directory rather than just the repo root. Deliberately NOT
+		// joined into the URL with kustomize's "//" notation: the result looks
+		// like a link and is not one.
+		src := kustSource{URL: strings.TrimRight(url, "/")}
 		if path, _, _ := unstructured.NestedString(k.Object, "spec", "path"); path != "" {
-			url = strings.TrimRight(url, "/") + "//" + strings.TrimPrefix(path, "./")
+			src.Path = strings.TrimPrefix(strings.TrimPrefix(path, "./"), "/")
 		}
-		out[ns+"/"+name] = url
+		out[ns+"/"+name] = src
 	}
 	return out
 }

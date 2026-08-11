@@ -203,24 +203,10 @@ func create(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticke
 	return nil
 }
 
-// existingFor checks every image a draft covers, since a grouped ticket should
-// not be raised if any of its images is already being handled.
+// existingFor checks every image a draft covers in one query, since a grouped
+// ticket should not be raised if any of its images is already being handled.
 func existingFor(ctx context.Context, jira *ticket.Jira, d ticket.Draft) ([]ticket.Existing, error) {
-	var all []ticket.Existing
-	seen := map[string]bool{}
-	for _, img := range d.Images {
-		found, err := jira.FindOpen(ctx, img)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range found {
-			if !seen[e.Key] {
-				seen[e.Key] = true
-				all = append(all, e)
-			}
-		}
-	}
-	return all, nil
+	return jira.FindOpen(ctx, d.Images)
 }
 
 func formatExisting(existing []ticket.Existing) string {

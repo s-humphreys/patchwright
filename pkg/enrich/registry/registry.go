@@ -98,8 +98,12 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 		// Always record how/where the image is deployed, so the report shows
 		// the change target (git repo, CR, ...) even when it's on the latest tag.
 		dc, hasCtx := contexts[img.NameTag()]
+		if hasCtx {
+			up.Manager = dc.Manager
+		}
 		if hasCtx && dc.Source != "" {
 			up.Source = dc.Source
+			up.SourcePath = dc.SourcePath
 		}
 
 		if latest != nil {

@@ -135,7 +135,10 @@ spec:
 		kubectlApply(`
 apiVersion: example.test/v1
 kind: Api
-metadata: { name: my-api, namespace: default }
+metadata:
+  name: my-api
+  namespace: default
+  labels: { app.kubernetes.io/part-of: api-operator }
 spec:
   image: nginx:1.27.0
 `)
@@ -173,6 +176,10 @@ spec:
 		Expect(inSpec.Mechanism).To(Equal("operator"))
 		Expect(inSpec.Actionable).To(BeTrue(), "image set in the CR spec should be actionable")
 		Expect(inSpec.Source).To(Equal("Api/default/my-api"))
+		// The CR names its operator in a standard label, which is what lets a
+		// report or a ticket point at the component to upgrade instead of
+		// guessing a name from the Kind.
+		Expect(inSpec.Manager).To(Equal("api-operator"))
 
 		derived := deployments[model.ParseImageRef("redis:7.2.0").NameTag()]
 		Expect(derived.Mechanism).To(Equal("operator"))
@@ -235,10 +242,18 @@ spec:
 		kust := deployments[model.ParseImageRef("httpd:2.4.62").NameTag()]
 		Expect(kust.Mechanism).To(Equal("kustomize"))
 		Expect(kust.Actionable).To(BeTrue())
-		Expect(kust.Source).To(Equal("https://github.com/acme/infra//apps/myapp"))
+		// Repository and path are reported separately: joined with kustomize's
+		// "//" notation the result looks like a link and is not one, which matters
+		// wherever a change target is rendered for a human.
+		Expect(kust.Source).To(Equal("https://github.com/acme/infra"))
+		Expect(kust.SourcePath).To(Equal("apps/myapp"))
 
 		ctrl := deployments[model.ParseImageRef("memcached:1.6.0").NameTag()]
 		Expect(ctrl.Mechanism).To(Equal("operator"), "app.kubernetes.io/managed-by should mark controller ownership")
 		Expect(ctrl.Actionable).To(BeFalse())
+		// The label names WHAT owns the version, not where to change it, so it is
+		// a Manager rather than a Source.
+		Expect(ctrl.Manager).To(Equal("flux-operator"))
+		Expect(ctrl.Source).To(BeEmpty())
 	})
 })

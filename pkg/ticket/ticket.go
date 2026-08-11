@@ -46,8 +46,9 @@ type Plan struct {
 
 // Planner renders drafts from findings according to the Jira config.
 type Planner struct {
-	cfg  config.JiraConfig
-	tmpl *template.Template
+	cfg      config.JiraConfig
+	tmpl     *template.Template
+	excluded *exclusions
 }
 
 // NewPlanner loads and parses the configured ticket template.
@@ -63,7 +64,11 @@ func NewPlanner(cfg config.JiraConfig) (*Planner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.Template, err)
 	}
-	return &Planner{cfg: cfg, tmpl: tmpl}, nil
+	excluded, err := newExclusions(cfg.Exclude)
+	if err != nil {
+		return nil, err
+	}
+	return &Planner{cfg: cfg, tmpl: tmpl, excluded: excluded}, nil
 }
 
 // Plan decides which findings become tickets, groups them, and renders each.
@@ -79,6 +84,21 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 		if !f.Actionable || f.Suppressed {
 			continue
 		}
+		// Exclusions first: an excluded finding is out of scope here regardless of
+		// whether it has an upgrade, and reporting it as "nothing to upgrade to"
+		// would be the wrong explanation.
+		name, why, excluded, err := p.excluded.match(f)
+		if err != nil {
+			return nil, err
+		}
+		if excluded {
+			reason := fmt.Sprintf("excluded by rule %q", name)
+			if why != "" {
+				reason += ": " + why
+			}
+			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
+			continue
+		}
 		if reason, ok := p.skipReason(f); ok {
 			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
 			continue
@@ -86,7 +106,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 		eligible = append(eligible, f)
 	}
 
-	for _, g := range group(eligible) {
+	for _, g := range mergeChains(group(eligible)) {
 		d, err := p.render(g)
 		if err != nil {
 			return nil, err
@@ -119,11 +139,92 @@ func (p *Planner) skipReason(f sink.FindingView) (string, bool) {
 	return "", false
 }
 
+// ticketGroup is one ticket's worth of findings: the upgrade(s) someone applies,
+// and the images that bump updates as a consequence.
+type ticketGroup struct {
+	// primary are the findings whose versions are actually changed.
+	primary []sink.FindingView
+	// dependents are findings fixed by changing primary, listed for context but
+	// not as work. Empty for an ordinary ticket.
+	dependents []sink.FindingView
+}
+
+// all returns every finding on the ticket, primary first.
+func (g ticketGroup) all() []sink.FindingView {
+	return append(append([]sink.FindingView{}, g.primary...), g.dependents...)
+}
+
+// mergeChains folds a group of managed images into the ticket for the component
+// that manages them, when that component is itself in the finding set.
+//
+// Six Flux controllers are owned by flux-operator, whose own tag is owned by its
+// Helm chart. Left alone that is two tickets, neither actionable: one asking for
+// six bumps nobody applies directly, and one for the operator image. The only
+// change a human can make is to the operator's chart, so that is what the ticket
+// should ask for, with the six controllers listed as what it fixes.
+//
+// Matching is by name: a managed group whose source is a bare component name
+// ("flux-operator") folds into the group holding an image whose repository ends
+// in that name. Deliberately narrow — sources that are object references or URLs
+// are left alone, because inferring a manager from them would mean guessing (a
+// "Kiali" custom resource does not tell us its operator is called
+// kiali-operator), and a wrong merge writes a ticket that asks for the wrong
+// change.
+func mergeChains(groups []ticketGroup) []ticketGroup {
+	// Where each component name lives, by group index.
+	owner := map[string]int{}
+	for i, g := range groups {
+		for _, f := range g.primary {
+			owner[lastSegment(f.Repository)] = i
+		}
+	}
+
+	merged := make([]bool, len(groups))
+	for i, g := range groups {
+		name := managedBy(g.primary)
+		if name == "" {
+			continue
+		}
+		target, ok := owner[name]
+		if !ok || target == i || merged[target] {
+			continue
+		}
+		groups[target].dependents = append(groups[target].dependents, g.primary...)
+		merged[i] = true
+	}
+
+	out := make([]ticketGroup, 0, len(groups))
+	for i, g := range groups {
+		if !merged[i] {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// managedBy returns the component that owns every finding's version in the
+// group, or "" when there is not exactly one. It reads the Manager the live
+// source resolved rather than inferring anything from a source string.
+func managedBy(findings []sink.FindingView) string {
+	name := ""
+	for _, f := range findings {
+		u := f.Upgrade
+		if u == nil || u.Manager == "" {
+			return ""
+		}
+		if name != "" && u.Manager != name {
+			return ""
+		}
+		name = u.Manager
+	}
+	return name
+}
+
 // group collects findings that a single change would fix. Findings sharing a
 // deployment source (a chart, a GitOps path) are fixed by one edit, so they
 // belong on one ticket; anything else stands alone. Keys are sorted so output is
 // stable across runs.
-func group(findings []sink.FindingView) [][]sink.FindingView {
+func group(findings []sink.FindingView) []ticketGroup {
 	byKey := map[string][]sink.FindingView{}
 	for _, f := range findings {
 		byKey[groupKey(f)] = append(byKey[groupKey(f)], f)
@@ -134,20 +235,35 @@ func group(findings []sink.FindingView) [][]sink.FindingView {
 	}
 	sort.Strings(keys)
 
-	out := make([][]sink.FindingView, 0, len(keys))
+	out := make([]ticketGroup, 0, len(keys))
 	for _, k := range keys {
 		g := byKey[k]
 		sort.Slice(g, func(i, j int) bool { return g[i].Image < g[j].Image })
-		out = append(out, g)
+		out = append(out, ticketGroup{primary: g})
 	}
 	return out
 }
 
 func groupKey(f sink.FindingView) string {
-	if f.Upgrade != nil && f.Upgrade.Source != "" {
-		return collapseObjectRef(f.Upgrade.Source)
+	if f.Upgrade == nil {
+		return f.Repository
 	}
-	return f.Repository
+	// A managed workload's version lives with its manager, so everything under one
+	// manager is one change. This also keeps controller sets together now that the
+	// manager name is no longer stuffed into Source.
+	if f.Upgrade.Manager != "" {
+		return f.Upgrade.Manager
+	}
+	if f.Upgrade.Source == "" {
+		return f.Repository
+	}
+	key := collapseObjectRef(f.Upgrade.Source)
+	// The path is part of the identity: two Kustomizations in one repo are two
+	// separate changes, so they must not collapse into one ticket.
+	if f.Upgrade.SourcePath != "" {
+		key += " " + f.Upgrade.SourcePath
+	}
+	return key
 }
 
 // collapseObjectRef reduces a Kubernetes object reference ("Kind/namespace/name")
@@ -175,8 +291,8 @@ func collapseObjectRef(source string) string {
 	return parts[0] + "/" + parts[1]
 }
 
-// render executes the template for one group of findings.
-func (p *Planner) render(group []sink.FindingView) (Draft, error) {
+// render executes the template for one ticket group.
+func (p *Planner) render(group ticketGroup) (Draft, error) {
 	data := newTemplateData(group)
 	var buf bytes.Buffer
 	if err := p.tmpl.Execute(&buf, data); err != nil {
@@ -190,8 +306,8 @@ func (p *Planner) render(group []sink.FindingView) (Draft, error) {
 		Summary:     summary,
 		Description: description,
 		Images:      data.Images,
-		Findings:    group,
-		Key:         groupKey(group[0]),
+		Findings:    group.all(),
+		Key:         groupKey(group.primary[0]),
 	}, nil
 }
 

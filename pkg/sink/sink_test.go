@@ -2,6 +2,7 @@ package sink
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -281,5 +282,30 @@ func TestEmitNoFindingsSkipsLegend(t *testing.T) {
 	}
 	if got := buf.String(); got != "no findings\n" {
 		t.Errorf("got %q, want \"no findings\\n\"", got)
+	}
+}
+
+// ToFindingView maps fields by hand, and a field that is declared but never
+// assigned is silent: it compiles, no test notices, and the JSON quietly reports
+// a zero value while the report shows the truth. That has now happened twice
+// (upgrade.resolved, then upgrade.manager), so assert the invariant rather than
+// the fields I happen to remember: given a fully-populated Upgrade, EVERY field
+// of the view must be non-zero.
+func TestUpgradeViewMapsEveryField(t *testing.T) {
+	u := model.Upgrade{
+		Kind: "image", Name: "acme/app", Current: "1.0.0", Latest: "2.0.0",
+		Available: true, Resolved: true, Source: "https://example.com/repo",
+		SourcePath: "bases/app", Actionable: true, Managed: "operator",
+		Manager: "acme-operator",
+	}
+	v := ToFindingView(model.Finding{Upgrade: &u}).Upgrade
+	if v == nil {
+		t.Fatal("upgrade view not produced")
+	}
+	rv := reflect.ValueOf(*v)
+	for i := 0; i < rv.NumField(); i++ {
+		if rv.Field(i).IsZero() {
+			t.Errorf("UpgradeView.%s is zero: ToFindingView does not assign it", rv.Type().Field(i).Name)
+		}
 	}
 }

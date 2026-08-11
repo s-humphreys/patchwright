@@ -25,6 +25,28 @@ scan:
   skipOwnerClasses: [cloud-provider]
   # skipRegistries: [acme.azurecr.io]
 
+# Ticket creation (`patchwright ticket`). See the README; credentials come from
+# the environment, never from this file.
+#
+# jira:
+#   board: 100
+#   project: PROJ
+#   template: config/templates/container-vuln.md.tmpl
+#   imageField: customfield_XXXXX
+#   epic: PROJ-100
+#   issueType: Container Vulnerability
+#   priority: Highest
+#
+#   # Keep findings out of ticket creation without hiding them. Unlike suppress
+#   # below, an excluded finding stays in the assessment and the queue and is
+#   # reported as skipped with the reason — it is work tracked somewhere else,
+#   # not work nobody should do. `when` is CEL over the same variables as the
+#   # rules below.
+#   exclude:
+#     - name: managed-elsewhere
+#       when: "dimensions['namespace'].exists(n, n == 'some-system')"
+#       reason: upgraded together on their own cadence
+
 suppress:
   # Cloud-provider-managed images are not directly patchable by app or platform
   # teams; keep them out of the actionable queue (a later phase can route them
