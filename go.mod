@@ -2,6 +2,12 @@ module github.com/s-humphreys/patchwright
 
 go 1.26.0
 
+// Pinned to a patch release that carries the fixes for GO-2026-5037/5038/5039/5856
+// (crypto/x509, mime, net/textproto, crypto/tls). Without it a build picks whatever
+// 1.26.x is to hand, which can silently be a vulnerable toolchain: govulncheck
+// reports four affected paths on 1.26.3.
+toolchain go1.26.5
+
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/google/cel-go v0.31.0

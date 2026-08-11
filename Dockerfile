@@ -1,7 +1,10 @@
 # Build a static patchwright binary and ship it on a minimal distroless base.
 # Cross-compiles for the target platform (set by buildx) from the native build
 # platform, so multi-arch builds don't need QEMU emulation.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+# Pinned to the patch release go.mod requires: see the toolchain directive there for
+# the CVEs it carries fixes for. A floating tag would let a build pick a vulnerable
+# toolchain without anything failing.
+FROM --platform=$BUILDPLATFORM golang:1.26.5 AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./

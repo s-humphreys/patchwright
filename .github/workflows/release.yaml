@@ -142,3 +142,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          # Publish an SBOM and build provenance with the image. A security review
+          # asks what is in the artefact; this answers it from the build rather than
+          # from a claim in a document.
+          sbom: true
+          provenance: mode=max

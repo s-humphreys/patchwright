@@ -180,6 +180,17 @@ registryAuth:
   dockerConfigSecret: ""
   dockerConfigKey: ".dockerconfigjson"
 
+# Restrict what patchwright can reach. Off by default: the destinations depend on
+# which registries, chart repositories and Jira instance you use, so a policy shipped
+# blind would either be wrong or so broad as to be theatre. See SECURITY.md for the
+# outbound connections and what enables each.
+networkPolicy:
+  enabled: false
+  # Override with specific rules; the defaults are deliberately coarse (HTTPS out,
+  # API port in) and documented as such in the template.
+  ingress: []
+  egress: []
+
 resources: {}
 nodeSelector: {}
 tolerations: []
