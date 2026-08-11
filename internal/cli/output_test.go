@@ -96,14 +96,14 @@ func TestEmitOutputsAppliesPerOutputView(t *testing.T) {
 
 // A ticket covering one image of a group suppresses the whole group, which is
 // right (they are one change) but can leave most of it unticketed. Reporting only
-// "skipped, DVOP-4061 is open" hid that: two urgent nats images with direct fixes
+// "skipped, PROJ-11 is open" hid that: two urgent nats images with direct fixes
 // got no ticket and nothing said so.
 func TestCoverageForReportsUncoveredImages(t *testing.T) {
 	index := map[string][]ticket.Existing{
-		"natsio/prometheus-nats-exporter": {{Key: "DVOP-4061", Status: "NEEDS REFINEMENT"}},
+		"natsio/prometheus-nats-exporter": {{Key: "PROJ-11", Status: "NEEDS REFINEMENT"}},
 	}
 	d := ticket.Draft{
-		Summary: "Upgrade event-bus images (3) to their latest versions",
+		Summary: "Upgrade example images (3) to their latest versions",
 		Images: []string{
 			"nats", "natsio/nats-server-config-reloader", "natsio/prometheus-nats-exporter",
 		},

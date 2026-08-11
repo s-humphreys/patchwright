@@ -223,7 +223,7 @@ func TestSummaryReportsCoverage(t *testing.T) {
 // nothing scanned its images must not be indistinguishable from a healthy one.
 func TestOwnersReportUnassessed(t *testing.T) {
 	s := New(stubAssessor{findings: []model.Finding{
-		assessedFinding("acr.io/a:1", "platform", "cpo", true),
+		assessedFinding("acr.io/a:1", "platform", "platform-team", true),
 		finding("acr.io/b:2", "engineering", "orders", false, false),
 		finding("acr.io/c:3", "engineering", "orders", false, false),
 	}})
@@ -243,8 +243,8 @@ func TestOwnersReportUnassessed(t *testing.T) {
 	if got := byTeam["orders"].Unassessed; got != 2 {
 		t.Errorf("orders unassessed = %d, want 2", got)
 	}
-	if got := byTeam["cpo"].Unassessed; got != 0 {
-		t.Errorf("cpo unassessed = %d, want 0", got)
+	if got := byTeam["platform-team"].Unassessed; got != 0 {
+		t.Errorf("platform-team unassessed = %d, want 0", got)
 	}
 }
 

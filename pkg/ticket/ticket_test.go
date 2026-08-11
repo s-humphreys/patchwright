@@ -333,13 +333,13 @@ func TestCollapseObjectRef(t *testing.T) {
 		// Kubernetes object references collapse to Kind/namespace.
 		"ProviderRevision/crossplane-system/provider-azuread-7abdea7d":  "ProviderRevision/crossplane-system",
 		"FunctionRevision/crossplane-system/function-sequencer-8b9e4e6": "FunctionRevision/crossplane-system",
-		"Kiali/istio-monitoring/kiali":                                  "Kiali/istio-monitoring",
+		"Kiali/istio-system/kiali":                                      "Kiali/istio-system",
 		// Everything else is left exactly as it is.
 		"ghcr.io/controlplaneio-fluxcd/flux-operator": "ghcr.io/controlplaneio-fluxcd/flux-operator",
 		"https://charts.crossplane.io/stable":         "https://charts.crossplane.io/stable",
 		"https://a.example.com/x/y/z":                 "https://a.example.com/x/y/z",
 		"flux-operator":                               "flux-operator",
-		"bases/argo-events/event-bus":                 "bases/argo-events/event-bus",
+		"bases/apps/example":                          "bases/apps/example",
 	}
 	for in, want := range cases {
 		if got := collapseObjectRef(in); got != want {
@@ -352,10 +352,10 @@ func TestGroupNoun(t *testing.T) {
 	cases := map[string]string{
 		"ProviderRevision/crossplane-system":  "providers",
 		"FunctionRevision/crossplane-system":  "functions",
-		"Kiali/istio-monitoring":              "kialis",
+		"Kiali/istio-system":                  "kialis",
 		"flux-operator":                       "images",
 		"https://charts.crossplane.io/stable": "images",
-		"bases/argo-events/event-bus":         "images",
+		"bases/apps/example":                  "images",
 	}
 	for in, want := range cases {
 		if got := groupNoun(in); got != want {
@@ -423,11 +423,11 @@ func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
 	mkShared := func(repo string) sink.FindingView {
 		return finding(repo, func(f *sink.FindingView) {
 			f.Upgrade.Source = "https://dev.example.com/_git/infra"
-			f.Upgrade.SourcePath = "bases/argo-events/event-bus"
+			f.Upgrade.SourcePath = "bases/apps/example"
 		})
 	}
 	shared := newTemplateData(ticketGroup{primary: []sink.FindingView{mkShared("natsio/a"), mkShared("natsio/b")}})
-	if shared.Source != "https://dev.example.com/_git/infra" || shared.SourcePath != "bases/argo-events/event-bus" {
+	if shared.Source != "https://dev.example.com/_git/infra" || shared.SourcePath != "bases/apps/example" {
 		t.Errorf("shared target not surfaced: source=%q path=%q", shared.Source, shared.SourcePath)
 	}
 }
@@ -528,7 +528,7 @@ func TestExclusionSharesThePolicyVocabulary(t *testing.T) {
 	}
 	for _, expr := range []string{
 		"image.registry == 'xpkg.crossplane.io'",
-		"owner['team'] == 'cpo'",
+		"owner['team'] == 'platform-team'",
 		"counts['critical'] > 100",
 		"labels.exists(k, k == 'nope')",
 		"vulns.exists(v, v.kev)",
@@ -629,7 +629,7 @@ func TestMergeChainsFoldsManagedImagesIntoTheirManager(t *testing.T) {
 func TestMergeChainsDeclinesWhenTheManagerIsNotNamed(t *testing.T) {
 	p := newTestPlanner(t, "")
 	for name, source := range map[string]string{
-		"object reference": "Kiali/istio-monitoring/kiali",
+		"object reference": "Kiali/istio-system/kiali",
 		"repository URL":   "https://kiali.org/helm-charts",
 		"registry path":    "ghcr.io/org/thing",
 	} {
@@ -654,7 +654,7 @@ func TestMergeChainsDeclinesWhenTheManagerIsNotNamed(t *testing.T) {
 func TestMergeChainsUsesManagerFromCustomResourceLabels(t *testing.T) {
 	p := newTestPlanner(t, "Summary: Upgrade {{ .ServiceName }} to {{ if .Upgrade }}{{ .Upgrade.Latest }}{{ else }}latest{{ end }}\n\napply={{ len .Upgrades }} fixes={{ len .Fixes }}\n")
 	managed := finding("kiali/kiali", func(f *sink.FindingView) {
-		f.Upgrade.Source = "Kiali/istio-monitoring/kiali"
+		f.Upgrade.Source = "Kiali/istio-system/kiali"
 		f.Upgrade.Manager = "kiali-operator" // resolved from the CR's labels
 		f.Upgrade.Managed = "operator"
 		f.Upgrade.Actionable = false

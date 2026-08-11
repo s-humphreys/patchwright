@@ -29,7 +29,7 @@ func TestOpenByImageIndexesEveryImageOnATicket(t *testing.T) {
 			  {"key":"PROJ-1","fields":{
 			     "summary":"Upgrade flux-operator to 0.58.0",
 			     "status":{"name":"NEEDS REFINEMENT","statusCategory":{"key":"new"}},
-			     "customfield_20983":["controlplaneio-fluxcd/flux-operator","fluxcd/source-controller"]}}
+			     "customfield_12345":["controlplaneio-fluxcd/flux-operator","fluxcd/source-controller"]}}
 			],"nextPageToken":"more","isLast":false}`))
 			return
 		}
@@ -37,7 +37,7 @@ func TestOpenByImageIndexesEveryImageOnATicket(t *testing.T) {
 		  {"key":"PROJ-2","fields":{
 		     "summary":"Upgrade curl",
 		     "status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},
-		     "customfield_20983":["curlimages/curl"]}}
+		     "customfield_12345":["curlimages/curl"]}}
 		],"isLast":true}`))
 	}))
 	defer srv.Close()
@@ -45,7 +45,7 @@ func TestOpenByImageIndexesEveryImageOnATicket(t *testing.T) {
 	j := &Jira{
 		BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
 		cfg: config.JiraConfig{Project: "PROJ", IssueType: "Container Vulnerability",
-			ImageField: "customfield_20983"},
+			ImageField: "customfield_12345"},
 	}
 	got, err := j.OpenByImage(context.Background())
 	if err != nil {
@@ -74,7 +74,7 @@ func TestOpenByImageIndexesEveryImageOnATicket(t *testing.T) {
 		t.Errorf("jql does not exclude Done: %s", gotJQL)
 	}
 	// The configurable field has to be requested explicitly or Jira omits it.
-	if !strings.Contains(gotFields, "customfield_20983") {
+	if !strings.Contains(gotFields, "customfield_12345") {
 		t.Errorf("fields did not request the image field: %s", gotFields)
 	}
 }

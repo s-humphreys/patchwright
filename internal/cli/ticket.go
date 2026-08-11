@@ -239,7 +239,7 @@ func create(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticke
 // The distinction matters. An open ticket on any image suppresses the whole draft,
 // which is right (they are one change), but it can leave most of the group
 // unticketed: a ticket covering one of three nats images stopped the other two
-// being raised at all. Reporting only "skipped, DVOP-4061 is open" hides that.
+// being raised at all. Reporting only "skipped, PROJ-11 is open" hides that.
 type coverage struct {
 	tickets   []ticket.Existing
 	covered   []string
