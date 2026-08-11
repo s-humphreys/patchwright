@@ -81,6 +81,10 @@
   .act-none { color: var(--idle); }
   .act-unknown { color: var(--muted); font-style: italic; }
   .ticket-status { color: var(--muted); font-size: 0.9em; }
+  /* Class rows are totals for the teams indented beneath them. */
+  tr.rollup td { font-weight: 600; }
+  td.indent { padding-left: 1.6rem; }
+  .pct { color: var(--muted); font-size: 0.9em; }
   .ticket-active { color: var(--ok); font-size: 0.9em; }
   .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
               margin: 0.4rem 0 0.9rem; font-size: 0.85rem; color: var(--muted); }
@@ -110,6 +114,12 @@
 <div id="coverage"></div>
 
 <div class="tiles" id="tiles"></div>
+
+<h2>Breakdown</h2>
+<div class="scroll short"><table id="breakdown">
+  <thead><tr></tr></thead>
+  <tbody></tbody>
+</table></div>
 
 <h2>Queue</h2>
 <div class="controls">
@@ -456,6 +466,96 @@ function renderTable(id, columns, rows) {
     }).join("") + "</tr>").join("");
 }
 
+// pct renders a share, and says "-" rather than "0%" when the denominator is zero:
+// nought out of nought is not a measurement.
+function pct(n, of) {
+  if (!of) return '<span class="pct">-</span>';
+  return `<span class="pct">${Math.round((n / of) * 100)}%</span>`;
+}
+
+// countPct puts the number first and the share second, so a row can be read either
+// as "how many" or "how much of it", and a small absolute number cannot hide behind
+// a large percentage.
+function countPct(n, of) {
+  return `${n} ${pct(n, of)}`;
+}
+
+// Breakdown: one row per owner class, with its teams indented beneath.
+//
+// Every column is a share of something stated, because the raw counts alone
+// mislead in both directions here: a team with two actionable findings out of six
+// looks quiet next to one with twenty out of seven hundred, and a team with 100%
+// coverage of four images is not in better shape than one with 40% of two hundred.
+const BREAKDOWN_COLUMNS = [
+  { label: "Class / team", get: (r) => r.label, cls: (r) => (r.team ? "indent" : ""),
+    help: "Owner class, with its teams beneath. Percentages are of that row's own findings unless stated." },
+  { label: "Findings", num: true, get: (r) => `${r.total} ${pct(r.total, r.estate)}`,
+    help: "Findings owned, and the share of the whole estate they represent." },
+  { label: "Assessed", num: true, get: (r) => countPct(r.total - r.unassessed, r.total),
+    help: "Findings the scan provider actually assessed. A low share means the rest of this row's numbers describe a small sample." },
+  { label: "Actionable", num: true, get: (r) => countPct(r.actionable, r.total),
+    help: "Findings policy marked for action, as a share of this row's findings." },
+  { label: "Direct", num: true, get: (r) => countPct(r.direct, r.actionable),
+    help: "Actionable findings this team can fix by bumping the image itself." },
+  { label: "Managed", num: true, get: (r) => countPct(r.managed, r.actionable),
+    help: "Actionable findings whose version is owned by a chart or operator, so the fix crosses a boundary." },
+  { label: "Fixable", num: true, get: (r) => countPct(r.fixable, r.actionable),
+    help: "Actionable findings with at least one critical CVE that has a fix available." },
+  // "?" rather than "0%" when Jira is not configured: an unknown is not an absence,
+  // and a column reading "0% ticketed" would say the work is untracked when the
+  // truth is that nobody asked Jira.
+  { label: "Ticketed", num: true,
+    get: (r) => (ticketsByRepo ? countPct(r.ticketed, r.actionable)
+      : '<span class="unknown" title="Jira is not configured, so ticket state is unknown">?</span>'),
+    help: "Actionable findings with an open ticket. \"?\" when Jira is not configured, which is not the same as nothing being tracked." },
+];
+
+function renderBreakdown(owners) {
+  const rows = [];
+  const estate = (owners || []).reduce((n, o) => n + o.total, 0);
+
+  // Group by class, then roll the class up from its teams so the totals cannot
+  // disagree with the rows beneath them.
+  const byClass = new Map();
+  for (const o of owners || []) {
+    const cls = o.class || "-";
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(o);
+  }
+  const sum = (list, key) => list.reduce((n, o) => n + (o[key] || 0), 0);
+
+  for (const [cls, teams] of [...byClass].sort((a, b) => sum(b[1], "actionable") - sum(a[1], "actionable"))) {
+    rows.push({
+      label: esc(cls), estate, team: false,
+      total: sum(teams, "total"), unassessed: sum(teams, "unassessed"),
+      actionable: sum(teams, "actionable"), direct: sum(teams, "direct"),
+      managed: sum(teams, "managed"), fixable: sum(teams, "fixable"),
+      ticketed: sum(teams, "ticketed"),
+    });
+    // Only break a class down when there is more than one team in it; a single
+    // team repeated under its own class is noise.
+    if (teams.length < 2) continue;
+    for (const o of [...teams].sort((a, b) => b.actionable - a.actionable)) {
+      rows.push({
+        label: esc(o.team || "(unattributed)"), estate, team: true,
+        total: o.total, unassessed: o.unassessed, actionable: o.actionable,
+        direct: o.direct, managed: o.managed, fixable: o.fixable, ticketed: o.ticketed,
+      });
+    }
+  }
+
+  const head = document.querySelector("#breakdown thead tr");
+  head.innerHTML = BREAKDOWN_COLUMNS.map((c) =>
+    `<th class="${c.num ? "num" : ""}" title="${esc(c.help)}">${esc(c.label)}</th>`).join("");
+  document.querySelector("#breakdown tbody").innerHTML = rows.map((r) => {
+    const cells = BREAKDOWN_COLUMNS.map((c) => {
+      const cls = [c.num ? "num" : "", c.cls ? c.cls(r) : ""].filter(Boolean).join(" ");
+      return `<td${cls ? ` class="${cls}"` : ""}>${c.get(r)}</td>`;
+    }).join("");
+    return `<tr${r.team ? "" : ' class="rollup"'}>${cells}</tr>`;
+  }).join("");
+}
+
 function renderOwners(rows) {
   renderTable("owners", OWNER_COLUMNS, rows || []);
 }
@@ -589,6 +689,7 @@ async function loadAll() {
       $("#tiles").innerHTML = "";
       $("#findings tbody").innerHTML = "";
       $("#owners tbody").innerHTML = "";
+      $("#breakdown tbody").innerHTML = "";
       $("#queueCount").textContent = "";
       $("#dataAge").textContent = "";
       return;
@@ -596,8 +697,11 @@ async function loadAll() {
     renderCoverage(summary.summary);
     renderDataAge(summary.summary);
     renderTiles(summary.summary);
-    renderOwners(owners.owners);
+    // Findings first: they carry whether Jira was consulted, which the breakdown
+    // needs in order to distinguish "no tickets" from "not asked".
     await loadFindings();
+    renderBreakdown(owners.owners);
+    renderOwners(owners.owners);
   } catch (e) {
     $("#freshness").textContent = `error: ${e.message}`;
     $("#freshness").className = "meta err";

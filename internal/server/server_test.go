@@ -607,3 +607,60 @@ func TestSummaryOmitsProviderDataAgeWhenNothingWasAssessed(t *testing.T) {
 		}
 	}
 }
+
+// The breakdown is only meaningful if each team's fix split and tracking are
+// reported, so the owner rollup has to carry them.
+func TestOwnersReportFixSplitAndTicketing(t *testing.T) {
+	direct := assessedFinding("acr.io/direct:1", "platform", "team", true)
+	managed := assessedFinding("acr.io/managed:1", "platform", "team", true)
+	managed.Upgrade.Actionable = false
+	managed.Upgrade.Managed = "operator"
+	// Actionable but with nothing to move to: counts in neither split.
+	stuck := assessedFinding("acr.io/stuck:1", "platform", "team", true)
+	stuck.Upgrade.Available = false
+
+	s := New(stubAssessor{findings: []model.Finding{direct, managed, stuck}}).
+		WithTickets(stubTickets{byImage: map[string][]ticket.Existing{
+			"direct": {{Key: "PROJ-1", Status: "To Do"}},
+		}}, "https://example.atlassian.net")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+	if len(body.Owners) != 1 {
+		t.Fatalf("got %d rows, want 1", len(body.Owners))
+	}
+	o := body.Owners[0]
+	if o.Direct != 1 || o.Managed != 1 {
+		t.Errorf("direct=%d managed=%d, want 1/1 (the stuck finding is in neither)", o.Direct, o.Managed)
+	}
+	if o.Ticketed != 1 {
+		t.Errorf("ticketed = %d, want 1", o.Ticketed)
+	}
+	// The splits describe the actionable subset, so neither may exceed it.
+	if o.Direct+o.Managed > o.Actionable || o.Ticketed > o.Actionable {
+		t.Errorf("splits exceed actionable: %+v", o)
+	}
+}
+
+// Non-actionable findings must not inflate a team's fix split: the breakdown reads
+// as "of the work you have", not "of everything you own".
+func TestOwnerFixSplitCountsOnlyActionableFindings(t *testing.T) {
+	quiet := assessedFinding("acr.io/quiet:1", "platform", "team", false)
+	s := New(stubAssessor{findings: []model.Finding{quiet}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+	if o := body.Owners[0]; o.Direct != 0 || o.Managed != 0 || o.Ticketed != 0 {
+		t.Errorf("a non-actionable finding contributed to the split: %+v", o)
+	}
+}

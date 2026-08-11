@@ -157,9 +157,11 @@ func (s *Server) Refresh(ctx context.Context) {
 	} else {
 		snap.views = buildViews(findings, s.includeSuppressed)
 		snap.summary = buildSummary(findings)
-		snap.owners = buildOwnerStats(findings)
 		snap.byImage = indexByImage(snap.views)
+		// Tickets first: the owner rollup counts how much of each team's work is
+		// already tracked.
 		snap.tickets = s.lookupTickets(ctx)
+		snap.owners = buildOwnerStats(findings, snap.tickets)
 		slog.InfoContext(ctx, "server: assessment cached",
 			"findings", len(snap.views), "ticketed_images", len(snap.tickets))
 	}

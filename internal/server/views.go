@@ -64,6 +64,18 @@ type ownerStats struct {
 	// nothing scanned its images looks identical to a team in good shape unless
 	// this is reported alongside.
 	Unassessed int `json:"unassessed"`
+
+	// Direct and Managed split the actionable findings by where the fix is applied:
+	// Direct can be bumped on the image, Managed needs a chart or operator change.
+	// The split matters more than the total, because it is the difference between
+	// work a team can do alone and work that crosses a boundary.
+	Direct  int `json:"direct"`
+	Managed int `json:"managed"`
+	// Ticketed counts actionable findings with an open ticket covering the image, so
+	// "is this being tracked?" is answerable per team rather than by reading Jira.
+	// Always 0 when Jira is not configured, which is why the API reports whether it
+	// is: see the tickets field on findings.
+	Ticketed int `json:"ticketed"`
 }
 
 func buildSummary(findings []model.Finding) summaryView {
@@ -124,7 +136,7 @@ func providerDataRange(findings []model.Finding) (oldest, newest *time.Time) {
 	return oldest, newest
 }
 
-func buildOwnerStats(findings []model.Finding) []ownerStats {
+func buildOwnerStats(findings []model.Finding, tickets map[string][]ticketRef) []ownerStats {
 	type key struct{ class, team string }
 	acc := map[key]*ownerStats{}
 	var order []key
@@ -152,6 +164,17 @@ func buildOwnerStats(findings []model.Finding) []ownerStats {
 		}
 		if !f.ProviderAssessed() {
 			st.Unassessed++
+		}
+		if f.Actionable {
+			switch fixPath(f) {
+			case "direct":
+				st.Direct++
+			case "managed":
+				st.Managed++
+			}
+			if len(tickets[f.Image.Repository]) > 0 {
+				st.Ticketed++
+			}
 		}
 	}
 	out := make([]ownerStats, 0, len(order))
@@ -192,6 +215,27 @@ func hasKnownExploited(f *model.Finding) bool {
 
 func hasActionableUpgrade(f *model.Finding) bool {
 	return f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable
+}
+
+// fixPath classifies where a finding's fix is applied, matching the vocabulary the
+// report and the status page use. Kept here rather than duplicated per consumer so
+// the API and the table cannot disagree about what "direct" means.
+func fixPath(f *model.Finding) string {
+	switch {
+	case f.Upgrade == nil:
+		if f.RemediationChecked {
+			return "unknown"
+		}
+		return "?"
+	case !f.Upgrade.Resolved:
+		return "unknown"
+	case !f.Upgrade.Available:
+		return "none"
+	case f.Upgrade.Actionable:
+		return "direct"
+	default:
+		return "managed"
+	}
 }
 
 // remediationResolved reports whether the available versions for an image were
