@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,15 +15,23 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
+// serverTicketer joins planning and the Jira client into the one interface the
+// server needs, so neither package has to know about the other.
+type serverTicketer struct {
+	*ticket.Planner
+	*ticket.Jira
+}
+
 // envAPIToken is the shared token required by the API and status page. Empty or
 // unset leaves both unauthenticated.
 const envAPIToken = "PATCHWRIGHT_API_TOKEN"
 
 func newServeCmd() *cobra.Command {
 	var (
-		in       assessInputs
-		addr     string
-		interval time.Duration
+		in         assessInputs
+		addr       string
+		interval   time.Duration
+		autoTicket bool
 	)
 
 	cmd := &cobra.Command{
@@ -64,14 +73,33 @@ func newServeCmd() *cobra.Command {
 			// are none. Only search is used here, never creation.
 			if cfg, err := loadTicketConfig(in.configPaths); err == nil {
 				jira, jerr := ticket.NewJira(cfg.Jira)
-				if jerr != nil {
+				switch {
+				case jerr != nil:
 					slog.WarnContext(cmd.Context(),
 						"jira configured but credentials missing; ticket links disabled", "error", jerr)
-				} else {
+					if autoTicket {
+						return fmt.Errorf("--auto-ticket needs Jira credentials: %w", jerr)
+					}
+				default:
 					srv = srv.WithTickets(jira, jira.BaseURL)
-					slog.InfoContext(cmd.Context(), "ticket lookup enabled",
-						"project", cfg.Jira.Project, "issue_type", cfg.Jira.EffectiveIssueType())
+					planner, perr := ticket.NewPlanner(cfg.Jira)
+					if perr != nil {
+						return perr
+					}
+					srv = srv.WithTicketing(&serverTicketer{Planner: planner, Jira: jira}, autoTicket)
+					slog.InfoContext(cmd.Context(), "ticketing enabled",
+						"project", cfg.Jira.Project, "issue_type", cfg.Jira.EffectiveIssueType(),
+						"auto_ticket", autoTicket)
+					if autoTicket {
+						// Loud on purpose: from here the service writes to Jira on a
+						// schedule with no further prompting.
+						slog.WarnContext(cmd.Context(),
+							"AUTO-TICKETING IS ON: every scheduled refresh will create and update Jira issues",
+							"interval", interval.String())
+					}
 				}
+			} else if autoTicket {
+				return fmt.Errorf("--auto-ticket needs a jira config block: %w", err)
 			}
 
 			ctx := cmd.Context()
@@ -109,6 +137,10 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&in.exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&in.remediation, "remediation", false, "detect available upgrades for how images are deployed")
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "address to serve the API on")
+	cmd.Flags().BoolVar(&autoTicket, "auto-ticket", false,
+		"create and reconcile Jira tickets on every scheduled refresh. Off by default: a "+
+			"service that starts raising tickets the moment it deploys is not a good surprise. "+
+			"The API endpoints work either way.")
 	cmd.Flags().DurationVar(&interval, "interval", time.Hour, "how often to re-run the assessment (0 to run once)")
 	return cmd
 }

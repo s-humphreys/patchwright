@@ -25,6 +25,33 @@ server:
   auth:
     secretName: ""      # e.g. "patchwright-api"; empty leaves the API open
     secretKey: token
+
+# Jira ticketing. The `jira:` block itself goes in config.policy below, with
+# `template: /etc/patchwright/ticket.md.tmpl` to match the file mounted from
+# ticketing.template.
+ticketing:
+  # Create and reconcile tickets on every scheduled refresh. Off by default: a
+  # service that starts raising tickets the moment it is deployed is not a good
+  # surprise, and the API endpoints work without it. Requires
+  # credentialsSecretName; the chart refuses to render otherwise, matching the
+  # binary, which refuses to start.
+  autoTicket: false
+  # Secret holding the Jira credentials, with keys: baseUrl, email, apiToken.
+  # Credentials are never read from a values file or the rules ConfigMap.
+  #
+  #   kubectl create secret generic patchwright-jira \
+  #     --from-literal=baseUrl=https://your-site.atlassian.net \
+  #     --from-literal=email=you@example.com \
+  #     --from-literal=apiToken=...
+  #
+  # Leave empty to run without ticketing: the assessment, API and page are
+  # unaffected.
+  credentialsSecretName: ""
+  # The ticket template, mounted alongside the rules. Required for ticketing,
+  # because `jira.template` is a path and the image ships no default: the wording
+  # of a ticket belongs to whoever owns the process. See
+  # config/templates/container-vuln.md.tmpl in the repository for a starting point.
+  template: ""
 # Structured logs (written to stderr / pod logs).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)

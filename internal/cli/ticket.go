@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -64,10 +63,7 @@ func newTicketCmd() *cobra.Command {
 				return nil
 			}
 
-			if !confirm {
-				return dryRun(ctx, out, cfg.Jira, plan)
-			}
-			return create(ctx, out, cfg.Jira, plan)
+			return run(ctx, out, cfg.Jira, plan, findings, confirm)
 		},
 	}
 
@@ -146,151 +142,104 @@ func reportSkips(w io.Writer, skips []ticket.Skip) {
 	fmt.Fprintln(w)
 }
 
-// dryRun prints the tickets that would be raised. It still queries Jira for
-// existing tickets when credentials are available, because "would this actually
-// create anything?" is the question a dry run needs to answer; without
-// credentials it says so rather than implying the answer is no.
-func dryRun(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.Plan) error {
-	jira, jiraErr := ticket.NewJira(cfg)
-	var index map[string][]ticket.Existing
-	if jiraErr == nil {
-		var err error
-		if index, err = jira.OpenByImage(ctx); err != nil {
-			return err
-		}
-	}
-	if jiraErr != nil {
-		fmt.Fprintf(w, "NOTE: %v\n", jiraErr)
-		fmt.Fprintf(w, "      Duplicate detection is part of that check, so the drafts below may\n")
-		fmt.Fprintf(w, "      already exist in Jira. Set the credentials to find out.\n\n")
-	}
-
-	fmt.Fprintf(w, "DRY RUN: %d ticket(s) would be raised in project %s", len(plan.Drafts), cfg.Project)
-	if cfg.Epic != "" {
-		fmt.Fprintf(w, " under %s", cfg.Epic)
-	}
-	fmt.Fprintf(w, " as %q.\n\n", cfg.EffectiveIssueType())
-
-	for i, d := range plan.Drafts {
-		fmt.Fprintf(w, "--- ticket %d of %d ---\n", i+1, len(plan.Drafts))
-		fmt.Fprintf(w, "Summary:  %s\n", d.Summary)
-		fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, d.Priority))
-		fmt.Fprintf(w, "Images:   %v\n", d.Images)
-		fmt.Fprintf(w, "Covers:   %d finding(s), grouped by %s\n", len(d.Findings), d.Key)
-
-		if jiraErr == nil {
-			c := coverageFor(index, d)
-			if c.skipped() {
-				fmt.Fprintf(w, "Existing: WOULD SKIP — ")
-				reportCoverage(w, c)
-			} else {
-				fmt.Fprintln(w, "Existing: none — would create")
-			}
-		}
-		fmt.Fprintf(w, "\n%s\n\n", d.Description)
-	}
-	fmt.Fprintln(w, "Nothing was created. Re-run with --confirm to raise these.")
-	return nil
-}
-
-func create(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.Plan) error {
+// run reconciles the plan against Jira and either reports or applies the result.
+//
+// One code path for both, so a dry run cannot describe something different from
+// what a confirmed run does.
+func run(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.Plan,
+	findings []sink.FindingView, confirm bool) error {
 	jira, err := ticket.NewJira(cfg)
 	if err != nil {
-		return err
+		if confirm {
+			return err
+		}
+		fmt.Fprintf(w, "NOTE: %v\n", err)
+		fmt.Fprintf(w, "      Without them this cannot tell which tickets already exist, so the\n")
+		fmt.Fprintf(w, "      drafts below may already be raised. Set the credentials to find out.\n\n")
+		reportDrafts(w, cfg, plan.Drafts)
+		return nil
 	}
 
 	index, err := jira.OpenByImage(ctx)
 	if err != nil {
 		return err
 	}
+	actions := ticket.Reconcile(ticket.ReconcileInput{
+		Drafts: plan.Drafts, OpenByImage: index, Findings: findings,
+	})
 
-	created, skipped, uncovered := 0, 0, 0
-	for _, d := range plan.Drafts {
-		c := coverageFor(index, d)
-		if c.skipped() {
-			fmt.Fprintf(w, "skip   %s\n       ", d.Summary)
-			reportCoverage(w, c)
-			skipped++
-			uncovered += len(c.uncovered)
-			continue
-		}
-		key, err := jira.Create(ctx, d)
-		if err != nil {
-			// Stop rather than continue: a failure here is usually systematic
-			// (a wrong custom field, a required field on the create screen), and
-			// carrying on would produce a long list of identical failures.
-			return fmt.Errorf("after creating %d ticket(s): %w", created, err)
-		}
-		fmt.Fprintf(w, "create %s  %s\n", key, d.Summary)
-		created++
+	if !confirm {
+		reportActions(w, cfg, actions)
+		fmt.Fprintln(w, "\nNothing was changed. Re-run with --confirm to apply this.")
+		return nil
 	}
-	slog.InfoContext(ctx, "ticket run complete",
-		"created", created, "skipped_existing", skipped, "images_left_uncovered", uncovered)
-	fmt.Fprintf(w, "\nCreated %d, skipped %d already open.\n", created, skipped)
-	if uncovered > 0 {
-		fmt.Fprintf(w, "%d image(s) in skipped groups have no ticket of their own; see above.\n", uncovered)
-	}
+	results := ticket.Apply(ctx, jira, actions)
+	reportResults(w, results)
 	return nil
 }
 
-// coverage is what open tickets say about one draft: which of its images are
-// already handled, and which are not.
-//
-// The distinction matters. An open ticket on any image suppresses the whole draft,
-// which is right (they are one change), but it can leave most of the group
-// unticketed: a ticket covering one of three nats images stopped the other two
-// being raised at all. Reporting only "skipped, PROJ-11 is open" hides that.
-type coverage struct {
-	tickets   []ticket.Existing
-	covered   []string
-	uncovered []string
-}
-
-func (c coverage) skipped() bool { return len(c.tickets) > 0 }
-
-// coverageFor resolves a draft against the whole project's open tickets. The index
-// is fetched once per run, so this costs nothing per draft.
-func coverageFor(index map[string][]ticket.Existing, d ticket.Draft) coverage {
-	var out coverage
-	seen := map[string]bool{}
-	for _, img := range d.Images {
-		found := index[img]
-		if len(found) == 0 {
-			out.uncovered = append(out.uncovered, img)
-			continue
-		}
-		out.covered = append(out.covered, img)
-		for _, e := range found {
-			if !seen[e.Key] {
-				seen[e.Key] = true
-				out.tickets = append(out.tickets, e)
-			}
-		}
-	}
-	return out
-}
-
-// reportCoverage prints the tickets that caused a skip and, crucially, the images
-// they do not cover. Only meaningful for a skip: uncovered images in a draft that
-// is about to be created are simply the draft's own work, not a gap.
-func reportCoverage(w io.Writer, c coverage) {
-	if !c.skipped() {
+// reportActions describes what reconciliation would do, in full, so the decision to
+// apply is made on the actual content rather than a count.
+func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) {
+	if len(actions) == 0 {
+		fmt.Fprintln(w, "Nothing to do: no drafts and no open tickets to reconcile.")
 		return
 	}
-	fmt.Fprintf(w, "%s covers %s\n", formatExisting(c.tickets), strings.Join(c.covered, ", "))
-	if len(c.uncovered) > 0 {
-		fmt.Fprintf(w, "       NOT covered by any open ticket: %s\n", strings.Join(c.uncovered, ", "))
-		fmt.Fprintf(w, "       These get no ticket while the above is open. Close it, or add them to it.\n")
+	fmt.Fprintf(w, "DRY RUN: %d action(s) in project %s.\n\n", len(actions), cfg.Project)
+	for i, a := range actions {
+		fmt.Fprintf(w, "--- %d of %d: %s ---\n", i+1, len(actions), a.Kind)
+		fmt.Fprintf(w, "Why:      %s\n", a.Why)
+		switch a.Kind {
+		case ticket.ActionCreate:
+			fmt.Fprintf(w, "Summary:  %s\n", a.Draft.Summary)
+			fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, a.Draft.Priority))
+			fmt.Fprintf(w, "Images:   %v\n\n%s\n", a.Draft.Images, a.Draft.Description)
+		case ticket.ActionSkip:
+			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+		default:
+			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+			if len(a.Images) > 0 {
+				fmt.Fprintf(w, "Add:      %v\n", a.Images)
+			}
+			fmt.Fprintf(w, "Comment:  %s\n", a.Message)
+		}
+		fmt.Fprintln(w)
 	}
 }
 
-func formatExisting(existing []ticket.Existing) string {
-	out := ""
-	for i, e := range existing {
-		if i > 0 {
-			out += ", "
-		}
-		out += fmt.Sprintf("%s (%s)", e.Key, e.Status)
+// reportDrafts is the credential-less fallback: what would be raised, with no claim
+// about what already exists.
+func reportDrafts(w io.Writer, cfg config.JiraConfig, drafts []ticket.Draft) {
+	fmt.Fprintf(w, "DRY RUN: %d ticket(s) would be considered for project %s.\n\n",
+		len(drafts), cfg.Project)
+	for i, d := range drafts {
+		fmt.Fprintf(w, "--- draft %d of %d ---\n", i+1, len(drafts))
+		fmt.Fprintf(w, "Summary:  %s\n", d.Summary)
+		fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, d.Priority))
+		fmt.Fprintf(w, "Images:   %v\n\n%s\n\n", d.Images, d.Description)
 	}
-	return out
+}
+
+func reportResults(w io.Writer, results []ticket.Result) {
+	var failed int
+	for _, r := range results {
+		switch {
+		case r.Err != nil:
+			failed++
+			fmt.Fprintf(w, "FAILED %-11s %s: %v\n", r.Action.Kind, r.Key, r.Err)
+		case r.Action.Kind == ticket.ActionCreate:
+			fmt.Fprintf(w, "create %-11s %s\n", r.Key, r.Action.Draft.Summary)
+		case r.Action.Kind == ticket.ActionSkip:
+			fmt.Fprintf(w, "ok     %-11s already covers this change\n", r.Key)
+		default:
+			fmt.Fprintf(w, "%-6s %-11s %s\n", r.Action.Kind, r.Key, r.Action.Why)
+		}
+	}
+	counts := ticket.Summarize(results)
+	fmt.Fprintf(w, "\nCreated %d, extended %d, commented %d, unchanged %d.\n",
+		counts[ticket.ActionCreate], counts[ticket.ActionExtend],
+		counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone], counts[ticket.ActionSkip])
+	if failed > 0 {
+		fmt.Fprintf(w, "%d action(s) failed; see above.\n", failed)
+	}
 }

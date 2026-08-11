@@ -10,6 +10,17 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
+var (
+	errTicketingNotConfigured = errTicketing("ticketing is not configured: a jira config block and JIRA_* credentials are required")
+	errNoAssessment           = errTicketing("no assessment has completed yet")
+)
+
+// errTicketing is a plain error type so the handlers can report the reason without
+// a dependency on a specific error package.
+type errTicketing string
+
+func (e errTicketing) Error() string { return string(e) }
+
 // assessmentMeta tells clients how fresh the data is.
 type assessmentMeta struct {
 	GeneratedAt *time.Time `json:"generated_at"`
@@ -35,6 +46,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/owners", s.handleOwners)
 	mux.HandleFunc("GET /api/v1/summary", s.handleSummary)
 	mux.HandleFunc("POST /api/v1/assessments", s.handleRefresh)
+	mux.HandleFunc("GET /api/v1/tickets", s.handleTicketPlan)
+	mux.HandleFunc("POST /api/v1/tickets", s.handleTicketApply)
 	// Authentication wraps everything, including the page: the page is a data view,
 	// so leaving it open while gating the API would protect nothing.
 	return s.authorize(mux)

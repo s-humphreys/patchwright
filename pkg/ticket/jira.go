@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -321,6 +322,74 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 		return "", fmt.Errorf("create ticket %q: %w", d.Summary, err)
 	}
 	return resp.Key, nil
+}
+
+// AddImages adds image repositories to an existing ticket's image field or labels,
+// preserving what is already there. Jira replaces a field wholesale on update, so
+// the current value is read first: a blind write would silently drop the images the
+// ticket was raised for.
+func (j *Jira) AddImages(ctx context.Context, key string, images []string) error {
+	existing, err := j.imagesOn(ctx, key)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for _, img := range existing {
+		have[img] = true
+	}
+	merged := append([]string{}, existing...)
+	for _, img := range images {
+		if !have[img] {
+			have[img] = true
+			merged = append(merged, img)
+		}
+	}
+	if len(merged) == len(existing) {
+		return nil // already covered; nothing to write
+	}
+	sort.Strings(merged)
+
+	values := merged
+	if j.cfg.ImageLabel {
+		values = make([]string, 0, len(merged))
+		for _, img := range merged {
+			values = append(values, ImageLabel(img))
+		}
+	}
+	body := map[string]any{"fields": map[string]any{j.imageFieldName(): values}}
+	if err := j.do(ctx, http.MethodPut, "/rest/api/3/issue/"+url.PathEscape(key), body, nil); err != nil {
+		return fmt.Errorf("add images to %s: %w", key, err)
+	}
+	return nil
+}
+
+// imagesOn reads the images currently recorded on a ticket.
+func (j *Jira) imagesOn(ctx context.Context, key string) ([]string, error) {
+	q := url.Values{}
+	q.Set("fields", j.imageFieldName())
+	body, err := j.raw(ctx, http.MethodGet,
+		"/rest/api/3/issue/"+url.PathEscape(key)+"?"+q.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", key, err)
+	}
+	var resp struct {
+		Fields map[string]json.RawMessage `json:"fields"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", key, err)
+	}
+	return j.imagesOf(resp.Fields), nil
+}
+
+// Comment adds a comment. Used rather than editing a ticket in place so the
+// reasoning is visible in the history and a human can disagree with it.
+func (j *Jira) Comment(ctx context.Context, key, body string) error {
+	doc := map[string]any{"body": ADFDocument(body)}
+	if err := j.do(ctx, http.MethodPost,
+		"/rest/api/3/issue/"+url.PathEscape(key)+"/comment", doc, nil); err != nil {
+		return fmt.Errorf("comment on %s: %w", key, err)
+	}
+	return nil
 }
 
 // raw performs a request and returns the response body, for callers that must

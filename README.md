@@ -316,6 +316,25 @@ per-instance, and a name that does not exist fails ticket creation. A dry run pr
 `urgent -> Highest` per ticket so a flattened queue is visible before anything is
 created.
 
+**It reconciles rather than only creating.** A queue that is only ever added to rots
+three ways, all of which happened on a real project inside a day: a ticket covering
+one image of a change suppresses the rest, leaving them with no ticket and nothing
+saying so; the version a ticket asks for moves on; and the work gets done but the
+ticket stays open. So a run produces actions, not just creations:
+
+| Action | When |
+|---|---|
+| `create` | no open ticket covers any of the change's images |
+| `extend` | a ticket covers part of the change; the rest are added to it, with a comment saying why |
+| `note-stale` | the available version has moved on since the ticket was raised |
+| `note-done` | nothing is reported for the ticket's images any more |
+| `skip` | already covers the change correctly |
+
+**Nothing is ever closed.** A finding can leave the queue because it was fixed or
+because nothing is assessing the image any more, and those are indistinguishable
+from the queue alone. Closing on the second would quietly retire real work, so
+`note-done` comments and says which of the two it cannot rule out.
+
 **Duplicates are prevented by asking Jira, not by local state.** Before creating,
 it searches for open tickets carrying the image in `imageField` (or the label),
 and skips when one exists. A state file would drift the moment someone closed a
@@ -355,6 +374,8 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed. |
 | `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`, `actionable_unassessed`). |
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
+| `GET /api/v1/tickets` | What ticket reconciliation would do against the cached assessment. Changes nothing. |
+| `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}`; without it, 400 and the plan. |
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 
 Given a `jira:` config block and `JIRA_*` credentials, `serve` also indexes the

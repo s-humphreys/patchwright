@@ -31,6 +31,9 @@ type Draft struct {
 	// Priority is the highest assessment priority across the findings covered, so
 	// the ticket can be raised at a matching Jira priority rather than a fixed one.
 	Priority string
+	// Upgrades are the version moves this draft asks for, carried so reconciliation
+	// can tell whether an existing ticket's target has moved on.
+	Upgrades []ImageUpgrade
 }
 
 // Skip records a finding that will not be ticketed, and why. Skips are reported
@@ -309,6 +312,7 @@ func (p *Planner) render(group ticketGroup) (Draft, error) {
 		Summary:     summary,
 		Description: description,
 		Priority:    data.Priority,
+		Upgrades:    data.Upgrades,
 		Images:      data.Images,
 		Findings:    group.all(),
 		Key:         groupKey(group.primary[0]),
