@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
+	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
 // stubAssessor returns fixed findings.
@@ -316,6 +318,11 @@ func TestUIServesPage(t *testing.T) {
 	// Sorting must respect the domain rather than the alphabet, and unknowns must
 	// sink rather than sort as zero. These assertions only prove the machinery is
 	// present; the ordering itself is JavaScript and is not exercised by Go tests.
+	// "?" for unknown ticket state, never "-": absent Jira config is not evidence
+	// that no ticket exists.
+	if !strings.Contains(body, "ticketsByRepo") {
+		t.Error("page does not render ticket state")
+	}
 	for _, want := range []string{"FIX_RANK", "PRI_RANK", "UNKNOWN", "sortable"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page is missing sorting machinery: %s", want)
@@ -389,4 +396,85 @@ type blockingAssessor struct{ release chan struct{} }
 func (b blockingAssessor) Run(context.Context) ([]model.Finding, error) {
 	<-b.release
 	return nil, nil
+}
+
+// stubTickets is a fixed open-ticket index.
+type stubTickets struct {
+	byImage map[string][]ticket.Existing
+	err     error
+}
+
+func (s stubTickets) OpenByImage(context.Context) (map[string][]ticket.Existing, error) {
+	return s.byImage, s.err
+}
+
+// Tickets ride alongside the findings, keyed by repository, so a client can show
+// whether someone is already on a finding.
+func TestFindingsIncludeOpenTickets(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		finding("acr.io/app:1", "engineering", "orders", true, false),
+		finding("acr.io/other:2", "engineering", "orders", true, false),
+	}}).WithTickets(stubTickets{byImage: map[string][]ticket.Existing{
+		"app": {{Key: "PROJ-1", Status: "In Progress", Summary: "Upgrade app"}},
+	}}, "https://example.atlassian.net/")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings", nil))
+	var body struct {
+		Tickets map[string][]ticketRef `json:"tickets"`
+	}
+	decodeInto(t, rec, &body)
+
+	refs := body.Tickets["app"]
+	if len(refs) != 1 || refs[0].Key != "PROJ-1" {
+		t.Fatalf("tickets = %+v, want PROJ-1 against app", body.Tickets)
+	}
+	// A link is more useful than a key, and the base URL is not a secret.
+	if want := "https://example.atlassian.net/browse/PROJ-1"; refs[0].URL != want {
+		t.Errorf("url = %q, want %q", refs[0].URL, want)
+	}
+	if _, ok := body.Tickets["other"]; ok {
+		t.Error("an image with no ticket must not appear in the index")
+	}
+}
+
+// Without Jira configured the key is absent, which a client must read as "unknown"
+// rather than "no ticket exists". Emitting an empty object would assert the latter.
+func TestFindingsOmitTicketsWhenJiraIsNotConfigured(t *testing.T) {
+	h := newTestServer(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings", nil))
+
+	var raw map[string]json.RawMessage
+	decodeInto(t, rec, &raw)
+	if _, present := raw["tickets"]; present {
+		t.Error("tickets key should be absent when there is no index, not empty")
+	}
+}
+
+// Findings are the point of the service: losing the ticket lookup must not cost
+// the assessment.
+func TestTicketLookupFailureDoesNotFailTheAssessment(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		finding("acr.io/app:1", "engineering", "orders", true, false),
+	}}).WithTickets(stubTickets{err: errors.New("jira unreachable")}, "https://example.atlassian.net")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Count   int                    `json:"count"`
+		Tickets map[string][]ticketRef `json:"tickets"`
+	}
+	decodeInto(t, rec, &body)
+	if body.Count != 1 {
+		t.Errorf("count = %d, want the finding to survive a ticket lookup failure", body.Count)
+	}
+	if len(body.Tickets) != 0 {
+		t.Errorf("tickets = %+v, want none after a failed lookup", body.Tickets)
+	}
 }

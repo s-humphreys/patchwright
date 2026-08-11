@@ -337,7 +337,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /` | Live-status page: coverage, the queue, per-team triage. Embedded in the binary and reads the API below, so the two cannot disagree. |
+| `GET /` | Live-status page: coverage, the queue, per-team triage, open Jira tickets. Embedded in the binary and reads the API below, so the two cannot disagree. |
 | `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
 | `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed. |
@@ -345,8 +345,16 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 
-Every response carries an `assessment` block (`generated_at`, `running`) so
-clients know how fresh the data is. This is how patchwright is deployed — the
+Given a `jira:` config block and `JIRA_*` credentials, `serve` also indexes the
+project's **open** tickets on each refresh (one JQL query for the whole project,
+not one per image) and returns them alongside findings as `tickets`, keyed by image
+repository, so the page can show whether someone is already on a finding. Only
+search is used; `serve` never creates anything. Without the config or the
+credentials the key is absent, which means *unknown* rather than "no ticket
+exists".
+
+Every response carries an `assessment` block (`generated_at`, `running`, and
+`started_at` while a run is in flight) so clients know how fresh the data is. This is how patchwright is deployed — the
 Helm chart runs it as a Deployment + Service. See
 [docs/design/api-server.md](docs/design/api-server.md).
 

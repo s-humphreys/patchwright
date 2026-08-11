@@ -63,8 +63,9 @@ func NewJira(cfg config.JiraConfig) (*Jira, error) {
 
 // Existing is a ticket already covering an image.
 type Existing struct {
-	Key    string
-	Status string
+	Key     string
+	Status  string
+	Summary string
 	// Done reports whether the ticket is in a completed status category. A
 	// recurrence after a completed upgrade is genuinely new work, so only open
 	// tickets suppress a new one.
@@ -117,6 +118,116 @@ func (j *Jira) FindOpen(ctx context.Context, images []string) ([]Existing, error
 	return out, nil
 }
 
+// OpenByImage returns every open ticket in the project, indexed by each image it
+// covers.
+//
+// One query for the whole project, rather than one per image: a ticket carries its
+// images in the configured field, so reading them back builds the whole index in a
+// single round trip. That is what makes showing "is someone already on this?" next
+// to every finding cheap enough to do on each assessment.
+func (j *Jira) OpenByImage(ctx context.Context) (map[string][]Existing, error) {
+	jql := fmt.Sprintf(`project = %q AND issuetype = %q AND statusCategory != Done`,
+		j.cfg.Project, j.cfg.EffectiveIssueType())
+
+	out := map[string][]Existing{}
+	token := ""
+	for {
+		var resp struct {
+			Issues []struct {
+				Key    string `json:"key"`
+				Fields struct {
+					Summary string `json:"summary"`
+					Status  struct {
+						Name           string `json:"name"`
+						StatusCategory struct {
+							Key string `json:"key"`
+						} `json:"statusCategory"`
+					} `json:"status"`
+				} `json:"fields"`
+				// The image field is configurable, so it cannot be a named struct
+				// field; decode the raw fields separately below.
+				RawFields map[string]json.RawMessage `json:"-"`
+			} `json:"issues"`
+			NextPageToken string `json:"nextPageToken"`
+			IsLast        bool   `json:"isLast"`
+		}
+		// Decode twice: once into the typed shape, once loosely for the
+		// configurable image field.
+		var loose struct {
+			Issues []struct {
+				Key    string                     `json:"key"`
+				Fields map[string]json.RawMessage `json:"fields"`
+			} `json:"issues"`
+		}
+
+		q := url.Values{}
+		q.Set("jql", jql)
+		q.Set("fields", "status,summary,"+j.imageFieldName())
+		q.Set("maxResults", "100")
+		if token != "" {
+			q.Set("nextPageToken", token)
+		}
+		body, err := j.raw(ctx, http.MethodGet, "/rest/api/3/search/jql?"+q.Encode())
+		if err != nil {
+			return nil, fmt.Errorf("list open tickets (jql: %s): %w", jql, err)
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("decode open tickets: %w", err)
+		}
+		if err := json.Unmarshal(body, &loose); err != nil {
+			return nil, fmt.Errorf("decode open ticket fields: %w", err)
+		}
+
+		for i, issue := range resp.Issues {
+			e := Existing{
+				Key:     issue.Key,
+				Status:  issue.Fields.Status.Name,
+				Summary: issue.Fields.Summary,
+				Done:    issue.Fields.Status.StatusCategory.Key == "done",
+			}
+			for _, img := range j.imagesOf(loose.Issues[i].Fields) {
+				out[img] = append(out[img], e)
+			}
+		}
+
+		if resp.IsLast || resp.NextPageToken == "" {
+			return out, nil
+		}
+		token = resp.NextPageToken
+	}
+}
+
+// imageFieldName is the field to request and read images from.
+func (j *Jira) imageFieldName() string {
+	if j.cfg.ImageLabel {
+		return "labels"
+	}
+	return j.cfg.ImageField
+}
+
+// imagesOf extracts the image repositories a ticket covers. Labels are converted
+// back from their sanitised form so they match a finding's repository again.
+func (j *Jira) imagesOf(fields map[string]json.RawMessage) []string {
+	raw, ok := fields[j.imageFieldName()]
+	if !ok {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	}
+	if !j.cfg.ImageLabel {
+		return values
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if repo, ok := repoFromLabel(v); ok {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
 // imageClause builds the JQL predicate matching a ticket to any of its images.
 //
 // Uses IN, i.e. exact equality, NOT the "~" contains operator: a multi-value
@@ -146,6 +257,17 @@ func (j *Jira) imageClause(images []string) string {
 func quoteJQL(s string) string {
 	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
 	return `"` + esc + `"`
+}
+
+// repoFromLabel reverses ImageLabel. It is lossy in principle (a repository
+// containing "_" is indistinguishable from one containing "/"), so it is only used
+// to display a ticket against a finding, never to decide whether to create one.
+func repoFromLabel(label string) (string, bool) {
+	const prefix = "patchwright-"
+	if !strings.HasPrefix(label, prefix) {
+		return "", false
+	}
+	return strings.ReplaceAll(strings.TrimPrefix(label, prefix), "_", "/"), true
 }
 
 // ImageLabel converts an image repository into a Jira-safe label. Jira labels
@@ -190,6 +312,17 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 		return "", fmt.Errorf("create ticket %q: %w", d.Summary, err)
 	}
 	return resp.Key, nil
+}
+
+// raw performs a request and returns the response body, for callers that must
+// decode it more than once (the image field's name is configuration, so it cannot
+// be a named struct field).
+func (j *Jira) raw(ctx context.Context, method, path string) ([]byte, error) {
+	var out json.RawMessage
+	if err := j.do(ctx, method, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (j *Jira) do(ctx context.Context, method, path string, body, out any) error {

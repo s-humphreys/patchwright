@@ -80,11 +80,27 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 	if snap != nil {
 		views = filterViews(snap.views, r)
 	}
+	var tickets map[string][]ticketRef
+	if snap != nil && snap.tickets != nil {
+		tickets = map[string][]ticketRef{}
+		// Only the tickets relevant to the rows being returned, so a filtered
+		// request does not carry the whole project's index.
+		for _, v := range views {
+			if refs, ok := snap.tickets[v.Repository]; ok {
+				tickets[v.Repository] = refs
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta     `json:"assessment"`
 		Count      int                `json:"count"`
 		Findings   []sink.FindingView `json:"findings"`
-	}{s.meta(), len(views), views})
+		// Tickets is keyed by image repository, alongside the findings rather than
+		// inside them: a ticket is external state someone else can change, not a
+		// fact this assessment measured. Absent when Jira is not configured, which
+		// a client must not read as "no ticket exists".
+		Tickets map[string][]ticketRef `json:"tickets,omitempty"`
+	}{s.meta(), len(views), views, tickets})
 }
 
 func (s *Server) handleFinding(w http.ResponseWriter, r *http.Request) {

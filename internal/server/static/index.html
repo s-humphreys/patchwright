@@ -80,6 +80,9 @@
   select { font: inherit; font-size: 0.85rem; padding: 0.2rem 0.3rem; border-radius: 5px;
            border: 1px solid var(--line); background: var(--card); color: var(--fg); }
   .err { color: var(--urgent); }
+  a { color: inherit; text-decoration: underline; text-underline-offset: 2px;
+      text-decoration-color: var(--muted); }
+  a:hover { text-decoration-color: currentColor; }
 </style>
 
 <header>
@@ -259,6 +262,7 @@ const FINDING_COLUMNS = [
     sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0) },
   { label: "Fix", get: (f) => fixPath(f), sort: (f) => FIX_RANK[fixPath(f)] ?? 0 },
   { label: "Upgrade", get: (f) => esc(upgradeText(f)), sort: (f) => upgradeText(f) },
+  { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f) },
 ];
 
 const OWNER_COLUMNS = [
@@ -270,6 +274,31 @@ const OWNER_COLUMNS = [
   { label: "Upgradable", num: true, get: (o) => o.upgradable, sort: (o) => o.upgradable },
   { label: "Unassessed", num: true, get: (o) => o.unassessed, sort: (o) => o.unassessed },
 ];
+
+function ticketsFor(f) {
+  return ticketsByRepo ? ticketsByRepo[f.repository] || [] : [];
+}
+
+// "-" means no open ticket; "?" means we were not able to look. Conflating them
+// would be the same mistake as printing an unscanned image's counts as zero.
+function ticketCell(f) {
+  if (!ticketsByRepo) return '<span class="unknown" title="Jira is not configured, so ticket state is unknown">?</span>';
+  const refs = ticketsFor(f);
+  if (!refs.length) return "-";
+  return refs.map((t) => {
+    const label = esc(t.key);
+    const title = esc(`${t.status}${t.summary ? ": " + t.summary : ""}`);
+    return t.url
+      ? `<a href="${esc(t.url)}" target="_blank" rel="noreferrer" title="${title}">${label}</a>`
+      : `<span title="${title}">${label}</span>`;
+  }).join(", ");
+}
+
+// Sort so findings with a ticket group together, then by key.
+function ticketSort(f) {
+  const refs = ticketsFor(f);
+  return refs.length ? refs[0].key : "";
+}
 
 const isScanned = (f) => f.scanned || (f.vulns || []).length > 0;
 const fixcrit = (f) => (isScanned(f) ? f.fixable_critical ?? 0 : "-");
@@ -352,6 +381,10 @@ function renderFindings(rows) {
 const UNATTRIBUTED = "\u0000unattributed";
 
 let queueRows = [];
+// Open tickets by image repository, from the API. Undefined means Jira is not
+// configured, which is NOT the same as "no ticket exists" and must not render as
+// if it were.
+let ticketsByRepo;
 
 async function loadFindings() {
   const params = new URLSearchParams();
@@ -359,6 +392,7 @@ async function loadFindings() {
   if ($("#showSuppressed").checked) params.set("suppressed", "true");
   const d = await get("/api/v1/findings?" + params);
   queueRows = d.findings || [];
+  ticketsByRepo = d.tickets;
   populateOwnerFilters(queueRows);
   applyOwnerFilters();
   renderFreshness(d.assessment);

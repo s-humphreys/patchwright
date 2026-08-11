@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/s-humphreys/patchwright/internal/server"
+	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
 func newServeCmd() *cobra.Command {
@@ -32,6 +33,23 @@ func newServeCmd() *cobra.Command {
 				return err
 			}
 			srv := server.New(a)
+
+			// Attach the open-ticket index when Jira is configured and credentials
+			// are present, so the API and page can show whether someone is already
+			// on a finding. Both are optional: without them the server simply has
+			// nothing to say about tickets, which is different from saying there
+			// are none. Only search is used here, never creation.
+			if cfg, err := loadTicketConfig(in.configPaths); err == nil {
+				jira, jerr := ticket.NewJira(cfg.Jira)
+				if jerr != nil {
+					slog.WarnContext(cmd.Context(),
+						"jira configured but credentials missing; ticket links disabled", "error", jerr)
+				} else {
+					srv = srv.WithTickets(jira, jira.BaseURL)
+					slog.InfoContext(cmd.Context(), "ticket lookup enabled",
+						"project", cfg.Jira.Project, "issue_type", cfg.Jira.EffectiveIssueType())
+				}
+			}
 
 			ctx := cmd.Context()
 			// Run assessments (initial + on interval) in the background.
