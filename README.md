@@ -647,8 +647,10 @@ that finding is reported unscanned (`err` in the report) and the run continues.
 Trivy also needs egress for its vuln DB (`ghcr.io/aquasecurity/trivy-db`) and, for
 `exploitSource: public`, the CISA/FIRST feeds.
 
-**Required inputs:** (1) the scanner export as a Secret (csv mode — refresh it
-out-of-band until the Rapid7 API provider lands); (2) ownership + policy rules
+**Required inputs:** (1) the scan data — either `provider.mode: api` with your
+tenant URL and an API-key Secret (preferred: current, and it reports why an image
+was not assessed), or `provider.mode: csv` with the export as a Secret you refresh
+out-of-band; (2) ownership + policy rules
 (the chart ships editable examples in a ConfigMap via `config.ownership` /
 `config.policy`); (3) optionally, a kubeconfig Secret for remote clusters, and
 registry credentials if scanning private images. See

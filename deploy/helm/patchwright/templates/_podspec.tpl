@@ -16,7 +16,11 @@ so they stay in sync. Callers pass a dict:
     - {{ .command }}
     - "--provider={{ .root.Values.provider.name }}"
     - "--mode={{ .root.Values.provider.mode }}"
+    {{- if eq .root.Values.provider.mode "csv" }}
     - "--input=/data/{{ .root.Values.provider.input.key }}"
+    {{- else if eq .root.Values.provider.mode "api" }}
+    - "--option=base-url={{ required "provider.api.baseURL is required for api mode" .root.Values.provider.api.baseURL }}"
+    {{- end }}
     - "--config=/etc/patchwright"
     - "--log-level={{ .root.Values.logLevel }}"
     - "--log-format={{ .root.Values.logFormat }}"
@@ -50,8 +54,15 @@ so they stay in sync. Callers pass a dict:
     {{- range .root.Values.extraArgs }}
     - {{ . | quote }}
     {{- end }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName .root.Values.ticketing.credentialsSecretName }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName .root.Values.ticketing.credentialsSecretName (eq .root.Values.provider.mode "api") }}
   env:
+    {{- if eq .root.Values.provider.mode "api" }}
+    - name: RAPID7_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: {{ required "provider.api.credentialsSecretName is required for api mode" .root.Values.provider.api.credentialsSecretName }}
+          key: {{ .root.Values.provider.api.credentialsSecretKey }}
+    {{- end }}
     {{- if .root.Values.ticketing.credentialsSecretName }}
     - name: JIRA_BASE_URL
       valueFrom:
