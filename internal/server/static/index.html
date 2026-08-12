@@ -497,11 +497,14 @@ function cveCell(r, n) {
   if (!r.cvesFrom) {
     return `<span class="unknown" title="Nothing in this row was assessed by the scan provider, so there is no CVE data. Not the same as no CVEs.">?</span>`;
   }
+  // The coverage stays in the tooltip rather than beside the number. Rendered
+  // inline it read as a fraction of the CVE count, which is a worse error than
+  // the one it was guarding against, and the Assessed column already states the
+  // same denominator two columns to the left.
   const cov = r.cvesFrom < r.total
     ? ` Drawn from the ${r.cvesFrom} of ${r.total} findings the provider assessed, so it is a floor, not a total.`
     : "";
-  return `<span title="Provider counts across this row.${cov}">${n.toLocaleString()}</span>` +
-    (r.cvesFrom < r.total ? ` <span class="pct">/${r.cvesFrom}</span>` : "");
+  return `<span title="Provider counts across this row.${cov}">${n.toLocaleString()}</span>`;
 }
 
 // cveColumns is the CVEs column, or the per-severity split when expanded. The

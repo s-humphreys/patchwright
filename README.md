@@ -397,10 +397,10 @@ has a ticket. A class with only one team is not broken down further, and the
 `Ticketed` column reads `?` rather than `0%` when Jira is not configured.
 
 The `CVEs` column totals the scan provider's own severity counts, and clicking its
-header splits it into `CRIT` / `HIGH` / `MED` / `LOW` for every row. It reports its
-own coverage: `1,570 /24` means the total was drawn from the 24 findings of that
-row the provider actually assessed, and `?` means none were, which is not the same
-as no CVEs. Provider counts only, matching the report's `CRIT`/`HIGH` columns, so a
+header splits it into `CRIT` / `HIGH` / `MED` / `LOW` for every row. It is drawn
+only from findings the provider assessed, so `?` means none were, which is not the
+same as no CVEs; how many contributed is in the cell's tooltip, and the `Assessed`
+column states the same denominator. Provider counts only, matching the report's `CRIT`/`HIGH` columns, so a
 finding that exists solely because Trivy looked where the provider did not
 contributes nothing here. The number is a floor, never a ceiling.
 
