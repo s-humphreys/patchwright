@@ -664,3 +664,42 @@ func TestOwnerFixSplitCountsOnlyActionableFindings(t *testing.T) {
 		t.Errorf("a non-actionable finding contributed to the split: %+v", o)
 	}
 }
+
+// The CVE total is only interpretable next to how much of the row it was drawn
+// from, and an unassessed row has no CVE data rather than no CVEs.
+func TestOwnersReportCVECountsWithTheirCoverage(t *testing.T) {
+	assessed := assessedFinding("acr.io/seen:1", "platform", "team", true)
+	assessed.Counts = model.Counts{model.SeverityCritical: 3, model.SeverityHigh: 5}
+	// Never assessed: its zero counts mean nobody looked, so they must not be
+	// summed in as though the image were clean.
+	blind := assessedFinding("acr.io/blind:1", "platform", "team", false)
+	blind.Occurrences[0].Assessed = false
+	blind.Counts = model.Counts{}
+
+	s := New(stubAssessor{findings: []model.Finding{assessed, blind}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+	o := body.Owners[0]
+	if o.CVEs[model.SeverityCritical] != 3 || o.CVEs[model.SeverityHigh] != 5 {
+		t.Errorf("cves = %v, want 3 critical / 5 high", o.CVEs)
+	}
+	if o.CVEsFrom != 1 {
+		t.Errorf("cves_from = %d, want 1: the unassessed finding must not count as a source", o.CVEsFrom)
+	}
+	if o.CVEsFrom > o.Total-o.Unassessed {
+		t.Errorf("cves_from %d exceeds the assessed findings %d", o.CVEsFrom, o.Total-o.Unassessed)
+	}
+	// Every standard severity is present so a client never has to tell "no
+	// criticals" from "key absent".
+	for _, sev := range []string{model.SeverityCritical, model.SeverityHigh, model.SeverityMedium, model.SeverityLow} {
+		if _, ok := o.CVEs[sev]; !ok {
+			t.Errorf("cves is missing the %q key", sev)
+		}
+	}
+}

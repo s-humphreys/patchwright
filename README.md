@@ -396,6 +396,14 @@ is directly fixable, how much is owned by a chart or operator, and how much alre
 has a ticket. A class with only one team is not broken down further, and the
 `Ticketed` column reads `?` rather than `0%` when Jira is not configured.
 
+The `CVEs` column totals the scan provider's own severity counts, and clicking its
+header splits it into `CRIT` / `HIGH` / `MED` / `LOW` for every row. It reports its
+own coverage: `1,570 /24` means the total was drawn from the 24 findings of that
+row the provider actually assessed, and `?` means none were, which is not the same
+as no CVEs. Provider counts only, matching the report's `CRIT`/`HIGH` columns, so a
+finding that exists solely because Trivy looked where the provider did not
+contributes nothing here. The number is a floor, never a ceiling.
+
 Classes with more than one team collapse, and start collapsed, with the team count
 in the class row so a rollup never reads as the whole story. The section replaces
 the old flat per-owner table, which showed a subset of the same numbers with no

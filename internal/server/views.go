@@ -71,6 +71,19 @@ type ownerStats struct {
 	// work a team can do alone and work that crosses a boundary.
 	Direct  int `json:"direct"`
 	Managed int `json:"managed"`
+	// CVEs sums the scan provider's per-severity counts across this row, and
+	// CVEsFrom says how many findings contributed. The denominator is not
+	// decoration: coverage is uneven by team, so a total is only interpretable
+	// next to how much of the row it was drawn from, and a row with CVEsFrom 0
+	// has no CVE data at all rather than no CVEs.
+	//
+	// Provider counts only, matching the report's CRIT/HIGH columns. Findings
+	// that exist solely because a vulnerability scanner looked where the
+	// provider did not contribute nothing here, so this is a floor on the CVEs
+	// present, never a ceiling.
+	CVEs     model.Counts `json:"cves"`
+	CVEsFrom int          `json:"cves_from"`
+
 	// Ticketed counts actionable findings with an open ticket covering the image, so
 	// "is this being tracked?" is answerable per team rather than by reading Jira.
 	// Always 0 when Jira is not configured, which is why the API reports whether it
@@ -148,7 +161,7 @@ func buildOwnerStats(findings []model.Finding, tickets map[string][]ticketRef) [
 		k := key{f.Owner.Class, f.Owner.Team}
 		st := acc[k]
 		if st == nil {
-			st = &ownerStats{Class: f.Owner.Class, Team: f.Owner.Team}
+			st = &ownerStats{Class: f.Owner.Class, Team: f.Owner.Team, CVEs: model.Counts{}}
 			acc[k] = st
 			order = append(order, k)
 		}
@@ -164,6 +177,13 @@ func buildOwnerStats(findings []model.Finding, tickets map[string][]ticketRef) [
 		}
 		if !f.ProviderAssessed() {
 			st.Unassessed++
+		} else {
+			// Only assessed findings contribute: adding a zero from an image
+			// nobody looked at would dilute the total toward "healthy".
+			st.CVEsFrom++
+			for sev, n := range f.Counts {
+				st.CVEs[sev] += n
+			}
 		}
 		if f.Actionable {
 			switch fixPath(f) {
@@ -179,6 +199,9 @@ func buildOwnerStats(findings []model.Finding, tickets map[string][]ticketRef) [
 	}
 	out := make([]ownerStats, 0, len(order))
 	for _, k := range order {
+		// Normalized so a client can index every standard severity without
+		// having to distinguish "no criticals" from "key absent".
+		acc[k].CVEs = acc[k].CVEs.Normalized()
 		out = append(out, *acc[k])
 	}
 	// Most actionable first, then by team for stability.

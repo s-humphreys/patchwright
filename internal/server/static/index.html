@@ -90,6 +90,11 @@
   tr.expandable:hover td, tr.expandable:focus-visible td { background: var(--hover); }
   tr.expandable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .caret { display: inline-block; width: 1rem; color: var(--muted); }
+  th.sev-toggle { cursor: pointer; }
+  th.sev-toggle:hover { color: var(--fg); }
+  th.sev-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.sev-critical { color: var(--urgent); }
+  td.sev-high { color: var(--high); }
   .pct { color: var(--muted); font-size: 0.9em; }
   .ticket-active { color: var(--ok); font-size: 0.9em; }
   .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
@@ -470,6 +475,51 @@ function countPct(n, of) {
 // mislead in both directions here: a team with two actionable findings out of six
 // looks quiet next to one with twenty out of seven hundred, and a team with 100%
 // coverage of four images is not in better shape than one with 40% of two hundred.
+// severityExpanded splits the CVEs column into one column per severity. A column
+// toggle rather than a per-row one: severity is a property of every row, so
+// expanding it row by row would mean the same question asked repeatedly, and a
+// second kind of expansion inside rows that already expand into teams.
+let severityExpanded = false;
+
+const SEVERITIES = ["critical", "high", "medium", "low"];
+const SEVERITY_LABELS = { critical: "CRIT", high: "HIGH", medium: "MED", low: "LOW" };
+
+// cveTotal only counts the severities we name, so an odd bucket from some future
+// provider cannot inflate a total whose breakdown does not account for it.
+function cveTotal(r) {
+  return SEVERITIES.reduce((n, sev) => n + (r.cves?.[sev] || 0), 0);
+}
+
+// cveCell renders a count, or "?" when nothing in the row was assessed. Zero
+// CVEs and no CVE data look identical otherwise, and on a real estate the
+// second is far more common than the first.
+function cveCell(r, n) {
+  if (!r.cvesFrom) {
+    return `<span class="unknown" title="Nothing in this row was assessed by the scan provider, so there is no CVE data. Not the same as no CVEs.">?</span>`;
+  }
+  const cov = r.cvesFrom < r.total
+    ? ` Drawn from the ${r.cvesFrom} of ${r.total} findings the provider assessed, so it is a floor, not a total.`
+    : "";
+  return `<span title="Provider counts across this row.${cov}">${n.toLocaleString()}</span>` +
+    (r.cvesFrom < r.total ? ` <span class="pct">/${r.cvesFrom}</span>` : "");
+}
+
+// cveColumns is the CVEs column, or the per-severity split when expanded. The
+// header carries the toggle so it reads as one column that opens.
+function cveColumns() {
+  if (!severityExpanded) {
+    return [{ label: "CVEs", num: true, expandSeverity: true,
+      get: (r) => cveCell(r, cveTotal(r)),
+      help: "Total CVEs the scan provider counted across this row, from provider-assessed findings only. Click to split by severity. \"?\" means nothing here was assessed." }];
+  }
+  return SEVERITIES.map((sev, i) => ({
+    label: SEVERITY_LABELS[sev], num: true, expandSeverity: i === 0,
+    cls: () => `sev-${sev}`,
+    get: (r) => cveCell(r, r.cves?.[sev] || 0),
+    help: `${sev[0].toUpperCase()}${sev.slice(1)} CVEs the provider counted, from provider-assessed findings only. Click to collapse back to a total.`,
+  }));
+}
+
 const BREAKDOWN_COLUMNS = [
   { label: "Class / team", get: (r) => breakdownLabel(r), cls: (r) => (r.team ? "indent" : ""),
     help: "Owner class, with its teams beneath. Classes with more than one team expand. Percentages are of that row's own findings unless stated." },
@@ -477,6 +527,7 @@ const BREAKDOWN_COLUMNS = [
     help: "Findings owned, and the share of the whole estate they represent." },
   { label: "Assessed", num: true, get: (r) => countPct(r.total - r.unassessed, r.total),
     help: "Findings the scan provider actually assessed. A low share means the rest of this row's numbers describe a small sample." },
+  { severitySlot: true },
   { label: "Actionable", num: true, get: (r) => countPct(r.actionable, r.total),
     help: "Findings policy marked for action, as a share of this row's findings." },
   { label: "Direct", num: true, get: (r) => countPct(r.direct, r.actionable),
@@ -508,6 +559,11 @@ function breakdownLabel(r) {
     ` <span class="pct">(${r.children} team${r.children === 1 ? "" : "s"})</span>`;
 }
 
+// breakdownColumns resolves the column set against the current severity state.
+function breakdownColumns() {
+  return BREAKDOWN_COLUMNS.flatMap((c) => (c.severitySlot ? cveColumns() : [c]));
+}
+
 function renderBreakdown(owners) {
   const rows = [];
   const estate = (owners || []).reduce((n, o) => n + o.total, 0);
@@ -521,10 +577,15 @@ function renderBreakdown(owners) {
     byClass.get(cls).push(o);
   }
   const sum = (list, key) => list.reduce((n, o) => n + (o[key] || 0), 0);
+  const sumCounts = (list) => list.reduce((acc, o) => {
+    for (const sev of SEVERITIES) acc[sev] = (acc[sev] || 0) + (o.cves?.[sev] || 0);
+    return acc;
+  }, {});
 
   for (const [cls, teams] of [...byClass].sort((a, b) => sum(b[1], "actionable") - sum(a[1], "actionable"))) {
     rows.push({
       label: esc(cls), key: cls, estate, team: false,
+      cves: sumCounts(teams), cvesFrom: sum(teams, "cves_from"),
       // Rows are only worth expanding when they say something the rollup does
       // not, so a class with a single team stays a leaf: the team row would be
       // a copy of the class row.
@@ -540,17 +601,25 @@ function renderBreakdown(owners) {
     for (const o of [...teams].sort((a, b) => b.actionable - a.actionable)) {
       rows.push({
         label: esc(o.team || "(unattributed)"), key: cls, estate, team: true,
+        cves: o.cves, cvesFrom: o.cves_from,
         total: o.total, unassessed: o.unassessed, actionable: o.actionable,
         direct: o.direct, managed: o.managed, fixable: o.fixable, ticketed: o.ticketed,
       });
     }
   }
 
+  const columns = breakdownColumns();
   const head = document.querySelector("#breakdown thead tr");
-  head.innerHTML = BREAKDOWN_COLUMNS.map((c) =>
-    `<th class="${c.num ? "num" : ""}" title="${esc(c.help)}">${esc(c.label)}</th>`).join("");
+  head.innerHTML = columns.map((c) => {
+    const cls = [c.num ? "num" : "", c.expandSeverity ? "sev-toggle" : ""].filter(Boolean).join(" ");
+    const label = c.expandSeverity
+      ? `<span class="caret">${severityExpanded ? "\u25c2" : "\u25b8"}</span>${esc(c.label)}`
+      : esc(c.label);
+    return `<th class="${cls}"${c.expandSeverity ? ' role="button" tabindex="0"' +
+      ` aria-expanded="${severityExpanded}"` : ""} title="${esc(c.help)}">${label}</th>`;
+  }).join("");
   document.querySelector("#breakdown tbody").innerHTML = rows.map((r) => {
-    const cells = BREAKDOWN_COLUMNS.map((c) => {
+    const cells = columns.map((c) => {
       const cls = [c.num ? "num" : "", c.cls ? c.cls(r) : ""].filter(Boolean).join(" ");
       return `<td${cls ? ` class="${cls}"` : ""}>${c.get(r)}</td>`;
     }).join("");
@@ -575,6 +644,21 @@ function toggleBreakdownClass(key) {
   else expandedClasses.add(key);
   renderBreakdown(lastOwners);
 }
+
+function toggleSeverityColumns() {
+  severityExpanded = !severityExpanded;
+  renderBreakdown(lastOwners);
+}
+
+$("#breakdown").addEventListener("click", (e) => {
+  if (e.target.closest("th.sev-toggle")) toggleSeverityColumns();
+});
+$("#breakdown").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  if (!e.target.closest("th.sev-toggle")) return;
+  e.preventDefault();
+  toggleSeverityColumns();
+});
 
 // Delegated so it survives the re-render that follows every toggle.
 $("#breakdown").addEventListener("click", (e) => {
