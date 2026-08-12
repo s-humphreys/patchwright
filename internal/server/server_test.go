@@ -607,3 +607,99 @@ func TestSummaryOmitsProviderDataAgeWhenNothingWasAssessed(t *testing.T) {
 		}
 	}
 }
+
+// The breakdown is only meaningful if each team's fix split and tracking are
+// reported, so the owner rollup has to carry them.
+func TestOwnersReportFixSplitAndTicketing(t *testing.T) {
+	direct := assessedFinding("acr.io/direct:1", "platform", "team", true)
+	managed := assessedFinding("acr.io/managed:1", "platform", "team", true)
+	managed.Upgrade.Actionable = false
+	managed.Upgrade.Managed = "operator"
+	// Actionable but with nothing to move to: counts in neither split.
+	stuck := assessedFinding("acr.io/stuck:1", "platform", "team", true)
+	stuck.Upgrade.Available = false
+
+	s := New(stubAssessor{findings: []model.Finding{direct, managed, stuck}}).
+		WithTickets(stubTickets{byImage: map[string][]ticket.Existing{
+			"direct": {{Key: "PROJ-1", Status: "To Do"}},
+		}}, "https://example.atlassian.net")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+	if len(body.Owners) != 1 {
+		t.Fatalf("got %d rows, want 1", len(body.Owners))
+	}
+	o := body.Owners[0]
+	if o.Direct != 1 || o.Managed != 1 {
+		t.Errorf("direct=%d managed=%d, want 1/1 (the stuck finding is in neither)", o.Direct, o.Managed)
+	}
+	if o.Ticketed != 1 {
+		t.Errorf("ticketed = %d, want 1", o.Ticketed)
+	}
+	// The splits describe the actionable subset, so neither may exceed it.
+	if o.Direct+o.Managed > o.Actionable || o.Ticketed > o.Actionable {
+		t.Errorf("splits exceed actionable: %+v", o)
+	}
+}
+
+// Non-actionable findings must not inflate a team's fix split: the breakdown reads
+// as "of the work you have", not "of everything you own".
+func TestOwnerFixSplitCountsOnlyActionableFindings(t *testing.T) {
+	quiet := assessedFinding("acr.io/quiet:1", "platform", "team", false)
+	s := New(stubAssessor{findings: []model.Finding{quiet}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+	if o := body.Owners[0]; o.Direct != 0 || o.Managed != 0 || o.Ticketed != 0 {
+		t.Errorf("a non-actionable finding contributed to the split: %+v", o)
+	}
+}
+
+// The CVE total is only interpretable next to how much of the row it was drawn
+// from, and an unassessed row has no CVE data rather than no CVEs.
+func TestOwnersReportCVECountsWithTheirCoverage(t *testing.T) {
+	assessed := assessedFinding("acr.io/seen:1", "platform", "team", true)
+	assessed.Counts = model.Counts{model.SeverityCritical: 3, model.SeverityHigh: 5}
+	// Never assessed: its zero counts mean nobody looked, so they must not be
+	// summed in as though the image were clean.
+	blind := assessedFinding("acr.io/blind:1", "platform", "team", false)
+	blind.Occurrences[0].Assessed = false
+	blind.Counts = model.Counts{}
+
+	s := New(stubAssessor{findings: []model.Finding{assessed, blind}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/owners", nil))
+	var body struct {
+		Owners []ownerStats `json:"owners"`
+	}
+	decodeInto(t, rec, &body)
+	o := body.Owners[0]
+	if o.CVEs[model.SeverityCritical] != 3 || o.CVEs[model.SeverityHigh] != 5 {
+		t.Errorf("cves = %v, want 3 critical / 5 high", o.CVEs)
+	}
+	if o.CVEsFrom != 1 {
+		t.Errorf("cves_from = %d, want 1: the unassessed finding must not count as a source", o.CVEsFrom)
+	}
+	if o.CVEsFrom > o.Total-o.Unassessed {
+		t.Errorf("cves_from %d exceeds the assessed findings %d", o.CVEsFrom, o.Total-o.Unassessed)
+	}
+	// Every standard severity is present so a client never has to tell "no
+	// criticals" from "key absent".
+	for _, sev := range []string{model.SeverityCritical, model.SeverityHigh, model.SeverityMedium, model.SeverityLow} {
+		if _, ok := o.CVEs[sev]; !ok {
+			t.Errorf("cves is missing the %q key", sev)
+		}
+	}
+}

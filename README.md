@@ -368,10 +368,10 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /` | Live-status page: coverage, the queue, per-team triage, open Jira tickets. Embedded in the binary and reads the API below, so the two cannot disagree. |
+| `GET /` | Live-status page: coverage, a per-class and per-team breakdown, the queue, open Jira tickets. Embedded in the binary and reads the API below, so the two cannot disagree. |
 | `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
-| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed. |
+| `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed, plus where the fix goes (`direct` / `managed`) and how much is already tracked (`ticketed`). |
 | `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`, `actionable_unassessed`). |
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /api/v1/tickets` | What ticket reconciliation would do against the cached assessment. Changes nothing. |
@@ -385,6 +385,30 @@ repository, so the page can show whether someone is already on a finding. Only
 search is used; `serve` never creates anything. Without the config or the
 credentials the key is absent, which means *unknown* rather than "no ticket
 exists".
+
+**The breakdown section** on the page rolls `/api/v1/owners` up per owner class and
+then per team, and states every count as a share of a named denominator. Raw counts
+alone mislead in both directions here: two actionable findings out of six reads as
+quieter than twenty out of seven hundred, and full coverage of four images is not
+better shape than 40% of two hundred. So each row reports its share of the estate,
+what fraction of it was actually assessed, and — of the actionable subset — how much
+is directly fixable, how much is owned by a chart or operator, and how much already
+has a ticket. A class with only one team is not broken down further, and the
+`Ticketed` column reads `?` rather than `0%` when Jira is not configured.
+
+The `CVEs` column totals the scan provider's own severity counts, and clicking its
+header splits it into `CRIT` / `HIGH` / `MED` / `LOW` for every row. It is drawn
+only from findings the provider assessed, so `?` means none were, which is not the
+same as no CVEs; how many contributed is in the cell's tooltip, and the `Assessed`
+column states the same denominator. Provider counts only, matching the report's `CRIT`/`HIGH` columns, so a
+finding that exists solely because Trivy looked where the provider did not
+contributes nothing here. The number is a floor, never a ceiling.
+
+Classes with more than one team collapse, and start collapsed, with the team count
+in the class row so a rollup never reads as the whole story. The section replaces
+the old flat per-owner table, which showed a subset of the same numbers with no
+denominators; `upgradable` is the one column it dropped, still available from
+`/api/v1/owners` and largely answered by `direct`.
 
 **Authentication.** Set `PATCHWRIGHT_API_TOKEN` and every request except the health
 probes requires it. Programmatic clients send `Authorization: Bearer <token>`;
