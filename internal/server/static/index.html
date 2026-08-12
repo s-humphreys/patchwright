@@ -9,6 +9,7 @@
     --card: #ffffff; --warn-bg: #fff6e5; --warn-line: #e0b050; --warn-fg: #6b4c00;
     --urgent: #a4262c; --high: #b8590a; --medium: #6b6b00; --low: #4a6b4a;
     --ok: #1f6b3a; --idle: #6b6b66;
+    --hover: #f0f0ed; --accent: #4a6b8a;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -16,6 +17,7 @@
       --card: #1e1e1c; --warn-bg: #2d2408; --warn-line: #8a6a1f; --warn-fg: #f0d491;
       --urgent: #f08a8f; --high: #e8a765; --medium: #cfcf7a; --low: #9ec49e;
       --ok: #7fd39a; --idle: #9a9a94;
+      --hover: #262623; --accent: #7fa8cf;
     }
   }
   * { box-sizing: border-box; }
@@ -84,6 +86,10 @@
   /* Class rows are totals for the teams indented beneath them. */
   tr.rollup td { font-weight: 600; }
   td.indent { padding-left: 1.6rem; }
+  tr.expandable { cursor: pointer; }
+  tr.expandable:hover td, tr.expandable:focus-visible td { background: var(--hover); }
+  tr.expandable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .caret { display: inline-block; width: 1rem; color: var(--muted); }
   .pct { color: var(--muted); font-size: 0.9em; }
   .ticket-active { color: var(--ok); font-size: 0.9em; }
   .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
@@ -487,8 +493,8 @@ function countPct(n, of) {
 // looks quiet next to one with twenty out of seven hundred, and a team with 100%
 // coverage of four images is not in better shape than one with 40% of two hundred.
 const BREAKDOWN_COLUMNS = [
-  { label: "Class / team", get: (r) => r.label, cls: (r) => (r.team ? "indent" : ""),
-    help: "Owner class, with its teams beneath. Percentages are of that row's own findings unless stated." },
+  { label: "Class / team", get: (r) => breakdownLabel(r), cls: (r) => (r.team ? "indent" : ""),
+    help: "Owner class, with its teams beneath. Classes with more than one team expand. Percentages are of that row's own findings unless stated." },
   { label: "Findings", num: true, get: (r) => `${r.total} ${pct(r.total, r.estate)}`,
     help: "Findings owned, and the share of the whole estate they represent." },
   { label: "Assessed", num: true, get: (r) => countPct(r.total - r.unassessed, r.total),
@@ -510,6 +516,20 @@ const BREAKDOWN_COLUMNS = [
     help: "Actionable findings with an open ticket. \"?\" when Jira is not configured, which is not the same as nothing being tracked." },
 ];
 
+// expandedClasses survives a re-render, so an hourly refresh does not collapse a
+// class someone had opened to read.
+const expandedClasses = new Set();
+
+// breakdownLabel renders the row's name, and for a class with teams beneath it a
+// caret plus the team count, so it is visible that there is more to see rather
+// than the collapsed rollup looking like the whole story.
+function breakdownLabel(r) {
+  if (r.team || !r.children) return r.label;
+  const open = expandedClasses.has(r.key);
+  return `<span class="caret">${open ? "\u25be" : "\u25b8"}</span>${r.label}` +
+    ` <span class="pct">(${r.children} team${r.children === 1 ? "" : "s"})</span>`;
+}
+
 function renderBreakdown(owners) {
   const rows = [];
   const estate = (owners || []).reduce((n, o) => n + o.total, 0);
@@ -526,7 +546,11 @@ function renderBreakdown(owners) {
 
   for (const [cls, teams] of [...byClass].sort((a, b) => sum(b[1], "actionable") - sum(a[1], "actionable"))) {
     rows.push({
-      label: esc(cls), estate, team: false,
+      label: esc(cls), key: cls, estate, team: false,
+      // Rows are only worth expanding when they say something the rollup does
+      // not, so a class with a single team stays a leaf: the team row would be
+      // a copy of the class row.
+      children: teams.length > 1 ? teams.length : 0,
       total: sum(teams, "total"), unassessed: sum(teams, "unassessed"),
       actionable: sum(teams, "actionable"), direct: sum(teams, "direct"),
       managed: sum(teams, "managed"), fixable: sum(teams, "fixable"),
@@ -534,10 +558,10 @@ function renderBreakdown(owners) {
     });
     // Only break a class down when there is more than one team in it; a single
     // team repeated under its own class is noise.
-    if (teams.length < 2) continue;
+    if (teams.length < 2 || !expandedClasses.has(cls)) continue;
     for (const o of [...teams].sort((a, b) => b.actionable - a.actionable)) {
       rows.push({
-        label: esc(o.team || "(unattributed)"), estate, team: true,
+        label: esc(o.team || "(unattributed)"), key: cls, estate, team: true,
         total: o.total, unassessed: o.unassessed, actionable: o.actionable,
         direct: o.direct, managed: o.managed, fixable: o.fixable, ticketed: o.ticketed,
       });
@@ -552,9 +576,40 @@ function renderBreakdown(owners) {
       const cls = [c.num ? "num" : "", c.cls ? c.cls(r) : ""].filter(Boolean).join(" ");
       return `<td${cls ? ` class="${cls}"` : ""}>${c.get(r)}</td>`;
     }).join("");
-    return `<tr${r.team ? "" : ' class="rollup"'}>${cells}</tr>`;
+    if (r.team) return `<tr>${cells}</tr>`;
+    const expandable = r.children > 0;
+    // The whole row is the control, so the click target is the size of the row
+    // rather than a caret someone has to aim at.
+    return `<tr class="rollup${expandable ? " expandable" : ""}"` +
+      (expandable ? ` data-class="${esc(r.key)}" tabindex="0" role="button"` +
+        ` aria-expanded="${expandedClasses.has(r.key)}"` : "") +
+      `>${cells}</tr>`;
   }).join("");
+  lastOwners = owners;
 }
+
+// lastOwners is kept so toggling re-renders from the same data instead of
+// refetching: expanding a row is a display change, not a new question.
+let lastOwners = null;
+
+function toggleBreakdownClass(key) {
+  if (expandedClasses.has(key)) expandedClasses.delete(key);
+  else expandedClasses.add(key);
+  renderBreakdown(lastOwners);
+}
+
+// Delegated so it survives the re-render that follows every toggle.
+$("#breakdown").addEventListener("click", (e) => {
+  const row = e.target.closest("tr.expandable");
+  if (row) toggleBreakdownClass(row.dataset.class);
+});
+$("#breakdown").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = e.target.closest("tr.expandable");
+  if (!row) return;
+  e.preventDefault(); // Space would otherwise scroll the page.
+  toggleBreakdownClass(row.dataset.class);
+});
 
 function renderOwners(rows) {
   renderTable("owners", OWNER_COLUMNS, rows || []);
