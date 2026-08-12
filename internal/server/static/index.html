@@ -144,12 +144,6 @@
   <tbody></tbody>
 </table></div>
 
-<h2>By owner</h2>
-<div class="scroll short"><table id="owners">
-  <thead><tr></tr></thead>
-  <tbody></tbody>
-</table></div>
-
 <script>
 // The page deliberately mirrors the CLI's vocabulary. Anything the report shows as
 // unknown must show as unknown here too: a dashboard that renders missing data as
@@ -362,22 +356,6 @@ const FINDING_COLUMNS = [
     help: "Open Jira tickets covering this image. \"-\" means no open ticket; \"?\" means Jira is not configured, so ticket state is unknown." },
 ];
 
-const OWNER_COLUMNS = [
-  { label: "Class", get: (o) => esc(o.class), sort: (o) => o.class || "",
-    help: "Coarse ownership bucket, defined by your ownership rules." },
-  { label: "Team", get: (o) => esc(o.team || "-"), sort: (o) => o.team || "",
-    help: "Owning team. \"-\" means no rule could attribute these workloads." },
-  { label: "Total", num: true, get: (o) => o.total, sort: (o) => o.total,
-    help: "Unsuppressed findings owned by this team." },
-  { label: "Actionable", num: true, get: (o) => o.actionable, sort: (o) => o.actionable,
-    help: "Findings the policy rules marked for action." },
-  { label: "Fixable", num: true, get: (o) => o.fixable, sort: (o) => o.fixable,
-    help: "Findings with at least one critical CVE that has a fix available." },
-  { label: "Upgradable", num: true, get: (o) => o.upgradable, sort: (o) => o.upgradable,
-    help: "Findings with a newer version that can be applied directly." },
-  { label: "Unassessed", num: true, get: (o) => o.unassessed, sort: (o) => o.unassessed,
-    help: "Findings the scan provider never assessed. A team can look quiet simply because nothing scanned its images, which this column exposes." },
-];
 
 function ticketsFor(f) {
   return ticketsByRepo ? ticketsByRepo[f.repository] || [] : [];
@@ -420,7 +398,7 @@ const priorityClass = (f) => {
 
 // One sort state per table. Null means the server's own order, which is already
 // the queue order someone works top-down, so it stays the default.
-const sortState = { findings: null, owners: null };
+const sortState = { findings: null };
 
 function compare(col, dir) {
   return (a, b) => {
@@ -611,10 +589,6 @@ $("#breakdown").addEventListener("keydown", (e) => {
   toggleBreakdownClass(row.dataset.class);
 });
 
-function renderOwners(rows) {
-  renderTable("owners", OWNER_COLUMNS, rows || []);
-}
-
 function renderFindings(rows) {
   $("#queueCount").textContent = rows.length === queueRows.length
     ? `${rows.length} shown`
@@ -743,7 +717,6 @@ async function loadAll() {
       if (summary.assessment?.running) setTimeout(loadAll, 5000);
       $("#tiles").innerHTML = "";
       $("#findings tbody").innerHTML = "";
-      $("#owners tbody").innerHTML = "";
       $("#breakdown tbody").innerHTML = "";
       $("#queueCount").textContent = "";
       $("#dataAge").textContent = "";
@@ -756,7 +729,6 @@ async function loadAll() {
     // needs in order to distinguish "no tickets" from "not asked".
     await loadFindings();
     renderBreakdown(owners.owners);
-    renderOwners(owners.owners);
   } catch (e) {
     $("#freshness").textContent = `error: ${e.message}`;
     $("#freshness").className = "meta err";

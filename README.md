@@ -396,6 +396,12 @@ is directly fixable, how much is owned by a chart or operator, and how much alre
 has a ticket. A class with only one team is not broken down further, and the
 `Ticketed` column reads `?` rather than `0%` when Jira is not configured.
 
+Classes with more than one team collapse, and start collapsed, with the team count
+in the class row so a rollup never reads as the whole story. The section replaces
+the old flat per-owner table, which showed a subset of the same numbers with no
+denominators; `upgradable` is the one column it dropped, still available from
+`/api/v1/owners` and largely answered by `direct`.
+
 **Authentication.** Set `PATCHWRIGHT_API_TOKEN` and every request except the health
 probes requires it. Programmatic clients send `Authorization: Bearer <token>`;
 browsers are prompted for HTTP Basic with the token as the password, since a browser
