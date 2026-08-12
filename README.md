@@ -78,6 +78,55 @@ Key flags: `--provider` (default `rapid7`), `-i/--input`, `--mode` (`csv`|`api`)
 (`debug`|`info`|`warn`|`error`) and `--log-format` (`text`|`json`) — logs go to
 **stderr**, so the report on stdout stays clean (pipe JSON to `jq` freely).
 
+### Rapid7 API instead of a CSV export
+
+`--mode api` queries InsightCloudSec directly rather than reading an export
+someone produced by hand. The base URL is your tenant's; the key comes from
+`RAPID7_API_KEY` and is deliberately not an option, because options are populated
+from config files and Helm values, which live in git.
+
+```sh
+export RAPID7_API_KEY=...
+patchwright assess --mode api -o base-url=https://example.customer.divvycloud.com \
+  -c config/
+```
+
+Two reasons to prefer it over the export, beyond not having to produce one:
+
+**It is current.** An export ages from the moment it is written, and a server
+refreshing hourly over a mounted file reports a fresh assessment forever while the
+data underneath it goes stale. Measured on a real estate, the same query returned
+data one hour old where the export in use was seven days old.
+
+**It says why an image was not assessed.** The export leaves `last_assessment`
+empty and stops there, so every uncovered image looks alike. They are not alike.
+The API returns `assessment_info`, which patchwright carries through to
+`assessment_issues` on each finding, to `unassessed_reasons` on the server's
+summary, and to the top of the coverage warning:
+
+```
+WARN provider never assessed some images — their zero counts are absence of data,
+     not a clean result  unassessed_images=773 total_images=854
+     top_reason="Can't authenticate to registry. Unable to obtain refresh token..."
+     images_affected=734
+```
+
+On the estate this was built against, 734 of 773 uncovered images came back to a
+single registry credential the platform could not use. A coverage percentage
+invites resignation; a named cause is a job someone can pick up. That is the whole
+argument for this mode.
+
+The API also carries the cluster name (as `dimensions["cluster"]`, available to
+rules without waiting for live reconciliation), the image platform, and the digest
+the assessment actually read — so a result is pinned to an image rather than to a
+mutable tag. The digest is taken only from a completed assessment; on a failed row
+it would name an image nothing was read from.
+
+Per-CVE detail (`fix_available` / `fixed_version`) is **not** in this mode yet, so
+`--vuln-source trivy` is still how the `vulns` list gets populated. The endpoints
+exist, and the notes are in
+[docs/design/rapid7-api.md](docs/design/rapid7-api.md).
+
 ### Live reconciliation (multi-cluster)
 
 Scanner exports are a point-in-time snapshot; completed Jobs and scaled-to-zero
@@ -514,8 +563,9 @@ ownership, and liveness. There is **no live registry or CVE lookup today**: a
 finding is "actionable" because it matched an `actionable` rule and no
 `suppress` rule, not because a fix has been confirmed to exist.
 
-The missing signal — *is there a patched image to move to?* — is planned via
-Trivy (or the Rapid7 API), which populates the `vulns` list with `fix_available`
+The missing signal — *is there a patched image to move to?* — comes from
+Trivy today (the Rapid7 API can supply it too, see
+[docs/design/rapid7-api.md](docs/design/rapid7-api.md)), which populates the `vulns` list with `fix_available`
 / `fixed_version` so rules can require a fix before paging anyone. See
 [docs/design/trivy-integration.md](docs/design/trivy-integration.md).
 
@@ -630,8 +680,10 @@ authentication. Written for a security review as much as for operators.
 - **Phase 2** — in progress. ✅ multi-cluster live reconciliation (client-go
   `kube` + offline `file` live sources; drop not-running findings); ✅ ownership
   enrichment from live namespace labels like `team`; ✅ Helm chart + Docker
-  image (CronJob, read-only RBAC, multi-cluster); ✅ kind-based e2e suite.
-  Remaining: Rapid7 API provider.
+  image (CronJob, read-only RBAC, multi-cluster); ✅ kind-based e2e suite;
+  ✅ Rapid7 API provider (`--mode api`), which also reports *why* an image was
+  not assessed. Remaining: per-CVE detail from the API, so Trivy becomes
+  optional.
 - **Phase 3** — vulnerability intelligence.
   ✅ [fix availability](docs/design/trivy-integration.md) (`--vuln-source trivy`):
   scan each image once, populate `vulns` with `fix_available` / `fixed_version`.

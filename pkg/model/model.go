@@ -11,7 +11,10 @@
 //     which reasons over the generic dimensions/labels/counts/vulns below.
 package model
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // Image identifies a container image reference, decomposed for matching.
 // Digest is populated when known (e.g. from live reconciliation or a digest-
@@ -175,6 +178,19 @@ type Occurrence struct {
 	// vuln-source scanning, which is optional and off by default.
 	Assessed bool
 
+	// AssessmentStatus and AssessmentError are the provider's own account of the
+	// assessment, when it gives one. Assessed alone says an image was not
+	// assessed; these say why, which is the difference between a coverage
+	// statistic and a fixable problem. On a real estate the overwhelming
+	// majority of a 4,243-row inventory was failing for one reason — a registry
+	// credential the platform could not use — and no amount of reporting
+	// "unassessed" would have surfaced that.
+	//
+	// Empty when the provider does not report it (the CSV export does not), so
+	// absent means "not stated", never "no problem".
+	AssessmentStatus string
+	AssessmentError  string
+
 	// Reconciled is set once a live-reconciliation enricher has run against
 	// this occurrence; Live then reports whether the image is actually running
 	// in a cluster right now. When Reconciled is false, liveness is unknown.
@@ -288,6 +304,32 @@ type Finding struct {
 	Suppressed bool
 	Priority   string   // free-form, defined by policy config
 	Reasons    []string // human-readable explanation of the verdict
+}
+
+// AssessmentIssues returns the distinct reasons this finding's workloads were not
+// assessed, in the provider's own words, most common first.
+//
+// The point is to make a coverage gap diagnosable instead of merely countable.
+// "This image was never assessed" invites a shrug; "Can't authenticate to the
+// registry"
+// names a credential someone can go and fix, and one such reason accounted for
+// the overwhelming majority of an entire estate's missing coverage.
+//
+// Empty when every workload was assessed, or when the provider gives no reason.
+func (f Finding) AssessmentIssues() []string {
+	counts := map[string]int{}
+	var order []string
+	for _, o := range f.Occurrences {
+		if o.Assessed || o.AssessmentError == "" {
+			continue
+		}
+		if _, seen := counts[o.AssessmentError]; !seen {
+			order = append(order, o.AssessmentError)
+		}
+		counts[o.AssessmentError]++
+	}
+	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
+	return order
 }
 
 // ProviderAssessed reports whether the scan provider assessed any of this

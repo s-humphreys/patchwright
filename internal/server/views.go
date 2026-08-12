@@ -49,6 +49,14 @@ type summaryView struct {
 	// provider's own timestamps are surfaced. Nil when nothing carried one.
 	ProviderDataNewest *time.Time `json:"provider_data_newest,omitempty"`
 	ProviderDataOldest *time.Time `json:"provider_data_oldest,omitempty"`
+
+	// UnassessedReasons counts findings by the provider's stated reason for not
+	// assessing them, worst first. This turns the coverage gap from a number
+	// into a work list: on a real estate a single registry credential accounted
+	// for the overwhelming majority of it, and no coverage percentage could have
+	// said so. Empty when the provider states no reasons (the CSV export does
+	// not), which is not the same as there being no problem.
+	UnassessedReasons []reasonCount `json:"unassessed_reasons,omitempty"`
 }
 
 // ownerStats is a per-team triage row.
@@ -91,9 +99,16 @@ type ownerStats struct {
 	Ticketed int `json:"ticketed"`
 }
 
+// reasonCount is one stated reason and how many findings it accounts for.
+type reasonCount struct {
+	Reason   string `json:"reason"`
+	Findings int    `json:"findings"`
+}
+
 func buildSummary(findings []model.Finding) summaryView {
 	var s summaryView
 	images := map[string]struct{}{}
+	reasons := map[string]int{}
 	for i := range findings {
 		f := &findings[i]
 		images[f.Image.Key()] = struct{}{}
@@ -118,6 +133,13 @@ func buildSummary(findings []model.Finding) summaryView {
 			if f.Actionable {
 				s.ActionableUnassessed++
 			}
+			// One finding, one vote for its primary reason. Counting every
+			// reason on every finding would make the shares sum past the
+			// unassessed total and read as though the problem were larger than
+			// the estate.
+			if issues := f.AssessmentIssues(); len(issues) > 0 {
+				reasons[issues[0]]++
+			}
 		}
 		if !remediationResolved(f) {
 			s.RemediationUnresolved++
@@ -125,7 +147,27 @@ func buildSummary(findings []model.Finding) summaryView {
 	}
 	s.UniqueImages = len(images)
 	s.ProviderDataOldest, s.ProviderDataNewest = providerDataRange(findings)
+	s.UnassessedReasons = rankReasons(reasons)
 	return s
+}
+
+// rankReasons orders stated reasons by how much coverage each one costs, worst
+// first, so the largest single fixable cause is the first thing read.
+func rankReasons(reasons map[string]int) []reasonCount {
+	if len(reasons) == 0 {
+		return nil
+	}
+	out := make([]reasonCount, 0, len(reasons))
+	for reason, n := range reasons {
+		out = append(out, reasonCount{Reason: reason, Findings: n})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Findings != out[j].Findings {
+			return out[i].Findings > out[j].Findings
+		}
+		return out[i].Reason < out[j].Reason
+	})
+	return out
 }
 
 // providerDataRange returns the oldest and newest assessment timestamps the

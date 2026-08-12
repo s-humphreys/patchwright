@@ -36,6 +36,11 @@ type FindingView struct {
 	// making Counts zero through ignorance rather than health. Consumers MUST
 	// check this before treating zero counts as a clean result.
 	ProviderAssessed bool `json:"provider_assessed"`
+	// AssessmentIssues are the provider's own reasons this image was not
+	// assessed, most common first. Present so a consumer can act on a coverage
+	// gap rather than only count it: these say "fix this credential", where
+	// provider_assessed:false only says "we do not know".
+	AssessmentIssues []string `json:"assessment_issues,omitempty"`
 	// Scanned and ExploitChecked are always emitted (no omitempty): false is
 	// the meaningful value. Without them an empty vulns list is ambiguous —
 	// a consumer cannot tell "scanned, nothing found" from "never scanned"
@@ -186,6 +191,7 @@ func ToFindingView(f model.Finding) FindingView {
 		FixableCritical:    fixableCriticals(f),
 		KnownExploited:     knownExploited,
 		ProviderAssessed:   f.ProviderAssessed(),
+		AssessmentIssues:   f.AssessmentIssues(),
 		Scanned:            f.Scanned,
 		ExploitChecked:     f.ExploitChecked,
 		ScanError:          f.ScanError,
