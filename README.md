@@ -114,6 +114,16 @@ patchwright assess -i export.csv -c config/ \
   --vuln-source trivy --vuln-option severity=CRITICAL,HIGH
 ```
 
+Trivy downloads its vulnerability DB once, before the concurrent scan loop. That
+download is the one step in a run that depends on a public CDN, and it is
+observably flaky: `mirror.gcr.io` will 404 a layer it has just advertised in its
+own manifest, and the identical command succeeds seconds later. Trivy does not
+retry that itself, so patchwright does — three attempts, and from the second it
+reaches past the mirror list to `ghcr.io/aquasecurity/trivy-db:2` upstream. Point
+it somewhere else with `--vuln-option db-repository=registry.internal/trivy-db:2`,
+which is also respected on retry rather than being abandoned for the internet, on
+the grounds that naming a repository usually means the default is unreachable.
+
 The report's `FIXCRIT` column shows fix-available critical CVEs; the JSON adds
 `fixable_critical` and the full `vulns` array. Example rule:
 `when: "vulns.exists(v, v.severity == 'critical' && v.fix_available)"`.

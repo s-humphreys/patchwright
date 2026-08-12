@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -29,6 +30,7 @@ func init() {
 			binary:   opts.StringOr("binary", "trivy"),
 			severity: opts.String("severity"), // e.g. "CRITICAL,HIGH"; empty = all
 			timeout:  opts.StringOr("timeout", "5m"),
+			dbRepo:   opts.String("db-repository"),
 		}, nil
 	})
 }
@@ -37,27 +39,86 @@ type source struct {
 	binary   string
 	severity string
 	timeout  string
+	// dbRepo overrides where the vulnerability DB is pulled from. Empty means
+	// Trivy's own default, which is a mirror list.
+	dbRepo   string
 	prepared bool // true once the DB has been pre-downloaded (see Prepare)
 }
+
+// dbDownloadAttempts is how many times Prepare will try to fetch the DB.
+//
+// Downloading it is the one step in a run that depends on a public CDN, and it
+// is observably flaky: mirror.gcr.io serves a 404 for a layer it has just
+// advertised in its own manifest, and the same command succeeds seconds later.
+// Trivy does not retry that itself, so a single bad response would otherwise
+// cost the entire assessment, including the provider data that needed no
+// network at all.
+const dbDownloadAttempts = 3
+
+// dbDownloadBackoff is the wait before each retry. Short: a mirror 404 clears
+// immediately, and anything that does not is not worth waiting minutes for.
+var dbDownloadBackoff = []time.Duration{2 * time.Second, 5 * time.Second}
+
+// fallbackDBRepository is tried when the default mirror list fails and the
+// caller has not named a repository of its own. This is the upstream source
+// rather than a cache of it, so it is not subject to the mirror's staleness.
+const fallbackDBRepository = "ghcr.io/aquasecurity/trivy-db:2"
 
 func (s *source) Name() string { return "trivy" }
 
 // Prepare downloads the vulnerability DB once, up front, so concurrent scans
 // don't race to update it. It is called once by the ImageScanner before the
 // concurrent scan loop.
+// It retries, and falls back to the upstream DB repository, because the download
+// is the flakiest step in a run and losing a whole assessment to one bad CDN
+// response is a poor trade.
 func (s *source) Prepare(ctx context.Context) error {
-	slog.DebugContext(ctx, "pre-downloading trivy vulnerability DB")
+	var lastErr error
+	for attempt := 1; attempt <= dbDownloadAttempts; attempt++ {
+		// Stick with the configured repository when there is one: the caller
+		// naming a repository usually means the default is unreachable (an
+		// air-gapped mirror), so silently reaching past it to the internet
+		// would be wrong.
+		repo := s.dbRepo
+		if repo == "" && attempt > 1 {
+			repo = fallbackDBRepository
+		}
+		if err := s.downloadDB(ctx, repo); err == nil {
+			s.prepared = true
+			return nil
+		} else if lastErr = err; ctx.Err() != nil {
+			// A cancelled context will not heal, so stop rather than burning
+			// the remaining attempts on it.
+			return lastErr
+		}
+		if attempt < dbDownloadAttempts {
+			slog.WarnContext(ctx, "trivy vulnerability DB download failed, retrying",
+				"attempt", attempt, "of", dbDownloadAttempts, "error", lastErr)
+			select {
+			case <-time.After(dbDownloadBackoff[min(attempt, len(dbDownloadBackoff))-1]):
+			case <-ctx.Done():
+				return lastErr
+			}
+		}
+	}
+	return lastErr
+}
+
+func (s *source) downloadDB(ctx context.Context, repo string) error {
+	slog.DebugContext(ctx, "pre-downloading trivy vulnerability DB", "db_repository", repo)
 	args := []string{"image", "--quiet", "--download-db-only"}
 	if s.timeout != "" {
 		args = append(args, "--timeout", s.timeout)
+	}
+	if repo != "" {
+		args = append(args, "--db-repository", repo)
 	}
 	cmd := exec.CommandContext(ctx, s.binary, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("trivy --download-db-only: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("trivy --download-db-only: %w: %s", err, scanFailureReason(stderr.String()))
 	}
-	s.prepared = true
 	return nil
 }
 
