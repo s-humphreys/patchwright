@@ -285,7 +285,43 @@ function renderCoverage(s) {
     were never assessed by the scan provider</strong> (${pct}% covered). Their severity counts
     are absent data rather than zero, so they cannot match a count-based rule.${scannerOnly}
     ${s.remediation_unresolved ? `${s.remediation_unresolved} findings have no resolvable upgrade.` : ""}
-    ${reasonList(s.unassessed_reasons)}</div>`;
+    ${reasonList(s.unassessed_reasons)}</div>${signalNotice(s)}`;
+}
+
+// signalNotice reports a missing signal by its consequence, not its name.
+//
+// A column of dashes says "no EPSS here". It does not say the thing that matters:
+// every rule of the form vulns.exists(...) is false without per-CVE detail, so the
+// urgent and high tiers cannot fire at all and the queue reads as calm when it is
+// merely uninformed. That is worth a sentence at the top rather than a dash
+// repeated down a column.
+//
+// The column stays either way. Removing it would hide the gap instead of naming
+// it, and an absent column reads as "this does not apply" rather than "this was
+// not gathered".
+function signalNotice(s) {
+  if (s.scanned === undefined) return "";       // older API, say nothing
+  if (s.scanned === 0) {
+    return `<div class="banner"><strong>No image was scanned for per-CVE detail.</strong>
+      Fix availability, EPSS and KEV are therefore absent, and every rule requiring
+      <code>vulns</code> is false — so no finding can reach the priorities that depend on
+      them, however bad it is. Counts from the scan provider still work. Add
+      <code>--vuln-source trivy</code> (chart: <code>scan.enabled</code>) to populate it.</div>`;
+  }
+  if (s.exploit_checked === 0) {
+    return `<div class="banner"><strong>Exploit intelligence was not gathered.</strong>
+      ${s.scanned} findings have per-CVE detail, but none carry EPSS or KEV, so rules
+      requiring exploitation pressure cannot fire and the EPSS column reads "-" rather
+      than 0. Add <code>--exploit-source public</code> (chart:
+      <code>scan.exploitSource</code>).</div>`;
+  }
+  // Partial coverage is worth stating too: it is the case most easily mistaken for
+  // full coverage, since the columns are populated for some rows.
+  if (s.exploit_checked < s.scanned) {
+    return `<div class="banner">${s.scanned - s.exploit_checked} of ${s.scanned} scanned
+      findings have no exploit intelligence, so their EPSS is unknown rather than low.</div>`;
+  }
+  return "";
 }
 
 // reasonList renders the provider's own reasons for the coverage gap, largest
@@ -371,6 +407,8 @@ const FINDING_COLUMNS = [
     sort: (f) => (isScanned(f) ? f.fixable_critical ?? 0 : UNKNOWN),
     help: "Critical CVEs with a fix available, from the vulnerability scanner. \"-\" means the image was not scanned.",
     title: (f) => (isScanned(f) ? "" : "Not scanned, so fix availability is unknown.") },
+  // Kept even when nothing gathered it: a column of "-" says the signal was not
+  // collected, whereas removing the column says the signal does not exist.
   { label: "EPSS", num: true, get: (f) => esc(epss(f)),
     sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN),
     help: "Highest EPSS across this image's CVEs: the predicted probability of exploitation in the next 30 days (0-1). A CVSS 10 at EPSS 0.008 is less urgent than a CVSS 5 at 0.93. \"-\" means exploit intel was not gathered." },

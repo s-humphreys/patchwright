@@ -703,3 +703,37 @@ func TestOwnersReportCVECountsWithTheirCoverage(t *testing.T) {
 		}
 	}
 }
+
+// The consequence of a missing scanner is that whole priority tiers cannot fire,
+// which a consumer can only know if the summary reports the coverage.
+func TestSummaryReportsScanAndExploitCoverage(t *testing.T) {
+	scanned := assessedFinding("acr.io/scanned:1", "platform", "team", true)
+	scanned.Scanned = true
+	scanned.ExploitChecked = true
+	// Scanned but no exploit intel: EPSS unknown, not low.
+	partial := assessedFinding("acr.io/partial:1", "platform", "team", true)
+	partial.Scanned = true
+	// Never scanned: no per-CVE detail at all.
+	unscanned := assessedFinding("acr.io/unscanned:1", "platform", "team", true)
+
+	s := New(stubAssessor{findings: []model.Finding{scanned, partial, unscanned}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+	if body.Summary.Scanned != 2 {
+		t.Errorf("scanned = %d, want 2", body.Summary.Scanned)
+	}
+	if body.Summary.ExploitChecked != 1 {
+		t.Errorf("exploit_checked = %d, want 1", body.Summary.ExploitChecked)
+	}
+	// Neither may exceed the findings they describe.
+	if body.Summary.ExploitChecked > body.Summary.Scanned {
+		t.Errorf("exploit_checked %d exceeds scanned %d",
+			body.Summary.ExploitChecked, body.Summary.Scanned)
+	}
+}

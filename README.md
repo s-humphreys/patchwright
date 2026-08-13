@@ -562,7 +562,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
 | `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed, plus where the fix goes (`direct` / `managed`) and how much is already tracked (`ticketed`). |
-| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`, `actionable_unassessed`). |
+| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`, `actionable_unassessed`, `scanned`, `exploit_checked`) and `unassessed_reasons`. |
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /api/v1/tickets` | What ticket reconciliation would do against the cached assessment. Changes nothing. |
 | `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}`; without it, 400 and the plan. |
@@ -599,6 +599,18 @@ in the class row so a rollup never reads as the whole story. The section replace
 the old flat per-owner table, which showed a subset of the same numbers with no
 denominators; `upgradable` is the one column it dropped, still available from
 `/api/v1/owners` and largely answered by `direct`.
+
+**A missing signal is reported by its consequence.** Running without a vuln source
+is the chart's default, and in that mode every rule of the form
+`vulns.exists(...)` — fix availability, EPSS, KEV — is false, so the priority tiers
+that depend on them cannot fire and the queue reads as calm when it is merely
+uninformed. The page says so at the top rather than leaving a column of dashes to
+imply it, and the summary reports `scanned` and `exploit_checked` so a consumer can
+tell the same story without inspecting every finding.
+
+The EPSS column stays in both cases. `-` says the signal was not collected;
+removing the column would say the signal does not exist, and hiding a gap is the
+one thing this tool is built not to do.
 
 **Authentication.** Set `PATCHWRIGHT_API_TOKEN` and every request except the health
 probes requires it. Programmatic clients send `Authorization: Bearer <token>`;
