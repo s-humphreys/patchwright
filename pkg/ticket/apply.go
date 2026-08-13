@@ -15,6 +15,9 @@ type Applier interface {
 	// Update rewrites an existing ticket's summary and description from a fresh
 	// draft. Used only on tickets nobody has picked up; see Existing.Untouched.
 	Update(ctx context.Context, key string, d Draft) error
+	// Close transitions a ticket into a done status, with a comment explaining
+	// why. Only called when the work is provably finished.
+	Close(ctx context.Context, key, comment string) error
 }
 
 // Result records what an Apply run did, per action, so a caller can report it
@@ -49,6 +52,8 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 			}
 		case ActionUpdate:
 			r.Err = a.Update(ctx, act.TicketKey, act.Draft)
+		case ActionClose:
+			r.Err = a.Close(ctx, act.TicketKey, act.Message)
 		case ActionNoteStale, ActionNoteDone:
 			r.Err = a.Comment(ctx, act.TicketKey, act.Message)
 		case ActionSkip:

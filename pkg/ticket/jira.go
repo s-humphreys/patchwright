@@ -483,6 +483,95 @@ func (j *Jira) Update(ctx context.Context, key string, d Draft) error {
 	return nil
 }
 
+// Close transitions a ticket into a done status, commenting with the reason in
+// the same request so the explanation cannot arrive without the transition.
+//
+// The transition is looked up rather than assumed: transition ids are per-workflow,
+// and a hardcoded one silently moves tickets to the wrong status on any board that
+// does not share the workflow it was written against.
+func (j *Jira) Close(ctx context.Context, key, comment string) error {
+	cfg := j.cfgForKey(key)
+	id, name, err := j.doneTransition(ctx, key, cfg.CloseTransition)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"transition": map[string]string{"id": id},
+	}
+	if comment != "" {
+		body["update"] = map[string]any{
+			"comment": []any{map[string]any{"add": map[string]any{"body": ADFDocument(comment)}}},
+		}
+	}
+	if err := j.do(ctx, http.MethodPost,
+		"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions", body, nil); err != nil {
+		return fmt.Errorf("close %s via %q: %w", key, name, err)
+	}
+	return nil
+}
+
+// doneTransition finds the transition to close a ticket with.
+//
+// A configured name wins, matched case-insensitively against both the transition
+// and its target status, because boards label these inconsistently ("Done", "Close
+// Issue", "Resolve"). Without a name, the only unambiguous choice is a transition
+// into the done status category, and more than one means the workflow offers
+// several ways to finish — patchwright refuses rather than picking, since "Won't
+// Do" and "Done" say very different things about the same work.
+func (j *Jira) doneTransition(ctx context.Context, key, want string) (id, name string, err error) {
+	body, err := j.raw(ctx, http.MethodGet,
+		"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions")
+	if err != nil {
+		return "", "", fmt.Errorf("list transitions for %s: %w", key, err)
+	}
+	var resp struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			To   struct {
+				Name           string `json:"name"`
+				StatusCategory struct {
+					Key string `json:"key"`
+				} `json:"statusCategory"`
+			} `json:"to"`
+		} `json:"transitions"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", "", fmt.Errorf("decode transitions for %s: %w", key, err)
+	}
+
+	var available []string
+	var done []int
+	for i, t := range resp.Transitions {
+		available = append(available, fmt.Sprintf("%s -> %s", t.Name, t.To.Name))
+		if want != "" && (strings.EqualFold(t.Name, want) || strings.EqualFold(t.To.Name, want)) {
+			return t.ID, t.Name, nil
+		}
+		if t.To.StatusCategory.Key == "done" {
+			done = append(done, i)
+		}
+	}
+	if want != "" {
+		return "", "", fmt.Errorf("no transition named %q available on %s (available: %s)",
+			want, key, strings.Join(available, ", "))
+	}
+	switch len(done) {
+	case 0:
+		return "", "", fmt.Errorf("no transition into a done status available on %s (available: %s)",
+			key, strings.Join(available, ", "))
+	case 1:
+		t := resp.Transitions[done[0]]
+		return t.ID, t.Name, nil
+	default:
+		names := make([]string, 0, len(done))
+		for _, i := range done {
+			names = append(names, resp.Transitions[i].Name)
+		}
+		return "", "", fmt.Errorf("%s has %d ways to finish (%s); set jira.closeTransition "+
+			"so the choice is yours rather than ours", key, len(done), strings.Join(names, ", "))
+	}
+}
+
 // AddImages adds image repositories to an existing ticket's image field or labels,
 // preserving what is already there. Jira replaces a field wholesale on update, so
 // the current value is read first: a blind write would silently drop the images the

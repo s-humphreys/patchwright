@@ -206,6 +206,10 @@ func byRoute(findings []sink.FindingView, r *routes, name string) []sink.Finding
 	return out
 }
 
+// AutoClose reports whether closing provably-finished tickets is enabled. On the
+// planner because it is a policy decision, and the planner owns the policy.
+func (p *Planner) AutoClose() bool { return p.cfg.AutoClose }
+
 // skipReason reports why a finding should not be ticketed, if it should not.
 //
 // The distinction between "on the latest version" and "we could not resolve the

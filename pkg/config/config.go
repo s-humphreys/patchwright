@@ -96,6 +96,23 @@ type JiraConfig struct {
 	// restating the template, the image field and the priority map.
 	Routes []TicketRoute `yaml:"routes"`
 
+	// AutoClose, when true, lets reconciliation close a ticket whose work is
+	// provably finished: every image it covers is present in the assessment, was
+	// checked for remediation, and is already on the latest available version,
+	// with live reconciliation having run so "everywhere" is a checked claim.
+	//
+	// Off by default, and deliberately narrow. Closing on the *absence* of a
+	// finding would retire real work whenever a provider stopped assessing an
+	// image, which is why that path only ever comments. This closes on positive
+	// evidence instead. Without the evidence, or without this flag, the ticket is
+	// commented on and left for a human.
+	AutoClose bool `yaml:"autoClose"`
+	// CloseTransition names the workflow transition to use, e.g. "Done" or
+	// "Won't Do". Empty means the first available transition into a done status
+	// category, which is right for simple workflows and wrong for boards with
+	// several ways to finish — name it explicitly there.
+	CloseTransition string `yaml:"closeTransition"`
+
 	// RequireRoute, when true, means a finding that matches no route gets no
 	// ticket rather than falling through to the settings above.
 	//

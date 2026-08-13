@@ -179,12 +179,21 @@ type recorder struct {
 	extended map[string][]string
 	comments map[string][]string
 	updated  map[string]Draft
+	closed   map[string]string
 	failOn   ActionKind
 }
 
 func newRecorder() *recorder {
 	return &recorder{extended: map[string][]string{}, comments: map[string][]string{},
-		updated: map[string]Draft{}}
+		updated: map[string]Draft{}, closed: map[string]string{}}
+}
+
+func (r *recorder) Close(_ context.Context, key, comment string) error {
+	if r.failOn == ActionClose {
+		return errors.New("boom")
+	}
+	r.closed[key] = comment
+	return nil
 }
 
 func (r *recorder) Update(_ context.Context, key string, d Draft) error {
@@ -391,5 +400,169 @@ func TestApplyPerformsUpdates(t *testing.T) {
 	}
 	if len(rec.comments["PROJ-1"]) != 0 {
 		t.Errorf("an update also posted a comment: %v", rec.comments["PROJ-1"])
+	}
+}
+
+// onLatest builds a finding for a repository that is demonstrably already on its
+// latest version: remediation checked, versions resolved, nothing available, and
+// liveness reconciled.
+func onLatest(repo, version string) sink.FindingView {
+	return sink.FindingView{
+		Repository: repo, Tag: version, ProviderAssessed: true, RemediationChecked: true,
+		Liveness: &sink.LivenessView{Live: true},
+		Upgrade: &sink.UpgradeView{
+			Kind: "image", Current: version, Latest: version, Resolved: true, Available: false,
+		},
+	}
+}
+
+// The case this exists for: someone merged the Renovate PR and rolled it out
+// without ever seeing the ticket.
+func TestClosesATicketWhoseWorkIsProvablyDone(t *testing.T) {
+	actions := Reconcile(ReconcileInput{
+		AutoClose:   true,
+		Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1", Category: "new"}}},
+	})
+	if len(actions) != 1 {
+		t.Fatalf("got %d actions: %+v", len(actions), actions)
+	}
+	if actions[0].Kind != ActionClose {
+		t.Fatalf("kind = %q, want %q", actions[0].Kind, ActionClose)
+	}
+	// The comment must state the evidence, so a human reading the closed ticket
+	// can check the reasoning rather than take it on trust.
+	for _, want := range []string{"acme/app is on 2.0.0", "positive check"} {
+		if !strings.Contains(actions[0].Message, want) {
+			t.Errorf("close comment does not mention %q: %s", want, actions[0].Message)
+		}
+	}
+}
+
+// Without the flag the same evidence must only comment. Closing tickets is not a
+// behaviour anyone should acquire by upgrading.
+func TestDoesNotCloseWhenAutoCloseIsOff(t *testing.T) {
+	actions := Reconcile(ReconcileInput{
+		Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
+	})
+	if len(actions) != 1 || actions[0].Kind != ActionNoteDone {
+		t.Fatalf("actions = %+v, want a single note-done", actions)
+	}
+}
+
+// Each guard, alone, must be enough to stop a close. These are the ways "it looks
+// done" is not the same as "it is done".
+func TestCloseGuards(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		finding func() sink.FindingView
+	}{
+		{"remediation never ran", func() sink.FindingView {
+			f := onLatest("acme/app", "2.0.0")
+			f.RemediationChecked = false
+			return f
+		}},
+		{"versions could not be resolved", func() sink.FindingView {
+			f := onLatest("acme/app", "2.0.0")
+			f.Upgrade.Resolved = false
+			return f
+		}},
+		{"an upgrade is still available", func() sink.FindingView {
+			f := onLatest("acme/app", "2.0.0")
+			f.Upgrade.Available = true
+			f.Upgrade.Latest = "2.1.0"
+			return f
+		}},
+		{"liveness was never reconciled", func() sink.FindingView {
+			f := onLatest("acme/app", "2.0.0")
+			f.Liveness = nil
+			return f
+		}},
+		{"no upgrade information at all", func() sink.FindingView {
+			f := onLatest("acme/app", "2.0.0")
+			f.Upgrade = nil
+			return f
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actions := Reconcile(ReconcileInput{
+				AutoClose:   true,
+				Findings:    []sink.FindingView{tc.finding()},
+				OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
+			})
+			for _, a := range actions {
+				if a.Kind == ActionClose {
+					t.Errorf("closed despite %s: %+v", tc.name, a)
+				}
+			}
+		})
+	}
+}
+
+// A repository absent from the assessment is the ambiguous case the whole design
+// refuses to close on: it cannot be told from a provider that stopped looking.
+func TestDoesNotCloseWhenTheImageIsNoLongerReported(t *testing.T) {
+	actions := Reconcile(ReconcileInput{
+		AutoClose:   true,
+		Findings:    []sink.FindingView{onLatest("acme/other", "1.0.0")},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
+	})
+	if len(actions) != 1 || actions[0].Kind != ActionNoteDone {
+		t.Fatalf("actions = %+v, want note-done for an unreported image", actions)
+	}
+	if !strings.Contains(actions[0].Message, "cannot tell") {
+		t.Errorf("comment does not admit the ambiguity: %s", actions[0].Message)
+	}
+}
+
+// A ticket covering several images is only done when every one of them is.
+func TestDoesNotCloseWhileAnyCoveredImageLags(t *testing.T) {
+	lagging := onLatest("acme/two", "1.0.0")
+	lagging.Upgrade.Available = true
+	lagging.Upgrade.Latest = "1.1.0"
+	ticketRef := Existing{Key: "PROJ-1"}
+	actions := Reconcile(ReconcileInput{
+		AutoClose: true,
+		Findings:  []sink.FindingView{onLatest("acme/one", "2.0.0"), lagging},
+		OpenByImage: map[string][]Existing{
+			"acme/one": {ticketRef}, "acme/two": {ticketRef},
+		},
+	})
+	for _, a := range actions {
+		if a.Kind == ActionClose {
+			t.Errorf("closed while acme/two still has an upgrade available: %+v", a)
+		}
+	}
+}
+
+// An old tag still running somewhere means the rollout is incomplete, even though
+// another finding for the same repository is on the latest version.
+func TestDoesNotCloseWhenAnOldTagIsStillRunning(t *testing.T) {
+	old := onLatest("acme/app", "1.0.0")
+	old.Upgrade.Available = true
+	old.Upgrade.Latest = "2.0.0"
+	actions := Reconcile(ReconcileInput{
+		AutoClose:   true,
+		Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0"), old},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
+	})
+	for _, a := range actions {
+		if a.Kind == ActionClose {
+			t.Errorf("closed while 1.0.0 is still running: %+v", a)
+		}
+	}
+}
+
+func TestApplyPerformsCloses(t *testing.T) {
+	rec := newRecorder()
+	results := Apply(context.Background(), rec, []Action{
+		{Kind: ActionClose, TicketKey: "PROJ-1", Message: "done because reasons"},
+	})
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("results = %+v", results)
+	}
+	if got := rec.closed["PROJ-1"]; got != "done because reasons" {
+		t.Errorf("closed with comment %q", got)
 	}
 }

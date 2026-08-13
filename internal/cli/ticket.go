@@ -167,6 +167,7 @@ func run(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.P
 	}
 	actions := ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, OpenByImage: index, Findings: findings,
+		AutoClose: cfg.AutoClose,
 	})
 
 	if !confirm {
@@ -202,6 +203,11 @@ func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) 
 			fmt.Fprintf(w, "Images:   %v\n\n%s\n", a.Draft.Images, a.Draft.Description)
 		case ticket.ActionSkip:
 			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+		case ticket.ActionClose:
+			// Closing is the only action that ends a piece of work, so the dry run
+			// shows the evidence rather than just the verdict.
+			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+			fmt.Fprintf(w, "Closing:  %s\n", a.Message)
 		case ticket.ActionUpdate:
 			// The rewrite is shown in full: it replaces what someone would
 			// otherwise read on the board, so approving it blind is worse than
@@ -306,8 +312,9 @@ func reportResults(w io.Writer, results []ticket.Result) {
 		}
 	}
 	counts := ticket.Summarize(results)
-	fmt.Fprintf(w, "\nCreated %d, extended %d, updated %d, commented %d, unchanged %d.\n",
+	fmt.Fprintf(w, "\nCreated %d, extended %d, updated %d, closed %d, commented %d, unchanged %d.\n",
 		counts[ticket.ActionCreate], counts[ticket.ActionExtend], counts[ticket.ActionUpdate],
+		counts[ticket.ActionClose],
 		counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone], counts[ticket.ActionSkip])
 	if failed > 0 {
 		fmt.Fprintf(w, "%d action(s) failed; see above.\n", failed)

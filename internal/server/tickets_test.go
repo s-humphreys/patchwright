@@ -16,14 +16,16 @@ import (
 
 // stubTicketer plans a fixed set of drafts and records what gets applied.
 type stubTicketer struct {
-	updated  []string
-	drafts   []ticket.Draft
-	open     map[string][]ticket.Existing
-	planErr  error
-	openErr  error
-	created  []ticket.Draft
-	comments map[string][]string
-	extended map[string][]string
+	updated   []string
+	closed    []string
+	autoClose bool
+	drafts    []ticket.Draft
+	open      map[string][]ticket.Existing
+	planErr   error
+	openErr   error
+	created   []ticket.Draft
+	comments  map[string][]string
+	extended  map[string][]string
 }
 
 func newStubTicketer(drafts ...ticket.Draft) *stubTicketer {
@@ -51,6 +53,13 @@ func (s *stubTicketer) Create(_ context.Context, d ticket.Draft) (string, error)
 
 func (s *stubTicketer) AddImages(_ context.Context, key string, images []string) error {
 	s.extended[key] = append(s.extended[key], images...)
+	return nil
+}
+
+func (s *stubTicketer) AutoClose() bool { return s.autoClose }
+
+func (s *stubTicketer) Close(_ context.Context, key, comment string) error {
+	s.closed = append(s.closed, key)
 	return nil
 }
 

@@ -67,6 +67,17 @@ scan:
 #   # With requireRoute, a finding matching no route below gets no ticket at all,
 #   # rather than falling through to `project` above. It is still reported as a
 #   # skip with the owner named, so unrouted work is visible rather than silent.
+#   # Close a ticket when its work is provably finished: every image it covers is
+#   # still reported, was checked for a newer version, and is already on the latest
+#   # one, with live reconciliation having run. For the common case where someone
+#   # merges a Renovate PR, rolls it out, and never sees the ticket.
+#   #
+#   # Off by default. Note this closes on positive evidence only — a finding merely
+#   # disappearing is never treated as done, because a provider that stopped
+#   # assessing an image looks identical.
+#   autoClose: true
+#   closeTransition: Done   # required when the workflow has several ways to finish
+#
 #   requireRoute: true
 #   routes:
 #     - name: sre

@@ -453,6 +453,29 @@ by definition. No comment is posted alongside: Jira records field edits in the i
 history, which is a better audit trail than a comment asserting that an edit
 happened.
 
+**`autoClose: true` closes tickets whose work is provably finished.** The case this
+exists for is ordinary: someone merges a Renovate PR, it rolls out, and nobody ever
+opens the ticket. Reconciliation closes it with a comment stating the evidence.
+
+The word "provably" is carrying weight. A finding *disappearing* is never treated as
+done, because a provider that stopped assessing an image looks exactly the same —
+that path still only comments. Closing needs every image on the ticket to satisfy
+all of:
+
+- still reported in the assessment, so this is not the absent-data case;
+- `remediation_checked`, or "no upgrade available" only means nobody looked;
+- `upgrade.resolved`, or "on the latest" is unproven — an unreadable private
+  registry reports exactly this;
+- no finding for that repository with an upgrade still available, which is what
+  catches an old tag still running somewhere;
+- liveness reconciled, so "everywhere" is a checked claim about running workloads
+  rather than an assumption.
+
+Any one of those failing means a comment instead. Set `closeTransition` when the
+workflow offers more than one way to finish: "Done" and "Won't Do" say very
+different things about the same work, so patchwright refuses to choose rather than
+guessing, and names the alternatives in the error.
+
 **It reconciles rather than only creating.** A queue that is only ever added to rots
 three ways, all of which happened on a real project inside a day: a ticket covering
 one image of a change suppresses the rest, leaving them with no ticket and nothing
