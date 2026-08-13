@@ -674,7 +674,11 @@ func (j *Jira) Comment(ctx context.Context, key, body string) error {
 //
 // Visible rather than hidden. A reader seeing the same note twice deserves to know
 // what identified it, and Jira offers no comment metadata that survives a round
-// trip through the API without a property write per comment.
+// trip through the API without a property write per comment. Rendered as inline
+// code so it reads as machine bookkeeping rather than as part of the sentence.
+//
+// The marker text itself carries no backticks: they are markup for the renderer,
+// and the lookup matches the text as it appears in the stored document.
 func commentRef(dedupe string) string { return "patchwright-ref: " + dedupe }
 
 // CommentOnce posts a comment unless one carrying the same reference is already
@@ -703,7 +707,7 @@ func (j *Jira) CommentOnce(ctx context.Context, key, dedupe, body string) (bool,
 	if present {
 		return false, nil
 	}
-	return true, j.Comment(ctx, key, body+"\n\n"+ref)
+	return true, j.Comment(ctx, key, body+"\n\n`"+ref+"`")
 }
 
 // hasComment reports whether any comment on the ticket carries the reference.

@@ -509,8 +509,9 @@ explanation still beats an open ticket nobody is reading.
 **A note is posted once, not every run.** Reconciliation is a loop, so a ticket
 sitting in a state that warrants a comment would collect an identical one every
 refresh — hourly, indefinitely — burying the ticket's own history and teaching people
-to skip anything patchwright writes. Each note carries a reference
-(`patchwright-ref: note-done`), and existing comments are read before posting.
+to skip anything patchwright writes. Each note carries a reference, rendered as inline code
+(`` `patchwright-ref: note-done` ``) so it reads as machine bookkeeping rather than
+part of the sentence, and existing comments are read before posting.
 
 The reference includes the facts that would make a fresh comment worth reading, so a
 note whose content genuinely changed is still posted: a staleness note is keyed on
@@ -559,6 +560,14 @@ The template is Go `text/template`, first line `Summary: ...`, then a blank line
 then the description. See
 [config/templates/container-vuln.md.tmpl](config/templates/container-vuln.md.tmpl)
 for the available fields; it is an example, meant to be edited.
+
+A small amount of markup is translated into Atlassian Document Format: `**bold**`,
+`` `code` ``, bullet lists, headings, and bare URLs become links so an upgrade target
+is clickable rather than something to copy out by hand. Code spans are left
+untouched inside, since an image reference or a command is exactly the kind of thing
+that contains characters the other rules would otherwise treat as markup. Anything
+unrecognised, including an unmatched `` ` `` or `**`, is passed through as written:
+a stray character should look wrong, not silently reformat everything after it.
 
 ### Serve — the assessment as an API
 

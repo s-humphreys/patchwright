@@ -140,17 +140,28 @@ func paragraph(lines []string) any {
 	return map[string]any{"type": "paragraph", "content": content}
 }
 
-// inline parses **bold** and bare URLs into ADF text nodes with marks. Anything
-// else is passed through as plain text, so an unrecognised construct shows as
-// the author typed it rather than being mangled.
+// inline parses `code`, **bold** and bare URLs into ADF text nodes with marks.
+// Anything else is passed through as plain text, so an unrecognised construct
+// shows as the author typed it rather than being mangled.
+//
+// Code is resolved first and its contents are left alone: an image reference or a
+// command is exactly the kind of thing that contains characters the other rules
+// would otherwise treat as markup, and a URL inside code should stay code rather
+// than becoming a link.
 func inline(s string) []any {
 	var out []any
-	for _, seg := range splitBold(s) {
-		if seg.bold {
-			out = append(out, linkify(seg.text, []any{map[string]any{"type": "strong"}})...)
+	for _, seg := range splitCode(s) {
+		if seg.code {
+			out = append(out, textNode(seg.text, []any{map[string]any{"type": "code"}}))
 			continue
 		}
-		out = append(out, linkify(seg.text, nil)...)
+		for _, b := range splitBold(seg.text) {
+			if b.bold {
+				out = append(out, linkify(b.text, []any{map[string]any{"type": "strong"}})...)
+				continue
+			}
+			out = append(out, linkify(b.text, nil)...)
+		}
 	}
 	if len(out) == 0 {
 		out = []any{map[string]any{"type": "text", "text": s}}
@@ -158,9 +169,38 @@ func inline(s string) []any {
 	return out
 }
 
+// splitCode separates `code` spans from the surrounding text.
+//
+// An unmatched backtick is left as literal text rather than swallowing the rest of
+// the line, on the same principle as the bold parser: a stray character in a
+// template should look wrong, not silently reformat everything after it.
+func splitCode(s string) []segment {
+	var out []segment
+	for {
+		start := strings.Index(s, "`")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start+1:], "`")
+		if end < 0 {
+			break
+		}
+		if start > 0 {
+			out = append(out, segment{text: s[:start]})
+		}
+		out = append(out, segment{text: s[start+1 : start+1+end], code: true})
+		s = s[start+1+end+1:]
+	}
+	if s != "" {
+		out = append(out, segment{text: s})
+	}
+	return out
+}
+
 type segment struct {
 	text string
 	bold bool
+	code bool
 }
 
 func splitBold(s string) []segment {

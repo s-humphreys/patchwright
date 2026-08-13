@@ -251,3 +251,93 @@ func TestQuoteJQLEscapes(t *testing.T) {
 		t.Errorf("backslash not escaped: %s", got)
 	}
 }
+
+// findMarked returns the text of nodes carrying the given mark type, so a test can
+// assert what Jira will actually render rather than what the source looked like.
+func findMarked(node any, mark string, out *[]string) {
+	switch n := node.(type) {
+	case map[string]any:
+		if n["type"] == "text" {
+			if marks, ok := n["marks"].([]any); ok {
+				for _, m := range marks {
+					if mm, ok := m.(map[string]any); ok && mm["type"] == mark {
+						*out = append(*out, n["text"].(string))
+					}
+				}
+			}
+		}
+		for _, v := range n {
+			findMarked(v, mark, out)
+		}
+	case []any:
+		for _, v := range n {
+			findMarked(v, mark, out)
+		}
+	}
+}
+
+func TestBackticksBecomeInlineCode(t *testing.T) {
+	doc := ADFDocument("Run `patchwright-ref: note-done` to see it.")
+	var code []string
+	findMarked(doc, "code", &code)
+	if len(code) != 1 || code[0] != "patchwright-ref: note-done" {
+		t.Errorf("code nodes = %v, want one holding the marker without backticks", code)
+	}
+	// The backticks are markup, so they must not survive into the text.
+	raw, _ := json.Marshal(doc)
+	if strings.Contains(string(raw), "`") {
+		t.Errorf("backticks leaked into the document: %s", raw)
+	}
+}
+
+// Code contents are left alone. An image reference or a command is exactly the kind
+// of thing containing characters the other rules would otherwise treat as markup.
+func TestCodeContentsAreNotReinterpreted(t *testing.T) {
+	doc := ADFDocument("see `https://example.com/**not-bold**` here")
+	var code, strong, links []string
+	findMarked(doc, "code", &code)
+	findMarked(doc, "strong", &strong)
+	findMarked(doc, "link", &links)
+	if len(code) != 1 || code[0] != "https://example.com/**not-bold**" {
+		t.Errorf("code = %v, want the span verbatim", code)
+	}
+	if len(strong) != 0 {
+		t.Errorf("bold was applied inside code: %v", strong)
+	}
+	if len(links) != 0 {
+		t.Errorf("a URL inside code became a link: %v", links)
+	}
+}
+
+// An unmatched backtick must look wrong rather than silently reformatting the rest
+// of the comment, matching how the bold parser behaves.
+func TestUnmatchedBacktickIsLiteral(t *testing.T) {
+	doc := ADFDocument("a lone ` backtick and **bold** after")
+	var code, strong []string
+	findMarked(doc, "code", &code)
+	findMarked(doc, "strong", &strong)
+	if len(code) != 0 {
+		t.Errorf("an unmatched backtick produced code: %v", code)
+	}
+	if len(strong) != 1 || strong[0] != "bold" {
+		t.Errorf("markup after the stray backtick stopped working: %v", strong)
+	}
+}
+
+// Bold and links still work alongside code.
+func TestCodeCoexistsWithBoldAndLinks(t *testing.T) {
+	doc := ADFDocument("**upgrade** `app:1.2` see https://example.com/x")
+	var code, strong, links []string
+	findMarked(doc, "code", &code)
+	findMarked(doc, "strong", &strong)
+	findMarked(doc, "link", &links)
+	if len(code) != 1 || code[0] != "app:1.2" {
+		t.Errorf("code = %v", code)
+	}
+	if len(strong) != 1 || strong[0] != "upgrade" {
+		t.Errorf("strong = %v", strong)
+	}
+	if len(links) != 1 {
+		t.Errorf("links = %v", links)
+	}
+}
