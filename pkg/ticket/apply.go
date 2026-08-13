@@ -12,6 +12,9 @@ type Applier interface {
 	Create(ctx context.Context, d Draft) (string, error)
 	AddImages(ctx context.Context, key string, images []string) error
 	Comment(ctx context.Context, key, body string) error
+	// Update rewrites an existing ticket's summary and description from a fresh
+	// draft. Used only on tickets nobody has picked up; see Existing.Untouched.
+	Update(ctx context.Context, key string, d Draft) error
 }
 
 // Result records what an Apply run did, per action, so a caller can report it
@@ -44,6 +47,8 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 			if r.Err = a.AddImages(ctx, act.TicketKey, act.Images); r.Err == nil && act.Message != "" {
 				r.Err = a.Comment(ctx, act.TicketKey, act.Message)
 			}
+		case ActionUpdate:
+			r.Err = a.Update(ctx, act.TicketKey, act.Draft)
 		case ActionNoteStale, ActionNoteDone:
 			r.Err = a.Comment(ctx, act.TicketKey, act.Message)
 		case ActionSkip:

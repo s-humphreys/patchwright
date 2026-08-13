@@ -178,11 +178,21 @@ type recorder struct {
 	created  []Draft
 	extended map[string][]string
 	comments map[string][]string
+	updated  map[string]Draft
 	failOn   ActionKind
 }
 
 func newRecorder() *recorder {
-	return &recorder{extended: map[string][]string{}, comments: map[string][]string{}}
+	return &recorder{extended: map[string][]string{}, comments: map[string][]string{},
+		updated: map[string]Draft{}}
+}
+
+func (r *recorder) Update(_ context.Context, key string, d Draft) error {
+	if r.failOn == ActionUpdate {
+		return errors.New("boom")
+	}
+	r.updated[key] = d
+	return nil
 }
 
 func (r *recorder) Create(_ context.Context, d Draft) (string, error) {
@@ -269,5 +279,117 @@ func TestApplyDoesNotExplainAnExtendThatFailed(t *testing.T) {
 	})
 	if len(rec.comments["PROJ-1"]) != 0 {
 		t.Errorf("commented despite the update failing: %v", rec.comments["PROJ-1"])
+	}
+}
+
+// A stale ticket nobody has picked up is corrected in place: leaving a wrong
+// summary with the right answer in a comment underneath wastes the reader's time
+// twice.
+func TestStaleTicketIsRewrittenWhenUntouched(t *testing.T) {
+	d := draft("Upgrade app to 1.2", []string{"acr.io/app"}, "1.2")
+	actions := Reconcile(ReconcileInput{
+		Drafts: []Draft{d},
+		OpenByImage: map[string][]Existing{
+			"acr.io/app": {{
+				Key: "PROJ-1", Summary: "Upgrade app to 1.1",
+				Status: "To Do", Category: "new", Assigned: false,
+			}},
+		},
+	})
+	if len(actions) != 1 {
+		t.Fatalf("got %d actions, want 1: %+v", len(actions), actions)
+	}
+	a := actions[0]
+	if a.Kind != ActionUpdate {
+		t.Fatalf("kind = %q, want %q", a.Kind, ActionUpdate)
+	}
+	if a.TicketKey != "PROJ-1" {
+		t.Errorf("ticket = %q", a.TicketKey)
+	}
+	// The fresh draft has to travel with the action, or the write has nothing to
+	// write.
+	if a.Draft.Summary == "" {
+		t.Error("update action carries no draft, so there is no new content")
+	}
+}
+
+// Once someone has engaged with a ticket, editing it would change the task after
+// they read it, so it is commented on instead.
+func TestStaleTicketIsOnlyCommentedOnWhenTouched(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		existing Existing
+	}{
+		{"assigned but not started", Existing{
+			Key: "PROJ-1", Summary: "Upgrade app to 1.1",
+			Category: "new", Assigned: true,
+		}},
+		{"in progress and unassigned", Existing{
+			Key: "PROJ-1", Summary: "Upgrade app to 1.1",
+			Category: "indeterminate", Assigned: false,
+		}},
+		{"in progress and assigned", Existing{
+			Key: "PROJ-1", Summary: "Upgrade app to 1.1",
+			Category: "indeterminate", Assigned: true,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actions := Reconcile(ReconcileInput{
+				Drafts:      []Draft{draft("Upgrade app to 1.2", []string{"acr.io/app"}, "1.2")},
+				OpenByImage: map[string][]Existing{"acr.io/app": {tc.existing}},
+			})
+			if len(actions) != 1 {
+				t.Fatalf("got %d actions: %+v", len(actions), actions)
+			}
+			if actions[0].Kind != ActionNoteStale {
+				t.Errorf("kind = %q, want %q: an engaged ticket must not be rewritten",
+					actions[0].Kind, ActionNoteStale)
+			}
+			if actions[0].Message == "" {
+				t.Error("no comment body, so the drift would go unreported")
+			}
+		})
+	}
+}
+
+// Untouched is a conjunction, and both halves matter on real boards.
+func TestUntouched(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		e    Existing
+		want bool
+	}{
+		{"unassigned and to do", Existing{Category: "new"}, true},
+		{"assigned and to do", Existing{Category: "new", Assigned: true}, false},
+		{"unassigned and in progress", Existing{Category: "indeterminate"}, false},
+		{"done", Existing{Category: "done"}, false},
+		{"no category reported", Existing{}, false},
+	} {
+		if got := tc.e.Untouched(); got != tc.want {
+			t.Errorf("%s: Untouched() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Apply has to route the new kind to the write, or a planned update silently
+// does nothing.
+func TestApplyPerformsUpdates(t *testing.T) {
+	rec := newRecorder()
+	d := draft("Upgrade app to 1.2", []string{"acr.io/app"}, "1.2")
+	results := Apply(context.Background(), rec, []Action{
+		{Kind: ActionUpdate, TicketKey: "PROJ-1", Draft: d},
+	})
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("results = %+v", results)
+	}
+	got, ok := rec.updated["PROJ-1"]
+	if !ok {
+		t.Fatalf("no update recorded; updated = %v", rec.updated)
+	}
+	if got.Summary != d.Summary {
+		t.Errorf("updated with summary %q, want %q", got.Summary, d.Summary)
+	}
+	if len(rec.comments["PROJ-1"]) != 0 {
+		t.Errorf("an update also posted a comment: %v", rec.comments["PROJ-1"])
 	}
 }

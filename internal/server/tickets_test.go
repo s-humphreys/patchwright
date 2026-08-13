@@ -16,6 +16,7 @@ import (
 
 // stubTicketer plans a fixed set of drafts and records what gets applied.
 type stubTicketer struct {
+	updated  []string
 	drafts   []ticket.Draft
 	open     map[string][]ticket.Existing
 	planErr  error
@@ -50,6 +51,11 @@ func (s *stubTicketer) Create(_ context.Context, d ticket.Draft) (string, error)
 
 func (s *stubTicketer) AddImages(_ context.Context, key string, images []string) error {
 	s.extended[key] = append(s.extended[key], images...)
+	return nil
+}
+
+func (s *stubTicketer) Update(_ context.Context, key string, d ticket.Draft) error {
+	s.updated = append(s.updated, key)
 	return nil
 }
 

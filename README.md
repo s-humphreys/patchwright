@@ -432,6 +432,27 @@ per-instance, and a name that does not exist fails ticket creation. A dry run pr
 `urgent -> Highest` per ticket so a flattened queue is visible before anything is
 created.
 
+**A stale ticket nobody has picked up is corrected, not commented on.** When the
+version a ticket asks for has moved on, what happens next depends on whether anyone
+has engaged with it. If the ticket is unassigned *and* still in a "new" status
+category, the summary and description are rewritten to the current target: leaving
+a wrong summary with the right answer in a comment underneath wastes the reader's
+time twice, once working out that the title is wrong and again finding the real
+target further down.
+
+If it is assigned, or already in progress, it is only commented on. Both halves of
+that test matter. An unassigned ticket in progress is being worked by someone who
+has not claimed it, common on boards that assign at standup; an assigned ticket in
+To Do has an owner who has read it and knows what it says. Rewriting either changes
+the task after someone engaged with it.
+
+Only the wording is replaced. Priority is left alone, because a human may have
+deliberately changed it and silently reverting someone's triage is a worse bug than
+a stale summary, and the images are unchanged since the draft covers the same group
+by definition. No comment is posted alongside: Jira records field edits in the issue
+history, which is a better audit trail than a comment asserting that an edit
+happened.
+
 **It reconciles rather than only creating.** A queue that is only ever added to rots
 three ways, all of which happened on a real project inside a day: a ticket covering
 one image of a change suppresses the rest, leaving them with no ticket and nothing

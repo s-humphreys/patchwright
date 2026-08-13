@@ -36,6 +36,12 @@ const (
 	ActionExtend ActionKind = "extend"
 	// ActionNoteStale comments that the version the ticket asks for has moved on.
 	ActionNoteStale ActionKind = "note-stale"
+	// ActionUpdate rewrites a ticket whose target has moved on, rather than
+	// commenting, when nobody has picked it up yet. A ticket asking for a version
+	// that is no longer the current one wastes the reader's time twice: once
+	// working out that the summary is wrong, and again finding the real target in
+	// a comment further down.
+	ActionUpdate ActionKind = "update"
 	// ActionNoteDone comments that the work appears finished, for a human to close.
 	ActionNoteDone ActionKind = "note-done"
 	// ActionSkip records a ticket that already covers its group correctly.
@@ -100,9 +106,22 @@ func Reconcile(in ReconcileInput) []Action {
 			continue
 		}
 		if stale := staleTarget(d, lead); stale != "" {
+			// Untouched means nobody has engaged with it, so correcting it in place
+			// is strictly better than leaving a wrong summary with a correction
+			// underneath. Once someone has claimed it or started it, editing would
+			// change the task after they read it, and a comment is the honest move.
+			if lead.Untouched() {
+				actions = append(actions, Action{
+					Kind: ActionUpdate, TicketKey: lead.Key, Draft: d,
+					Why: "the available version has moved on and nobody has picked the ticket up, " +
+						"so it was corrected rather than commented on",
+				})
+				continue
+			}
 			actions = append(actions, Action{
 				Kind: ActionNoteStale, TicketKey: lead.Key, Message: stale,
-				Why: "the available version has moved on since the ticket was raised",
+				Why: "the available version has moved on since the ticket was raised, " +
+					"and someone has already picked it up so it was not edited",
 			})
 			continue
 		}

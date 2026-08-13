@@ -190,16 +190,25 @@ func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) 
 	for i, a := range actions {
 		fmt.Fprintf(w, "--- %d of %d: %s ---\n", i+1, len(actions), a.Kind)
 		fmt.Fprintf(w, "Why:      %s\n", a.Why)
+		// Every action names its tracker, not just creations: reviewing forty
+		// actions across two boards means knowing which team each one touches.
+		// For an action against an existing ticket the project comes from the
+		// issue key, which is where the write will actually land.
+		fmt.Fprintf(w, "Tracker:  %s\n", describeActionTracker(cfg, a))
 		switch a.Kind {
 		case ticket.ActionCreate:
 			fmt.Fprintf(w, "Summary:  %s\n", a.Draft.Summary)
-			// Where a ticket lands is the question routing creates, so a dry run
-			// has to answer it before anyone approves the run.
-			fmt.Fprintf(w, "Tracker:  %s\n", describeRoute(cfg, a.Draft.Route))
 			fmt.Fprintf(w, "Priority: %s\n", describePriority(routedConfig(cfg, a.Draft.Route), a.Draft.Priority))
 			fmt.Fprintf(w, "Images:   %v\n\n%s\n", a.Draft.Images, a.Draft.Description)
 		case ticket.ActionSkip:
 			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+		case ticket.ActionUpdate:
+			// The rewrite is shown in full: it replaces what someone would
+			// otherwise read on the board, so approving it blind is worse than
+			// approving a comment blind.
+			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+			fmt.Fprintf(w, "New summary: %s\n", a.Draft.Summary)
+			fmt.Fprintf(w, "New description:\n\n%s\n", a.Draft.Description)
 		default:
 			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
 			if len(a.Images) > 0 {
@@ -234,6 +243,31 @@ func routedConfig(cfg config.JiraConfig, route string) config.JiraConfig {
 		}
 	}
 	return cfg
+}
+
+// describeActionTracker names where an action will land.
+//
+// A creation goes wherever its route says. An action against an existing ticket
+// goes to that ticket's project, which the issue key already states — reading the
+// route for those would describe where a new ticket would go, not where this write
+// is going, and the two can differ once routes change.
+func describeActionTracker(cfg config.JiraConfig, a ticket.Action) string {
+	if a.Kind == ticket.ActionCreate {
+		return describeRoute(cfg, a.Draft.Route)
+	}
+	project, _, ok := strings.Cut(a.TicketKey, "-")
+	if !ok || project == "" {
+		return "unknown"
+	}
+	for _, p := range cfg.Projects() {
+		if p == project {
+			return project
+		}
+	}
+	// Worth saying out loud rather than printing the key and moving on: a ticket
+	// in a project this configuration does not write to usually means a route was
+	// removed or renamed while its tickets are still open.
+	return project + " (not a configured project)"
 }
 
 // describeRoute names the tracker a draft lands on, and the rule that chose it.
@@ -272,8 +306,8 @@ func reportResults(w io.Writer, results []ticket.Result) {
 		}
 	}
 	counts := ticket.Summarize(results)
-	fmt.Fprintf(w, "\nCreated %d, extended %d, commented %d, unchanged %d.\n",
-		counts[ticket.ActionCreate], counts[ticket.ActionExtend],
+	fmt.Fprintf(w, "\nCreated %d, extended %d, updated %d, commented %d, unchanged %d.\n",
+		counts[ticket.ActionCreate], counts[ticket.ActionExtend], counts[ticket.ActionUpdate],
 		counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone], counts[ticket.ActionSkip])
 	if failed > 0 {
 		fmt.Fprintf(w, "%d action(s) failed; see above.\n", failed)

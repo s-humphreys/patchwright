@@ -85,6 +85,23 @@ type Existing struct {
 	// recurrence after a completed upgrade is genuinely new work, so only open
 	// tickets suppress a new one.
 	Done bool
+	// Assigned reports whether anyone has picked the ticket up. Together with
+	// Category it decides whether a stale ticket can be rewritten or should only
+	// be commented on: nobody's work is disrupted by editing a ticket that is
+	// untouched and unassigned, whereas rewriting one under the person working it
+	// changes the task they are halfway through.
+	Assigned bool
+}
+
+// Untouched reports whether a ticket can be rewritten rather than commented on.
+//
+// Both conditions are needed. An unassigned ticket already in progress is being
+// worked by someone who has not claimed it — common on boards that assign at
+// standup rather than on pickup — and an assigned ticket still in "To Do" has an
+// owner who has read it and knows what it says. Editing either would change the
+// task after someone engaged with it, so the comment is the honest move there.
+func (e Existing) Untouched() bool {
+	return !e.Assigned && e.Category == "new"
 }
 
 // FindOpen returns open (not Done) tickets already covering any of the images.
@@ -222,6 +239,11 @@ func (j *Jira) openByImageIn(ctx context.Context, cfg config.JiraConfig) (map[st
 							Key string `json:"key"`
 						} `json:"statusCategory"`
 					} `json:"status"`
+					// A pointer, because Jira sends null for unassigned and the
+					// difference between null and an object is the whole signal.
+					Assignee *struct {
+						AccountID string `json:"accountId"`
+					} `json:"assignee"`
 				} `json:"fields"`
 				// The image field is configurable, so it cannot be a named struct
 				// field; decode the raw fields separately below.
@@ -241,7 +263,7 @@ func (j *Jira) openByImageIn(ctx context.Context, cfg config.JiraConfig) (map[st
 
 		q := url.Values{}
 		q.Set("jql", jql)
-		q.Set("fields", "status,summary,"+jiraImageFieldName(cfg))
+		q.Set("fields", "status,summary,assignee,"+jiraImageFieldName(cfg))
 		q.Set("maxResults", "100")
 		if token != "" {
 			q.Set("nextPageToken", token)
@@ -264,6 +286,7 @@ func (j *Jira) openByImageIn(ctx context.Context, cfg config.JiraConfig) (map[st
 				Summary:  issue.Fields.Summary,
 				Category: issue.Fields.Status.StatusCategory.Key,
 				Done:     issue.Fields.Status.StatusCategory.Key == "done",
+				Assigned: issue.Fields.Assignee != nil,
 			}
 			for _, img := range imagesOfFields(cfg, loose.Issues[i].Fields) {
 				out[img] = append(out[img], e)
@@ -437,6 +460,27 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 		return "", fmt.Errorf("create ticket %q in project %s: %w", d.Summary, cfg.Project, err)
 	}
 	return resp.Key, nil
+}
+
+// Update rewrites a ticket's summary and description to match a fresh draft.
+//
+// Only the wording is replaced. The images stay as they are, because the draft
+// that produced this update covers the same group by definition, and priority
+// stays because a human may have deliberately changed it — silently reverting
+// someone's triage decision would be a worse bug than a stale summary.
+//
+// No comment is posted alongside. Jira records field edits in the issue history,
+// which is a better audit trail than a comment claiming an edit happened, and
+// patchwright logs the write with its own reason.
+func (j *Jira) Update(ctx context.Context, key string, d Draft) error {
+	body := map[string]any{"fields": map[string]any{
+		"summary":     d.Summary,
+		"description": ADFDocument(d.Description),
+	}}
+	if err := j.do(ctx, http.MethodPut, "/rest/api/3/issue/"+url.PathEscape(key), body, nil); err != nil {
+		return fmt.Errorf("update %s: %w", key, err)
+	}
+	return nil
 }
 
 // AddImages adds image repositories to an existing ticket's image field or labels,
