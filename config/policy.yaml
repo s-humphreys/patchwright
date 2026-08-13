@@ -64,6 +64,10 @@ scan:
 #   # A group of findings is never split across routes: two findings sharing one
 #   # upgrade but owned by different teams become two tickets, because one issue
 #   # cannot exist in two projects.
+#   # With requireRoute, a finding matching no route below gets no ticket at all,
+#   # rather than falling through to `project` above. It is still reported as a
+#   # skip with the owner named, so unrouted work is visible rather than silent.
+#   requireRoute: true
 #   routes:
 #     - name: sre
 #       when: "owner['team'] == 'sre'"

@@ -96,6 +96,20 @@ type JiraConfig struct {
 	// restating the template, the image field and the priority map.
 	Routes []TicketRoute `yaml:"routes"`
 
+	// RequireRoute, when true, means a finding that matches no route gets no
+	// ticket rather than falling through to the settings above.
+	//
+	// Worth being explicit about, because the two behaviours are both defensible
+	// and the wrong one is silent. Fall-through suits a single shared board.
+	// RequireRoute suits a deployment where every tracker is named on purpose:
+	// coverage arriving for a team nobody has routed yet then produces reported
+	// skips rather than tickets on whichever board happens to be the default.
+	//
+	// Skipped findings are still reported with the reason, and still appear in the
+	// assessment and the queue. This decides where work is tracked, never whether
+	// it is visible.
+	RequireRoute bool `yaml:"requireRoute"`
+
 	// RequireUpgrade, when unset, defaults to true: no ticket is raised for a
 	// finding with nothing to upgrade to. A ticket saying "upgrade to the latest
 	// version" for an image already on the latest wastes the assignee's time,

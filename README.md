@@ -406,6 +406,21 @@ Two consequences worth knowing:
   existing ticket resolve its tracker from the issue key's project prefix, so the
   images go into the field that project actually uses.
 
+**`requireRoute: true` means no match, no ticket.** By default an unmatched finding
+falls through to the top-level `project`, which suits a single shared board. Set
+`requireRoute` and a finding matching no route is reported as skipped instead, with
+the owner named in the reason:
+
+```
+no ticket route matches its owner (engineering/orders) and requireRoute is set,
+so no tracker is configured for this work
+```
+
+It is still in the report and the queue — this decides where work is tracked, never
+whether it is visible. Worth setting when every tracker is named on purpose: a team
+whose coverage arrives before anyone has routed it then produces reported skips
+rather than tickets on whichever board happens to be the default.
+
 Dry runs print `Tracker: SRE / Bug (route "sre")` per ticket, and the API's ticket
 plan carries `route` on every action, so where work lands is reviewable before
 anything is written.

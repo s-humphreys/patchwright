@@ -141,6 +141,21 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
 			continue
 		}
+		// With requireRoute, an unrouted finding is reported rather than sent to
+		// the default tracker. Reported, not dropped: the work still exists and
+		// still needs a home, and silence here would read as "nothing to do".
+		if p.cfg.RequireRoute && p.routes.match(f) == routeName {
+			owner := "unattributed"
+			if f.Owner.Class != "" || f.Owner.Team != "" {
+				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
+			}
+			out.Skips = append(out.Skips, Skip{
+				Image: f.Image,
+				Reason: fmt.Sprintf("no ticket route matches its owner (%s) and requireRoute is set, "+
+					"so no tracker is configured for this work", owner),
+			})
+			continue
+		}
 		eligible = append(eligible, f)
 	}
 

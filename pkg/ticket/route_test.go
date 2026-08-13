@@ -221,3 +221,75 @@ func TestEveryDraftIsRouted(t *testing.T) {
 		}
 	}
 }
+
+// requireRoute: work with no configured tracker is reported, not quietly sent to
+// whichever board happens to be the default.
+func TestRequireRouteSkipsUnroutedWorkWithAReason(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/ticket.tmpl"
+	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.JiraConfig{
+		Board: 1, Project: "DVOP", Template: tmpl, ImageField: "customfield_1",
+		RequireRoute: true,
+		Routes: []config.TicketRoute{
+			{Name: "platform", When: "owner['class'] == 'platform'", Project: "DVOP"},
+		},
+	}
+	p, err := NewPlanner(cfg)
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	plan, err := p.Plan([]sink.FindingView{
+		routedView("platform", "cpo", "acr.io/platform-thing"),
+		routedView("engineering", "orders", "acr.io/app"),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 || plan.Drafts[0].Route != "platform" {
+		t.Fatalf("got %d drafts %+v, want only the platform one", len(plan.Drafts), plan.Drafts)
+	}
+	// The unrouted finding must be visible, and say why.
+	var found bool
+	for _, s := range plan.Skips {
+		if strings.Contains(s.Image, "acr.io/app") {
+			found = true
+			for _, want := range []string{"no ticket route", "engineering/orders", "requireRoute"} {
+				if !strings.Contains(s.Reason, want) {
+					t.Errorf("skip reason %q does not mention %q", s.Reason, want)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the unrouted finding was dropped silently; skips = %+v", plan.Skips)
+	}
+}
+
+// Without requireRoute the previous behaviour stands, so enabling routing does
+// not silently stop tickets for anyone who has not written routes yet.
+func TestWithoutRequireRouteUnroutedWorkUsesTheDefault(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/ticket.tmpl"
+	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(config.JiraConfig{
+		Board: 1, Project: "DVOP", Template: tmpl, ImageField: "customfield_1",
+		Routes: []config.TicketRoute{
+			{Name: "platform", When: "owner['class'] == 'platform'", Project: "DVOP"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	plan, err := p.Plan([]sink.FindingView{routedView("engineering", "orders", "acr.io/app")})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 || plan.Drafts[0].Route != routeName {
+		t.Fatalf("got %d drafts %+v, want one on the default route", len(plan.Drafts), plan.Drafts)
+	}
+}
