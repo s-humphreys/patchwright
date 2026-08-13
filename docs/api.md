@@ -9,7 +9,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 ```
 
 Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
-[the published API reference](https://s-humphreys.github.io/patchwright/).
+[the published API reference](https://patchwright.shumphreys.com).
 
 | Endpoint | Purpose |
 |---|---|

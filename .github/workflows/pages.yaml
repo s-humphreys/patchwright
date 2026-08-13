@@ -32,6 +32,9 @@ jobs:
           mkdir -p site/images
           cp docs/api/index.html docs/api/openapi.yaml site/
           cp docs/images/patchwright.png site/images/
+          # Required because this deploys from an artifact rather than a branch:
+          # without it a later deploy drops the custom domain.
+          echo "patchwright.shumphreys.com" > site/CNAME
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
