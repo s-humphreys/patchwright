@@ -669,6 +669,82 @@ func (j *Jira) Comment(ctx context.Context, key, body string) error {
 	return nil
 }
 
+// commentRef is the marker appended to a deduplicated comment, and the thing
+// looked for before posting another.
+//
+// Visible rather than hidden. A reader seeing the same note twice deserves to know
+// what identified it, and Jira offers no comment metadata that survives a round
+// trip through the API without a property write per comment.
+func commentRef(dedupe string) string { return "patchwright-ref: " + dedupe }
+
+// CommentOnce posts a comment unless one carrying the same reference is already
+// there. It reports whether it posted.
+//
+// Without this, reconciliation comments on every run: a ticket in a state that
+// warrants a note collects an identical comment hourly, forever, which buries the
+// ticket's own history and teaches people to skip anything patchwright writes.
+//
+// A read before every write, deliberately. The alternative is remembering what we
+// have said, and local state drifts the moment someone deletes a comment or a
+// second deployment writes to the same board — the same reason existing tickets are
+// found by querying Jira rather than from a state file.
+func (j *Jira) CommentOnce(ctx context.Context, key, dedupe, body string) (bool, error) {
+	if dedupe == "" {
+		return true, j.Comment(ctx, key, body)
+	}
+	ref := commentRef(dedupe)
+	present, err := j.hasComment(ctx, key, ref)
+	if err != nil {
+		// Failing closed would mean never commenting when the check breaks, which
+		// loses information silently; failing open would duplicate. The check
+		// failing is itself worth reporting, so the caller decides.
+		return false, err
+	}
+	if present {
+		return false, nil
+	}
+	return true, j.Comment(ctx, key, body+"\n\n"+ref)
+}
+
+// hasComment reports whether any comment on the ticket carries the reference.
+//
+// The raw response is searched rather than the parsed document: a comment body is
+// ADF, so the marker sits inside nested content nodes, and matching the serialised
+// form finds it wherever it landed without walking the tree.
+func (j *Jira) hasComment(ctx context.Context, key, ref string) (bool, error) {
+	start := 0
+	for {
+		q := url.Values{}
+		q.Set("maxResults", "100")
+		q.Set("startAt", fmt.Sprintf("%d", start))
+		// Oldest first is the default; our note is usually old, so this finds it
+		// on the first page of a long-running ticket.
+		body, err := j.raw(ctx, http.MethodGet,
+			"/rest/api/3/issue/"+url.PathEscape(key)+"/comment?"+q.Encode())
+		if err != nil {
+			return false, fmt.Errorf("read comments on %s: %w", key, err)
+		}
+		if strings.Contains(string(body), ref) {
+			return true, nil
+		}
+		var page struct {
+			StartAt    int `json:"startAt"`
+			MaxResults int `json:"maxResults"`
+			Total      int `json:"total"`
+			Comments   []struct {
+				ID string `json:"id"`
+			} `json:"comments"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return false, fmt.Errorf("decode comments on %s: %w", key, err)
+		}
+		start += len(page.Comments)
+		if len(page.Comments) == 0 || start >= page.Total {
+			return false, nil
+		}
+	}
+}
+
 // raw performs a request and returns the response body, for callers that must
 // decode it more than once (the image field's name is configuration, so it cannot
 // be a named struct field).

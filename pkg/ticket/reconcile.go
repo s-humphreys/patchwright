@@ -78,6 +78,16 @@ type Action struct {
 	Images []string
 	// Message is the comment to post, for the note actions.
 	Message string
+	// Dedupe identifies a comment's content so it is posted once rather than on
+	// every run. Empty means "always post".
+	//
+	// Reconciliation is a loop: without this, a ticket sitting in a state that
+	// warrants a note collects an identical comment every refresh — hourly,
+	// indefinitely — which buries the ticket's real history and trains people to
+	// ignore anything patchwright says. The key includes the facts that would make
+	// a fresh comment worth reading, so a note whose content has genuinely changed
+	// still gets posted.
+	Dedupe string
 	// Why explains the action in the dry run and the logs.
 	Why string
 }
@@ -144,6 +154,9 @@ func Reconcile(in ReconcileInput) []Action {
 			}
 			actions = append(actions, Action{
 				Kind: ActionNoteStale, TicketKey: lead.Key, Message: stale,
+				// Keyed on the version now available: the target moving again is
+				// news worth a second comment, the same target is not.
+				Dedupe: "note-stale:" + latestOf(d),
 				Why: "the available version has moved on since the ticket was raised, " +
 					"and someone has already picked it up so it was not edited",
 			})
@@ -209,7 +222,10 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 						"tell whether that is because the upgrade landed or because nothing is " +
 						"assessing these images any more: " + strings.Join(blind, ", ") +
 						". Worth confirming before closing.",
-					Why: "no longer in the queue, but coverage for its images is missing",
+					// Keyed on which images are blind: a different set is a
+					// different problem and worth saying again.
+					Dedupe: "note-done:blind:" + strings.Join(blind, ","),
+					Why:    "no longer in the queue, but coverage for its images is missing",
 				})
 				continue
 			}
@@ -218,12 +234,23 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				Message: "patchwright no longer reports an available upgrade for this ticket's " +
 					"images, which suggests the work is done. Left open deliberately: closing " +
 					"is a human decision.",
-				Why: "no longer in the queue and its images are still assessed",
+				// Nothing in this note varies, so it is said exactly once.
+				Dedupe: "note-done",
+				Why:    "no longer in the queue and its images are still assessed",
 			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TicketKey < out[j].TicketKey })
 	return out
+}
+
+// latestOf reports the version a single-image draft asks for, used to key a
+// staleness note. Empty for grouped drafts, which staleTarget never produces.
+func latestOf(d Draft) string {
+	if len(d.Upgrades) == 1 {
+		return d.Upgrades[0].Latest
+	}
+	return ""
 }
 
 // projectOf extracts the project key from a Jira issue key ("PROJ-123" -> "PROJ").

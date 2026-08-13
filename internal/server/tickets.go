@@ -215,6 +215,13 @@ func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 		if r.Action.Kind == ticket.ActionSkip {
 			continue // nothing changed, so there is nothing to record
 		}
+		if r.NoOp {
+			// Not a write, so not part of the audit trail — but worth saying, or a
+			// quiet run looks like a broken one.
+			slog.DebugContext(ctx, "jira write skipped: already present",
+				"source", source, "action", r.Action.Kind, "ticket", r.Key)
+			continue
+		}
 		if r.Err != nil {
 			failed++
 			slog.WarnContext(ctx, "jira write failed",
@@ -234,7 +241,7 @@ func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 	for _, kind := range ticket.ActionKinds() {
 		attrs = append(attrs, string(kind), counts[kind])
 	}
-	attrs = append(attrs, "failed", failed)
+	attrs = append(attrs, "already_present", ticket.NoOps(results), "failed", failed)
 	slog.InfoContext(ctx, "ticket reconciliation complete", attrs...)
 }
 

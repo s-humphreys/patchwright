@@ -19,16 +19,18 @@ import (
 
 // stubTicketer plans a fixed set of drafts and records what gets applied.
 type stubTicketer struct {
-	updated   []string
-	closed    []string
-	autoClose bool
-	drafts    []ticket.Draft
-	open      map[string][]ticket.Existing
-	planErr   error
-	openErr   error
-	created   []ticket.Draft
-	comments  map[string][]string
-	extended  map[string][]string
+	updated          []string
+	closed           []string
+	dedupes          []string
+	alreadyCommented bool
+	autoClose        bool
+	drafts           []ticket.Draft
+	open             map[string][]ticket.Existing
+	planErr          error
+	openErr          error
+	created          []ticket.Draft
+	comments         map[string][]string
+	extended         map[string][]string
 }
 
 func newStubTicketer(drafts ...ticket.Draft) *stubTicketer {
@@ -61,6 +63,16 @@ func (s *stubTicketer) AddImages(_ context.Context, key string, images []string)
 
 func (s *stubTicketer) Config() config.JiraConfig {
 	return config.JiraConfig{Project: "PROJ", AutoClose: s.autoClose}
+}
+
+// CommentOnce records the dedupe key it was asked about, and can be told the
+// comment is already present so the no-op path is testable.
+func (s *stubTicketer) CommentOnce(ctx context.Context, key, dedupe, body string) (bool, error) {
+	s.dedupes = append(s.dedupes, dedupe)
+	if s.alreadyCommented {
+		return false, nil
+	}
+	return true, s.Comment(ctx, key, body)
 }
 
 func (s *stubTicketer) Close(_ context.Context, key, comment string) error {

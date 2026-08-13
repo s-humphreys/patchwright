@@ -218,3 +218,123 @@ func TestCloseFallsBackWhenTheWorkflowRejectsTheComment(t *testing.T) {
 		t.Error("the reasoning was lost: no comment posted after the bare transition")
 	}
 }
+
+// commentServer records posted comments and serves them back, so a second run
+// sees what the first one wrote.
+type commentServer struct {
+	posted []string
+	gets   int
+}
+
+func (cs *commentServer) jira(t *testing.T) *Jira {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			cs.gets++
+			comments := make([]map[string]any, 0, len(cs.posted))
+			for _, body := range cs.posted {
+				comments = append(comments, map[string]any{
+					"id": "1", "body": ADFDocument(body),
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"startAt": 0, "maxResults": 100, "total": len(comments), "comments": comments,
+			})
+			return
+		}
+		var body struct {
+			Body map[string]any `json:"body"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cs.posted = append(cs.posted, flattenADF(body.Body))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(srv.Close)
+	cfg := baseCfg()
+	return &Jira{BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
+		cfg: cfg, byRoute: map[string]config.JiraConfig{routeName: cfg}}
+}
+
+// flattenADF pulls the text out of an ADF document, which is how the marker is
+// found in a real response too.
+func flattenADF(doc map[string]any) string {
+	raw, _ := json.Marshal(doc)
+	return string(raw)
+}
+
+// The bug: reconciliation runs on a loop, so a note-done posted every refresh
+// buries the ticket's own history and trains people to ignore the tool.
+func TestCommentOncePostsOnlyOnce(t *testing.T) {
+	cs := &commentServer{}
+	j := cs.jira(t)
+
+	posted, err := j.CommentOnce(context.Background(), "PROJ-1", "note-done", "the work looks done")
+	if err != nil || !posted {
+		t.Fatalf("first call: posted=%v err=%v", posted, err)
+	}
+	// Simulate the next hourly refresh, and the ten after it.
+	for i := 0; i < 10; i++ {
+		posted, err = j.CommentOnce(context.Background(), "PROJ-1", "note-done", "the work looks done")
+		if err != nil {
+			t.Fatalf("refresh %d: %v", i, err)
+		}
+		if posted {
+			t.Fatalf("refresh %d posted a duplicate comment", i)
+		}
+	}
+	if len(cs.posted) != 1 {
+		t.Errorf("ticket has %d comments, want 1", len(cs.posted))
+	}
+}
+
+// A note whose content genuinely changed is worth saying again: the upgrade target
+// moving is news, the same target is not.
+func TestCommentOncePostsAgainWhenTheContentChanges(t *testing.T) {
+	cs := &commentServer{}
+	j := cs.jira(t)
+
+	if _, err := j.CommentOnce(context.Background(), "PROJ-1", "note-stale:3.1.0", "now at 3.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	posted, err := j.CommentOnce(context.Background(), "PROJ-1", "note-stale:3.2.0", "now at 3.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !posted {
+		t.Error("a changed target did not produce a new comment")
+	}
+	if len(cs.posted) != 2 {
+		t.Errorf("ticket has %d comments, want 2", len(cs.posted))
+	}
+}
+
+// An empty dedupe means "always post", which is what the extend explanation wants:
+// it only happens when the images actually changed.
+func TestCommentOnceWithoutADedupeAlwaysPosts(t *testing.T) {
+	cs := &commentServer{}
+	j := cs.jira(t)
+	for i := 0; i < 3; i++ {
+		posted, err := j.CommentOnce(context.Background(), "PROJ-1", "", "adding images")
+		if err != nil || !posted {
+			t.Fatalf("call %d: posted=%v err=%v", i, posted, err)
+		}
+	}
+	if len(cs.posted) != 3 {
+		t.Errorf("posted %d comments, want 3", len(cs.posted))
+	}
+	if cs.gets != 0 {
+		t.Errorf("read comments %d times for an undeduplicated post", cs.gets)
+	}
+}
+
+// The marker has to survive the round trip, or every run reposts.
+func TestTheDedupeMarkerIsPresentInWhatWasPosted(t *testing.T) {
+	cs := &commentServer{}
+	j := cs.jira(t)
+	if _, err := j.CommentOnce(context.Background(), "PROJ-1", "note-done", "body text"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cs.posted[0], commentRef("note-done")) {
+		t.Errorf("posted comment does not carry its reference: %s", cs.posted[0])
+	}
+}

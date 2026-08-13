@@ -176,17 +176,30 @@ func TestReconcileNeverClosesAnything(t *testing.T) {
 
 // recorder captures applied actions without a Jira.
 type recorder struct {
-	created  []Draft
-	extended map[string][]string
-	comments map[string][]string
-	updated  map[string]Draft
-	closed   map[string]string
-	failOn   ActionKind
+	created          []Draft
+	extended         map[string][]string
+	comments         map[string][]string
+	updated          map[string]Draft
+	closed           map[string]string
+	alreadyCommented map[string]bool
+	failOn           ActionKind
 }
 
 func newRecorder() *recorder {
 	return &recorder{extended: map[string][]string{}, comments: map[string][]string{},
-		updated: map[string]Draft{}, closed: map[string]string{}}
+		updated: map[string]Draft{}, closed: map[string]string{},
+		alreadyCommented: map[string]bool{}}
+}
+
+func (r *recorder) CommentOnce(ctx context.Context, key, dedupe, body string) (bool, error) {
+	if r.alreadyCommented[dedupe] {
+		return false, nil
+	}
+	if r.alreadyCommented == nil {
+		r.alreadyCommented = map[string]bool{}
+	}
+	r.alreadyCommented[dedupe] = true
+	return true, r.Comment(ctx, key, body)
 }
 
 func (r *recorder) Close(_ context.Context, key, comment string) error {
@@ -608,5 +621,78 @@ func TestAutoCloseIsResolvedPerProject(t *testing.T) {
 		if closed != tc.wantClose {
 			t.Errorf("%s: closed = %v, want %v", tc.key, closed, tc.wantClose)
 		}
+	}
+}
+
+// Every note action must carry a dedupe key, or it repeats on every run. Asserted
+// over the reconciler's own output rather than by inspection, so a new note added
+// later cannot forget one.
+func TestEveryNoteActionCarriesADedupeKey(t *testing.T) {
+	// A stale target on a ticket someone has picked up, and two done-looking
+	// tickets: one whose images are still assessed, one whose coverage is missing.
+	actions := Reconcile(ReconcileInput{
+		Drafts: []Draft{draft("Upgrade app to 2.1.0", []string{"acme/app"}, "2.1.0")},
+		OpenByImage: map[string][]Existing{
+			"acme/app":  {{Key: "PROJ-1", Summary: "Upgrade app to 2.0.0", Category: "indeterminate", Assigned: true}},
+			"acme/done": {{Key: "PROJ-2"}},
+			"acme/gone": {{Key: "PROJ-3"}},
+		},
+		Findings: []sink.FindingView{assessed("acme/done")},
+	})
+	var notes int
+	for _, a := range actions {
+		if a.Kind != ActionNoteStale && a.Kind != ActionNoteDone {
+			continue
+		}
+		notes++
+		if a.Dedupe == "" {
+			t.Errorf("%s on %s has no dedupe key, so it will repeat every run: %s",
+				a.Kind, a.TicketKey, a.Why)
+		}
+	}
+	if notes == 0 {
+		t.Fatal("no note actions produced, so this asserts nothing")
+	}
+}
+
+// The staleness key tracks the version, so a target that moves again is said again
+// while a static one is not.
+func TestStaleNoteKeyTracksTheAvailableVersion(t *testing.T) {
+	existing := Existing{Key: "PROJ-1", Summary: "Upgrade app to 2.0.0",
+		Category: "indeterminate", Assigned: true}
+	first := Reconcile(ReconcileInput{
+		Drafts:      []Draft{draft("Upgrade app to 2.1.0", []string{"acme/app"}, "2.1.0")},
+		OpenByImage: map[string][]Existing{"acme/app": {existing}},
+	})
+	second := Reconcile(ReconcileInput{
+		Drafts:      []Draft{draft("Upgrade app to 2.2.0", []string{"acme/app"}, "2.2.0")},
+		OpenByImage: map[string][]Existing{"acme/app": {existing}},
+	})
+	if first[0].Dedupe == second[0].Dedupe {
+		t.Errorf("both versions share the dedupe key %q, so the second move would go unsaid",
+			first[0].Dedupe)
+	}
+}
+
+// A no-op must not be counted as a write, or a report claims work that never
+// happened.
+func TestNoOpsAreNotCountedAsWrites(t *testing.T) {
+	rec := newRecorder()
+	action := Action{Kind: ActionNoteDone, TicketKey: "PROJ-1",
+		Message: "looks done", Dedupe: "note-done"}
+
+	first := Apply(context.Background(), rec, []Action{action})
+	if Summarize(first)[ActionNoteDone] != 1 || NoOps(first) != 0 {
+		t.Fatalf("first run: summarize=%v noops=%d", Summarize(first), NoOps(first))
+	}
+	second := Apply(context.Background(), rec, []Action{action})
+	if Summarize(second)[ActionNoteDone] != 0 {
+		t.Errorf("a comment that was already present was counted as posted")
+	}
+	if NoOps(second) != 1 {
+		t.Errorf("NoOps = %d, want 1", NoOps(second))
+	}
+	if second[0].Err != nil {
+		t.Errorf("a no-op was reported as a failure: %v", second[0].Err)
 	}
 }

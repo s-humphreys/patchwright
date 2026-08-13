@@ -506,6 +506,22 @@ run forever. Where a transition screen rejects an attached comment, the transiti
 is retried bare and the reason posted separately, since a closed ticket with no
 explanation still beats an open ticket nobody is reading.
 
+**A note is posted once, not every run.** Reconciliation is a loop, so a ticket
+sitting in a state that warrants a comment would collect an identical one every
+refresh — hourly, indefinitely — burying the ticket's own history and teaching people
+to skip anything patchwright writes. Each note carries a reference
+(`patchwright-ref: note-done`), and existing comments are read before posting.
+
+The reference includes the facts that would make a fresh comment worth reading, so a
+note whose content genuinely changed is still posted: a staleness note is keyed on
+the version now available, so a target that moves again is said again, while the same
+target is not. Comments with no reference — the explanation attached to extending a
+ticket — always post, because that only happens when the images actually changed.
+
+A comment that was already present is reported as `already_present`, never counted as
+posted: claiming a write that did not happen is the same error as counting an
+unassessed image as clean.
+
 **It reconciles rather than only creating.** A queue that is only ever added to rots
 three ways, all of which happened on a real project inside a day: a ticket covering
 one image of a change suppresses the rest, leaving them with no ticket and nothing
