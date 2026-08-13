@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -735,5 +736,107 @@ func TestSummaryReportsScanAndExploitCoverage(t *testing.T) {
 	if body.Summary.ExploitChecked > body.Summary.Scanned {
 		t.Errorf("exploit_checked %d exceeds scanned %d",
 			body.Summary.ExploitChecked, body.Summary.Scanned)
+	}
+}
+
+// Metrics are scrapable without a credential by default: a scrape config that
+// needs a bearer token is friction in the place least likely to tolerate it.
+func TestMetricsAreOpenByDefault(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/app:1", "platform", "team", true),
+	}}).WithAuth("secret")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("unauthenticated /metrics returned %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "patchwright_findings") {
+		t.Errorf("scrape has no patchwright metrics:\n%s", rec.Body.String())
+	}
+
+	// Everything else still needs the token: opening metrics must not open the API.
+	for _, path := range []string{"/", "/api/v1/summary", "/api/v1/findings"} {
+		rec = httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s returned %d without a token, want 401", path, rec.Code)
+		}
+	}
+
+	// The probes stay open, or a cluster cannot tell a wedged pod from a missing
+	// credential.
+	for _, path := range []string{"/healthz", "/readyz"} {
+		rec = httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code == http.StatusUnauthorized {
+			t.Errorf("%s requires a token; probes must not", path)
+		}
+	}
+
+}
+
+// A deployment that treats coverage counts as sensitive can gate them, and then a
+// scrape without the token must be refused rather than quietly served.
+func TestMetricsCanBeGated(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/app:1", "platform", "team", true),
+	}}).WithAuth("secret").WithMetricsAuth(true)
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("gated /metrics returned %d without a token, want 401", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gated /metrics returned %d with the token", rec.Code)
+	}
+}
+
+// Gating metrics on a server with no token configured would protect nothing while
+// looking like it did.
+func TestGatingMetricsWithoutATokenIsHonest(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/app:1", "platform", "team", true),
+	}}).WithMetricsAuth(true) // no WithAuth
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("metrics returned %d on an unauthenticated server, want 200", rec.Code)
+	}
+}
+
+// The assessment's own numbers and the metrics must come from the same run, or a
+// scrape lands between them and shows an estate that never existed.
+func TestMetricsMatchTheCachedAssessment(t *testing.T) {
+	findings := []model.Finding{
+		assessedFinding("acr.io/a:1", "platform", "cpo", true),
+		assessedFinding("acr.io/b:1", "engineering", "orders", false),
+	}
+	s := New(stubAssessor{findings: findings})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	scrape := rec.Body.String()
+	want := "patchwright_findings " + strconv.Itoa(body.Summary.Findings)
+	if !strings.Contains(scrape, want) {
+		t.Errorf("metrics disagree with the summary: want %q", want)
 	}
 }

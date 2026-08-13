@@ -63,10 +63,11 @@ const envAPIToken = "PATCHWRIGHT_API_TOKEN"
 
 func newServeCmd() *cobra.Command {
 	var (
-		in         assessInputs
-		addr       string
-		interval   time.Duration
-		autoTicket bool
+		in          assessInputs
+		addr        string
+		interval    time.Duration
+		autoTicket  bool
+		metricsAuth bool
 	)
 
 	cmd := &cobra.Command{
@@ -90,7 +91,7 @@ func newServeCmd() *cobra.Command {
 			// Authentication. The token comes from the environment rather than a
 			// flag so it does not land in a process list or a shell history.
 			token := os.Getenv(envAPIToken)
-			srv = srv.WithAuth(token)
+			srv = srv.WithAuth(token).WithMetricsAuth(metricsAuth)
 			if token == "" {
 				// Deliberately a warning on every start: an unauthenticated API
 				// that serves an estate's unpatched criticals is fine on a laptop
@@ -180,6 +181,11 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&in.exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&in.remediation, "remediation", false, "detect available upgrades for how images are deployed")
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "address to serve the API on")
+	cmd.Flags().BoolVar(&metricsAuth, "metrics-require-auth", false,
+		"require the API token on /metrics too. Off by default: a scrape config needing a "+
+			"credential is friction where it is least tolerated. On means anything scraping "+
+			"must present the token, which is worth it if coverage counts are treated as "+
+			"sensitive in your environment.")
 	cmd.Flags().BoolVar(&autoTicket, "auto-ticket", false,
 		"create and reconcile Jira tickets on every scheduled refresh. Off by default: a "+
 			"service that starts raising tickets the moment it deploys is not a good surprise. "+

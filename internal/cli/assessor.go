@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/enrich/registry"
@@ -136,8 +137,13 @@ func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 
 	occ, err := a.provider.Fetch(ctx)
 	if err != nil {
+		// Separate from the assessment counter: a provider that has started
+		// refusing us (an expired API key, a moved export) is a different fault
+		// from an assessment that failed later on, and needs a different response.
+		metrics.ProviderFetch("failure")
 		return nil, err
 	}
+	metrics.ProviderFetch("success")
 	slog.InfoContext(ctx, "fetched scan data", "provider", a.providerName, "occurrences", len(occ))
 
 	if len(a.liveEnrichers) > 0 {

@@ -338,3 +338,29 @@ func TestTheDedupeMarkerIsPresentInWhatWasPosted(t *testing.T) {
 		t.Errorf("posted comment does not carry its reference: %s", cs.posted[0])
 	}
 }
+
+// The metric's operation label is built from the path, so it must not carry issue
+// keys: one series per ticket, forever, is a metrics incident rather than
+// observability.
+func TestJiraOperationLabelIsBounded(t *testing.T) {
+	for _, tc := range []struct{ method, path, want string }{
+		{"GET", "/rest/api/3/issue/PROJ-123?fields=status", "get issue"},
+		{"GET", "/rest/api/3/issue/PROJ-999999", "get issue"},
+		{"PUT", "/rest/api/3/issue/PROJ-1", "put issue"},
+		{"POST", "/rest/api/3/issue", "post issue"},
+		{"POST", "/rest/api/3/issue/PROJ-1/comment", "post issue/comment"},
+		{"GET", "/rest/api/3/issue/PROJ-1/transitions", "get issue/transitions"},
+		{"POST", "/rest/api/3/issue/PROJ-1/transitions", "post issue/transitions"},
+		{"GET", "/rest/api/3/search/jql?jql=project+%3D+%22PROJ%22", "get search"},
+	} {
+		if got := jiraOperation(tc.method, tc.path); got != tc.want {
+			t.Errorf("%s %s -> %q, want %q", tc.method, tc.path, got, tc.want)
+		}
+	}
+	// Two different tickets must produce one label, not two.
+	a := jiraOperation("GET", "/rest/api/3/issue/PROJ-1")
+	b := jiraOperation("GET", "/rest/api/3/issue/OTHER-42")
+	if a != b {
+		t.Errorf("issue keys leaked into the label: %q vs %q", a, b)
+	}
+}
