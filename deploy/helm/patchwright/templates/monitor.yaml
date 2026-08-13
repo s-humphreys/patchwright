@@ -1,0 +1,90 @@
+{{/*
+Prometheus Operator scrape configuration.
+
+A ServiceMonitor is the right default here: serve mode already has a Service, so
+scraping through it needs no extra selector plumbing and survives a rename of the
+pod labels. A PodMonitor is offered for clusters whose Prometheus is scoped to pods,
+or where the Service is not in the scrape namespace — but not both at once, since
+two monitors on one target doubles every counter's rate.
+
+Both are off by default. A chart that starts producing series the moment it is
+installed is a surprise, and neither object is valid without the Prometheus
+Operator CRDs.
+*/}}
+{{- if and .Values.metrics.serviceMonitor.enabled .Values.metrics.podMonitor.enabled }}
+{{- fail "enable metrics.serviceMonitor or metrics.podMonitor, not both: two monitors scraping one target double every counter" }}
+{{- end }}
+{{- if and (or .Values.metrics.serviceMonitor.enabled .Values.metrics.podMonitor.enabled) (not .Values.server.enabled) }}
+{{- fail "metrics scraping needs server.enabled: the CronJob exits between runs, so there is nothing to scrape (see the chart README)" }}
+{{- end }}
+
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "patchwright.fullname" . }}
+  {{- with .Values.metrics.serviceMonitor.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "patchwright.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- if .Values.metrics.serviceMonitor.namespace }}
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace }}]
+  {{- end }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+      {{- if .Values.server.auth.secretName }}
+      # The endpoint is authenticated, because these numbers are the estate's
+      # posture rather than liveness. Prometheus reads the same Secret the server
+      # does, so there is one credential rather than a second one to rotate.
+      bearerTokenSecret:
+        name: {{ .Values.server.auth.secretName }}
+        key: {{ .Values.server.auth.secretKey }}
+      {{- end }}
+{{- end }}
+
+{{- if .Values.metrics.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "patchwright.fullname" . }}
+  {{- with .Values.metrics.podMonitor.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    {{- with .Values.metrics.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "patchwright.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- if .Values.metrics.podMonitor.namespace }}
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace }}]
+  {{- end }}
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.podMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.podMonitor.scrapeTimeout }}
+      {{- if .Values.server.auth.secretName }}
+      bearerTokenSecret:
+        name: {{ .Values.server.auth.secretName }}
+        key: {{ .Values.server.auth.secretKey }}
+      {{- end }}
+{{- end }}

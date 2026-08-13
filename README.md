@@ -591,6 +591,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /api/v1/tickets` | What ticket reconciliation would do against the cached assessment. Changes nothing. |
 | `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}`; without it, 400 and the plan. |
+| `GET /metrics` | Prometheus metrics, all prefixed `patchwright_`. Authenticated, unlike the probes. |
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 
 Given a `jira:` config block and `JIRA_*` credentials, `serve` also indexes the
@@ -636,6 +637,51 @@ tell the same story without inspecting every finding.
 The EPSS column stays in both cases. `-` says the signal was not collected;
 removing the column would say the signal does not exist, and hiding a gap is the
 one thing this tool is built not to do.
+
+### Metrics
+
+`GET /metrics` exposes Prometheus metrics prefixed `patchwright_`, plus the standard
+`go_*` and `process_*` collectors. Enable scraping with
+`metrics.serviceMonitor.enabled` (a ServiceMonitor is the default choice, since
+server mode already has a Service) or `metrics.podMonitor.enabled` for a Prometheus
+scoped to pods. Enabling both is refused: two monitors on one target double every
+counter.
+
+The endpoint is **behind the same token as the API**, unlike the health probes.
+These numbers are the estate's posture — how many unpatched criticals, how much of
+it nobody has data for — not liveness. The chart wires Prometheus to the same Secret
+the server uses, so there is one credential rather than two.
+
+Two things worth alerting on that the rest of this README exists to explain:
+
+```promql
+# The scan provider's data going stale behind a freshly-generated report. -1 means
+# the provider reports no timestamps at all, which is not the same as fresh.
+patchwright_provider_data_age_seconds > 86400 * 3
+
+# Coverage lost to one fixable cause. On a real estate this was a single expired
+# registry credential accounting for 96% of the estate.
+topk(3, patchwright_findings_unassessed_by_reason)
+
+# Ticketing has stopped working because the credentials expired, which otherwise
+# looks identical to "no work to raise".
+increase(patchwright_jira_requests_total{outcome="auth_error"}[15m]) > 0
+```
+
+Coverage is reported per owner as `patchwright_owner_findings{class,team,state}`,
+where `state` is `total`, `actionable`, `unassessed` or `ticketed`. Series are reset
+between assessments, so a team that leaves the estate stops being reported rather
+than freezing at its last value.
+
+A counter appears on its first occurrence, so `patchwright_jira_requests_total`
+carries no `auth_error` series until one happens. Write alerts as `increase(...) > 0`
+rather than comparing an absent series to zero.
+
+**Cardinality is bounded deliberately.** There is no per-image or per-CVE label
+anywhere — 800 images would be 800 series behind one metric, and the JSON API
+already answers questions at that grain. Provider-supplied reason strings are
+trimmed to their first clause and capped, with the tail summed into `other` so the
+totals still add up.
 
 **Authentication.** Set `PATCHWRIGHT_API_TOKEN` and every request except the health
 probes requires it. Programmatic clients send `Authorization: Bearer <token>`;

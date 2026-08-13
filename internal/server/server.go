@@ -13,6 +13,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -149,7 +150,9 @@ func (s *Server) Refresh(ctx context.Context) {
 	}()
 
 	slog.InfoContext(ctx, "server: running assessment")
+	done := metrics.AssessmentStarted()
 	findings, err := s.assessor.Run(ctx)
+	done(err)
 	snap := &snapshot{generatedAt: time.Now()}
 	if err != nil {
 		snap.err = err.Error()
@@ -162,6 +165,10 @@ func (s *Server) Refresh(ctx context.Context) {
 		// already tracked.
 		snap.tickets = s.lookupTickets(ctx)
 		snap.owners = buildOwnerStats(findings, snap.tickets)
+		// Published after the rollup so the owner series and the fleet totals come
+		// from the same assessment; scraping between the two would show them
+		// disagreeing.
+		metrics.Observe(metricsSnapshot(snap))
 		slog.InfoContext(ctx, "server: assessment cached",
 			"findings", len(snap.views), "ticketed_images", len(snap.tickets))
 	}

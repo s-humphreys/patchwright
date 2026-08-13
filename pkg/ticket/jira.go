@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/config"
 )
 
@@ -749,6 +750,30 @@ func (j *Jira) hasComment(ctx context.Context, key, ref string) (bool, error) {
 	}
 }
 
+// jiraOperation names the API call for the metric label, from the method and path.
+//
+// Bounded by construction: the path segment after /rest/api/3/ with any identifier
+// stripped, so PROJ-123 and PROJ-124 are one series rather than two. A metric
+// labelled with issue keys would grow a series per ticket, forever.
+func jiraOperation(method, path string) string {
+	const prefix = "/rest/api/3/"
+	trimmed := strings.TrimPrefix(path, prefix)
+	if q := strings.IndexByte(trimmed, '?'); q >= 0 {
+		trimmed = trimmed[:q]
+	}
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return strings.ToLower(method)
+	}
+	op := parts[0]
+	// A trailing sub-resource is worth keeping ("issue/transitions" vs "issue"),
+	// but the identifier between them is not.
+	if len(parts) >= 3 && parts[2] != "" {
+		op += "/" + parts[2]
+	}
+	return strings.ToLower(method) + " " + op
+}
+
 // raw performs a request and returns the response body, for callers that must
 // decode it more than once (the image field's name is configuration, so it cannot
 // be a named struct field).
@@ -781,9 +806,17 @@ func (j *Jira) do(ctx context.Context, method, path string, body, out any) error
 
 	resp, err := j.Client.Do(req)
 	if err != nil {
+		// A request that never got a response: DNS, TLS, timeout. Recorded with no
+		// status, which the metric maps to network_error — a different problem from
+		// a rejection, and usually somewhere else entirely.
+		metrics.JiraRequest(jiraOperation(method, path), 0, err)
 		return err
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body close, nothing to do on failure
+	// Recorded for every request, success included: a failure rate is only
+	// meaningful against a total, and "no requests at all" is itself a symptom
+	// worth being able to see.
+	metrics.JiraRequest(jiraOperation(method, path), resp.StatusCode, nil)
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

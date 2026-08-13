@@ -26,6 +26,40 @@ server:
     secretName: ""      # e.g. "patchwright-api"; empty leaves the API open
     secretKey: token
 
+# Prometheus metrics, prefixed patchwright_, served at /metrics in server mode.
+#
+# The endpoint is behind the same token as the rest of the API: these are counts of
+# unpatched criticals and coverage gaps, which is estate posture rather than
+# liveness. Both monitors below wire Prometheus to the same Secret the server uses,
+# so there is one credential rather than a second to rotate. Health probes stay open
+# either way.
+#
+# Worth alerting on, in rough order of usefulness:
+#   patchwright_provider_data_age_seconds  — the scan provider's data going stale,
+#                                            which a freshly-generated report hides
+#   patchwright_findings_unassessed_by_reason — coverage lost to one fixable cause
+#   patchwright_jira_requests_total{outcome="auth_error"} — expired credentials
+#   patchwright_assessment_runs_total{result="failure"}
+metrics:
+  # A ServiceMonitor is the default choice: server mode already has a Service.
+  serviceMonitor:
+    enabled: false
+    # Namespace to create the object in. Empty means the release namespace, which
+    # is right unless Prometheus only reads monitors from its own.
+    namespace: ""
+    # Extra labels, for a Prometheus whose serviceMonitorSelector requires them.
+    labels: {}
+    interval: 60s
+    scrapeTimeout: 10s
+  # For clusters whose Prometheus scrapes pods rather than services. Enabling both
+  # is refused: two monitors on one target double every counter.
+  podMonitor:
+    enabled: false
+    namespace: ""
+    labels: {}
+    interval: 60s
+    scrapeTimeout: 10s
+
 # Jira ticketing. The `jira:` block itself goes in config.policy below, with
 # `template: /etc/patchwright/ticket.md.tmpl` to match the file mounted from
 # ticketing.template.

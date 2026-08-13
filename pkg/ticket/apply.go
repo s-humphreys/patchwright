@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"github.com/s-humphreys/patchwright/internal/metrics"
 )
 
 // Applier performs the Jira side of reconciliation. *Jira satisfies it; tests
@@ -70,6 +72,9 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 		default:
 			r.Err = fmt.Errorf("unknown action %q", act.Kind)
 		}
+		// Recorded here rather than at either call site, so the CLI and the server
+		// cannot drift on what counts as applied.
+		metrics.TicketAction(string(act.Kind), actionResult(r))
 		if r.Err != nil {
 			slog.WarnContext(ctx, "reconciliation action failed",
 				"kind", act.Kind, "ticket", act.TicketKey, "error", r.Err)
@@ -77,6 +82,20 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 		out = append(out, r)
 	}
 	return out
+}
+
+// actionResult classifies one result for the metric: a no-op is neither a write
+// nor a failure, and collapsing it into "applied" would report work that did not
+// happen.
+func actionResult(r Result) string {
+	switch {
+	case r.Err != nil:
+		return "failed"
+	case r.NoOp:
+		return "noop"
+	default:
+		return "applied"
+	}
 }
 
 // Summarize counts results that actually changed something, by action kind.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -735,5 +736,67 @@ func TestSummaryReportsScanAndExploitCoverage(t *testing.T) {
 	if body.Summary.ExploitChecked > body.Summary.Scanned {
 		t.Errorf("exploit_checked %d exceeds scanned %d",
 			body.Summary.ExploitChecked, body.Summary.Scanned)
+	}
+}
+
+// Metrics are estate posture — counts of unpatched criticals and coverage gaps —
+// so unlike the health probes they must not be reachable without the token.
+func TestMetricsRequireTheToken(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/app:1", "platform", "team", true),
+	}}).WithAuth("secret")
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated /metrics returned %d, want 401", rec.Code)
+	}
+
+	// The probes stay open, or a cluster cannot tell a wedged pod from a missing
+	// credential.
+	for _, path := range []string{"/healthz", "/readyz"} {
+		rec = httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code == http.StatusUnauthorized {
+			t.Errorf("%s requires a token; probes must not", path)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authenticated /metrics returned %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "patchwright_findings") {
+		t.Errorf("scrape has no patchwright metrics:\n%s", rec.Body.String())
+	}
+}
+
+// The assessment's own numbers and the metrics must come from the same run, or a
+// scrape lands between them and shows an estate that never existed.
+func TestMetricsMatchTheCachedAssessment(t *testing.T) {
+	findings := []model.Finding{
+		assessedFinding("acr.io/a:1", "platform", "cpo", true),
+		assessedFinding("acr.io/b:1", "engineering", "orders", false),
+	}
+	s := New(stubAssessor{findings: findings})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	scrape := rec.Body.String()
+	want := "patchwright_findings " + strconv.Itoa(body.Summary.Findings)
+	if !strings.Contains(scrape, want) {
+		t.Errorf("metrics disagree with the summary: want %q", want)
 	}
 }

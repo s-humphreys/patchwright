@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -41,6 +42,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /favicon.png", s.handleFavicon)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	// Metrics sit behind the same token as everything else. They are counts of an
+	// estate's unpatched criticals and its coverage gaps — posture, not liveness —
+	// so unlike the probes they are not something to leave open. A ServiceMonitor
+	// carries the token; see the chart.
+	mux.Handle("GET /metrics", metrics.Handler())
 	mux.HandleFunc("GET /api/v1/findings", s.handleFindings)
 	mux.HandleFunc("GET /api/v1/finding", s.handleFinding)
 	mux.HandleFunc("GET /api/v1/owners", s.handleOwners)

@@ -122,6 +122,19 @@ without them. `autoClose` is separately off by default, and both it and the
 transition used are per-tracker, so enabling closing for one team's board does not
 enable it anywhere else.
 
+## Metrics
+
+`GET /metrics` serves Prometheus metrics in server mode. It sits behind the same
+token as the API rather than alongside the health probes, because the counts it
+exposes — unpatched criticals, coverage gaps per team, the age of the scan
+provider's data — describe the estate's security posture. A reader who cannot see a
+finding should not be able to count them either.
+
+No finding, image, CVE or ticket identifier appears in a label. Labels are owner
+class, team, and small closed sets such as an action kind or an HTTP outcome class.
+Provider-supplied reason strings are the one free-text source, and they are trimmed
+to their first clause and capped in number.
+
 ## Container
 
 - `gcr.io/distroless/static:nonroot` — no shell, no package manager, no libc

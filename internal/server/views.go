@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
@@ -326,4 +327,39 @@ func fixPath(f *model.Finding) string {
 // are equally not a statement that the image is up to date.
 func remediationResolved(f *model.Finding) bool {
 	return f.Upgrade != nil && f.Upgrade.Resolved
+}
+
+// metricsSnapshot projects a cached assessment onto the metrics surface.
+//
+// A translation rather than a shared struct: metrics are an operational contract
+// that outlives any refactor of the view types, and coupling them would mean a
+// rename here silently renaming a metric someone is alerting on.
+func metricsSnapshot(snap *snapshot) metrics.Snapshot {
+	out := metrics.Snapshot{
+		Findings:           snap.summary.Findings,
+		Actionable:         snap.summary.Actionable,
+		Suppressed:         snap.summary.Suppressed,
+		ProviderAssessed:   snap.summary.ProviderAssessed,
+		ProviderUnassessed: snap.summary.ProviderUnassessed,
+		Scanned:            snap.summary.Scanned,
+		ExploitChecked:     snap.summary.ExploitChecked,
+		Upgradable:         snap.summary.Upgradable,
+		KnownExploited:     snap.summary.KnownExploited,
+		RemediationUnknown: snap.summary.RemediationUnresolved,
+		ActionableBlind:    snap.summary.ActionableUnassessed,
+		UniqueImages:       snap.summary.UniqueImages,
+	}
+	if snap.summary.ProviderDataNewest != nil {
+		out.ProviderDataNewest = *snap.summary.ProviderDataNewest
+	}
+	for _, o := range snap.owners {
+		out.Owners = append(out.Owners, metrics.OwnerSnapshot{
+			Class: o.Class, Team: o.Team, Findings: o.Total,
+			Actionable: o.Actionable, Unassessed: o.Unassessed, Ticketed: o.Ticketed,
+		})
+	}
+	for _, r := range snap.summary.UnassessedReasons {
+		out.Reasons = append(out.Reasons, metrics.ReasonCount{Reason: r.Reason, Findings: r.Findings})
+	}
+	return out
 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
@@ -97,6 +98,11 @@ func (s ImageScanner) EnrichImages(ctx context.Context, images []model.AssessedI
 		}
 	}
 	toScan := len(images) - skipped
+	for i := 0; i < skipped; i++ {
+		// Skips are counted too: "nothing failed" reads very differently when most
+		// of the estate was never a candidate.
+		metrics.ImageScan("skipped")
+	}
 	slog.InfoContext(ctx, "scanning images for vulnerabilities",
 		"source", s.Source.Name(), "to_scan", toScan, "skipped", skipped, "concurrency", conc)
 	if toScan == 0 {
@@ -138,6 +144,10 @@ loop:
 			// critical section so it doesn't serialize concurrent scans.
 			vulns, err := s.Source.Scan(ctx, images[i].Image)
 			if err != nil {
+				// Counted, not labelled by image: a per-image label would be one
+				// series per image in the estate, and the finding itself already
+				// carries the reason.
+				metrics.ImageScan("failed")
 				images[i].ScanError = err.Error()
 				mu.Lock()
 				failures++
@@ -148,6 +158,7 @@ loop:
 				slog.WarnContext(ctx, "image scan failed (reported unscanned)", "image", images[i].Image.Ref, "error", err)
 				return
 			}
+			metrics.ImageScan("ok")
 			images[i].Scanned = true
 			images[i].Vulns = mergeVulns(images[i].Vulns, vulns)
 			slog.DebugContext(ctx, "scanned image", "image", images[i].Image.Ref, "vulns", len(images[i].Vulns))
