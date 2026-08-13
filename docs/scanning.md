@@ -58,6 +58,32 @@ Severity and exploitability diverge sharply. A CVSS 10.0 at EPSS 0.008 is a poor
 use of an afternoon than a CVSS 5 at EPSS 0.93; gating on `epss`/`kev` is what stops
 the queue being sorted by fear.
 
+## Ageing
+
+`--age-source rapid7` dates each CVE from the scan provider's own first-seen times,
+so the queue has a time dimension. Requires a vuln source: it stamps CVEs that
+already exist.
+
+```sh
+patchwright assess -i export.csv -c config/ \
+  --vuln-source trivy \
+  --age-source rapid7 --age-option base-url=https://example.customer.divvycloud.com
+```
+
+The `AGE` column shows days since the oldest CVE on the image was first seen; JSON
+carries `oldest_cve_days`, `oldest_cve_first_seen`, and `first_seen` per CVE. `-` and
+an absent field mean no CVE is dated — no age source ran, or the provider has never
+seen those CVEs. Nothing reports `0` for unknown, which would make everything look
+new.
+
+Nothing is stored locally. A state file would start empty, so every finding would
+look new on the first run and ages would only become true months later.
+
+One limit worth knowing: the provider reports when it first saw a CVE **anywhere in
+the estate**, not on this image. For "how long have we known about this" that is
+right; for "how long has this image been exposed" it can be earlier than the truth if
+the image adopted the CVE later.
+
 ## Without a vuln source
 
 Every `vulns.exists(...)` rule is false, so the priority tiers built on them cannot

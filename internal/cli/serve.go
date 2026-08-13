@@ -107,6 +107,19 @@ func newServeCmd() *cobra.Command {
 			// on a finding. Both are optional: without them the server simply has
 			// nothing to say about tickets, which is different from saying there
 			// are none. Only search is used here, never creation.
+			// The loaded rules, served back so "why is this not actionable?" is
+			// answerable without repository or cluster access. Paths are expanded the
+			// same way the assessor expands them, since -c commonly names a directory.
+			if paths, err := expandConfigPaths(in.configPaths); err == nil && len(paths) > 0 {
+				if cfg, cerr := config.Load(paths...); cerr == nil {
+					srv = srv.WithConfig(cfg)
+				} else {
+					slog.WarnContext(cmd.Context(),
+						"could not load config for the API; the rules endpoint will report none",
+						"error", cerr)
+				}
+			}
+
 			if cfg, err := loadTicketConfig(in.configPaths); err == nil {
 				jira, jerr := ticket.NewJira(cfg.Jira)
 				switch {
@@ -179,6 +192,9 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&in.vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&in.exploitSource, "exploit-source", "", "enrich CVEs with exploit intel ("+joinExploitSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&in.exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
+	cmd.Flags().StringVar(&in.ageSource, "age-source", "",
+		"date CVEs from the scan provider's own first-seen times ("+joinAgeSources()+"); requires --vuln-source")
+	cmd.Flags().StringArrayVar(&in.ageOptions, "age-option", nil, "age source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&in.remediation, "remediation", false, "detect available upgrades for how images are deployed")
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "address to serve the API on")
 	cmd.Flags().BoolVar(&metricsAuth, "metrics-require-auth", false,

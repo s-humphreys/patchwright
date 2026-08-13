@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
@@ -54,9 +55,9 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 			class, len(group), actionable, fixSummary(group))
 
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "FIX\tPRIORITY\tTEAM\tNAMESPACE\tIMAGE\tCRIT\tHIGH\tFIXCRIT\tKEV\tEPSS\tRISK\tWORKLOADS\tLIVE\tUPGRADE\tACCOUNTS")
+		fmt.Fprintln(tw, "FIX\tPRIORITY\tTEAM\tNAMESPACE\tIMAGE\tCRIT\tHIGH\tFIXCRIT\tKEV\tEPSS\tAGE\tRISK\tWORKLOADS\tLIVE\tUPGRADE\tACCOUNTS")
 		for _, f := range group {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.0f\t%d\t%s\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%.0f\t%d\t%s\t%s\t%s\n",
 				fixPathMark(f),
 				priorityMark(f),
 				dash(f.Owner.Team),
@@ -67,6 +68,7 @@ func (t Table) Emit(w io.Writer, findings []model.Finding) error {
 				fixMark(f),
 				kevMark(f),
 				epssMark(f),
+				ageMark(f),
 				f.RiskScore,
 				len(f.Occurrences),
 				liveMark(f),
@@ -95,6 +97,8 @@ func writeLegend(w io.Writer) {
 	fmt.Fprintln(w, "  CRIT/HIGH  severity counts from the scan provider. ? = the provider NEVER ASSESSED this")
 	fmt.Fprintln(w, "             image, so nothing is known about it. Not the same as 0.")
 	fmt.Fprintln(w, "  FIXCRIT    criticals with a fix available, from the vuln scanner. - = not scanned, err = failed")
+	fmt.Fprintln(w, "  AGE        days since the scan provider first saw the oldest CVE on the image; \"-\" when")
+	fmt.Fprintln(w, "             no CVE is dated (no --age-source, or the provider has not seen them)")
 	fmt.Fprintln(w, "  KEV/EPSS   known-exploited count, and the highest exploitation probability (0-1) across the")
 	fmt.Fprintln(w, "             image's CVEs. - = exploit intel not gathered, so 0/0.00 means checked and clear")
 	fmt.Fprintln(w, "  LIVE       running in a cluster right now. ? = no live reconciliation ran")
@@ -250,6 +254,23 @@ func countMark(f model.Finding, severity string) string {
 		return "?"
 	}
 	return fmt.Sprintf("%d", f.Counts.Get(severity))
+}
+
+// ageMark shows how long the oldest known CVE on the image has been known, in days.
+//
+// "-" when no CVE carries a date: either no age source ran, or the provider has
+// never seen these CVEs. Printing 0 there would make everything look brand new,
+// which is the reading that removes any pressure to act.
+func ageMark(f model.Finding) string {
+	t, ok := f.OldestVuln()
+	if !ok {
+		return "-"
+	}
+	days := int(time.Since(t).Hours() / 24)
+	if days < 1 {
+		return "<1d"
+	}
+	return fmt.Sprintf("%dd", days)
 }
 
 // epssMark shows the highest EPSS across a finding's CVEs — the exploitation

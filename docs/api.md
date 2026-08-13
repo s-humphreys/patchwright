@@ -18,6 +18,7 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `GET /api/v1/finding?image=<ref>` | One image's finding |
 | `GET /api/v1/owners` | Per-team triage, including where the fix goes and how much is ticketed |
 | `GET /api/v1/summary` | Fleet headline, coverage counts, and `unassessed_reasons` |
+| `GET /api/v1/config` | The ownership and policy rules as parsed at startup |
 | `POST /api/v1/assessments` | Trigger a refresh |
 | `GET /api/v1/tickets` | What ticket reconciliation would do. Changes nothing |
 | `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}` |
@@ -44,6 +45,17 @@ credentials the key is absent, meaning *unknown* rather than "no ticket exists".
 Writes are opt-in: `--auto-ticket` applies the plan on every refresh, and the
 endpoints work either way. Every refresh logs the plan whether or not it will be
 applied.
+
+## Rules on the page
+
+"Show config" on the status page reveals the ownership and policy YAML the
+assessment was run with, so "why is this not actionable?" is answerable without
+repository or cluster access. It is the text parsed at startup, not the files as they
+are now — re-reading them would show edits that are not in effect.
+
+Values of keys that look like credentials are replaced with `[redacted]`. Nothing
+should match, since credentials come from the environment, but the cost of being
+wrong is a credential in a browser tab.
 
 ## Coverage on the page
 

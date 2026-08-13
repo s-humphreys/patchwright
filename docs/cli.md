@@ -33,6 +33,7 @@ patchwright assess -i export.csv -c config/ --all --show-suppressed
 | `--live-source`, `--live-option` | [Live reconciliation](reconciliation.md) |
 | `--vuln-source`, `--vuln-option` | [Vulnerability scanning](scanning.md) |
 | `--exploit-source`, `--exploit-option` | EPSS + KEV enrichment |
+| `--age-source`, `--age-option` | Date CVEs from the provider's first-seen times |
 | `--remediation` | [Upgrade detection](remediation.md) |
 | `--log-level`, `--log-format` | `debug`\|`info`\|`warn`\|`error`, `text`\|`json` |
 
@@ -63,6 +64,7 @@ it and they mean different things:
 | `FIX unknown` | detection ran but could not resolve a version, e.g. an unreadable private registry |
 | `UPGRADE ?` | as `FIX ?` |
 | `EPSS -` / `KEV -` | exploit enrichment did not run, so `0.00` always means "checked, nothing" |
+| `AGE -` | no CVE on the image is dated: no age source ran, or the provider has not seen them |
 | `TEAM -` | no ownership rule attributed the workload to a team |
 
 Unassessed findings stay in the queue. They can never match a count-based rule,

@@ -78,7 +78,7 @@ func newAPIProvider(baseURL, apiKey string) (*apiProvider, error) {
 		// Deliberately not an option: a key in a config file or a Helm values
 		// file ends up in a git repository. It comes from the environment, which
 		// a Secret can populate.
-		return nil, fmt.Errorf("rapid7 api mode requires the RAPID7_API_KEY environment variable")
+		return nil, fmt.Errorf("rapid7 api mode requires the %s environment variable", EnvAPIKey)
 	}
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {

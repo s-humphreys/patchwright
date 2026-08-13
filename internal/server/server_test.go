@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
@@ -838,5 +839,81 @@ func TestMetricsMatchTheCachedAssessment(t *testing.T) {
 	want := "patchwright_findings " + strconv.Itoa(body.Summary.Findings)
 	if !strings.Contains(scrape, want) {
 		t.Errorf("metrics disagree with the summary: want %q", want)
+	}
+}
+
+// The rules answer "why is this not actionable?", so they are served back — as
+// parsed, not as the files are now.
+func TestConfigIsServedAsLoaded(t *testing.T) {
+	s := New(stubAssessor{}).WithConfig(&config.Config{Sources: []config.Source{
+		{Path: "config/ownership.yaml", Content: "owners:\n  - name: platform\n"},
+		{Path: "config/policy.yaml", Content: "suppress: []\n"},
+	}})
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d", rec.Code)
+	}
+	var body struct {
+		Sources []configSource `json:"sources"`
+	}
+	decodeInto(t, rec, &body)
+	if len(body.Sources) != 2 {
+		t.Fatalf("got %d sources, want 2", len(body.Sources))
+	}
+	// Load order is preserved: later files override earlier ones, so the order is
+	// part of the answer.
+	if body.Sources[0].Path != "config/ownership.yaml" {
+		t.Errorf("sources reordered: %+v", body.Sources)
+	}
+	if !strings.Contains(body.Sources[0].Content, "name: platform") {
+		t.Errorf("content not served: %q", body.Sources[0].Content)
+	}
+}
+
+// "No config loaded" and "config is empty" render identically in a viewer, so they
+// are distinguished here.
+func TestConfigReportsWhenNoneWasLoaded(t *testing.T) {
+	s := New(stubAssessor{})
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("got %d, want 404", rec.Code)
+	}
+}
+
+// Nothing should ever match, since credentials come from the environment. The cost
+// of being wrong is a credential in a browser tab, so it is checked anyway.
+func TestConfigRedactsSecretLookingValues(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    bool // redacted?
+	}{
+		{"api token", "jira:\n  apiToken: hunter2\n", true},
+		{"password", "db:\n  password: hunter2\n", true},
+		{"nested secret key", "x:\n  client_secret: abc\n", true},
+		{"list item", "creds:\n  - token: abc\n", true},
+		{"empty value is not a secret", "jira:\n  apiToken:\n", false},
+		{"commented out", "jira:\n  # apiToken: abc\n", false},
+		{"ordinary field", "jira:\n  project: PROJ\n", false},
+		// "tokenField" names where a token lives, not the token. Redacting it loses
+		// information for no gain — but erring the other way is the safer default,
+		// so this documents the behaviour rather than asserting it is ideal.
+		{"field naming a secret", "jira:\n  tokenField: customfield_1\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, redacted := redactSecrets(tc.content)
+			if redacted != tc.want {
+				t.Errorf("redacted = %v, want %v (got %q)", redacted, tc.want, got)
+			}
+			if tc.want && strings.Contains(got, "hunter2") {
+				t.Errorf("the secret survived: %q", got)
+			}
+			if !tc.want && got != tc.content {
+				t.Errorf("content changed unnecessarily: %q", got)
+			}
+		})
 	}
 }

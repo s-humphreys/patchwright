@@ -1,0 +1,86 @@
+package server
+
+import (
+	"net/http"
+	"regexp"
+	"strings"
+
+	"github.com/s-humphreys/patchwright/pkg/config"
+)
+
+// Serving the loaded rules back.
+//
+// "Why is this finding not actionable?" and "who does this namespace belong to?"
+// are answered by the rules, and the rules usually live in a repository the person
+// asking cannot see — or in a ConfigMap they would need cluster access to read. The
+// answer is one request away from the data it explains, so it may as well be here.
+//
+// What is served is the text that was parsed at startup, not the files as they are
+// now. Re-reading them would show edits that are not in effect, which is a worse
+// answer than none.
+
+// configSource is one config file as the API reports it.
+type configSource struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	// Redacted is true when a value in this file was withheld.
+	Redacted bool `json:"redacted,omitempty"`
+}
+
+// WithConfig attaches the loaded configuration so it can be served.
+func (s *Server) WithConfig(cfg *config.Config) *Server {
+	if cfg != nil {
+		s.configSources = cfg.Sources
+	}
+	return s
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if len(s.configSources) == 0 {
+		// Distinguishes "no config was loaded" from "config is empty", which read
+		// the same in a viewer showing nothing.
+		writeError(w, http.StatusNotFound, "no configuration was loaded")
+		return
+	}
+	out := make([]configSource, 0, len(s.configSources))
+	for _, src := range s.configSources {
+		content, redacted := redactSecrets(src.Content)
+		out = append(out, configSource{Path: src.Path, Content: content, Redacted: redacted})
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Sources []configSource `json:"sources"`
+	}{out})
+}
+
+// secretish matches a YAML key whose value should never be shown.
+//
+// Credentials are read from the environment by design, so nothing here should ever
+// match. That is exactly why it exists: this endpoint turns a config file into an
+// HTTP response, and the cost of being wrong about what someone put in one is a
+// credential in a browser tab. Belt and braces, cheap.
+var secretish = regexp.MustCompile(`(?i)^(\s*(?:-\s+)?)([a-z0-9_-]*(?:token|password|passwd|secret|apikey|api_key|credential|private_key)[a-z0-9_-]*)(\s*:\s*)(.+)$`)
+
+// redactSecrets replaces the value of any secret-looking key, reporting whether it
+// changed anything.
+func redactSecrets(content string) (string, bool) {
+	var redacted bool
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		m := secretish.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		// An empty value or a comment-only remainder is not a secret, and blanking
+		// it would suggest one had been set.
+		value := strings.TrimSpace(m[4])
+		if value == "" || strings.HasPrefix(value, "#") {
+			continue
+		}
+		lines[i] = m[1] + m[2] + m[3] + "[redacted]"
+		redacted = true
+	}
+	if !redacted {
+		return content, false
+	}
+	return strings.Join(lines, "\n"), true
+}

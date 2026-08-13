@@ -49,6 +49,7 @@ func (s *Server) routes() map[string]http.Handler {
 		"GET /api/v1/finding":      http.HandlerFunc(s.handleFinding),
 		"GET /api/v1/owners":       http.HandlerFunc(s.handleOwners),
 		"GET /api/v1/summary":      http.HandlerFunc(s.handleSummary),
+		"GET /api/v1/config":       http.HandlerFunc(s.handleConfig),
 		"POST /api/v1/assessments": http.HandlerFunc(s.handleRefresh),
 		"GET /api/v1/tickets":      http.HandlerFunc(s.handleTicketPlan),
 		"POST /api/v1/tickets":     http.HandlerFunc(s.handleTicketApply),
