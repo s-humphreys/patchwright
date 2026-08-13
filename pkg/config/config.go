@@ -86,6 +86,16 @@ type JiraConfig struct {
 	// and is listed as skipped, so excluding something never hides it.
 	Exclude []ExcludeRule `yaml:"exclude"`
 
+	// Routes send findings to different projects, boards or issue types based on
+	// who owns them, so one deployment can serve teams that do not share a
+	// tracker. The first matching route wins; findings matching none use the
+	// settings above.
+	//
+	// A route sets only what differs. Everything it leaves empty falls through to
+	// the top-level configuration, so adding a team's board does not mean
+	// restating the template, the image field and the priority map.
+	Routes []TicketRoute `yaml:"routes"`
+
 	// RequireUpgrade, when unset, defaults to true: no ticket is raised for a
 	// finding with nothing to upgrade to. A ticket saying "upgrade to the latest
 	// version" for an image already on the latest wastes the assignee's time,
@@ -147,7 +157,117 @@ func (j JiraConfig) Validate() error {
 	if j.ImageField != "" && j.ImageLabel {
 		return fmt.Errorf("jira config sets both imageField and imageLabel; pick one so the idempotency key is unambiguous")
 	}
+	// Every route is validated as the configuration it actually becomes. A route
+	// is a merge, so it can only break the result by overriding something into an
+	// invalid combination, and that has to fail at load rather than at the first
+	// ticket it tries to raise.
+	names := map[string]bool{}
+	for i, r := range j.Routes {
+		switch {
+		case r.Name == "":
+			return fmt.Errorf("jira route %d: missing name", i)
+		case r.When == "":
+			return fmt.Errorf("jira route %q: missing when", r.Name)
+		case names[r.Name]:
+			return fmt.Errorf("jira route %q: duplicate name", r.Name)
+		}
+		names[r.Name] = true
+		resolved := j.Resolve(r)
+		if err := resolved.Validate(); err != nil {
+			return fmt.Errorf("jira route %q: %w", r.Name, err)
+		}
+	}
 	return nil
+}
+
+// TicketRoute overrides ticket settings for the findings it matches.
+//
+// Only routing-relevant settings are overridable. Notably absent is Exclude:
+// exclusions decide whether work is tracked at all, which is a policy question
+// for the whole deployment rather than something a route should quietly change.
+type TicketRoute struct {
+	// Name identifies the route in logs and dry runs. Required.
+	Name string `yaml:"name"`
+	// When is a CEL expression over the same variables as policy rules, e.g.
+	// "owner['team'] == 'sre'" or "owner['class'] == 'platform'". Required.
+	When string `yaml:"when"`
+
+	// Everything below overrides the top-level setting of the same name when
+	// non-empty. Pointer and slice types distinguish "not set" from "set empty".
+	Board       int               `yaml:"board"`
+	Project     string            `yaml:"project"`
+	Template    string            `yaml:"template"`
+	ImageField  string            `yaml:"imageField"`
+	ImageLabel  *bool             `yaml:"imageLabel"`
+	Epic        string            `yaml:"epic"`
+	IssueType   string            `yaml:"issueType"`
+	Priority    string            `yaml:"priority"`
+	PriorityMap map[string]string `yaml:"priorityMap"`
+	Labels      []string          `yaml:"labels"`
+}
+
+// Resolve returns the configuration for a route: the base with this route's
+// overrides applied. The zero route returns the base unchanged, so the
+// unrouted path and the routed path run through identical code.
+func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
+	out := c
+	// Routes are a routing concern, not a policy one: the resolved config must
+	// never carry a route's own nested routes.
+	out.Routes = nil
+	if r.Board != 0 {
+		out.Board = r.Board
+	}
+	if r.Project != "" {
+		out.Project = r.Project
+	}
+	if r.Template != "" {
+		out.Template = r.Template
+	}
+	if r.ImageField != "" {
+		out.ImageField = r.ImageField
+		// A route naming a custom field means that field, not labels, even when
+		// the base uses labels; otherwise the field would be written and the
+		// lookup would still search labels, and no ticket would ever be found.
+		out.ImageLabel = false
+	}
+	if r.ImageLabel != nil {
+		out.ImageLabel = *r.ImageLabel
+		if *r.ImageLabel {
+			out.ImageField = ""
+		}
+	}
+	if r.Epic != "" {
+		out.Epic = r.Epic
+	}
+	if r.IssueType != "" {
+		out.IssueType = r.IssueType
+	}
+	if r.Priority != "" {
+		out.Priority = r.Priority
+	}
+	if len(r.PriorityMap) > 0 {
+		out.PriorityMap = r.PriorityMap
+	}
+	if len(r.Labels) > 0 {
+		out.Labels = r.Labels
+	}
+	return out
+}
+
+// Projects returns every distinct project this configuration can write to, base
+// first. Reconciliation has to search all of them: a ticket that moved to
+// another team's project is still an open ticket, and missing it would raise a
+// duplicate.
+func (c JiraConfig) Projects() []string {
+	seen := map[string]bool{c.Project: true}
+	out := []string{c.Project}
+	for _, r := range c.Routes {
+		if r.Project != "" && !seen[r.Project] {
+			seen[r.Project] = true
+			out = append(out, r.Project)
+		}
+	}
+	return out
 }
 
 // ExcludeRule keeps matching findings out of ticket creation. When is a CEL

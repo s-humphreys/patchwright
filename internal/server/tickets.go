@@ -43,10 +43,13 @@ func (s *Server) WithTicketing(t Ticketer, autoApply bool) *Server {
 
 // actionView is one reconciliation step as the API reports it.
 type actionView struct {
-	Kind    string   `json:"kind"`
-	Why     string   `json:"why"`
-	Ticket  string   `json:"ticket,omitempty"`
-	Summary string   `json:"summary,omitempty"`
+	Kind    string `json:"kind"`
+	Why     string `json:"why"`
+	Ticket  string `json:"ticket,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	// Route names the routing rule that chose this action's tracker, so a caller
+	// reviewing a plan can see whose board each ticket lands on.
+	Route   string   `json:"route,omitempty"`
 	Images  []string `json:"images,omitempty"`
 	Comment string   `json:"comment,omitempty"`
 	// Error is set on an applied action that failed. Present so a caller sees
@@ -163,6 +166,9 @@ func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 		}
 		slog.InfoContext(ctx, "jira write",
 			"source", source, "action", r.Action.Kind, "ticket", r.Key,
+			// Which tracker, now that a deployment can write to several: "created
+			// PROJ-1" is not an audit trail if it cannot say whose board that was.
+			"route", r.Action.Draft.Route,
 			"images", r.Action.Images, "why", r.Action.Why)
 	}
 	slog.InfoContext(ctx, "ticket reconciliation complete",
@@ -197,7 +203,8 @@ func viewActions(actions []ticket.Action, results []ticket.Result) []actionView 
 func viewAction(a ticket.Action) actionView {
 	return actionView{
 		Kind: string(a.Kind), Why: a.Why, Ticket: a.TicketKey,
-		Summary: a.Draft.Summary, Images: actionImages(a), Comment: a.Message,
+		Summary: a.Draft.Summary, Route: a.Draft.Route,
+		Images: actionImages(a), Comment: a.Message,
 	}
 }
 

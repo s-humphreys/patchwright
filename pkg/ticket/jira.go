@@ -26,6 +26,10 @@ type Jira struct {
 	Token   string
 	Client  *http.Client
 	cfg     config.JiraConfig
+	// byRoute is the resolved configuration per route name, so a write uses the
+	// project, issue type, image field and priority scheme of the tracker the
+	// planner chose. Always contains the default.
+	byRoute map[string]config.JiraConfig
 }
 
 // Credential environment variables. Kept out of config files: a config file is
@@ -53,7 +57,12 @@ func NewJira(cfg config.JiraConfig) (*Jira, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing Jira credentials in the environment: %s", strings.Join(missing, ", "))
 	}
+	byRoute := map[string]config.JiraConfig{routeName: cfg}
+	for _, r := range cfg.Routes {
+		byRoute[r.Name] = cfg.Resolve(r)
+	}
 	return &Jira{
+		byRoute: byRoute,
 		BaseURL: strings.TrimSuffix(base, "/"),
 		Email:   email,
 		Token:   token,
@@ -89,8 +98,29 @@ func (j *Jira) FindOpen(ctx context.Context, images []string) ([]Existing, error
 	if len(images) == 0 {
 		return nil, nil
 	}
+	// Every configured tracker, for the same reason OpenByImage searches them all:
+	// an existing ticket in another team's project still means the work is in
+	// flight, and an idempotency check that cannot see it is not one.
+	var out []Existing
+	seen := map[string]bool{}
+	for _, cfg := range j.searchConfigs() {
+		found, err := j.findOpenIn(ctx, cfg, images)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range found {
+			if !seen[e.Key] {
+				seen[e.Key] = true
+				out = append(out, e)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (j *Jira) findOpenIn(ctx context.Context, cfg config.JiraConfig, images []string) ([]Existing, error) {
 	jql := fmt.Sprintf(`project = %q AND issuetype = %q AND %s AND statusCategory != Done`,
-		j.cfg.Project, j.cfg.EffectiveIssueType(), j.imageClause(images))
+		cfg.Project, cfg.EffectiveIssueType(), imageClauseFor(cfg, images))
 
 	var resp struct {
 		Issues []struct {
@@ -125,16 +155,58 @@ func (j *Jira) FindOpen(ctx context.Context, images []string) ([]Existing, error
 	return out, nil
 }
 
-// OpenByImage returns every open ticket in the project, indexed by each image it
-// covers.
+// OpenByImage indexes the open tickets of every tracker this configuration can
+// write to, not just the default one.
 //
-// One query for the whole project, rather than one per image: a ticket carries its
-// images in the configured field, so reading them back builds the whole index in a
-// single round trip. That is what makes showing "is someone already on this?" next
-// to every finding cheap enough to do on each assessment.
+// Searching only the base project would be silently wrong once routes exist: a
+// finding routed to another team's project would find no ticket there, and every
+// run would raise a fresh duplicate. Distinct searches are deduplicated first,
+// since several routes commonly share a project.
 func (j *Jira) OpenByImage(ctx context.Context) (map[string][]Existing, error) {
+	out := map[string][]Existing{}
+	seenSearch := map[string]bool{}
+	seenTicket := map[string]map[string]bool{} // image -> ticket keys already indexed
+	for _, cfg := range j.searchConfigs() {
+		key := cfg.Project + "\x00" + cfg.EffectiveIssueType() + "\x00" + jiraImageFieldName(cfg)
+		if seenSearch[key] {
+			continue
+		}
+		seenSearch[key] = true
+		found, err := j.openByImageIn(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		for image, tickets := range found {
+			if seenTicket[image] == nil {
+				seenTicket[image] = map[string]bool{}
+			}
+			for _, t := range tickets {
+				// The same ticket can surface twice when two searches overlap;
+				// counting it twice would make reconciliation think an image is
+				// covered by more tickets than exist.
+				if seenTicket[image][t.Key] {
+					continue
+				}
+				seenTicket[image][t.Key] = true
+				out[image] = append(out[image], t)
+			}
+		}
+	}
+	return out, nil
+}
+
+// searchConfigs is every tracker to search: the default plus each route's.
+func (j *Jira) searchConfigs() []config.JiraConfig {
+	out := []config.JiraConfig{j.cfg}
+	for _, r := range j.cfg.Routes {
+		out = append(out, j.cfg.Resolve(r))
+	}
+	return out
+}
+
+func (j *Jira) openByImageIn(ctx context.Context, cfg config.JiraConfig) (map[string][]Existing, error) {
 	jql := fmt.Sprintf(`project = %q AND issuetype = %q AND statusCategory != Done`,
-		j.cfg.Project, j.cfg.EffectiveIssueType())
+		cfg.Project, cfg.EffectiveIssueType())
 
 	out := map[string][]Existing{}
 	token := ""
@@ -169,7 +241,7 @@ func (j *Jira) OpenByImage(ctx context.Context) (map[string][]Existing, error) {
 
 		q := url.Values{}
 		q.Set("jql", jql)
-		q.Set("fields", "status,summary,"+j.imageFieldName())
+		q.Set("fields", "status,summary,"+jiraImageFieldName(cfg))
 		q.Set("maxResults", "100")
 		if token != "" {
 			q.Set("nextPageToken", token)
@@ -193,7 +265,7 @@ func (j *Jira) OpenByImage(ctx context.Context) (map[string][]Existing, error) {
 				Category: issue.Fields.Status.StatusCategory.Key,
 				Done:     issue.Fields.Status.StatusCategory.Key == "done",
 			}
-			for _, img := range j.imagesOf(loose.Issues[i].Fields) {
+			for _, img := range imagesOfFields(cfg, loose.Issues[i].Fields) {
 				out[img] = append(out[img], e)
 			}
 		}
@@ -205,18 +277,56 @@ func (j *Jira) OpenByImage(ctx context.Context) (map[string][]Existing, error) {
 	}
 }
 
-// imageFieldName is the field to request and read images from.
-func (j *Jira) imageFieldName() string {
-	if j.cfg.ImageLabel {
+// imageFieldName is the field to request and read images from, for the default
+// tracker. Per-tracker callers use jiraImageFieldName directly.
+func (j *Jira) imageFieldName() string { return jiraImageFieldName(j.cfg) }
+
+func jiraImageFieldName(cfg config.JiraConfig) string {
+	if cfg.ImageLabel {
 		return "labels"
 	}
-	return j.cfg.ImageField
+	return cfg.ImageField
+}
+
+// cfgForRoute returns the configuration for a route name, falling back to the
+// default. A draft naming an unknown route is a bug rather than a user error, and
+// writing it to the default tracker is the recoverable outcome.
+func (j *Jira) cfgForRoute(name string) config.JiraConfig {
+	if cfg, ok := j.byRoute[name]; ok {
+		return cfg
+	}
+	return j.cfg
+}
+
+// cfgForKey resolves the tracker an existing ticket belongs to from its key.
+//
+// A Jira issue key is "<PROJECT>-<n>", so the prefix identifies the project
+// without another API call. This matters for writes to existing tickets: the
+// image field differs per tracker, and writing our images into the wrong field
+// would leave a ticket that no future run can find.
+func (j *Jira) cfgForKey(key string) config.JiraConfig {
+	project, _, ok := strings.Cut(key, "-")
+	if !ok {
+		return j.cfg
+	}
+	for _, cfg := range j.searchConfigs() {
+		if cfg.Project == project {
+			return cfg
+		}
+	}
+	return j.cfg
 }
 
 // imagesOf extracts the image repositories a ticket covers. Labels are converted
 // back from their sanitised form so they match a finding's repository again.
 func (j *Jira) imagesOf(fields map[string]json.RawMessage) []string {
-	raw, ok := fields[j.imageFieldName()]
+	return imagesOfFields(j.cfg, fields)
+}
+
+// imagesOfFields reads the images a ticket covers out of whichever field the
+// given tracker stores them in.
+func imagesOfFields(cfg config.JiraConfig, fields map[string]json.RawMessage) []string {
+	raw, ok := fields[jiraImageFieldName(cfg)]
 	if !ok {
 		return nil
 	}
@@ -224,7 +334,7 @@ func (j *Jira) imagesOf(fields map[string]json.RawMessage) []string {
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return nil
 	}
-	if !j.cfg.ImageLabel {
+	if !cfg.ImageLabel {
 		return values
 	}
 	out := make([]string, 0, len(values))
@@ -243,20 +353,22 @@ func (j *Jira) imagesOf(fields map[string]json.RawMessage) []string {
 // nothing against one. Silently, which is the dangerous part — a duplicate check
 // that always finds nothing reports "would create" for a ticket that already
 // exists, and a batch run then raises the lot again.
-func (j *Jira) imageClause(images []string) string {
+func (j *Jira) imageClause(images []string) string { return imageClauseFor(j.cfg, images) }
+
+func imageClauseFor(cfg config.JiraConfig, images []string) string {
 	values := make([]string, 0, len(images))
 	for _, img := range images {
 		v := img
-		if j.cfg.ImageLabel {
+		if cfg.ImageLabel {
 			v = ImageLabel(v)
 		}
 		values = append(values, quoteJQL(v))
 	}
 	list := strings.Join(values, ", ")
-	if j.cfg.ImageLabel {
+	if cfg.ImageLabel {
 		return "labels IN (" + list + ")"
 	}
-	id := strings.TrimPrefix(j.cfg.ImageField, "customfield_")
+	id := strings.TrimPrefix(cfg.ImageField, "customfield_")
 	return "cf[" + id + "] IN (" + list + ")"
 }
 
@@ -288,28 +400,31 @@ func ImageLabel(image string) string {
 
 // Create raises a ticket and returns its key.
 func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
+	// The tracker comes from the draft's route: the planner already decided whose
+	// board this belongs on, and re-deciding it here would let the two disagree.
+	cfg := j.cfgForRoute(d.Route)
 	fields := map[string]any{
-		"project":     map[string]string{"key": j.cfg.Project},
+		"project":     map[string]string{"key": cfg.Project},
 		"summary":     d.Summary,
-		"issuetype":   map[string]string{"name": j.cfg.EffectiveIssueType()},
+		"issuetype":   map[string]string{"name": cfg.EffectiveIssueType()},
 		"description": ADFDocument(d.Description),
 	}
-	if j.cfg.Epic != "" {
-		fields["parent"] = map[string]string{"key": j.cfg.Epic}
+	if cfg.Epic != "" {
+		fields["parent"] = map[string]string{"key": cfg.Epic}
 	}
 	// The assessment already decided how urgent this is; carrying that into Jira is
 	// what stops the queue flattening to one priority.
-	if p := j.cfg.JiraPriority(d.Priority); p != "" {
+	if p := cfg.JiraPriority(d.Priority); p != "" {
 		fields["priority"] = map[string]string{"name": p}
 	}
 
-	labels := append([]string{}, j.cfg.Labels...)
-	if j.cfg.ImageLabel {
+	labels := append([]string{}, cfg.Labels...)
+	if cfg.ImageLabel {
 		for _, img := range d.Images {
 			labels = append(labels, ImageLabel(img))
 		}
 	} else {
-		fields[j.cfg.ImageField] = d.Images
+		fields[cfg.ImageField] = d.Images
 	}
 	if len(labels) > 0 {
 		fields["labels"] = labels
@@ -319,7 +434,7 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 		Key string `json:"key"`
 	}
 	if err := j.do(ctx, http.MethodPost, "/rest/api/3/issue", map[string]any{"fields": fields}, &resp); err != nil {
-		return "", fmt.Errorf("create ticket %q: %w", d.Summary, err)
+		return "", fmt.Errorf("create ticket %q in project %s: %w", d.Summary, cfg.Project, err)
 	}
 	return resp.Key, nil
 }
@@ -329,6 +444,10 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 // the current value is read first: a blind write would silently drop the images the
 // ticket was raised for.
 func (j *Jira) AddImages(ctx context.Context, key string, images []string) error {
+	// Resolved from the ticket's own key, not the default: the image field differs
+	// per tracker, and writing into the wrong one leaves a ticket no later run can
+	// find, which is how duplicates get raised for work already in flight.
+	cfg := j.cfgForKey(key)
 	existing, err := j.imagesOn(ctx, key)
 	if err != nil {
 		return err
@@ -350,13 +469,13 @@ func (j *Jira) AddImages(ctx context.Context, key string, images []string) error
 	sort.Strings(merged)
 
 	values := merged
-	if j.cfg.ImageLabel {
+	if cfg.ImageLabel {
 		values = make([]string, 0, len(merged))
 		for _, img := range merged {
 			values = append(values, ImageLabel(img))
 		}
 	}
-	body := map[string]any{"fields": map[string]any{j.imageFieldName(): values}}
+	body := map[string]any{"fields": map[string]any{jiraImageFieldName(cfg): values}}
 	if err := j.do(ctx, http.MethodPut, "/rest/api/3/issue/"+url.PathEscape(key), body, nil); err != nil {
 		return fmt.Errorf("add images to %s: %w", key, err)
 	}
@@ -365,8 +484,9 @@ func (j *Jira) AddImages(ctx context.Context, key string, images []string) error
 
 // imagesOn reads the images currently recorded on a ticket.
 func (j *Jira) imagesOn(ctx context.Context, key string) ([]string, error) {
+	cfg := j.cfgForKey(key)
 	q := url.Values{}
-	q.Set("fields", j.imageFieldName())
+	q.Set("fields", jiraImageFieldName(cfg))
 	body, err := j.raw(ctx, http.MethodGet,
 		"/rest/api/3/issue/"+url.PathEscape(key)+"?"+q.Encode())
 	if err != nil {
@@ -378,7 +498,7 @@ func (j *Jira) imagesOn(ctx context.Context, key string) ([]string, error) {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", key, err)
 	}
-	return j.imagesOf(resp.Fields), nil
+	return imagesOfFields(cfg, resp.Fields), nil
 }
 
 // Comment adds a comment. Used rather than editing a ticket in place so the

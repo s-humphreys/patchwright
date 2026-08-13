@@ -368,6 +368,48 @@ act on and it leaves the assessment entirely; an excluded one is real work simpl
 tracked elsewhere, so it stays in the report and the queue and is listed as
 skipped with the rule name and reason. Excluding something never makes it quiet.
 
+**Routing sends each team's tickets to its own tracker.** One deployment covers
+teams that do not share a board: platform work on one project, an SRE team with
+its own project, issue type and priority scheme. `routes` matches on the same CEL
+variables as everything else, first match wins, and anything matching no route
+uses the top-level settings.
+
+```yaml
+jira:
+  project: PROJ                 # the default for anything unrouted
+  issueType: Container Vulnerability
+  routes:
+    - name: sre
+      when: "owner['team'] == 'sre'"
+      project: SRE
+      issueType: Bug
+      imageLabel: true          # this project has no shared custom field
+    - name: platform
+      when: "owner['class'] == 'platform'"
+      project: PROJ
+```
+
+A route states **only what differs**; template, image field, priority map and
+labels are inherited, so adding a board is three lines rather than a second copy
+of the configuration. Each route is validated as the configuration it resolves to,
+at load rather than at the first ticket it tries to raise.
+
+Two consequences worth knowing:
+
+- **A group is never split across routes.** Two findings that share one upgrade
+  but belong to different teams become two tickets, because an issue cannot exist
+  in two projects and merging them would move one team's work onto another team's
+  board.
+- **Reconciliation searches every configured project**, not just the default. A
+  ticket on another team's board still means the work is in flight, and an
+  idempotency check that cannot see it raises duplicates forever. Writes to an
+  existing ticket resolve its tracker from the issue key's project prefix, so the
+  images go into the field that project actually uses.
+
+Dry runs print `Tracker: SRE / Bug (route "sre")` per ticket, and the API's ticket
+plan carries `route` on every action, so where work lands is reviewable before
+anything is written.
+
 **Priority carries across.** Without `priorityMap`, every ticket is raised at the
 single `priority` value, and the tracker cannot tell an urgent, exploited, fixable
 finding from a low one. The map is deliberately not defaulted: priority schemes are

@@ -56,6 +56,29 @@ scan:
 #     - name: managed-elsewhere
 #       when: "dimensions['namespace'].exists(n, n == 'some-system')"
 #       reason: upgraded together on their own cadence
+#
+#   # Send a team's tickets to the tracker it actually uses. First match wins;
+#   # anything matching no route uses the settings above, and a route states only
+#   # what differs — template, image field and priority map are inherited.
+#   #
+#   # A group of findings is never split across routes: two findings sharing one
+#   # upgrade but owned by different teams become two tickets, because one issue
+#   # cannot exist in two projects.
+#   routes:
+#     - name: sre
+#       when: "owner['team'] == 'sre'"
+#       project: SRE
+#       issueType: Bug
+#       epic: SRE-42
+#       # A team-managed project with no shared custom field can key on labels
+#       # instead; the lookup follows automatically.
+#       imageLabel: true
+#     - name: platform
+#       when: "owner['class'] == 'platform'"
+#       project: PROJ
+#       priorityMap:
+#         urgent: Highest
+#         high: High
 
 suppress:
   # Cloud-provider-managed images are not directly patchable by app or platform

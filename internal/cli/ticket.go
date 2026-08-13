@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -185,14 +186,17 @@ func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) 
 		fmt.Fprintln(w, "Nothing to do: no drafts and no open tickets to reconcile.")
 		return
 	}
-	fmt.Fprintf(w, "DRY RUN: %d action(s) in project %s.\n\n", len(actions), cfg.Project)
+	fmt.Fprintf(w, "DRY RUN: %d action(s) across %s.\n\n", len(actions), describeTrackers(cfg))
 	for i, a := range actions {
 		fmt.Fprintf(w, "--- %d of %d: %s ---\n", i+1, len(actions), a.Kind)
 		fmt.Fprintf(w, "Why:      %s\n", a.Why)
 		switch a.Kind {
 		case ticket.ActionCreate:
 			fmt.Fprintf(w, "Summary:  %s\n", a.Draft.Summary)
-			fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, a.Draft.Priority))
+			// Where a ticket lands is the question routing creates, so a dry run
+			// has to answer it before anyone approves the run.
+			fmt.Fprintf(w, "Tracker:  %s\n", describeRoute(cfg, a.Draft.Route))
+			fmt.Fprintf(w, "Priority: %s\n", describePriority(routedConfig(cfg, a.Draft.Route), a.Draft.Priority))
 			fmt.Fprintf(w, "Images:   %v\n\n%s\n", a.Draft.Images, a.Draft.Description)
 		case ticket.ActionSkip:
 			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
@@ -210,14 +214,46 @@ func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) 
 // reportDrafts is the credential-less fallback: what would be raised, with no claim
 // about what already exists.
 func reportDrafts(w io.Writer, cfg config.JiraConfig, drafts []ticket.Draft) {
-	fmt.Fprintf(w, "DRY RUN: %d ticket(s) would be considered for project %s.\n\n",
-		len(drafts), cfg.Project)
+	fmt.Fprintf(w, "DRY RUN: %d ticket(s) would be considered across %s.\n\n",
+		len(drafts), describeTrackers(cfg))
 	for i, d := range drafts {
 		fmt.Fprintf(w, "--- draft %d of %d ---\n", i+1, len(drafts))
 		fmt.Fprintf(w, "Summary:  %s\n", d.Summary)
-		fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, d.Priority))
+		fmt.Fprintf(w, "Tracker:  %s\n", describeRoute(cfg, d.Route))
+		fmt.Fprintf(w, "Priority: %s\n", describePriority(routedConfig(cfg, d.Route), d.Priority))
 		fmt.Fprintf(w, "Images:   %v\n\n%s\n\n", d.Images, d.Description)
 	}
+}
+
+// routedConfig resolves the settings a draft will actually be created with, so
+// what a dry run prints is what the write will use.
+func routedConfig(cfg config.JiraConfig, route string) config.JiraConfig {
+	for _, r := range cfg.Routes {
+		if r.Name == route {
+			return cfg.Resolve(r)
+		}
+	}
+	return cfg
+}
+
+// describeRoute names the tracker a draft lands on, and the rule that chose it.
+func describeRoute(cfg config.JiraConfig, route string) string {
+	resolved := routedConfig(cfg, route)
+	desc := fmt.Sprintf("%s / %s", resolved.Project, resolved.EffectiveIssueType())
+	if route != "" && route != "(default)" {
+		return fmt.Sprintf("%s (route %q)", desc, route)
+	}
+	return desc
+}
+
+// describeTrackers lists every project this run can write to, so "1 project" is
+// never assumed when routing means otherwise.
+func describeTrackers(cfg config.JiraConfig) string {
+	projects := cfg.Projects()
+	if len(projects) == 1 {
+		return "project " + projects[0]
+	}
+	return fmt.Sprintf("%d projects (%s)", len(projects), strings.Join(projects, ", "))
 }
 
 func reportResults(w io.Writer, results []ticket.Result) {

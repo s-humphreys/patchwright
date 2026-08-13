@@ -35,6 +35,11 @@
   .brand { display: flex; align-items: center; gap: 0.5rem; }
   .logo { display: block; }
   .meta { color: var(--muted); font-size: 0.82rem; }
+  .reasons { margin-top: 0.6rem; }
+  .reasons-head { font-weight: 600; }
+  .reasons ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+  .reasons li { margin: 0.15rem 0; }
+  .reasons-more { margin-top: 0.3rem; opacity: 0.8; }
   .banner {
     margin: 1rem 0 0; padding: 0.7rem 0.9rem; border-radius: 6px;
     background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg);
@@ -280,6 +285,29 @@ function renderCoverage(s) {
     were never assessed by the scan provider</strong> (${pct}% covered). Their severity counts
     are absent data rather than zero, so they cannot match a count-based rule.${scannerOnly}
     ${s.remediation_unresolved ? `${s.remediation_unresolved} findings have no resolvable upgrade.` : ""}
+    ${reasonList(s.unassessed_reasons)}</div>`;
+}
+
+// reasonList renders the provider's own reasons for the coverage gap, largest
+// first.
+//
+// This is the difference between a statistic and a work list. A percentage
+// invites resignation; "cannot authenticate to the registry, 734 findings" names
+// something one person can fix in an afternoon, and on a real estate a single
+// cause accounted for nearly the whole gap. It stays on the page until it is
+// fixed, rather than living in one Slack thread.
+//
+// Absent when the provider states no reasons — the CSV export never does — which
+// is not the same as there being no cause.
+function reasonList(reasons) {
+  if (!reasons || !reasons.length) return "";
+  const top = reasons.slice(0, 4);
+  const rest = reasons.length - top.length;
+  const items = top.map((r) =>
+    `<li><strong>${r.findings}</strong> ${esc(r.reason)}</li>`).join("");
+  return `<div class="reasons"><div class="reasons-head">Why the provider has no data:</div>
+    <ul>${items}</ul>
+    ${rest > 0 ? `<div class="reasons-more">and ${rest} other reason${rest === 1 ? "" : "s"}.</div>` : ""}
     </div>`;
 }
 
