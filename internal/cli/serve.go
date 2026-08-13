@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/s-humphreys/patchwright/internal/server"
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
@@ -20,6 +22,39 @@ import (
 type serverTicketer struct {
 	*ticket.Planner
 	*ticket.Jira
+}
+
+// routeSummary describes the configured routes for the startup log: name, the
+// project it writes to, and its issue type where it differs.
+func routeSummary(cfg config.JiraConfig) string {
+	if len(cfg.Routes) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(cfg.Routes))
+	for _, r := range cfg.Routes {
+		resolved := cfg.Resolve(r)
+		parts = append(parts, fmt.Sprintf("%s->%s/%s", r.Name, resolved.Project, resolved.EffectiveIssueType()))
+	}
+	return strings.Join(parts, " ")
+}
+
+// closeSummary reports where closing tickets is enabled, since it is per-tracker
+// and off by default. "none" is worth printing: it is the difference between a
+// deployment that can close tickets and one that cannot.
+func closeSummary(cfg config.JiraConfig) string {
+	var on []string
+	if cfg.AutoClose {
+		on = append(on, cfg.Project)
+	}
+	for _, r := range cfg.Routes {
+		if resolved := cfg.Resolve(r); resolved.AutoClose && resolved.Project != cfg.Project {
+			on = append(on, resolved.Project)
+		}
+	}
+	if len(on) == 0 {
+		return "none"
+	}
+	return strings.Join(on, ",")
 }
 
 // envAPIToken is the shared token required by the API and status page. Empty or
@@ -87,8 +122,16 @@ func newServeCmd() *cobra.Command {
 						return perr
 					}
 					srv = srv.WithTicketing(&serverTicketer{Planner: planner, Jira: jira}, autoTicket)
+					// Every tracker, not just the default: with routes configured, naming
+					// one project understates what this deployment can write to, and
+					// startup is where an operator checks that.
 					slog.InfoContext(cmd.Context(), "ticketing enabled",
-						"project", cfg.Jira.Project, "issue_type", cfg.Jira.EffectiveIssueType(),
+						"projects", strings.Join(cfg.Jira.Projects(), ","),
+						"default_project", cfg.Jira.Project,
+						"issue_type", cfg.Jira.EffectiveIssueType(),
+						"routes", routeSummary(cfg.Jira),
+						"require_route", cfg.Jira.RequireRoute,
+						"auto_close", closeSummary(cfg.Jira),
 						"auto_ticket", autoTicket)
 					if autoTicket {
 						// Loud on purpose: from here the service writes to Jira on a

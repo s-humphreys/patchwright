@@ -56,7 +56,7 @@ connections beyond the Kubernetes API.
 | `api.first.org` | EPSS exploitation-probability scores | `--exploit-source=public` |
 | `www.cisa.gov` | CISA Known Exploited Vulnerabilities catalogue | `--exploit-source=public` |
 | Trivy's vulnerability database (an OCI registry) | Scanner database updates | `--vuln-source=trivy` |
-| Your Jira instance | Search for existing tickets; create and comment | `jira:` config + credentials |
+| Your Jira instance | Search for existing tickets; create, edit, comment, and (opt-in) transition to done | `jira:` config + credentials |
 
 The chart can render a NetworkPolicy restricting this (`networkPolicy.enabled`).
 Registry and Helm-repository destinations depend on what you run, so the egress
@@ -85,16 +85,42 @@ authenticator or oauth2-proxy). The built-in token is a floor, not a substitute.
 
 ## Writes to Jira
 
-The only mutating integration. Ticket reconciliation and `--auto-ticket` are
-described here as designed; if this document has landed ahead of them, treat this
-section as the intended behaviour rather than the shipped behaviour. It can create issues, add images to an existing
-issue's field, and comment. It **cannot** close, transition, assign, or delete
-anything, by design: a finding leaving the queue is ambiguous between "fixed" and
-"no longer scanned", so closing is always a human decision.
+The only mutating integration. What it can do:
+
+| Write | When | Gated by |
+|---|---|---|
+| Create an issue | Actionable work with no open ticket covering it | credentials |
+| Add images to an issue's field or labels | An open ticket covers part of a change | credentials |
+| Comment | A ticket's target moved on, or its work looks finished | credentials |
+| Edit an issue's summary and description | The target moved on **and** nobody has picked the ticket up (unassigned, still in a "new" status category) | credentials |
+| Transition an issue to a done status | Every image it covers is provably already on its latest version | `autoClose`, off by default |
+
+It **cannot** assign, delete, change priority, or transition anywhere other than a
+done status reached by a named or unambiguous transition. Priority is deliberately
+left alone on an edit: a human may have re-triaged it, and silently reverting that
+would be worse than a stale summary.
+
+Closing deserves explanation, because an earlier version of this document said it
+would never happen. The reasoning behind that has not changed: a finding *leaving*
+the queue is ambiguous between "fixed" and "no longer scanned", so disappearance
+never closes anything — that case still only comments. Closing requires positive
+evidence that every image on the ticket is still reported, was checked for a newer
+version, resolved its versions, has no upgrade available, and had liveness
+reconciled. Any one of those missing produces a comment instead.
+
+Comments are deduplicated by a reference in the comment body, read before each
+write, so a long-lived ticket does not accumulate an identical note per run.
+
+Every write is logged with what triggered it — a scheduled refresh or an API call —
+which ticket, which action, which tracker, and why. The shared API token carries no
+identity, so a write cannot be attributed to a person; recording that it came from
+the schedule rather than a caller is the most that can honestly be said.
 
 Automatic ticketing is off by default. Enabling it (`--auto-ticket`, or
 `ticketing.autoTicket`) requires credentials, and the chart refuses to render
-without them.
+without them. `autoClose` is separately off by default, and both it and the
+transition used are per-tracker, so enabling closing for one team's board does not
+enable it anywhere else.
 
 ## Container
 
