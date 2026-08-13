@@ -60,6 +60,10 @@ type ticketRef struct {
 // Server holds the assessor and the latest cached assessment.
 type Server struct {
 	assessor Assessor
+	// metricsAuth brings /metrics under the shared token. Off by default: a scrape
+	// config needing a credential is friction where it is least tolerated.
+	metricsAuth bool
+
 	// tickets and jiraBaseURL are set only when Jira is configured.
 	tickets     TicketIndex
 	jiraBaseURL string

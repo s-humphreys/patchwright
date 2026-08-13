@@ -591,7 +591,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /api/v1/tickets` | What ticket reconciliation would do against the cached assessment. Changes nothing. |
 | `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}`; without it, 400 and the plan. |
-| `GET /metrics` | Prometheus metrics, all prefixed `patchwright_`. Authenticated, unlike the probes. |
+| `GET /metrics` | Prometheus metrics, all prefixed `patchwright_`. Unauthenticated by default, like the probes. |
 | `GET /healthz`, `GET /readyz` | Health (ready once a first assessment is cached). |
 
 Given a `jira:` config block and `JIRA_*` credentials, `serve` also indexes the
@@ -647,10 +647,17 @@ server mode already has a Service) or `metrics.podMonitor.enabled` for a Prometh
 scoped to pods. Enabling both is refused: two monitors on one target double every
 counter.
 
-The endpoint is **behind the same token as the API**, unlike the health probes.
-These numbers are the estate's posture — how many unpatched criticals, how much of
-it nobody has data for — not liveness. The chart wires Prometheus to the same Secret
-the server uses, so there is one credential rather than two.
+The endpoint is **unauthenticated by default**, like the health probes, because a
+scrape config that needs a bearer token is friction in the place least likely to
+tolerate it. Worth being clear about what that trades away: anything able to reach
+the port can read how many unpatched criticals the estate has and which teams have
+no coverage at all. Those are aggregate counts rather than the findings themselves,
+and NetworkPolicy is the control — but it is a real exposure, not a free one.
+
+`metrics.requireAuth` (or `--metrics-require-auth`) brings it under the same token
+as the API, and the ServiceMonitor then presents that token from the same Secret the
+server reads. Rendering fails if it is set without a token configured, since there
+would be nothing to require.
 
 Two things worth alerting on that the rest of this README exists to explain:
 

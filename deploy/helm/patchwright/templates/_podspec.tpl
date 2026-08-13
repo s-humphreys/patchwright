@@ -45,6 +45,9 @@ so they stay in sync. Callers pass a dict:
     - "--exploit-source={{ .root.Values.scan.exploitSource }}"
     {{- end }}
     {{- end }}
+    {{- if and (eq .command "serve") .root.Values.metrics.requireAuth }}
+    - "--metrics-require-auth"
+    {{- end }}
     {{- if and (eq .command "serve") .root.Values.ticketing.autoTicket }}
     - "--auto-ticket"
     {{- end }}

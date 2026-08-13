@@ -739,9 +739,9 @@ func TestSummaryReportsScanAndExploitCoverage(t *testing.T) {
 	}
 }
 
-// Metrics are estate posture — counts of unpatched criticals and coverage gaps —
-// so unlike the health probes they must not be reachable without the token.
-func TestMetricsRequireTheToken(t *testing.T) {
+// Metrics are scrapable without a credential by default: a scrape config that
+// needs a bearer token is friction in the place least likely to tolerate it.
+func TestMetricsAreOpenByDefault(t *testing.T) {
 	s := New(stubAssessor{findings: []model.Finding{
 		assessedFinding("acr.io/app:1", "platform", "team", true),
 	}}).WithAuth("secret")
@@ -749,8 +749,20 @@ func TestMetricsRequireTheToken(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("unauthenticated /metrics returned %d, want 401", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("unauthenticated /metrics returned %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "patchwright_findings") {
+		t.Errorf("scrape has no patchwright metrics:\n%s", rec.Body.String())
+	}
+
+	// Everything else still needs the token: opening metrics must not open the API.
+	for _, path := range []string{"/", "/api/v1/summary", "/api/v1/findings"} {
+		rec = httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s returned %d without a token, want 401", path, rec.Code)
+		}
 	}
 
 	// The probes stay open, or a cluster cannot tell a wedged pod from a missing
@@ -763,15 +775,43 @@ func TestMetricsRequireTheToken(t *testing.T) {
 		}
 	}
 
+}
+
+// A deployment that treats coverage counts as sensitive can gate them, and then a
+// scrape without the token must be refused rather than quietly served.
+func TestMetricsCanBeGated(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/app:1", "platform", "team", true),
+	}}).WithAuth("secret").WithMetricsAuth(true)
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("gated /metrics returned %d without a token, want 401", rec.Code)
+	}
+
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("authenticated /metrics returned %d", rec.Code)
+		t.Fatalf("gated /metrics returned %d with the token", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "patchwright_findings") {
-		t.Errorf("scrape has no patchwright metrics:\n%s", rec.Body.String())
+}
+
+// Gating metrics on a server with no token configured would protect nothing while
+// looking like it did.
+func TestGatingMetricsWithoutATokenIsHonest(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/app:1", "platform", "team", true),
+	}}).WithMetricsAuth(true) // no WithAuth
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("metrics returned %d on an unauthenticated server, want 200", rec.Code)
 	}
 }
 

@@ -29,10 +29,30 @@ import (
 
 // openPaths are reachable without a token. Probes must not need a credential, and
 // the favicon carries no data.
+//
+// /metrics is here too, because a scrape config that needs a bearer token is
+// friction in the place least likely to be tolerated: an operator adding a
+// dashboard should not have to negotiate credentials with the team that runs
+// Prometheus. It is not a costless default — the metrics count unpatched criticals
+// and per-team coverage gaps, so anything that can reach the port can read the
+// estate's shape. Network policy is the control there, and WithMetricsAuth exists
+// for deployments that would rather pay the friction.
 var openPaths = map[string]bool{
 	"/healthz":     true,
 	"/readyz":      true,
 	"/favicon.png": true,
+	"/metrics":     true,
+}
+
+// WithMetricsAuth brings /metrics under the shared token, for a deployment that
+// treats coverage counts as sensitive. Off by default: see openPaths.
+//
+// Has no effect when no token is configured, since there would be nothing to
+// require — silently "protecting" an endpoint on a server with authentication
+// disabled would be worse than leaving it open honestly.
+func (s *Server) WithMetricsAuth(required bool) *Server {
+	s.metricsAuth = required
+	return s
 }
 
 // WithAuth requires the given token on every request except openPaths. An empty
@@ -50,10 +70,20 @@ func (s *Server) WithAuth(token string) *Server {
 // authenticated reports whether authentication is configured.
 func (s *Server) authenticated() bool { return len(s.tokenDigest) > 0 }
 
+// openPath reports whether a path needs no token. Metrics are open unless the
+// deployment has asked for them to be gated, which is the one openPaths entry that
+// is a policy choice rather than a necessity.
+func (s *Server) openPath(path string) bool {
+	if path == "/metrics" && s.metricsAuth {
+		return false
+	}
+	return openPaths[path]
+}
+
 // authorize wraps h, rejecting requests without a valid token.
 func (s *Server) authorize(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authenticated() || openPaths[r.URL.Path] {
+		if !s.authenticated() || s.openPath(r.URL.Path) {
 			h.ServeHTTP(w, r)
 			return
 		}

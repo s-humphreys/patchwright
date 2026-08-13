@@ -14,6 +14,9 @@ Operator CRDs.
 {{- if and .Values.metrics.serviceMonitor.enabled .Values.metrics.podMonitor.enabled }}
 {{- fail "enable metrics.serviceMonitor or metrics.podMonitor, not both: two monitors scraping one target double every counter" }}
 {{- end }}
+{{- if and .Values.metrics.requireAuth (not .Values.server.auth.secretName) }}
+{{- fail "metrics.requireAuth needs server.auth.secretName: there is no token to require, and a monitor would scrape an endpoint that is open anyway" }}
+{{- end }}
 {{- if and (or .Values.metrics.serviceMonitor.enabled .Values.metrics.podMonitor.enabled) (not .Values.server.enabled) }}
 {{- fail "metrics scraping needs server.enabled: the CronJob exits between runs, so there is nothing to scrape (see the chart README)" }}
 {{- end }}
@@ -45,9 +48,8 @@ spec:
       path: /metrics
       interval: {{ .Values.metrics.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
-      {{- if .Values.server.auth.secretName }}
-      # The endpoint is authenticated, because these numbers are the estate's
-      # posture rather than liveness. Prometheus reads the same Secret the server
+      {{- if and .Values.metrics.requireAuth .Values.server.auth.secretName }}
+      # Only when the endpoint is gated. Prometheus reads the same Secret the server
       # does, so there is one credential rather than a second one to rotate.
       bearerTokenSecret:
         name: {{ .Values.server.auth.secretName }}
@@ -82,7 +84,7 @@ spec:
       path: /metrics
       interval: {{ .Values.metrics.podMonitor.interval }}
       scrapeTimeout: {{ .Values.metrics.podMonitor.scrapeTimeout }}
-      {{- if .Values.server.auth.secretName }}
+      {{- if and .Values.metrics.requireAuth .Values.server.auth.secretName }}
       bearerTokenSecret:
         name: {{ .Values.server.auth.secretName }}
         key: {{ .Values.server.auth.secretKey }}

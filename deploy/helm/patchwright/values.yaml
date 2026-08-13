@@ -28,11 +28,14 @@ server:
 
 # Prometheus metrics, prefixed patchwright_, served at /metrics in server mode.
 #
-# The endpoint is behind the same token as the rest of the API: these are counts of
-# unpatched criticals and coverage gaps, which is estate posture rather than
-# liveness. Both monitors below wire Prometheus to the same Secret the server uses,
-# so there is one credential rather than a second to rotate. Health probes stay open
-# either way.
+# The endpoint is unauthenticated by default, like the health probes. A scrape config
+# that needs a bearer token is friction in the place least likely to tolerate it, and
+# the numbers are aggregate counts rather than the findings themselves.
+#
+# It is not a costless default: anything that can reach the port can read how many
+# unpatched criticals the estate has and which teams have no coverage. NetworkPolicy
+# is the control (see networkPolicy below). Set requireAuth to bring /metrics under
+# the same token as the API, and the monitors then present it.
 #
 # Worth alerting on, in rough order of usefulness:
 #   patchwright_provider_data_age_seconds  — the scan provider's data going stale,
@@ -41,6 +44,9 @@ server:
 #   patchwright_jira_requests_total{outcome="auth_error"} — expired credentials
 #   patchwright_assessment_runs_total{result="failure"}
 metrics:
+  # Require the API token on /metrics too. Needs server.auth.secretName; without a
+  # token there is nothing to require, and the server says so rather than pretending.
+  requireAuth: false
   # A ServiceMonitor is the default choice: server mode already has a Service.
   serviceMonitor:
     enabled: false

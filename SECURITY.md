@@ -124,11 +124,20 @@ enable it anywhere else.
 
 ## Metrics
 
-`GET /metrics` serves Prometheus metrics in server mode. It sits behind the same
-token as the API rather than alongside the health probes, because the counts it
-exposes — unpatched criticals, coverage gaps per team, the age of the scan
-provider's data — describe the estate's security posture. A reader who cannot see a
-finding should not be able to count them either.
+`GET /metrics` serves Prometheus metrics in server mode, **unauthenticated by
+default**, alongside the health probes.
+
+Stated plainly because it is a deliberate trade and a reviewer should weigh it: the
+counts describe the estate's security posture — how many unpatched criticals, which
+teams have no coverage, how stale the scan data is — so anything that can reach the
+port can read that shape without a credential. It cannot read the findings
+themselves: no image, CVE, ticket or namespace appears in any metric.
+
+The reasoning is that scrape configs needing bearer tokens are the friction that
+stops monitoring being set up at all, and unmonitored coverage decay is the larger
+risk. Network policy is the intended control, and `metrics.requireAuth` brings the
+endpoint under the API token for environments that judge otherwise; the chart's
+monitors then present that token from the same Secret.
 
 No finding, image, CVE or ticket identifier appears in a label. Labels are owner
 class, team, and small closed sets such as an action kind or an HTTP outcome class.
