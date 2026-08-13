@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -227,5 +229,102 @@ func TestTicketingFailureDoesNotBreakTheAssessment(t *testing.T) {
 	decodeInto(t, rec, &raw)
 	if _, ok := raw["summary"]; !ok {
 		t.Error("the assessment was lost because ticketing failed")
+	}
+}
+
+// Pending work nobody can see is the same failure as absent data rendered as
+// zero: the schedule has to plan and say so even when it will not apply.
+func TestSchedulePlansAndLogsWhenAutoTicketingIsOff(t *testing.T) {
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(restore)
+
+	st := newStubTicketer(ticket.Draft{Summary: "Upgrade app to 2.0", Images: []string{"acme/app"}})
+	s := New(stubAssessor{findings: []model.Finding{assessedFinding("acr.io/app:1", "platform", "team", true)}}).
+		WithTicketing(st, false) // auto-ticketing off
+	s.Refresh(context.Background())
+
+	out := buf.String()
+	if !strings.Contains(out, "ticket plan") {
+		t.Errorf("no plan was logged with auto-ticketing off:\n%s", out)
+	}
+	if !strings.Contains(out, "will not be applied") {
+		t.Errorf("the log does not say the plan is not being applied:\n%s", out)
+	}
+	// Nothing may have been written.
+	if len(st.created)+len(st.updated)+len(st.closed) != 0 {
+		t.Errorf("writes happened with auto-ticketing off: created=%v updated=%v closed=%v",
+			st.created, st.updated, st.closed)
+	}
+}
+
+// A plan that is about to be applied must not read identically to one that is
+// not, or the log cannot answer "did that happen?".
+func TestAppliedPlansAreLoggedAsApplied(t *testing.T) {
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(restore)
+
+	st := newStubTicketer(ticket.Draft{Summary: "Upgrade app to 2.0", Images: []string{"acme/app"}})
+	s := New(stubAssessor{findings: []model.Finding{assessedFinding("acr.io/app:1", "platform", "team", true)}}).
+		WithTicketing(st, true)
+	s.Refresh(context.Background())
+
+	out := buf.String()
+	if !strings.Contains(out, "applied=true") {
+		t.Errorf("an applied plan was not logged as applied:\n%s", out)
+	}
+	if strings.Contains(out, "will not be applied") {
+		t.Errorf("an applied plan claimed it would not be applied:\n%s", out)
+	}
+	if len(st.created) == 0 {
+		t.Error("auto-ticketing was on but nothing was created")
+	}
+}
+
+// Every action kind must appear in both log lines. This exists because it did not:
+// "update" was applied and counted, but the hand-written summary omitted it, so a
+// run that rewrote a ticket reported nothing about it. A list written by hand
+// cannot be trusted to grow with the type.
+func TestEveryActionKindIsReported(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		applied       bool
+	}{
+		{"plan", "ticket plan", false},
+		{"audit", "ticket reconciliation complete", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			defer slog.SetDefault(restore)
+
+			actions := make([]ticket.Action, 0, len(ticket.ActionKinds()))
+			for _, kind := range ticket.ActionKinds() {
+				actions = append(actions, ticket.Action{Kind: kind, TicketKey: "PROJ-1"})
+			}
+			if tc.applied {
+				results := make([]ticket.Result, 0, len(actions))
+				for _, a := range actions {
+					results = append(results, ticket.Result{Action: a, Key: a.TicketKey})
+				}
+				auditWrites(context.Background(), "test", results)
+			} else {
+				logPlan(context.Background(), "test", actions, false)
+			}
+
+			out := buf.String()
+			if !strings.Contains(out, tc.message) {
+				t.Fatalf("%q was not logged:\n%s", tc.message, out)
+			}
+			for _, kind := range ticket.ActionKinds() {
+				if !strings.Contains(out, string(kind)+"=") {
+					t.Errorf("kind %q is missing from the %s line:\n%s", kind, tc.name, out)
+				}
+			}
+		})
 	}
 }

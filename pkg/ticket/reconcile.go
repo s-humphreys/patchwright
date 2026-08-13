@@ -54,6 +54,19 @@ const (
 	ActionSkip ActionKind = "skip"
 )
 
+// ActionKinds returns every action kind, in reporting order.
+//
+// Exists so callers can report on all of them by iteration rather than by hand.
+// A hand-listed summary is a silent liar the moment a kind is added: the count is
+// computed, the kind is simply missing from the output, and the run looks like it
+// did less than it did. That happened — "update" was applied and reported nowhere.
+func ActionKinds() []ActionKind {
+	return []ActionKind{
+		ActionCreate, ActionExtend, ActionUpdate, ActionClose,
+		ActionNoteStale, ActionNoteDone, ActionSkip,
+	}
+}
+
 // Action is one reconciliation step.
 type Action struct {
 	Kind ActionKind

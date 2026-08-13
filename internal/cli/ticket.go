@@ -312,10 +312,14 @@ func reportResults(w io.Writer, results []ticket.Result) {
 		}
 	}
 	counts := ticket.Summarize(results)
-	fmt.Fprintf(w, "\nCreated %d, extended %d, updated %d, closed %d, commented %d, unchanged %d.\n",
-		counts[ticket.ActionCreate], counts[ticket.ActionExtend], counts[ticket.ActionUpdate],
-		counts[ticket.ActionClose],
-		counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone], counts[ticket.ActionSkip])
+	parts := make([]string, 0, len(ticket.ActionKinds()))
+	// Built by iteration for the same reason the server's is: a hand-written list
+	// silently omits a kind added later, and the run then reads as though it did
+	// less than it did.
+	for _, kind := range ticket.ActionKinds() {
+		parts = append(parts, fmt.Sprintf("%s %d", kind, counts[kind]))
+	}
+	fmt.Fprintf(w, "\n%s.\n", strings.Join(parts, ", "))
 	if failed > 0 {
 		fmt.Fprintf(w, "%d action(s) failed; see above.\n", failed)
 	}
