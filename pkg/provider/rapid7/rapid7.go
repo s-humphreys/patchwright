@@ -7,7 +7,9 @@
 // Modes:
 //
 //	csv (default) — parse an exported InsightCloudSec "Resources" CSV.
-//	api           — query the Rapid7 API directly (not yet implemented).
+//	api           — query the InsightCloudSec API directly. Needs "base-url" and
+//	                the RAPID7_API_KEY environment variable. Reports why an image
+//	                was not assessed, which the CSV export cannot.
 package rapid7
 
 import (
@@ -36,7 +38,9 @@ func init() {
 			}
 			return &csvProvider{path: path}, nil
 		case "api":
-			return nil, fmt.Errorf("rapid7 api mode is not yet implemented")
+			// The key comes from the environment, never from options: options are
+			// populated from config files and Helm values, which live in git.
+			return newAPIProvider(opts.String("base-url"), os.Getenv("RAPID7_API_KEY"))
 		default:
 			return nil, fmt.Errorf("rapid7: unknown mode %q (want csv or api)", mode)
 		}

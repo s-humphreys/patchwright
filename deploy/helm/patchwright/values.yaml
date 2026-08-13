@@ -107,15 +107,33 @@ config:
 
 provider:
   name: rapid7
-  mode: csv
-  # The scanner export must be made available to the job as a Secret. The
-  # secret's `key` is mounted read-only under /data and passed via --input.
+  # csv reads an export someone produced; api queries InsightCloudSec directly.
   #
-  # NOTE: until the Rapid7 API provider lands, refresh this Secret out-of-band
-  # (e.g. a separate CronJob that pulls the export and updates the Secret).
+  # Prefer api. An export is stale the moment it is written, and a server
+  # refreshing hourly over a mounted file will report a fresh assessment forever
+  # while the data underneath it ages. More importantly, only the API says *why*
+  # an image was not assessed, which is the difference between a coverage
+  # statistic and a registry credential someone can go and fix.
+  mode: csv
+
+  # csv mode: the export is mounted read-only under /data and passed via --input.
+  # Refresh the Secret out-of-band (e.g. a CronJob that pulls a fresh export).
   input:
     secretName: ""            # REQUIRED for csv mode, e.g. "patchwright-export"
     key: "export.csv"
+
+  # api mode: your InsightCloudSec tenant, and the API key.
+  #
+  # The key is read from the RAPID7_API_KEY environment variable, populated from
+  # a Secret you create yourself. It is never a value here: values files end up
+  # in git.
+  #
+  #   kubectl create secret generic patchwright-rapid7 \
+  #     --from-literal=apiKey="$RAPID7_API_KEY"
+  api:
+    baseURL: ""                       # REQUIRED for api mode, e.g. https://example.customer.divvycloud.com
+    credentialsSecretName: ""         # REQUIRED for api mode, e.g. "patchwright-rapid7"
+    credentialsSecretKey: apiKey
 
 reconcile:
   # Reconcile findings against live clusters (drops not-running workloads and

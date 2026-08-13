@@ -200,6 +200,42 @@ func warnUnassessed(ctx context.Context, findings []model.Finding) {
 	if len(unassessed) == 0 {
 		return
 	}
+	attrs := []any{"unassessed_images", len(unassessed), "total_images", len(total)}
+	// When the provider says why, lead with the largest cause. A coverage number
+	// invites resignation; a named cause is a job someone can pick up, and in
+	// practice one cause has accounted for nearly all of it.
+	if reason, images := topAssessmentIssue(findings); reason != "" {
+		attrs = append(attrs, "top_reason", reason, "images_affected", images)
+	}
 	slog.WarnContext(ctx, "provider never assessed some images — their zero counts are absence of data, not a clean result",
-		"unassessed_images", len(unassessed), "total_images", len(total))
+		attrs...)
+}
+
+// topAssessmentIssue returns the provider's most common stated reason for not
+// assessing an image, and how many images it accounts for. Counted per image
+// rather than per finding so the number is comparable with unassessed_images
+// above; the same image under two owners is one gap, not two.
+func topAssessmentIssue(findings []model.Finding) (string, int) {
+	byImage := map[string]string{}
+	for _, f := range findings {
+		if f.ProviderAssessed() {
+			continue
+		}
+		if issues := f.AssessmentIssues(); len(issues) > 0 {
+			byImage[f.Image.Key()] = issues[0]
+		}
+	}
+	counts := map[string]int{}
+	for _, reason := range byImage {
+		counts[reason]++
+	}
+	var topReason string
+	var topCount int
+	for reason, n := range counts {
+		// Ties broken by reason text so the log line is stable run to run.
+		if n > topCount || (n == topCount && reason < topReason) {
+			topReason, topCount = reason, n
+		}
+	}
+	return topReason, topCount
 }
