@@ -1,0 +1,512 @@
+openapi: 3.1.0
+info:
+  title: patchwright
+  version: v1
+  description: |
+    Read-only access to the latest cached assessment, plus ticket reconciliation.
+
+    Every endpoint except `/healthz`, `/readyz` and `/metrics` requires the shared
+    token when `PATCHWRIGHT_API_TOKEN` is set: `Authorization: Bearer <token>`, or
+    HTTP Basic with the token as the password so a browser can be prompted.
+
+    Absent data and zero are different states throughout. A finding with
+    `provider_assessed: false` has zero severity counts because nothing looked, not
+    because nothing was found; `scanned` and `exploit_checked` say the same for the
+    optional scanners. Consumers that treat them as equivalent will report an
+    unscanned estate as a clean one.
+  license:
+    name: MIT
+    url: https://github.com/s-humphreys/patchwright/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8080
+    description: Local or port-forwarded
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: findings
+  - name: tickets
+  - name: operations
+
+paths:
+  /:
+    get:
+      tags: [operations]
+      summary: Live-status page
+      description: HTML. Reads the API below, so the two cannot disagree.
+      responses:
+        "200":
+          description: The status page
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/findings:
+    get:
+      tags: [findings]
+      summary: List findings
+      parameters:
+        - { name: owner_class, in: query, schema: { type: string }, description: "Owner class, e.g. platform" }
+        - { name: team, in: query, schema: { type: string } }
+        - { name: priority, in: query, schema: { type: string, enum: [urgent, high, medium, low] } }
+        - { name: actionable, in: query, schema: { type: boolean } }
+        - { name: live, in: query, schema: { type: boolean } }
+        - { name: upgradable, in: query, schema: { type: boolean } }
+        - { name: known_exploited, in: query, schema: { type: boolean } }
+        - { name: suppressed, in: query, schema: { type: boolean } }
+        - name: provider_assessed
+          in: query
+          schema: { type: boolean }
+          description: "`false` lists the coverage gap: findings nobody has data for."
+        - { name: remediation_checked, in: query, schema: { type: boolean } }
+        - { name: upgrade_resolved, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Matching findings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, findings]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  findings:
+                    type: array
+                    items: { $ref: "#/components/schemas/Finding" }
+                  tickets:
+                    description: |
+                      Open tickets keyed by image repository. Absent when Jira is not
+                      configured, which means unknown rather than "no ticket exists".
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items: { $ref: "#/components/schemas/TicketRef" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/NoAssessment" }
+
+  /api/v1/finding:
+    get:
+      tags: [findings]
+      summary: One image's finding
+      parameters:
+        - name: image
+          in: query
+          required: true
+          schema: { type: string }
+          description: Full image reference or repository
+      responses:
+        "200":
+          description: The finding
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Finding" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No finding for that image }
+
+  /api/v1/owners:
+    get:
+      tags: [findings]
+      summary: Per-team triage
+      responses:
+        "200":
+          description: One row per owner class and team
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, owners]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  owners:
+                    type: array
+                    items: { $ref: "#/components/schemas/OwnerStats" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/NoAssessment" }
+
+  /api/v1/summary:
+    get:
+      tags: [findings]
+      summary: Fleet-wide headline and coverage
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, summary]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  summary: { $ref: "#/components/schemas/Summary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/NoAssessment" }
+
+  /api/v1/assessments:
+    post:
+      tags: [operations]
+      summary: Trigger a refresh
+      description: Returns immediately; the refresh runs in the background.
+      responses:
+        "202":
+          description: Refresh started, or already running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/tickets:
+    get:
+      tags: [tickets]
+      summary: What ticket reconciliation would do
+      description: Computed from the cached assessment. Changes nothing.
+      responses:
+        "200":
+          description: The plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: Ticketing is not configured, or no assessment is cached
+    post:
+      tags: [tickets]
+      summary: Apply the plan
+      description: |
+        The only endpoint that changes anything outside patchwright. Requires
+        `{"confirm": true}`; without it the plan is returned with a 400 rather than
+        applied, so a bare POST cannot write to a tracker.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: { type: boolean }
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketPlan" }
+        "400":
+          description: Not confirmed; the plan is returned unapplied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  actions:
+                    type: array
+                    items: { $ref: "#/components/schemas/TicketAction" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /metrics:
+    get:
+      tags: [operations]
+      summary: Prometheus metrics
+      description: |
+        Prefixed `patchwright_`, plus `go_*` and `process_*`. Unauthenticated unless
+        `--metrics-require-auth` is set.
+      security: []
+      responses:
+        "200":
+          description: Metrics in Prometheus text format
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /healthz:
+    get:
+      tags: [operations]
+      summary: Liveness
+      security: []
+      responses:
+        "200": { description: Serving }
+
+  /readyz:
+    get:
+      tags: [operations]
+      summary: Readiness
+      description: Ready once a first assessment is cached.
+      security: []
+      responses:
+        "200": { description: An assessment is cached }
+        "503": { description: No assessment cached yet }
+
+  /favicon.png:
+    get:
+      tags: [operations]
+      summary: Favicon
+      security: []
+      responses:
+        "200":
+          description: PNG
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        `PATCHWRIGHT_API_TOKEN`. HTTP Basic with any username and the token as the
+        password also works, so a browser can be prompted for the status page.
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+    BadRequest:
+      description: Invalid parameters
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+    NoAssessment:
+      description: No assessment has completed yet
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+
+  schemas:
+    AssessmentMeta:
+      type: object
+      required: [generated_at, running]
+      properties:
+        generated_at: { type: string, format: date-time }
+        running: { type: boolean }
+        started_at:
+          type: string
+          format: date-time
+          description: When the in-flight assessment started.
+        error:
+          type: string
+          description: |
+            Set when the most recent run failed. The previously cached result is
+            still served, so a failed refresh does not blank the API.
+
+    Finding:
+      type: object
+      required:
+        [image, registry, repository, owner, counts, risk, actionable, suppressed,
+         workload_count, provider_assessed, scanned, exploit_checked,
+         remediation_checked, dimensions]
+      properties:
+        image: { type: string }
+        registry: { type: string }
+        repository: { type: string }
+        tag: { type: string }
+        digest: { type: string }
+        owner: { $ref: "#/components/schemas/Owner" }
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: |
+            Severity counts from the scan provider. All zero when
+            `provider_assessed` is false, which means absent data.
+        risk: { type: number }
+        actionable: { type: boolean }
+        suppressed: { type: boolean }
+        priority: { type: string }
+        reasons:
+          type: array
+          items: { type: string }
+          description: Which rules produced this verdict.
+        workload_count: { type: integer }
+        fixable_critical:
+          type: integer
+          description: Critical CVEs with a fix available. Needs a vuln source.
+        known_exploited: { type: boolean }
+        provider_assessed:
+          type: boolean
+          description: False means the provider never assessed this image.
+        assessment_issues:
+          type: array
+          items: { type: string }
+          description: |
+            The provider's own reasons for not assessing it, most common first, when
+            it gives them.
+        scanned: { type: boolean }
+        exploit_checked: { type: boolean }
+        scan_error: { type: string }
+        remediation_checked:
+          type: boolean
+          description: |
+            False means upgrade detection did not run. A consumer that skips findings
+            without an upgrade must check this, or it silently skips images whose
+            versions merely could not be resolved.
+        upgrade: { $ref: "#/components/schemas/Upgrade" }
+        liveness:
+          type: object
+          description: Present only when reconciliation ran.
+          properties:
+            live: { type: boolean }
+        dimensions:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        labels:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        vulns:
+          type: array
+          items: { $ref: "#/components/schemas/Vulnerability" }
+
+    Owner:
+      type: object
+      properties:
+        class: { type: string }
+        team: { type: string }
+        rule: { type: string, description: The ownership rule that matched. }
+
+    Upgrade:
+      type: object
+      required: [kind, current, available, resolved, actionable]
+      properties:
+        kind: { type: string, description: "e.g. image, chart" }
+        name: { type: string }
+        current: { type: string }
+        latest: { type: string }
+        available: { type: boolean }
+        resolved:
+          type: boolean
+          description: |
+            False means versions could not be resolved, so "no upgrade available" is
+            unproven.
+        actionable:
+          type: boolean
+          description: True only when applicable at this level.
+        managed:
+          type: string
+          description: What owns the version, when something else does.
+        manager: { type: string }
+        source: { type: string }
+        source_path: { type: string }
+
+    Vulnerability:
+      type: object
+      required: [id, severity, fix_available]
+      properties:
+        id: { type: string }
+        severity: { type: string }
+        cvss: { type: number }
+        fix_available: { type: boolean }
+        fixed_version: { type: string }
+        epss:
+          type: number
+          description: Probability of exploitation in 30 days. Needs an exploit source.
+        kev: { type: boolean, description: CISA Known Exploited Vulnerabilities. }
+
+    OwnerStats:
+      type: object
+      required: [class, team, total, actionable, fixable, upgradable, unassessed]
+      properties:
+        class: { type: string }
+        team: { type: string }
+        total: { type: integer }
+        actionable: { type: integer }
+        fixable: { type: integer }
+        upgradable: { type: integer }
+        unassessed: { type: integer }
+        direct: { type: integer, description: Actionable findings fixable on the image. }
+        managed: { type: integer, description: Actionable findings a chart or operator owns. }
+        ticketed: { type: integer }
+        cves:
+          type: object
+          additionalProperties: { type: integer }
+          description: Provider severity counts summed across assessed findings.
+        cves_from:
+          type: integer
+          description: |
+            How many findings contributed to `cves`. Zero means no CVE data at all,
+            not no CVEs.
+
+    Summary:
+      type: object
+      properties:
+        findings: { type: integer }
+        actionable: { type: integer }
+        suppressed: { type: integer }
+        known_exploited: { type: integer }
+        upgradable: { type: integer }
+        unique_images: { type: integer }
+        provider_assessed: { type: integer }
+        provider_unassessed: { type: integer }
+        remediation_unresolved: { type: integer }
+        actionable_unassessed:
+          type: integer
+          description: |
+            Actionable findings on images the provider never assessed — actionable
+            only because a scanner looked where the provider did not.
+        scanned: { type: integer }
+        exploit_checked: { type: integer }
+        provider_data_newest:
+          type: string
+          format: date-time
+          description: |
+            Newest assessment timestamp in the provider's own data, which is not the
+            same as when this pipeline ran.
+        provider_data_oldest: { type: string, format: date-time }
+        unassessed_reasons:
+          type: array
+          items:
+            type: object
+            properties:
+              reason: { type: string }
+              findings: { type: integer }
+
+    TicketRef:
+      type: object
+      properties:
+        key: { type: string }
+        status: { type: string }
+        url: { type: string }
+
+    TicketPlan:
+      type: object
+      required: [assessment, applied, actions]
+      properties:
+        assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+        applied: { type: boolean }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/TicketAction" }
+
+    TicketAction:
+      type: object
+      required: [kind, why]
+      properties:
+        kind:
+          type: string
+          enum: [create, extend, update, close, note-stale, note-done, skip]
+        why: { type: string }
+        ticket: { type: string }
+        summary: { type: string }
+        route:
+          type: string
+          description: The routing rule that chose the tracker.
+        images:
+          type: array
+          items: { type: string }
+        comment: { type: string }
+        error:
+          type: string
+          description: Set on an applied action that failed; others may have succeeded.

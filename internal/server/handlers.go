@@ -33,29 +33,46 @@ type assessmentMeta struct {
 	StartedAt *time.Time `json:"started_at,omitempty"`
 }
 
+// routes is the one place a pattern is written down: Handler registers from it and
+// the OpenAPI drift test reads it, so a route cannot be served and undocumented, or
+// documented and unserved.
+func (s *Server) routes() map[string]http.Handler {
+	return map[string]http.Handler{
+		// The status page is served by the same process as the API it reads, so
+		// there is no second deployment and no build step.
+		"GET /":                    http.HandlerFunc(s.handleUI),
+		"GET /favicon.png":         http.HandlerFunc(s.handleFavicon),
+		"GET /healthz":             http.HandlerFunc(s.handleHealthz),
+		"GET /readyz":              http.HandlerFunc(s.handleReadyz),
+		"GET /metrics":             metrics.Handler(),
+		"GET /api/v1/findings":     http.HandlerFunc(s.handleFindings),
+		"GET /api/v1/finding":      http.HandlerFunc(s.handleFinding),
+		"GET /api/v1/owners":       http.HandlerFunc(s.handleOwners),
+		"GET /api/v1/summary":      http.HandlerFunc(s.handleSummary),
+		"POST /api/v1/assessments": http.HandlerFunc(s.handleRefresh),
+		"GET /api/v1/tickets":      http.HandlerFunc(s.handleTicketPlan),
+		"POST /api/v1/tickets":     http.HandlerFunc(s.handleTicketApply),
+	}
+}
+
+// registeredRoutes lists the served patterns, for the spec test.
+func registeredRoutes() []string {
+	var out []string
+	for pattern := range (&Server{}).routes() {
+		out = append(out, pattern)
+	}
+	return out
+}
+
 // Handler returns the HTTP handler for the API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	// The live-status page is served by the same process as the API it reads, so
-	// there is no second deployment and no build step.
-	mux.HandleFunc("GET /", s.handleUI)
-	mux.HandleFunc("GET /favicon.png", s.handleFavicon)
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	// Metrics sit behind the same token as everything else. They are counts of an
-	// estate's unpatched criticals and its coverage gaps — posture, not liveness —
-	// so unlike the probes they are not something to leave open. A ServiceMonitor
-	// carries the token; see the chart.
-	mux.Handle("GET /metrics", metrics.Handler())
-	mux.HandleFunc("GET /api/v1/findings", s.handleFindings)
-	mux.HandleFunc("GET /api/v1/finding", s.handleFinding)
-	mux.HandleFunc("GET /api/v1/owners", s.handleOwners)
-	mux.HandleFunc("GET /api/v1/summary", s.handleSummary)
-	mux.HandleFunc("POST /api/v1/assessments", s.handleRefresh)
-	mux.HandleFunc("GET /api/v1/tickets", s.handleTicketPlan)
-	mux.HandleFunc("POST /api/v1/tickets", s.handleTicketApply)
+	for pattern, h := range s.routes() {
+		mux.Handle(pattern, h)
+	}
 	// Authentication wraps everything, including the page: the page is a data view,
-	// so leaving it open while gating the API would protect nothing.
+	// so leaving it open while gating the API would protect nothing. /metrics and the
+	// probes are exempt; see openPaths.
 	return s.authorize(mux)
 }
 

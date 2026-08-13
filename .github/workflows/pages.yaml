@@ -1,0 +1,40 @@
+name: pages
+
+# Publishes the API reference only. The markdown in docs/ renders on GitHub already,
+# so a static-site generator would add a build step for no reader benefit.
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/api/**
+      - .github/workflows/pages.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assemble the site
+        run: |
+          mkdir -p site/images
+          cp docs/api/index.html docs/api/openapi.yaml site/
+          cp docs/images/patchwright.png site/images/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
