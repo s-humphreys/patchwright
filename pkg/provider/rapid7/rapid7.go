@@ -40,12 +40,18 @@ func init() {
 		case "api":
 			// The key comes from the environment, never from options: options are
 			// populated from config files and Helm values, which live in git.
-			return newAPIProvider(opts.String("base-url"), os.Getenv("RAPID7_API_KEY"))
+			return newAPIProvider(opts.String("base-url"), apiKeyFromEnv())
 		default:
 			return nil, fmt.Errorf("rapid7: unknown mode %q (want csv or api)", mode)
 		}
 	})
 }
+
+// EnvAPIKey holds the InsightCloudSec API key. Read from the environment, never
+// from options: options come from config files and Helm values, which live in git.
+const EnvAPIKey = "RAPID7_API_KEY"
+
+func apiKeyFromEnv() string { return os.Getenv(EnvAPIKey) }
 
 // csvProvider reads an exported InsightCloudSec "Resources" CSV.
 type csvProvider struct {

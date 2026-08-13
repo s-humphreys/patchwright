@@ -3,6 +3,7 @@ package sink
 import (
 	"encoding/json"
 	"io"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
@@ -48,6 +49,13 @@ type FindingView struct {
 	Scanned        bool   `json:"scanned"`
 	ExploitChecked bool   `json:"exploit_checked"`
 	ScanError      string `json:"scan_error,omitempty"`
+	// OldestCVEDays is how long the earliest-known CVE on this image has been known
+	// to the scan provider. Nil when no CVE has a date — no age source ran, or the
+	// provider has never seen these CVEs. Zero and unknown are different answers, so
+	// this is a pointer rather than a 0.
+	OldestCVEDays *int       `json:"oldest_cve_days,omitempty"`
+	OldestCVESeen *time.Time `json:"oldest_cve_first_seen,omitempty"`
+
 	// RemediationChecked distinguishes "no upgrade found" from "we never looked".
 	// A consumer that skips findings without an upgrade MUST check this, or it
 	// will silently skip images whose versions simply could not be resolved.
@@ -89,13 +97,14 @@ type UpgradeView struct {
 
 // VulnView is one CVE affecting an image.
 type VulnView struct {
-	ID           string  `json:"id"`
-	Severity     string  `json:"severity"`
-	CVSS         float64 `json:"cvss,omitempty"`
-	FixAvailable bool    `json:"fix_available"`
-	FixedVersion string  `json:"fixed_version,omitempty"`
-	EPSS         float64 `json:"epss,omitempty"`
-	KEV          bool    `json:"kev,omitempty"`
+	ID           string     `json:"id"`
+	Severity     string     `json:"severity"`
+	FirstSeen    *time.Time `json:"first_seen,omitempty"`
+	CVSS         float64    `json:"cvss,omitempty"`
+	FixAvailable bool       `json:"fix_available"`
+	FixedVersion string     `json:"fixed_version,omitempty"`
+	EPSS         float64    `json:"epss,omitempty"`
+	KEV          bool       `json:"kev,omitempty"`
 }
 
 // Emit implements Sink.
@@ -152,6 +161,7 @@ func ToFindingView(f model.Finding) FindingView {
 		vulns = append(vulns, VulnView{
 			ID:           v.ID,
 			Severity:     v.Severity,
+			FirstSeen:    firstSeen(v),
 			CVSS:         v.CVSS,
 			FixAvailable: v.FixAvailable,
 			FixedVersion: v.FixedVersion,
@@ -162,6 +172,14 @@ func ToFindingView(f model.Finding) FindingView {
 	var liveness *LivenessView
 	if f.Reconciled {
 		liveness = &LivenessView{Live: f.Live}
+	}
+	// Dated from the oldest known CVE: an image carrying one since June has been
+	// exposed since June, whatever was added later.
+	var oldestDays *int
+	var oldestSeen *time.Time
+	if t, ok := f.OldestVuln(); ok {
+		days := int(time.Since(t).Hours() / 24)
+		oldestDays, oldestSeen = &days, &t
 	}
 	var upgrade *UpgradeView
 	if f.Upgrade != nil {
@@ -195,6 +213,8 @@ func ToFindingView(f model.Finding) FindingView {
 		Scanned:            f.Scanned,
 		ExploitChecked:     f.ExploitChecked,
 		ScanError:          f.ScanError,
+		OldestCVEDays:      oldestDays,
+		OldestCVESeen:      oldestSeen,
 		RemediationChecked: f.RemediationChecked,
 		Liveness:           liveness,
 		Upgrade:            upgrade,
@@ -202,4 +222,14 @@ func ToFindingView(f model.Finding) FindingView {
 		Labels:             f.Labels,
 		Vulns:              vulns,
 	}
+}
+
+// firstSeen returns the CVE's first-seen time, or nil when unknown — never a zero
+// time, which would render as 1970 and sort as the oldest thing in the queue.
+func firstSeen(v model.Vulnerability) *time.Time {
+	if v.FirstSeen.IsZero() {
+		return nil
+	}
+	t := v.FirstSeen
+	return &t
 }

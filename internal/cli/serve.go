@@ -192,6 +192,9 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&in.vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&in.exploitSource, "exploit-source", "", "enrich CVEs with exploit intel ("+joinExploitSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&in.exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
+	cmd.Flags().StringVar(&in.ageSource, "age-source", "",
+		"date CVEs from the scan provider's own first-seen times ("+joinAgeSources()+"); requires --vuln-source")
+	cmd.Flags().StringArrayVar(&in.ageOptions, "age-option", nil, "age source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&in.remediation, "remediation", false, "detect available upgrades for how images are deployed")
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "address to serve the API on")
 	cmd.Flags().BoolVar(&metricsAuth, "metrics-require-auth", false,

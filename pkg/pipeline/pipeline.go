@@ -24,6 +24,7 @@ type Pipeline struct {
 	evaluator   *policy.Evaluator
 	scanner     *enrich.ImageScanner        // optional: per-CVE scan after dedupe
 	exploit     *enrich.ExploitEnricher     // optional: EPSS/KEV enrichment after scan
+	age         *enrich.AgeEnricher         // optional: CVE first-seen enrichment after scan
 	remediation *enrich.RemediationEnricher // optional: deployment upgrade detection
 }
 
@@ -40,6 +41,12 @@ func WithImageScanner(s *enrich.ImageScanner) Option {
 // scanned vulnerabilities, after image scanning and before policy.
 func WithExploitEnricher(e *enrich.ExploitEnricher) Option {
 	return func(p *Pipeline) { p.exploit = e }
+}
+
+// WithAgeEnricher enables CVE first-seen enrichment, after image scanning: it
+// stamps ages onto vulnerabilities that already exist.
+func WithAgeEnricher(a *enrich.AgeEnricher) Option {
+	return func(p *Pipeline) { p.age = a }
 }
 
 // WithRemediationEnricher enables detection of available upgrades (e.g. a newer
@@ -79,6 +86,13 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	if p.scanner != nil {
 		if err := p.scanner.EnrichImages(ctx, images); err != nil {
 			return nil, err
+		}
+	}
+	if p.age != nil {
+		if err := p.age.EnrichImages(ctx, images); err != nil {
+			// Ageing is decoration on top of the queue, not the queue: losing it must
+			// not lose the assessment, so it warns rather than failing the run.
+			slog.WarnContext(ctx, "cve ageing failed; ages will be unknown", "error", err)
 		}
 	}
 	if p.exploit != nil {

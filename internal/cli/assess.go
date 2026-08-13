@@ -36,6 +36,8 @@ func newAssessCmd() *cobra.Command {
 		vulnOptions    []string
 		exploitSource  string
 		exploitOptions []string
+		ageSource      string
+		ageOptions     []string
 		remediation    bool
 	)
 
@@ -65,6 +67,8 @@ func newAssessCmd() *cobra.Command {
 				vulnOptions:    vulnOptions,
 				exploitSource:  exploitSource,
 				exploitOptions: exploitOptions,
+				ageSource:      ageSource,
+				ageOptions:     ageOptions,
 				remediation:    remediation,
 			})
 			if err != nil {
@@ -108,6 +112,9 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().StringVar(&vulnSource, "vuln-source", "", "scan images for per-CVE fix availability ("+joinVulnSources()+")")
 	cmd.Flags().StringArrayVar(&vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable), e.g. severity=CRITICAL,HIGH")
 	cmd.Flags().StringVar(&exploitSource, "exploit-source", "", "enrich CVEs with exploit intel — EPSS + CISA KEV ("+joinExploitSources()+"); requires --vuln-source")
+	cmd.Flags().StringVar(&ageSource, "age-source", "",
+		"date CVEs from the scan provider's own first-seen times ("+joinAgeSources()+"); requires --vuln-source")
+	cmd.Flags().StringArrayVar(&ageOptions, "age-option", nil, "age source option as key=value (repeatable)")
 	cmd.Flags().StringArrayVar(&exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&remediation, "remediation", false, "detect available upgrades for how images are deployed: a newer Helm chart (Flux, with --live-source kube) or a newer image tag (registry)")
 	return cmd
@@ -129,6 +136,32 @@ func buildExploitEnricher(name string, options []string) (*enrich.ExploitEnriche
 	}
 	enricher := enrich.NewExploitEnricher(src)
 	return &enricher, nil
+}
+
+// buildAgeEnricher constructs the CVE-ageing enricher for the named source.
+func buildAgeEnricher(name string, options []string) (*enrich.AgeEnricher, error) {
+	opts := enrich.Options{}
+	for _, kv := range options {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid --age-option %q, want key=value", kv)
+		}
+		opts[k] = v
+	}
+	src, err := enrich.NewAgeSource(name, opts)
+	if err != nil {
+		return nil, err
+	}
+	enricher := enrich.NewAgeEnricher(src)
+	return &enricher, nil
+}
+
+func joinAgeSources() string {
+	names := enrich.AgeSourceNames()
+	if len(names) == 0 {
+		return "none registered"
+	}
+	return strings.Join(names, "|")
 }
 
 func joinExploitSources() string {

@@ -27,6 +27,8 @@ type assessInputs struct {
 	vulnOptions    []string
 	exploitSource  string
 	exploitOptions []string
+	ageSource      string
+	ageOptions     []string
 	remediation    bool
 }
 
@@ -42,6 +44,7 @@ type assessor struct {
 	liveSource    string
 	vulnSource    string
 	exploitSource string
+	ageSource     string
 }
 
 // newAssessor loads config and constructs the provider, enrichers, and pipeline
@@ -98,6 +101,16 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		}
 		popts = append(popts, pipeline.WithImageScanner(scanner))
 	}
+	if in.ageSource != "" {
+		if in.vulnSource == "" {
+			return nil, fmt.Errorf("--age-source requires --vuln-source: there are no vulnerabilities to date otherwise")
+		}
+		enricher, err := buildAgeEnricher(in.ageSource, in.ageOptions)
+		if err != nil {
+			return nil, err
+		}
+		popts = append(popts, pipeline.WithAgeEnricher(enricher))
+	}
 	if in.exploitSource != "" {
 		if in.vulnSource == "" {
 			return nil, fmt.Errorf("--exploit-source requires --vuln-source: there are no vulnerabilities to annotate with EPSS/KEV otherwise")
@@ -126,6 +139,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		liveSource:    in.liveSource,
 		vulnSource:    in.vulnSource,
 		exploitSource: in.exploitSource,
+		ageSource:     in.ageSource,
 	}, nil
 }
 
@@ -133,7 +147,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 // full finding set (no display filtering).
 func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 	slog.InfoContext(ctx, "starting assessment",
-		"provider", a.providerName, "vuln_source", a.vulnSource, "exploit_source", a.exploitSource, "live_source", a.liveSource)
+		"provider", a.providerName, "vuln_source", a.vulnSource, "exploit_source", a.exploitSource, "age_source", a.ageSource, "live_source", a.liveSource)
 
 	occ, err := a.provider.Fetch(ctx)
 	if err != nil {

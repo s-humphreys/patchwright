@@ -379,6 +379,13 @@ components:
         scanned: { type: boolean }
         exploit_checked: { type: boolean }
         scan_error: { type: string }
+        oldest_cve_days:
+          type: integer
+          description: |
+            Days since the scan provider first saw the oldest CVE on this image.
+            Absent when no CVE is dated — no age source ran, or the provider has never
+            seen them. Absent and zero are different answers.
+        oldest_cve_first_seen: { type: string, format: date-time }
         remediation_checked:
           type: boolean
           description: |
@@ -442,6 +449,12 @@ components:
       properties:
         id: { type: string }
         severity: { type: string }
+        first_seen:
+          type: string
+          format: date-time
+          description: |
+            When the scan provider first observed this CVE, estate-wide. Needs an age
+            source; absent when unknown.
         cvss: { type: number }
         fix_available: { type: boolean }
         fixed_version: { type: string }

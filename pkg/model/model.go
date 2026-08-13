@@ -92,6 +92,14 @@ type Vulnerability struct {
 	Description  string
 	Links        []string
 
+	// FirstSeen is when the scan provider first observed this CVE, populated by an
+	// age source. Zero when unknown.
+	//
+	// The queue has no other time dimension: without it, a critical found this
+	// morning and one open since June are indistinguishable, and neither an SLA nor
+	// an "oldest first" triage order is expressible.
+	FirstSeen time.Time
+
 	// Exploitability signals, populated by an exploit-intelligence enricher.
 	// They approximate "is this actually worth acting on" without code-level
 	// reachability analysis. EPSS is the probability of exploitation in the next
@@ -304,6 +312,24 @@ type Finding struct {
 	Suppressed bool
 	Priority   string   // free-form, defined by policy config
 	Reasons    []string // human-readable explanation of the verdict
+}
+
+// OldestVuln returns the earliest FirstSeen across this finding's CVEs, and whether
+// any was known.
+//
+// The oldest is the interesting one: an image carrying a CVE since June has been
+// exposed since June, whatever else has been added since.
+func (f Finding) OldestVuln() (time.Time, bool) {
+	var oldest time.Time
+	for _, v := range f.Vulns {
+		if v.FirstSeen.IsZero() {
+			continue
+		}
+		if oldest.IsZero() || v.FirstSeen.Before(oldest) {
+			oldest = v.FirstSeen
+		}
+	}
+	return oldest, !oldest.IsZero()
 }
 
 // AssessmentIssues returns the distinct reasons this finding's workloads were not
