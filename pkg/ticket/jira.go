@@ -483,13 +483,21 @@ func (j *Jira) Update(ctx context.Context, key string, d Draft) error {
 	return nil
 }
 
-// Close transitions a ticket into a done status, commenting with the reason in
-// the same request so the explanation cannot arrive without the transition.
+// Close comments with the reason and transitions the ticket into a done status.
+//
+// Both happen in one request. Posting the comment separately first would be
+// simpler to read but has two failure modes this avoids: a transition that then
+// fails leaves a ticket explaining a closure that never happened, and the next
+// run — seeing the ticket still open — comments again, so a workflow patchwright
+// cannot complete accumulates a comment per run forever. In one request the
+// explanation and the closure share a fate.
 //
 // The transition is looked up rather than assumed: transition ids are per-workflow,
 // and a hardcoded one silently moves tickets to the wrong status on any board that
 // does not share the workflow it was written against.
 func (j *Jira) Close(ctx context.Context, key, comment string) error {
+	// Resolved by project, not by route: this ticket already exists on a specific
+	// board, and that board's workflow decides how it can be finished.
 	cfg := j.cfgForKey(key)
 	id, name, err := j.doneTransition(ctx, key, cfg.CloseTransition)
 	if err != nil {
@@ -505,7 +513,23 @@ func (j *Jira) Close(ctx context.Context, key, comment string) error {
 	}
 	if err := j.do(ctx, http.MethodPost,
 		"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions", body, nil); err != nil {
-		return fmt.Errorf("close %s via %q: %w", key, name, err)
+		// Some workflows reject a comment supplied with a transition (a transition
+		// screen with required fields). Retrying without it still closes the
+		// ticket, and a closed ticket with no explanation beats an open ticket
+		// nobody is looking at — but say so, because the reasoning is the point.
+		slog.WarnContext(ctx, "transition with comment failed; retrying without the comment",
+			"ticket", key, "transition", name, "error", err)
+		if bare := j.do(ctx, http.MethodPost,
+			"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions",
+			map[string]any{"transition": map[string]string{"id": id}}, nil); bare != nil {
+			return fmt.Errorf("close %s via %q: %w", key, name, err)
+		}
+		// The closure landed, so record the reasoning separately rather than
+		// losing it. A failure here is not worth failing the close over.
+		if cerr := j.Comment(ctx, key, comment); cerr != nil {
+			slog.WarnContext(ctx, "closed but could not post the reason",
+				"ticket", key, "error", cerr)
+		}
 	}
 	return nil
 }

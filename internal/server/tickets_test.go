@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
@@ -56,7 +57,9 @@ func (s *stubTicketer) AddImages(_ context.Context, key string, images []string)
 	return nil
 }
 
-func (s *stubTicketer) AutoClose() bool { return s.autoClose }
+func (s *stubTicketer) Config() config.JiraConfig {
+	return config.JiraConfig{Project: "PROJ", AutoClose: s.autoClose}
+}
 
 func (s *stubTicketer) Close(_ context.Context, key, comment string) error {
 	s.closed = append(s.closed, key)

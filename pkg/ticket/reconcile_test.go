@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -406,6 +407,11 @@ func TestApplyPerformsUpdates(t *testing.T) {
 // onLatest builds a finding for a repository that is demonstrably already on its
 // latest version: remediation checked, versions resolved, nothing available, and
 // liveness reconciled.
+// autoCloseCfg is the minimum configuration that permits closing.
+func autoCloseCfg() config.JiraConfig {
+	return config.JiraConfig{Project: "PROJ", AutoClose: true}
+}
+
 func onLatest(repo, version string) sink.FindingView {
 	return sink.FindingView{
 		Repository: repo, Tag: version, ProviderAssessed: true, RemediationChecked: true,
@@ -420,7 +426,7 @@ func onLatest(repo, version string) sink.FindingView {
 // without ever seeing the ticket.
 func TestClosesATicketWhoseWorkIsProvablyDone(t *testing.T) {
 	actions := Reconcile(ReconcileInput{
-		AutoClose:   true,
+		Config:      autoCloseCfg(),
 		Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
 		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1", Category: "new"}}},
 	})
@@ -432,7 +438,7 @@ func TestClosesATicketWhoseWorkIsProvablyDone(t *testing.T) {
 	}
 	// The comment must state the evidence, so a human reading the closed ticket
 	// can check the reasoning rather than take it on trust.
-	for _, want := range []string{"acme/app is on 2.0.0", "positive check"} {
+	for _, want := range []string{"acme/app is on 2.0.0", "Checked, not assumed"} {
 		if !strings.Contains(actions[0].Message, want) {
 			t.Errorf("close comment does not mention %q: %s", want, actions[0].Message)
 		}
@@ -487,7 +493,7 @@ func TestCloseGuards(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			actions := Reconcile(ReconcileInput{
-				AutoClose:   true,
+				Config:      autoCloseCfg(),
 				Findings:    []sink.FindingView{tc.finding()},
 				OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
 			})
@@ -504,7 +510,7 @@ func TestCloseGuards(t *testing.T) {
 // refuses to close on: it cannot be told from a provider that stopped looking.
 func TestDoesNotCloseWhenTheImageIsNoLongerReported(t *testing.T) {
 	actions := Reconcile(ReconcileInput{
-		AutoClose:   true,
+		Config:      autoCloseCfg(),
 		Findings:    []sink.FindingView{onLatest("acme/other", "1.0.0")},
 		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
 	})
@@ -523,8 +529,8 @@ func TestDoesNotCloseWhileAnyCoveredImageLags(t *testing.T) {
 	lagging.Upgrade.Latest = "1.1.0"
 	ticketRef := Existing{Key: "PROJ-1"}
 	actions := Reconcile(ReconcileInput{
-		AutoClose: true,
-		Findings:  []sink.FindingView{onLatest("acme/one", "2.0.0"), lagging},
+		Config:   autoCloseCfg(),
+		Findings: []sink.FindingView{onLatest("acme/one", "2.0.0"), lagging},
 		OpenByImage: map[string][]Existing{
 			"acme/one": {ticketRef}, "acme/two": {ticketRef},
 		},
@@ -543,7 +549,7 @@ func TestDoesNotCloseWhenAnOldTagIsStillRunning(t *testing.T) {
 	old.Upgrade.Available = true
 	old.Upgrade.Latest = "2.0.0"
 	actions := Reconcile(ReconcileInput{
-		AutoClose:   true,
+		Config:      autoCloseCfg(),
 		Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0"), old},
 		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
 	})
@@ -564,5 +570,43 @@ func TestApplyPerformsCloses(t *testing.T) {
 	}
 	if got := rec.closed["PROJ-1"]; got != "done because reasons" {
 		t.Errorf("closed with comment %q", got)
+	}
+}
+
+// Closing is per-tracker: a route can automate it for its own board without
+// automating it everywhere. Resolved by the ticket's project, because that is the
+// board it is actually on.
+func TestAutoCloseIsResolvedPerProject(t *testing.T) {
+	yes, no := true, false
+	cfg := config.JiraConfig{
+		Project: "DVOP", AutoClose: false,
+		Routes: []config.TicketRoute{
+			{Name: "sre", When: "true", Project: "SRE", AutoClose: &yes},
+			{Name: "locked", When: "true", Project: "LOCKED", AutoClose: &no},
+		},
+	}
+	for _, tc := range []struct {
+		key       string
+		wantClose bool
+	}{
+		{"SRE-1", true},     // its route opts in
+		{"DVOP-1", false},   // base has it off
+		{"LOCKED-1", false}, // its route opts out explicitly
+		{"OTHER-1", false},  // unknown project falls back to the base
+	} {
+		actions := Reconcile(ReconcileInput{
+			Config:      cfg,
+			Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
+			OpenByImage: map[string][]Existing{"acme/app": {{Key: tc.key}}},
+		})
+		var closed bool
+		for _, a := range actions {
+			if a.Kind == ActionClose {
+				closed = true
+			}
+		}
+		if closed != tc.wantClose {
+			t.Errorf("%s: closed = %v, want %v", tc.key, closed, tc.wantClose)
+		}
 	}
 }

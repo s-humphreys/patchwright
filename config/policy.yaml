@@ -75,6 +75,8 @@ scan:
 #   # Off by default. Note this closes on positive evidence only — a finding merely
 #   # disappearing is never treated as done, because a provider that stopped
 #   # assessing an image looks identical.
+#   # Both are per route as well as here, since they belong to the tracker: see
+#   # routes below. For existing tickets they resolve by the issue key's project.
 #   autoClose: true
 #   closeTransition: Done   # required when the workflow has several ways to finish
 #
@@ -85,6 +87,8 @@ scan:
 #       project: SRE
 #       issueType: Bug
 #       epic: SRE-42
+#       autoClose: true
+#       closeTransition: Ship It    # this project's workflow, not the one above
 #       # A team-managed project with no shared custom field can key on labels
 #       # instead; the lookup follows automatically.
 #       imageLabel: true

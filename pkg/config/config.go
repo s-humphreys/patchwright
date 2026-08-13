@@ -225,16 +225,22 @@ type TicketRoute struct {
 
 	// Everything below overrides the top-level setting of the same name when
 	// non-empty. Pointer and slice types distinguish "not set" from "set empty".
-	Board       int               `yaml:"board"`
-	Project     string            `yaml:"project"`
-	Template    string            `yaml:"template"`
-	ImageField  string            `yaml:"imageField"`
-	ImageLabel  *bool             `yaml:"imageLabel"`
-	Epic        string            `yaml:"epic"`
-	IssueType   string            `yaml:"issueType"`
-	Priority    string            `yaml:"priority"`
-	PriorityMap map[string]string `yaml:"priorityMap"`
-	Labels      []string          `yaml:"labels"`
+	Board int `yaml:"board"`
+	// AutoClose and CloseTransition are per-route because both are properties of
+	// the tracker, not of the deployment: one team may want closing automated and
+	// another may not, and a transition named "Done" in one project says nothing
+	// about another project's workflow.
+	AutoClose       *bool             `yaml:"autoClose"`
+	CloseTransition string            `yaml:"closeTransition"`
+	Project         string            `yaml:"project"`
+	Template        string            `yaml:"template"`
+	ImageField      string            `yaml:"imageField"`
+	ImageLabel      *bool             `yaml:"imageLabel"`
+	Epic            string            `yaml:"epic"`
+	IssueType       string            `yaml:"issueType"`
+	Priority        string            `yaml:"priority"`
+	PriorityMap     map[string]string `yaml:"priorityMap"`
+	Labels          []string          `yaml:"labels"`
 }
 
 // Resolve returns the configuration for a route: the base with this route's
@@ -247,6 +253,12 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	out.Routes = nil
 	if r.Board != 0 {
 		out.Board = r.Board
+	}
+	if r.AutoClose != nil {
+		out.AutoClose = *r.AutoClose
+	}
+	if r.CloseTransition != "" {
+		out.CloseTransition = r.CloseTransition
 	}
 	if r.Project != "" {
 		out.Project = r.Project
@@ -283,6 +295,25 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 		out.Labels = r.Labels
 	}
 	return out
+}
+
+// ForProject returns the configuration governing a project: the route that writes
+// there, or the base settings.
+//
+// Used for decisions about tickets that already exist, where the project is known
+// from the issue key but the route that created it may since have been renamed or
+// removed. Resolving by project rather than by route name means those tickets are
+// still governed by the settings of the board they are actually on.
+func (c JiraConfig) ForProject(project string) JiraConfig {
+	if project == "" {
+		return c
+	}
+	for _, r := range c.Routes {
+		if resolved := c.Resolve(r); resolved.Project == project {
+			return resolved
+		}
+	}
+	return c
 }
 
 // Projects returns every distinct project this configuration can write to, base

@@ -167,7 +167,7 @@ func run(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.P
 	}
 	actions := ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, OpenByImage: index, Findings: findings,
-		AutoClose: cfg.AutoClose,
+		Config: cfg,
 	})
 
 	if !confirm {

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -77,9 +78,11 @@ type ReconcileInput struct {
 	// Findings are all findings from the assessment, used to tell "fixed" from
 	// "no longer assessed" when a ticket's work looks finished.
 	Findings []sink.FindingView
-	// AutoClose allows closing tickets whose work is provably finished. Without
-	// it, the same evidence produces a comment.
-	AutoClose bool
+	// Config decides whether a ticket may be closed, resolved per project so a
+	// route can enable closing for its own board without enabling it everywhere.
+	// The zero value closes nothing, which is the safe default for a caller that
+	// has not thought about it.
+	Config config.JiraConfig
 }
 
 // Reconcile turns the difference between drafts and open tickets into actions.
@@ -170,14 +173,16 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 			// away" but "the images are still here, we checked, and they are all
 			// on the latest version already". Someone merged the Renovate PR and
 			// rolled it out without ever seeing the ticket.
-			if in.AutoClose {
+			if in.Config.ForProject(projectOf(t.Key)).AutoClose {
 				if done, evidence := upgradeComplete(images, byRepo(in.Findings)); done {
 					out = append(out, Action{
 						Kind: ActionClose, TicketKey: t.Key,
-						Message: "patchwright is closing this: every image it covers is still being " +
-							"reported, was checked for a newer version, and is already on the latest " +
-							"available one. " + evidence + "\n\nThis is a positive check rather than " +
-							"an absence of data. Reopen if that is wrong.",
+						// Brief on purpose. The one thing a reader needs is what was
+						// observed, so they can disagree with a fact rather than an
+						// argument.
+						Message: "Closing: already on the latest available version. " + evidence +
+							"\n\nChecked, not assumed — patchwright never closes a ticket because a " +
+							"finding disappeared. Reopen if this is wrong.",
 						Why: "every image it covers is already on the latest available version",
 					})
 					continue
@@ -206,6 +211,12 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TicketKey < out[j].TicketKey })
 	return out
+}
+
+// projectOf extracts the project key from a Jira issue key ("PROJ-123" -> "PROJ").
+func projectOf(key string) string {
+	project, _, _ := strings.Cut(key, "-")
+	return project
 }
 
 // byRepo groups findings by repository, since a ticket's images are bare

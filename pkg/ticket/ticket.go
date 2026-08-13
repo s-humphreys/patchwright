@@ -206,9 +206,9 @@ func byRoute(findings []sink.FindingView, r *routes, name string) []sink.Finding
 	return out
 }
 
-// AutoClose reports whether closing provably-finished tickets is enabled. On the
-// planner because it is a policy decision, and the planner owns the policy.
-func (p *Planner) AutoClose() bool { return p.cfg.AutoClose }
+// Config exposes the ticket configuration, including its routes, so callers can
+// resolve per-project decisions without keeping a second copy of it.
+func (p *Planner) Config() config.JiraConfig { return p.cfg }
 
 // skipReason reports why a finding should not be ticketed, if it should not.
 //

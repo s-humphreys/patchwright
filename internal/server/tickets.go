@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
@@ -30,10 +31,10 @@ import (
 type Ticketer interface {
 	Plan(findings []sink.FindingView) (*ticket.Plan, error)
 	OpenByImage(ctx context.Context) (map[string][]ticket.Existing, error)
-	// AutoClose reports whether reconciliation may close tickets whose work is
-	// provably finished. Asked rather than assumed, so the server cannot enable a
-	// write the configuration did not.
-	AutoClose() bool
+	// Config is the ticket configuration, so reconciliation can resolve per-project
+	// decisions such as whether closing is allowed on that board. Asked rather than
+	// assumed: the server must not enable a write the configuration did not.
+	Config() config.JiraConfig
 	ticket.Applier
 }
 
@@ -130,7 +131,7 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 	}
 	return ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, OpenByImage: index, Findings: snap.views,
-		AutoClose: s.ticketer.AutoClose(),
+		Config: s.ticketer.Config(),
 	}), nil
 }
 

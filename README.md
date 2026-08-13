@@ -476,6 +476,36 @@ workflow offers more than one way to finish: "Done" and "Won't Do" say very
 different things about the same work, so patchwright refuses to choose rather than
 guessing, and names the alternatives in the error.
 
+Both settings are **per route**, because both belong to the tracker rather than the
+deployment: one team may want closing automated while another does not, and a
+transition named "Done" in one project says nothing about another project's
+workflow.
+
+```yaml
+jira:
+  project: PROJ
+  autoClose: false              # off for anything unrouted
+  routes:
+    - name: sre
+      when: "owner['team'] == 'sre'"
+      project: SRE
+      autoClose: true
+      closeTransition: Ship It  # SRE's workflow, not PROJ's
+```
+
+For tickets that already exist the settings are resolved by the issue key's
+**project**, not by the route that created it — the board a ticket sits on decides
+how it can be finished, and a route may since have been renamed or removed.
+
+The closing comment is short and states only what was observed, so a reader can
+disagree with a fact rather than an argument. It is posted in the same request as
+the transition: a separate comment first would leave a ticket explaining a closure
+that never happened if the transition then failed, and the next run would comment
+again, so a workflow patchwright cannot complete would accumulate one comment per
+run forever. Where a transition screen rejects an attached comment, the transition
+is retried bare and the reason posted separately, since a closed ticket with no
+explanation still beats an open ticket nobody is reading.
+
 **It reconciles rather than only creating.** A queue that is only ever added to rots
 three ways, all of which happened on a real project inside a day: a ticket covering
 one image of a change suppresses the rest, leaving them with no ticket and nothing
