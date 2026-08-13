@@ -145,6 +145,41 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/NoAssessment" }
 
+  /api/v1/config:
+    get:
+      tags: [operations]
+      summary: The loaded rules
+      description: |
+        The ownership and policy configuration as parsed at startup — not the files as
+        they are on disk now, which may include edits that are not in effect.
+
+        Values of keys that look like credentials are replaced with `[redacted]`.
+        Nothing should ever match, since credentials come from the environment by
+        design; the check exists because the cost of being wrong is a credential in a
+        browser tab.
+      responses:
+        "200":
+          description: One entry per config file, in load order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, content]
+                      properties:
+                        path: { type: string }
+                        content: { type: string, description: YAML as loaded. }
+                        redacted:
+                          type: boolean
+                          description: A value in this file was withheld.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No configuration was loaded }
+
   /api/v1/assessments:
     post:
       tags: [operations]

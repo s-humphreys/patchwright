@@ -107,6 +107,19 @@ func newServeCmd() *cobra.Command {
 			// on a finding. Both are optional: without them the server simply has
 			// nothing to say about tickets, which is different from saying there
 			// are none. Only search is used here, never creation.
+			// The loaded rules, served back so "why is this not actionable?" is
+			// answerable without repository or cluster access. Paths are expanded the
+			// same way the assessor expands them, since -c commonly names a directory.
+			if paths, err := expandConfigPaths(in.configPaths); err == nil && len(paths) > 0 {
+				if cfg, cerr := config.Load(paths...); cerr == nil {
+					srv = srv.WithConfig(cfg)
+				} else {
+					slog.WarnContext(cmd.Context(),
+						"could not load config for the API; the rules endpoint will report none",
+						"error", cerr)
+				}
+			}
+
 			if cfg, err := loadTicketConfig(in.configPaths); err == nil {
 				jira, jerr := ticket.NewJira(cfg.Jira)
 				switch {

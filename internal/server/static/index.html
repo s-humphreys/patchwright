@@ -95,6 +95,21 @@
   tr.expandable:hover td, tr.expandable:focus-visible td { background: var(--hover); }
   tr.expandable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .caret { display: inline-block; width: 1rem; color: var(--muted); }
+  .linkish {
+    font: inherit; font-size: 0.78rem; font-weight: 500; margin-left: 0.6rem;
+    background: none; border: 1px solid var(--line); border-radius: 4px;
+    padding: 0.1rem 0.45rem; color: var(--muted); cursor: pointer;
+  }
+  .linkish:hover { color: var(--fg); }
+  .linkish:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .cfg-file { margin: 0.6rem 0 1rem; }
+  .cfg-path { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); }
+  .cfg-yaml {
+    margin: 0.3rem 0 0; padding: 0.6rem 0.8rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 6px; overflow-x: auto;
+    font-family: ui-monospace, monospace; font-size: 0.78rem; line-height: 1.45;
+    max-height: 26rem; overflow-y: auto;
+  }
   th.sev-toggle { cursor: pointer; }
   th.sev-toggle:hover { color: var(--fg); }
   th.sev-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -130,6 +145,11 @@
 <div id="coverage"></div>
 
 <div class="tiles" id="tiles"></div>
+
+<h2>Rules
+  <button id="configToggle" class="linkish" aria-expanded="false">show config</button>
+</h2>
+<div id="config" hidden></div>
 
 <h2>Breakdown</h2>
 <div class="scroll short"><table id="breakdown">
@@ -854,6 +874,40 @@ function applyOwnerFilters() {
   });
   renderFindings(rows);
 }
+
+// The rules, on demand. Fetched on first open rather than with every refresh: they
+// change when someone deploys, not hourly, and they are the largest payload here.
+let configLoaded = false;
+
+async function loadConfig() {
+  const el = $("#config");
+  try {
+    const cfg = await get("/api/v1/config");
+    el.innerHTML = (cfg.sources || []).map((src) => `
+      <div class="cfg-file">
+        <div class="cfg-path">${esc(src.path)}${src.redacted
+          ? ' <span class="pct">— a value was redacted</span>' : ""}</div>
+        <pre class="cfg-yaml">${esc(src.content)}</pre>
+      </div>`).join("");
+  } catch (e) {
+    // Says which question cannot be answered, rather than only that a fetch failed.
+    el.innerHTML = `<div class="banner">Could not read the loaded rules: ${esc(e.message)}.
+      This is what the assessment was run with, so without it the verdicts on this page
+      cannot be explained.</div>`;
+  }
+}
+
+$("#configToggle").addEventListener("click", async () => {
+  const el = $("#config"), btn = $("#configToggle");
+  const opening = el.hidden;
+  el.hidden = !opening;
+  btn.setAttribute("aria-expanded", String(opening));
+  btn.textContent = opening ? "hide config" : "show config";
+  if (opening && !configLoaded) {
+    configLoaded = true;
+    await loadConfig();
+  }
+});
 
 async function loadAll() {
   try {

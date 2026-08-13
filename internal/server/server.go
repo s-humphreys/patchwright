@@ -14,6 +14,7 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -60,6 +61,9 @@ type ticketRef struct {
 // Server holds the assessor and the latest cached assessment.
 type Server struct {
 	assessor Assessor
+	// configSources is the raw text of the loaded config, for GET /api/v1/config.
+	configSources []config.Source
+
 	// metricsAuth brings /metrics under the shared token. Off by default: a scrape
 	// config needing a credential is friction where it is least tolerated.
 	metricsAuth bool

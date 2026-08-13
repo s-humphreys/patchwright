@@ -32,6 +32,10 @@ type Config struct {
 	// Jira configures ticket creation (the `ticket` command). Optional; only
 	// validated when that command runs.
 	Jira JiraConfig `yaml:"jira"`
+
+	// Sources is the raw text of each file this config was loaded from, in order.
+	// Not settable from YAML: it describes the load, not the configuration.
+	Sources []Source `yaml:"-"`
 }
 
 // JiraConfig describes where tickets go and what they look like. Everything
@@ -394,6 +398,12 @@ type PolicyRule struct {
 	Priority string `yaml:"priority"`
 }
 
+// Source is one config file as loaded: its path and the text that was parsed.
+type Source struct {
+	Path    string
+	Content string
+}
+
 // Load reads and merges one or more YAML config files. Later files append to
 // earlier ones, so configuration can be split across files (e.g. ownership.yaml
 // and policy.yaml).
@@ -404,6 +414,10 @@ func Load(paths ...string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read config %s: %w", p, err)
 		}
+		// Kept so a server can show the rules actually in effect. Re-reading the
+		// file later would show whatever is on disk now, which is not the same
+		// thing once someone has edited it mid-run.
+		cfg.Sources = append(cfg.Sources, Source{Path: p, Content: string(data)})
 		var part Config
 		dec := yaml.NewDecoder(bytes.NewReader(data))
 		dec.KnownFields(true)
