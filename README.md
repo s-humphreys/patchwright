@@ -368,12 +368,160 @@ act on and it leaves the assessment entirely; an excluded one is real work simpl
 tracked elsewhere, so it stays in the report and the queue and is listed as
 skipped with the rule name and reason. Excluding something never makes it quiet.
 
+**Routing sends each team's tickets to its own tracker.** One deployment covers
+teams that do not share a board: platform work on one project, an SRE team with
+its own project, issue type and priority scheme. `routes` matches on the same CEL
+variables as everything else, first match wins, and anything matching no route
+uses the top-level settings.
+
+```yaml
+jira:
+  project: PROJ                 # the default for anything unrouted
+  issueType: Container Vulnerability
+  routes:
+    - name: sre
+      when: "owner['team'] == 'sre'"
+      project: SRE
+      issueType: Bug
+      imageLabel: true          # this project has no shared custom field
+    - name: platform
+      when: "owner['class'] == 'platform'"
+      project: PROJ
+```
+
+A route states **only what differs**; template, image field, priority map and
+labels are inherited, so adding a board is three lines rather than a second copy
+of the configuration. Each route is validated as the configuration it resolves to,
+at load rather than at the first ticket it tries to raise.
+
+Two consequences worth knowing:
+
+- **A group is never split across routes.** Two findings that share one upgrade
+  but belong to different teams become two tickets, because an issue cannot exist
+  in two projects and merging them would move one team's work onto another team's
+  board.
+- **Reconciliation searches every configured project**, not just the default. A
+  ticket on another team's board still means the work is in flight, and an
+  idempotency check that cannot see it raises duplicates forever. Writes to an
+  existing ticket resolve its tracker from the issue key's project prefix, so the
+  images go into the field that project actually uses.
+
+**`requireRoute: true` means no match, no ticket.** By default an unmatched finding
+falls through to the top-level `project`, which suits a single shared board. Set
+`requireRoute` and a finding matching no route is reported as skipped instead, with
+the owner named in the reason:
+
+```
+no ticket route matches its owner (engineering/orders) and requireRoute is set,
+so no tracker is configured for this work
+```
+
+It is still in the report and the queue — this decides where work is tracked, never
+whether it is visible. Worth setting when every tracker is named on purpose: a team
+whose coverage arrives before anyone has routed it then produces reported skips
+rather than tickets on whichever board happens to be the default.
+
+Dry runs print `Tracker: SRE / Bug (route "sre")` per ticket, and the API's ticket
+plan carries `route` on every action, so where work lands is reviewable before
+anything is written.
+
 **Priority carries across.** Without `priorityMap`, every ticket is raised at the
 single `priority` value, and the tracker cannot tell an urgent, exploited, fixable
 finding from a low one. The map is deliberately not defaulted: priority schemes are
 per-instance, and a name that does not exist fails ticket creation. A dry run prints
 `urgent -> Highest` per ticket so a flattened queue is visible before anything is
 created.
+
+**A stale ticket nobody has picked up is corrected, not commented on.** When the
+version a ticket asks for has moved on, what happens next depends on whether anyone
+has engaged with it. If the ticket is unassigned *and* still in a "new" status
+category, the summary and description are rewritten to the current target: leaving
+a wrong summary with the right answer in a comment underneath wastes the reader's
+time twice, once working out that the title is wrong and again finding the real
+target further down.
+
+If it is assigned, or already in progress, it is only commented on. Both halves of
+that test matter. An unassigned ticket in progress is being worked by someone who
+has not claimed it, common on boards that assign at standup; an assigned ticket in
+To Do has an owner who has read it and knows what it says. Rewriting either changes
+the task after someone engaged with it.
+
+Only the wording is replaced. Priority is left alone, because a human may have
+deliberately changed it and silently reverting someone's triage is a worse bug than
+a stale summary, and the images are unchanged since the draft covers the same group
+by definition. No comment is posted alongside: Jira records field edits in the issue
+history, which is a better audit trail than a comment asserting that an edit
+happened.
+
+**`autoClose: true` closes tickets whose work is provably finished.** The case this
+exists for is ordinary: someone merges a Renovate PR, it rolls out, and nobody ever
+opens the ticket. Reconciliation closes it with a comment stating the evidence.
+
+The word "provably" is carrying weight. A finding *disappearing* is never treated as
+done, because a provider that stopped assessing an image looks exactly the same —
+that path still only comments. Closing needs every image on the ticket to satisfy
+all of:
+
+- still reported in the assessment, so this is not the absent-data case;
+- `remediation_checked`, or "no upgrade available" only means nobody looked;
+- `upgrade.resolved`, or "on the latest" is unproven — an unreadable private
+  registry reports exactly this;
+- no finding for that repository with an upgrade still available, which is what
+  catches an old tag still running somewhere;
+- liveness reconciled, so "everywhere" is a checked claim about running workloads
+  rather than an assumption.
+
+Any one of those failing means a comment instead. Set `closeTransition` when the
+workflow offers more than one way to finish: "Done" and "Won't Do" say very
+different things about the same work, so patchwright refuses to choose rather than
+guessing, and names the alternatives in the error.
+
+Both settings are **per route**, because both belong to the tracker rather than the
+deployment: one team may want closing automated while another does not, and a
+transition named "Done" in one project says nothing about another project's
+workflow.
+
+```yaml
+jira:
+  project: PROJ
+  autoClose: false              # off for anything unrouted
+  routes:
+    - name: sre
+      when: "owner['team'] == 'sre'"
+      project: SRE
+      autoClose: true
+      closeTransition: Ship It  # SRE's workflow, not PROJ's
+```
+
+For tickets that already exist the settings are resolved by the issue key's
+**project**, not by the route that created it — the board a ticket sits on decides
+how it can be finished, and a route may since have been renamed or removed.
+
+The closing comment is short and states only what was observed, so a reader can
+disagree with a fact rather than an argument. It is posted in the same request as
+the transition: a separate comment first would leave a ticket explaining a closure
+that never happened if the transition then failed, and the next run would comment
+again, so a workflow patchwright cannot complete would accumulate one comment per
+run forever. Where a transition screen rejects an attached comment, the transition
+is retried bare and the reason posted separately, since a closed ticket with no
+explanation still beats an open ticket nobody is reading.
+
+**A note is posted once, not every run.** Reconciliation is a loop, so a ticket
+sitting in a state that warrants a comment would collect an identical one every
+refresh — hourly, indefinitely — burying the ticket's own history and teaching people
+to skip anything patchwright writes. Each note carries a reference, rendered as inline code
+(`` `patchwright-ref: note-done` ``) so it reads as machine bookkeeping rather than
+part of the sentence, and existing comments are read before posting.
+
+The reference includes the facts that would make a fresh comment worth reading, so a
+note whose content genuinely changed is still posted: a staleness note is keyed on
+the version now available, so a target that moves again is said again, while the same
+target is not. Comments with no reference — the explanation attached to extending a
+ticket — always post, because that only happens when the images actually changed.
+
+A comment that was already present is reported as `already_present`, never counted as
+posted: claiming a write that did not happen is the same error as counting an
+unassessed image as clean.
 
 **It reconciles rather than only creating.** A queue that is only ever added to rots
 three ways, all of which happened on a real project inside a day: a ticket covering
@@ -413,6 +561,14 @@ then the description. See
 [config/templates/container-vuln.md.tmpl](config/templates/container-vuln.md.tmpl)
 for the available fields; it is an example, meant to be edited.
 
+A small amount of markup is translated into Atlassian Document Format: `**bold**`,
+`` `code` ``, bullet lists, headings, and bare URLs become links so an upgrade target
+is clickable rather than something to copy out by hand. Code spans are left
+untouched inside, since an image reference or a command is exactly the kind of thing
+that contains characters the other rules would otherwise treat as markup. Anything
+unrecognised, including an unmatched `` ` `` or `**`, is passed through as written:
+a stray character should look wrong, not silently reformat everything after it.
+
 ### Serve — the assessment as an API
 
 A CronJob that logs findings is write-only. `patchwright serve` runs the same
@@ -431,7 +587,7 @@ patchwright serve -i export.csv -c config/ --addr :8080 --interval 1h \
 | `GET /api/v1/findings` | Findings, filterable: `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved`. |
 | `GET /api/v1/finding?image=<ref>` | A single image's finding. |
 | `GET /api/v1/owners` | Per-team triage: total / actionable / fixable / upgradable / unassessed, plus where the fix goes (`direct` / `managed`) and how much is already tracked (`ticketed`). |
-| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`, `actionable_unassessed`). |
+| `GET /api/v1/summary` | Fleet-wide headline, including coverage (`provider_assessed`, `provider_unassessed`, `remediation_unresolved`, `actionable_unassessed`, `scanned`, `exploit_checked`) and `unassessed_reasons`. |
 | `POST /api/v1/assessments` | Trigger a refresh (async). |
 | `GET /api/v1/tickets` | What ticket reconciliation would do against the cached assessment. Changes nothing. |
 | `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}`; without it, 400 and the plan. |
@@ -468,6 +624,18 @@ in the class row so a rollup never reads as the whole story. The section replace
 the old flat per-owner table, which showed a subset of the same numbers with no
 denominators; `upgradable` is the one column it dropped, still available from
 `/api/v1/owners` and largely answered by `direct`.
+
+**A missing signal is reported by its consequence.** Running without a vuln source
+is the chart's default, and in that mode every rule of the form
+`vulns.exists(...)` — fix availability, EPSS, KEV — is false, so the priority tiers
+that depend on them cannot fire and the queue reads as calm when it is merely
+uninformed. The page says so at the top rather than leaving a column of dashes to
+imply it, and the summary reports `scanned` and `exploit_checked` so a consumer can
+tell the same story without inspecting every finding.
+
+The EPSS column stays in both cases. `-` says the signal was not collected;
+removing the column would say the signal does not exist, and hiding a gap is the
+one thing this tool is built not to do.
 
 **Authentication.** Set `PATCHWRIGHT_API_TOKEN` and every request except the health
 probes requires it. Programmatic clients send `Authorization: Bearer <token>`;

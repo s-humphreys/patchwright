@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -36,11 +37,35 @@ const (
 	ActionExtend ActionKind = "extend"
 	// ActionNoteStale comments that the version the ticket asks for has moved on.
 	ActionNoteStale ActionKind = "note-stale"
+	// ActionUpdate rewrites a ticket whose target has moved on, rather than
+	// commenting, when nobody has picked it up yet. A ticket asking for a version
+	// that is no longer the current one wastes the reader's time twice: once
+	// working out that the summary is wrong, and again finding the real target in
+	// a comment further down.
+	ActionUpdate ActionKind = "update"
 	// ActionNoteDone comments that the work appears finished, for a human to close.
 	ActionNoteDone ActionKind = "note-done"
+	// ActionClose closes a ticket whose work is provably done. Only ever emitted
+	// on positive evidence — the images are still reported, remediation was
+	// checked, and every one is already on the latest available version — never on
+	// a finding having disappeared.
+	ActionClose ActionKind = "close"
 	// ActionSkip records a ticket that already covers its group correctly.
 	ActionSkip ActionKind = "skip"
 )
+
+// ActionKinds returns every action kind, in reporting order.
+//
+// Exists so callers can report on all of them by iteration rather than by hand.
+// A hand-listed summary is a silent liar the moment a kind is added: the count is
+// computed, the kind is simply missing from the output, and the run looks like it
+// did less than it did. That happened — "update" was applied and reported nowhere.
+func ActionKinds() []ActionKind {
+	return []ActionKind{
+		ActionCreate, ActionExtend, ActionUpdate, ActionClose,
+		ActionNoteStale, ActionNoteDone, ActionSkip,
+	}
+}
 
 // Action is one reconciliation step.
 type Action struct {
@@ -53,6 +78,16 @@ type Action struct {
 	Images []string
 	// Message is the comment to post, for the note actions.
 	Message string
+	// Dedupe identifies a comment's content so it is posted once rather than on
+	// every run. Empty means "always post".
+	//
+	// Reconciliation is a loop: without this, a ticket sitting in a state that
+	// warrants a note collects an identical comment every refresh — hourly,
+	// indefinitely — which buries the ticket's real history and trains people to
+	// ignore anything patchwright says. The key includes the facts that would make
+	// a fresh comment worth reading, so a note whose content has genuinely changed
+	// still gets posted.
+	Dedupe string
 	// Why explains the action in the dry run and the logs.
 	Why string
 }
@@ -66,6 +101,11 @@ type ReconcileInput struct {
 	// Findings are all findings from the assessment, used to tell "fixed" from
 	// "no longer assessed" when a ticket's work looks finished.
 	Findings []sink.FindingView
+	// Config decides whether a ticket may be closed, resolved per project so a
+	// route can enable closing for its own board without enabling it everywhere.
+	// The zero value closes nothing, which is the safe default for a caller that
+	// has not thought about it.
+	Config config.JiraConfig
 }
 
 // Reconcile turns the difference between drafts and open tickets into actions.
@@ -100,9 +140,25 @@ func Reconcile(in ReconcileInput) []Action {
 			continue
 		}
 		if stale := staleTarget(d, lead); stale != "" {
+			// Untouched means nobody has engaged with it, so correcting it in place
+			// is strictly better than leaving a wrong summary with a correction
+			// underneath. Once someone has claimed it or started it, editing would
+			// change the task after they read it, and a comment is the honest move.
+			if lead.Untouched() {
+				actions = append(actions, Action{
+					Kind: ActionUpdate, TicketKey: lead.Key, Draft: d,
+					Why: "the available version has moved on and nobody has picked the ticket up, " +
+						"so it was corrected rather than commented on",
+				})
+				continue
+			}
 			actions = append(actions, Action{
 				Kind: ActionNoteStale, TicketKey: lead.Key, Message: stale,
-				Why: "the available version has moved on since the ticket was raised",
+				// Keyed on the version now available: the target moving again is
+				// news worth a second comment, the same target is not.
+				Dedupe: "note-stale:" + latestOf(d),
+				Why: "the available version has moved on since the ticket was raised, " +
+					"and someone has already picked it up so it was not edited",
 			})
 			continue
 		}
@@ -138,6 +194,27 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 			seen[t.Key] = true
 
 			images := imagesOfTicket(in.OpenByImage, t.Key)
+
+			// The one case where closing is defensible: not "the finding went
+			// away" but "the images are still here, we checked, and they are all
+			// on the latest version already". Someone merged the Renovate PR and
+			// rolled it out without ever seeing the ticket.
+			if in.Config.ForProject(projectOf(t.Key)).AutoClose {
+				if done, evidence := upgradeComplete(images, byRepo(in.Findings)); done {
+					out = append(out, Action{
+						Kind: ActionClose, TicketKey: t.Key,
+						// Brief on purpose. The one thing a reader needs is what was
+						// observed, so they can disagree with a fact rather than an
+						// argument.
+						Message: "Closing: already on the latest available version. " + evidence +
+							"\n\nChecked, not assumed — patchwright never closes a ticket because a " +
+							"finding disappeared. Reopen if this is wrong.",
+						Why: "every image it covers is already on the latest available version",
+					})
+					continue
+				}
+			}
+
 			if blind := unknownImages(images, byImage); len(blind) > 0 {
 				out = append(out, Action{
 					Kind: ActionNoteDone, TicketKey: t.Key,
@@ -145,7 +222,10 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 						"tell whether that is because the upgrade landed or because nothing is " +
 						"assessing these images any more: " + strings.Join(blind, ", ") +
 						". Worth confirming before closing.",
-					Why: "no longer in the queue, but coverage for its images is missing",
+					// Keyed on which images are blind: a different set is a
+					// different problem and worth saying again.
+					Dedupe: "note-done:blind:" + strings.Join(blind, ","),
+					Why:    "no longer in the queue, but coverage for its images is missing",
 				})
 				continue
 			}
@@ -154,12 +234,105 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				Message: "patchwright no longer reports an available upgrade for this ticket's " +
 					"images, which suggests the work is done. Left open deliberately: closing " +
 					"is a human decision.",
-				Why: "no longer in the queue and its images are still assessed",
+				// Nothing in this note varies, so it is said exactly once.
+				Dedupe: "note-done",
+				Why:    "no longer in the queue and its images are still assessed",
 			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TicketKey < out[j].TicketKey })
 	return out
+}
+
+// latestOf reports the version a single-image draft asks for, used to key a
+// staleness note. Empty for grouped drafts, which staleTarget never produces.
+func latestOf(d Draft) string {
+	if len(d.Upgrades) == 1 {
+		return d.Upgrades[0].Latest
+	}
+	return ""
+}
+
+// projectOf extracts the project key from a Jira issue key ("PROJ-123" -> "PROJ").
+func projectOf(key string) string {
+	project, _, _ := strings.Cut(key, "-")
+	return project
+}
+
+// byRepo groups findings by repository, since a ticket's images are bare
+// repositories and one repository can have several findings — different tags,
+// different owners, different clusters. All of them have to be on the latest
+// version before the work is finished.
+func byRepo(findings []sink.FindingView) map[string][]sink.FindingView {
+	out := map[string][]sink.FindingView{}
+	for _, f := range findings {
+		out[f.Repository] = append(out[f.Repository], f)
+	}
+	return out
+}
+
+// upgradeComplete reports whether every image on a ticket is demonstrably already
+// on its latest available version, and the evidence for saying so.
+//
+// Every condition here is a guard against closing something that is not done:
+//
+//   - the repository must still be reported, or this is the absent-data case and
+//     nothing can be concluded,
+//   - remediation must have been checked, or "no upgrade available" only means
+//     nobody looked,
+//   - the versions must have resolved, or "on the latest" is unproven — a private
+//     registry whose tags cannot be listed reports exactly this,
+//   - no finding for the repository may still have an upgrade available, which is
+//     what catches an old tag still running somewhere,
+//   - liveness must have been reconciled, so "everywhere" is a checked claim about
+//     running workloads rather than an assumption about the whole estate.
+func upgradeComplete(images []string, byRepo map[string][]sink.FindingView) (bool, string) {
+	if len(images) == 0 {
+		return false, ""
+	}
+	var evidence []string
+	for _, img := range images {
+		found := byRepo[img]
+		if len(found) == 0 {
+			return false, ""
+		}
+		for _, f := range found {
+			if !f.RemediationChecked || f.Upgrade == nil || !f.Upgrade.Resolved {
+				return false, ""
+			}
+			if f.Upgrade.Available {
+				return false, ""
+			}
+			if f.Liveness == nil {
+				return false, ""
+			}
+		}
+		evidence = append(evidence, fmt.Sprintf("%s is on %s", img, currentOf(found)))
+	}
+	sort.Strings(evidence)
+	return true, strings.Join(evidence, "; ") + "."
+}
+
+// currentOf describes the version(s) a repository is running, so the closing
+// comment states what was observed rather than only asserting a conclusion.
+func currentOf(findings []sink.FindingView) string {
+	seen := map[string]bool{}
+	var versions []string
+	for _, f := range findings {
+		v := f.Tag
+		if f.Upgrade != nil && f.Upgrade.Current != "" {
+			v = f.Upgrade.Current
+		}
+		if v != "" && !seen[v] {
+			seen[v] = true
+			versions = append(versions, v)
+		}
+	}
+	sort.Strings(versions)
+	if len(versions) == 0 {
+		return "its latest available version"
+	}
+	return strings.Join(versions, ", ")
 }
 
 // imagesOfTicket returns every image the index associates with a ticket.

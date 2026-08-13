@@ -12,6 +12,15 @@ type Applier interface {
 	Create(ctx context.Context, d Draft) (string, error)
 	AddImages(ctx context.Context, key string, images []string) error
 	Comment(ctx context.Context, key, body string) error
+	// Update rewrites an existing ticket's summary and description from a fresh
+	// draft. Used only on tickets nobody has picked up; see Existing.Untouched.
+	Update(ctx context.Context, key string, d Draft) error
+	// Close transitions a ticket into a done status, with a comment explaining
+	// why. Only called when the work is provably finished.
+	Close(ctx context.Context, key, comment string) error
+	// CommentOnce posts a comment unless one with the same dedupe reference is
+	// already present, reporting whether it posted. An empty dedupe always posts.
+	CommentOnce(ctx context.Context, key, dedupe, body string) (bool, error)
 }
 
 // Result records what an Apply run did, per action, so a caller can report it
@@ -25,6 +34,10 @@ type Result struct {
 	// should not strand the rest, unlike creation from scratch where a failure is
 	// usually systematic.
 	Err error
+	// NoOp is set when the action was correct but nothing needed doing — a comment
+	// already present, say. Distinguished from success so a log does not claim a
+	// write that did not happen.
+	NoOp bool
 }
 
 // Apply performs the actions. ActionSkip does nothing by design, and is returned
@@ -44,8 +57,14 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 			if r.Err = a.AddImages(ctx, act.TicketKey, act.Images); r.Err == nil && act.Message != "" {
 				r.Err = a.Comment(ctx, act.TicketKey, act.Message)
 			}
+		case ActionUpdate:
+			r.Err = a.Update(ctx, act.TicketKey, act.Draft)
+		case ActionClose:
+			r.Err = a.Close(ctx, act.TicketKey, act.Message)
 		case ActionNoteStale, ActionNoteDone:
-			r.Err = a.Comment(ctx, act.TicketKey, act.Message)
+			var posted bool
+			posted, r.Err = a.CommentOnce(ctx, act.TicketKey, act.Dedupe, act.Message)
+			r.NoOp = r.Err == nil && !posted
 		case ActionSkip:
 			// Nothing to do.
 		default:
@@ -60,15 +79,30 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 	return out
 }
 
-// Summarize counts successful results by action kind, for a one-line report.
-// Failures are excluded: they are reported separately rather than counted as done.
+// Summarize counts results that actually changed something, by action kind.
+//
+// Failures are excluded, and so are no-ops: counting a comment that was already
+// present as a comment posted would report work that did not happen, which is the
+// same error as counting an unassessed image as clean.
 func Summarize(results []Result) map[ActionKind]int {
 	counts := map[ActionKind]int{}
 	for _, r := range results {
-		if r.Err != nil {
+		if r.Err != nil || r.NoOp {
 			continue
 		}
 		counts[r.Action.Kind]++
 	}
 	return counts
+}
+
+// NoOps counts results that needed nothing doing, so a report can say "already
+// said that" rather than implying either a write or a failure.
+func NoOps(results []Result) int {
+	n := 0
+	for _, r := range results {
+		if r.Err == nil && r.NoOp {
+			n++
+		}
+	}
+	return n
 }

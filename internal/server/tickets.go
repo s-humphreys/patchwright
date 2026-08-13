@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
@@ -30,6 +31,10 @@ import (
 type Ticketer interface {
 	Plan(findings []sink.FindingView) (*ticket.Plan, error)
 	OpenByImage(ctx context.Context) (map[string][]ticket.Existing, error)
+	// Config is the ticket configuration, so reconciliation can resolve per-project
+	// decisions such as whether closing is allowed on that board. Asked rather than
+	// assumed: the server must not enable a write the configuration did not.
+	Config() config.JiraConfig
 	ticket.Applier
 }
 
@@ -43,10 +48,13 @@ func (s *Server) WithTicketing(t Ticketer, autoApply bool) *Server {
 
 // actionView is one reconciliation step as the API reports it.
 type actionView struct {
-	Kind    string   `json:"kind"`
-	Why     string   `json:"why"`
-	Ticket  string   `json:"ticket,omitempty"`
-	Summary string   `json:"summary,omitempty"`
+	Kind    string `json:"kind"`
+	Why     string `json:"why"`
+	Ticket  string `json:"ticket,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	// Route names the routing rule that chose this action's tracker, so a caller
+	// reviewing a plan can see whose board each ticket lands on.
+	Route   string   `json:"route,omitempty"`
 	Images  []string `json:"images,omitempty"`
 	Comment string   `json:"comment,omitempty"`
 	// Error is set on an applied action that failed. Present so a caller sees
@@ -60,6 +68,7 @@ func (s *Server) handleTicketPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	logPlan(r.Context(), "api", actions, false)
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta `json:"assessment"`
 		Applied    bool           `json:"applied"`
@@ -94,12 +103,9 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logPlan(r.Context(), "api", actions, true)
 	results := ticket.Apply(r.Context(), s.ticketer, actions)
-	counts := ticket.Summarize(results)
-	slog.InfoContext(r.Context(), "ticket reconciliation applied",
-		"created", counts[ticket.ActionCreate], "extended", counts[ticket.ActionExtend],
-		"commented", counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone],
-		"unchanged", counts[ticket.ActionSkip])
+	auditWrites(r.Context(), "api", results)
 
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta `json:"assessment"`
@@ -127,33 +133,116 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 	}
 	return ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, OpenByImage: index, Findings: snap.views,
+		Config: s.ticketer.Config(),
 	}), nil
 }
 
-// autoReconcile runs ticketing after a scheduled refresh, when enabled. Failures
-// are logged and dropped: the assessment is the service's job, and losing a
-// ticketing run must not cost it.
+// autoReconcile reconciles tickets after a scheduled refresh. Failures are logged
+// and dropped: the assessment is the service's job, and losing a ticketing run
+// must not cost it.
+//
+// It plans on every refresh even when applying is disabled, and logs what it
+// would do. Previously it returned before planning, so a deployment without
+// --auto-ticket gave no indication that work was piling up — the plan existed
+// only for whoever thought to call the API. Pending work nobody can see is the
+// same failure as absent data rendered as zero: the log has to say it.
 func (s *Server) autoReconcile(ctx context.Context) {
-	if !s.autoTicket || s.ticketer == nil {
+	if s.ticketer == nil {
 		return
 	}
 	actions, err := s.planTickets(ctx)
 	if err != nil {
-		slog.WarnContext(ctx, "auto-ticketing: could not plan", "error", err)
+		slog.WarnContext(ctx, "ticket reconciliation: could not plan", "error", err)
+		return
+	}
+	logPlan(ctx, "schedule", actions, s.autoTicket)
+	if !s.autoTicket {
 		return
 	}
 	results := ticket.Apply(ctx, s.ticketer, actions)
+	auditWrites(ctx, "schedule", results)
+}
+
+// logPlan records what reconciliation intends to do, whether or not it will be
+// applied. Skips are summarised rather than listed: "already correct" is worth
+// counting and not worth a line each.
+//
+// applied says whether these actions are about to be written. Logging a plan that
+// reads identically in both cases would be worse than not logging it, since the
+// reader's next question is always "did that happen?".
+func logPlan(ctx context.Context, source string, actions []ticket.Action, applied bool) {
+	counts := map[ticket.ActionKind]int{}
+	for _, a := range actions {
+		counts[a.Kind]++
+	}
+	writes := len(actions) - counts[ticket.ActionSkip]
+	attrs := []any{"source", source, "applied", applied}
+	for _, kind := range ticket.ActionKinds() {
+		attrs = append(attrs, string(kind), counts[kind])
+	}
+	slog.InfoContext(ctx, "ticket plan", attrs...)
+	if writes == 0 {
+		return
+	}
+	if !applied {
+		// Said once, not per action: the point is that something is waiting, and
+		// repeating it on every line would bury the actions themselves.
+		slog.InfoContext(ctx, "ticket plan will not be applied (auto-ticketing is off); "+
+			"POST /api/v1/tickets with {\"confirm\": true} to apply it",
+			"source", source, "pending_writes", writes)
+	}
+	for _, a := range actions {
+		if a.Kind == ticket.ActionSkip {
+			continue
+		}
+		slog.InfoContext(ctx, "ticket plan action",
+			"source", source, "applied", applied, "action", a.Kind,
+			"ticket", a.TicketKey, "route", a.Draft.Route,
+			"summary", a.Draft.Summary, "why", a.Why)
+	}
+}
+
+// auditWrites records every change made to Jira and what triggered it.
+//
+// The shared token carries no identity, so a write cannot be attributed to a person.
+// What can be recorded is whether it came from the refresh schedule or an API call,
+// and exactly which tickets were touched: without the per-ticket lines the only trace
+// of an automated change would be a count, which is not an audit trail.
+func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 	counts := ticket.Summarize(results)
-	var failed int
+	failed := 0
 	for _, r := range results {
+		if r.Action.Kind == ticket.ActionSkip {
+			continue // nothing changed, so there is nothing to record
+		}
+		if r.NoOp {
+			// Not a write, so not part of the audit trail — but worth saying, or a
+			// quiet run looks like a broken one.
+			slog.DebugContext(ctx, "jira write skipped: already present",
+				"source", source, "action", r.Action.Kind, "ticket", r.Key)
+			continue
+		}
 		if r.Err != nil {
 			failed++
+			slog.WarnContext(ctx, "jira write failed",
+				"source", source, "action", r.Action.Kind, "ticket", r.Key, "error", r.Err)
+			continue
 		}
+		slog.InfoContext(ctx, "jira write",
+			"source", source, "action", r.Action.Kind, "ticket", r.Key,
+			// Which tracker, now that a deployment can write to several: "created
+			// PROJ-1" is not an audit trail if it cannot say whose board that was.
+			"route", r.Action.Draft.Route,
+			"images", r.Action.Images, "why", r.Action.Why)
 	}
-	slog.InfoContext(ctx, "auto-ticketing complete",
-		"created", counts[ticket.ActionCreate], "extended", counts[ticket.ActionExtend],
-		"commented", counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone],
-		"unchanged", counts[ticket.ActionSkip], "failed", failed)
+	attrs := []any{"source", source}
+	// Every kind, by iteration: a hand-written list drops a new kind silently and
+	// the run reads as though it did less than it did.
+	for _, kind := range ticket.ActionKinds() {
+		attrs = append(attrs, string(kind), counts[kind])
+	}
+	attrs = append(attrs, "already_present", ticket.NoOps(results), "failed", failed)
+	slog.InfoContext(ctx, "ticket reconciliation complete", attrs...)
 }
 
 func viewActions(actions []ticket.Action, results []ticket.Result) []actionView {
@@ -181,7 +270,8 @@ func viewActions(actions []ticket.Action, results []ticket.Result) []actionView 
 func viewAction(a ticket.Action) actionView {
 	return actionView{
 		Kind: string(a.Kind), Why: a.Why, Ticket: a.TicketKey,
-		Summary: a.Draft.Summary, Images: actionImages(a), Comment: a.Message,
+		Summary: a.Draft.Summary, Route: a.Draft.Route,
+		Images: actionImages(a), Comment: a.Message,
 	}
 }
 

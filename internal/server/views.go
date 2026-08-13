@@ -50,6 +50,17 @@ type summaryView struct {
 	ProviderDataNewest *time.Time `json:"provider_data_newest,omitempty"`
 	ProviderDataOldest *time.Time `json:"provider_data_oldest,omitempty"`
 
+	// Scanned and ExploitChecked count findings a vulnerability scanner and an
+	// exploit source actually looked at.
+	//
+	// Reported because their absence disables whole tiers of the policy, silently.
+	// Every rule of the form vulns.exists(...) — fix availability, EPSS, KEV — is
+	// false when no scanner ran, so the urgent and high tiers simply never fire and
+	// the queue looks calm rather than uninformed. A consumer cannot infer this
+	// from the findings alone without inspecting every one of them.
+	Scanned        int `json:"scanned"`
+	ExploitChecked int `json:"exploit_checked"`
+
 	// UnassessedReasons counts findings by the provider's stated reason for not
 	// assessing them, worst first. This turns the coverage gap from a number
 	// into a work list: on a real estate a single registry credential accounted
@@ -143,6 +154,12 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 		if !remediationResolved(f) {
 			s.RemediationUnresolved++
+		}
+		if f.Scanned {
+			s.Scanned++
+		}
+		if f.ExploitChecked {
+			s.ExploitChecked++
 		}
 	}
 	s.UniqueImages = len(images)

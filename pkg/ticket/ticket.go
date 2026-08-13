@@ -34,6 +34,10 @@ type Draft struct {
 	// Upgrades are the version moves this draft asks for, carried so reconciliation
 	// can tell whether an existing ticket's target has moved on.
 	Upgrades []ImageUpgrade
+	// Route names the routing rule that chose this draft's tracker, or
+	// "(default)" for the top-level settings. Carried so a dry run says where a
+	// ticket would land, which is the question routing creates.
+	Route string
 }
 
 // Skip records a finding that will not be ticketed, and why. Skips are reported
@@ -52,7 +56,11 @@ type Plan struct {
 
 // Planner renders drafts from findings according to the Jira config.
 type Planner struct {
-	cfg      config.JiraConfig
+	cfg config.JiraConfig
+	// tmpls holds one parsed template per route name, so a team can word its own
+	// tickets. Every route has an entry, falling back to the base template.
+	tmpls    map[string]*template.Template
+	routes   *routes
 	tmpl     *template.Template
 	excluded *exclusions
 }
@@ -70,11 +78,35 @@ func NewPlanner(cfg config.JiraConfig) (*Planner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.Template, err)
 	}
+	routed, err := newRoutes(cfg.Routes)
+	if err != nil {
+		return nil, err
+	}
+	// Parse every route's template up front. A template that does not parse is a
+	// configuration error, and finding that out on the first ticket of the month
+	// for one team is far worse than finding out at startup.
+	tmpls := map[string]*template.Template{routeName: tmpl}
+	for _, r := range cfg.Routes {
+		if r.Template == "" || r.Template == cfg.Template {
+			tmpls[r.Name] = tmpl
+			continue
+		}
+		raw, err := os.ReadFile(r.Template)
+		if err != nil {
+			return nil, fmt.Errorf("read ticket template %s for route %q: %w", r.Template, r.Name, err)
+		}
+		t, err := template.New("ticket").Parse(string(raw))
+		if err != nil {
+			return nil, fmt.Errorf("parse ticket template %s for route %q: %w", r.Template, r.Name, err)
+		}
+		tmpls[r.Name] = t
+	}
+
 	excluded, err := newExclusions(cfg.Exclude)
 	if err != nil {
 		return nil, err
 	}
-	return &Planner{cfg: cfg, tmpl: tmpl, excluded: excluded}, nil
+	return &Planner{cfg: cfg, tmpl: tmpl, tmpls: tmpls, routes: routed, excluded: excluded}, nil
 }
 
 // Plan decides which findings become tickets, groups them, and renders each.
@@ -109,18 +141,74 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
 			continue
 		}
+		// With requireRoute, an unrouted finding is reported rather than sent to
+		// the default tracker. Reported, not dropped: the work still exists and
+		// still needs a home, and silence here would read as "nothing to do".
+		if p.cfg.RequireRoute && p.routes.match(f) == routeName {
+			owner := "unattributed"
+			if f.Owner.Class != "" || f.Owner.Team != "" {
+				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
+			}
+			out.Skips = append(out.Skips, Skip{
+				Image: f.Image,
+				Reason: fmt.Sprintf("no ticket route matches its owner (%s) and requireRoute is set, "+
+					"so no tracker is configured for this work", owner),
+			})
+			continue
+		}
 		eligible = append(eligible, f)
 	}
 
-	for _, g := range mergeChains(group(eligible)) {
-		d, err := p.render(g)
-		if err != nil {
-			return nil, err
+	// Group within a route, never across one. Two findings that share an upgrade
+	// still need two tickets when they belong to different teams' trackers: one
+	// issue cannot exist in two projects, and merging them would silently move
+	// one team's work onto another team's board.
+	for _, name := range p.routeOrder(eligible) {
+		for _, g := range mergeChains(group(byRoute(eligible, p.routes, name))) {
+			d, err := p.render(g, name)
+			if err != nil {
+				return nil, err
+			}
+			out.Drafts = append(out.Drafts, d)
 		}
-		out.Drafts = append(out.Drafts, d)
 	}
 	return out, nil
 }
+
+// routeOrder returns the route names present in these findings, in configuration
+// order with the default last, so output is deterministic rather than following
+// map iteration.
+func (p *Planner) routeOrder(findings []sink.FindingView) []string {
+	present := map[string]bool{}
+	for _, f := range findings {
+		present[p.routes.match(f)] = true
+	}
+	var out []string
+	for _, r := range p.cfg.Routes {
+		if present[r.Name] {
+			out = append(out, r.Name)
+		}
+	}
+	if present[routeName] {
+		out = append(out, routeName)
+	}
+	return out
+}
+
+// byRoute returns the findings routed to name.
+func byRoute(findings []sink.FindingView, r *routes, name string) []sink.FindingView {
+	out := make([]sink.FindingView, 0, len(findings))
+	for _, f := range findings {
+		if r.match(f) == name {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// Config exposes the ticket configuration, including its routes, so callers can
+// resolve per-project decisions without keeping a second copy of it.
+func (p *Planner) Config() config.JiraConfig { return p.cfg }
 
 // skipReason reports why a finding should not be ticketed, if it should not.
 //
@@ -298,10 +386,14 @@ func collapseObjectRef(source string) string {
 }
 
 // render executes the template for one ticket group.
-func (p *Planner) render(group ticketGroup) (Draft, error) {
+func (p *Planner) render(group ticketGroup, route string) (Draft, error) {
 	data := newTemplateData(group)
+	tmpl := p.tmpls[route]
+	if tmpl == nil {
+		tmpl = p.tmpl
+	}
 	var buf bytes.Buffer
-	if err := p.tmpl.Execute(&buf, data); err != nil {
+	if err := tmpl.Execute(&buf, data); err != nil {
 		return Draft{}, fmt.Errorf("render ticket template for %s: %w", data.ServiceName, err)
 	}
 	summary, description, err := splitSummary(buf.String())
@@ -316,6 +408,7 @@ func (p *Planner) render(group ticketGroup) (Draft, error) {
 		Images:      data.Images,
 		Findings:    group.all(),
 		Key:         groupKey(group.primary[0]),
+		Route:       route,
 	}, nil
 }
 

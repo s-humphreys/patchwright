@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -166,6 +167,7 @@ func run(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.P
 	}
 	actions := ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, OpenByImage: index, Findings: findings,
+		Config: cfg,
 	})
 
 	if !confirm {
@@ -185,17 +187,34 @@ func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) 
 		fmt.Fprintln(w, "Nothing to do: no drafts and no open tickets to reconcile.")
 		return
 	}
-	fmt.Fprintf(w, "DRY RUN: %d action(s) in project %s.\n\n", len(actions), cfg.Project)
+	fmt.Fprintf(w, "DRY RUN: %d action(s) across %s.\n\n", len(actions), describeTrackers(cfg))
 	for i, a := range actions {
 		fmt.Fprintf(w, "--- %d of %d: %s ---\n", i+1, len(actions), a.Kind)
 		fmt.Fprintf(w, "Why:      %s\n", a.Why)
+		// Every action names its tracker, not just creations: reviewing forty
+		// actions across two boards means knowing which team each one touches.
+		// For an action against an existing ticket the project comes from the
+		// issue key, which is where the write will actually land.
+		fmt.Fprintf(w, "Tracker:  %s\n", describeActionTracker(cfg, a))
 		switch a.Kind {
 		case ticket.ActionCreate:
 			fmt.Fprintf(w, "Summary:  %s\n", a.Draft.Summary)
-			fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, a.Draft.Priority))
+			fmt.Fprintf(w, "Priority: %s\n", describePriority(routedConfig(cfg, a.Draft.Route), a.Draft.Priority))
 			fmt.Fprintf(w, "Images:   %v\n\n%s\n", a.Draft.Images, a.Draft.Description)
 		case ticket.ActionSkip:
 			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+		case ticket.ActionClose:
+			// Closing is the only action that ends a piece of work, so the dry run
+			// shows the evidence rather than just the verdict.
+			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+			fmt.Fprintf(w, "Closing:  %s\n", a.Message)
+		case ticket.ActionUpdate:
+			// The rewrite is shown in full: it replaces what someone would
+			// otherwise read on the board, so approving it blind is worse than
+			// approving a comment blind.
+			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+			fmt.Fprintf(w, "New summary: %s\n", a.Draft.Summary)
+			fmt.Fprintf(w, "New description:\n\n%s\n", a.Draft.Description)
 		default:
 			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
 			if len(a.Images) > 0 {
@@ -210,14 +229,71 @@ func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) 
 // reportDrafts is the credential-less fallback: what would be raised, with no claim
 // about what already exists.
 func reportDrafts(w io.Writer, cfg config.JiraConfig, drafts []ticket.Draft) {
-	fmt.Fprintf(w, "DRY RUN: %d ticket(s) would be considered for project %s.\n\n",
-		len(drafts), cfg.Project)
+	fmt.Fprintf(w, "DRY RUN: %d ticket(s) would be considered across %s.\n\n",
+		len(drafts), describeTrackers(cfg))
 	for i, d := range drafts {
 		fmt.Fprintf(w, "--- draft %d of %d ---\n", i+1, len(drafts))
 		fmt.Fprintf(w, "Summary:  %s\n", d.Summary)
-		fmt.Fprintf(w, "Priority: %s\n", describePriority(cfg, d.Priority))
+		fmt.Fprintf(w, "Tracker:  %s\n", describeRoute(cfg, d.Route))
+		fmt.Fprintf(w, "Priority: %s\n", describePriority(routedConfig(cfg, d.Route), d.Priority))
 		fmt.Fprintf(w, "Images:   %v\n\n%s\n\n", d.Images, d.Description)
 	}
+}
+
+// routedConfig resolves the settings a draft will actually be created with, so
+// what a dry run prints is what the write will use.
+func routedConfig(cfg config.JiraConfig, route string) config.JiraConfig {
+	for _, r := range cfg.Routes {
+		if r.Name == route {
+			return cfg.Resolve(r)
+		}
+	}
+	return cfg
+}
+
+// describeActionTracker names where an action will land.
+//
+// A creation goes wherever its route says. An action against an existing ticket
+// goes to that ticket's project, which the issue key already states — reading the
+// route for those would describe where a new ticket would go, not where this write
+// is going, and the two can differ once routes change.
+func describeActionTracker(cfg config.JiraConfig, a ticket.Action) string {
+	if a.Kind == ticket.ActionCreate {
+		return describeRoute(cfg, a.Draft.Route)
+	}
+	project, _, ok := strings.Cut(a.TicketKey, "-")
+	if !ok || project == "" {
+		return "unknown"
+	}
+	for _, p := range cfg.Projects() {
+		if p == project {
+			return project
+		}
+	}
+	// Worth saying out loud rather than printing the key and moving on: a ticket
+	// in a project this configuration does not write to usually means a route was
+	// removed or renamed while its tickets are still open.
+	return project + " (not a configured project)"
+}
+
+// describeRoute names the tracker a draft lands on, and the rule that chose it.
+func describeRoute(cfg config.JiraConfig, route string) string {
+	resolved := routedConfig(cfg, route)
+	desc := fmt.Sprintf("%s / %s", resolved.Project, resolved.EffectiveIssueType())
+	if route != "" && route != "(default)" {
+		return fmt.Sprintf("%s (route %q)", desc, route)
+	}
+	return desc
+}
+
+// describeTrackers lists every project this run can write to, so "1 project" is
+// never assumed when routing means otherwise.
+func describeTrackers(cfg config.JiraConfig) string {
+	projects := cfg.Projects()
+	if len(projects) == 1 {
+		return "project " + projects[0]
+	}
+	return fmt.Sprintf("%d projects (%s)", len(projects), strings.Join(projects, ", "))
 }
 
 func reportResults(w io.Writer, results []ticket.Result) {
@@ -236,9 +312,14 @@ func reportResults(w io.Writer, results []ticket.Result) {
 		}
 	}
 	counts := ticket.Summarize(results)
-	fmt.Fprintf(w, "\nCreated %d, extended %d, commented %d, unchanged %d.\n",
-		counts[ticket.ActionCreate], counts[ticket.ActionExtend],
-		counts[ticket.ActionNoteStale]+counts[ticket.ActionNoteDone], counts[ticket.ActionSkip])
+	parts := make([]string, 0, len(ticket.ActionKinds()))
+	// Built by iteration for the same reason the server's is: a hand-written list
+	// silently omits a kind added later, and the run then reads as though it did
+	// less than it did.
+	for _, kind := range ticket.ActionKinds() {
+		parts = append(parts, fmt.Sprintf("%s %d", kind, counts[kind]))
+	}
+	fmt.Fprintf(w, "\n%s.\n", strings.Join(parts, ", "))
 	if failed > 0 {
 		fmt.Fprintf(w, "%d action(s) failed; see above.\n", failed)
 	}

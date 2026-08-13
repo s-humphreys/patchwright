@@ -56,6 +56,48 @@ scan:
 #     - name: managed-elsewhere
 #       when: "dimensions['namespace'].exists(n, n == 'some-system')"
 #       reason: upgraded together on their own cadence
+#
+#   # Send a team's tickets to the tracker it actually uses. First match wins;
+#   # anything matching no route uses the settings above, and a route states only
+#   # what differs — template, image field and priority map are inherited.
+#   #
+#   # A group of findings is never split across routes: two findings sharing one
+#   # upgrade but owned by different teams become two tickets, because one issue
+#   # cannot exist in two projects.
+#   # With requireRoute, a finding matching no route below gets no ticket at all,
+#   # rather than falling through to `project` above. It is still reported as a
+#   # skip with the owner named, so unrouted work is visible rather than silent.
+#   # Close a ticket when its work is provably finished: every image it covers is
+#   # still reported, was checked for a newer version, and is already on the latest
+#   # one, with live reconciliation having run. For the common case where someone
+#   # merges a Renovate PR, rolls it out, and never sees the ticket.
+#   #
+#   # Off by default. Note this closes on positive evidence only — a finding merely
+#   # disappearing is never treated as done, because a provider that stopped
+#   # assessing an image looks identical.
+#   # Both are per route as well as here, since they belong to the tracker: see
+#   # routes below. For existing tickets they resolve by the issue key's project.
+#   autoClose: true
+#   closeTransition: Done   # required when the workflow has several ways to finish
+#
+#   requireRoute: true
+#   routes:
+#     - name: sre
+#       when: "owner['team'] == 'sre'"
+#       project: SRE
+#       issueType: Bug
+#       epic: SRE-42
+#       autoClose: true
+#       closeTransition: Ship It    # this project's workflow, not the one above
+#       # A team-managed project with no shared custom field can key on labels
+#       # instead; the lookup follows automatically.
+#       imageLabel: true
+#     - name: platform
+#       when: "owner['class'] == 'platform'"
+#       project: PROJ
+#       priorityMap:
+#         urgent: Highest
+#         high: High
 
 suppress:
   # Cloud-provider-managed images are not directly patchable by app or platform
