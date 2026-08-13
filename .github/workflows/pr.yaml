@@ -93,8 +93,36 @@ jobs:
       #
       # The gate covers the base image and our own binary, which we can fix by
       # bumping a module or a base tag. It fails the build.
+      #
+      # Retried once, because the step's first act is to fetch the vulnerability
+      # DB from a public registry and that fetch is observably flaky: it has
+      # failed here in one second, far too fast to have scanned anything, on a
+      # commit touching no build input whose predecessor passed twenty seconds
+      # earlier. Retrying costs nothing in correctness — a real fixable CRITICAL
+      # fails both attempts — and the alternative is a gate people learn to
+      # re-run on reflex, which is a gate nobody reads.
+      #
+      # The DB repository is pinned to upstream first: the default list leads
+      # with a mirror that has served 404s for layers it had just advertised.
       - name: Scan our own image (gate)
+        id: gate
+        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2
+        with:
+          image-ref: patchwright:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          skip-files: usr/local/bin/trivy
+
+      - name: Scan our own image (gate, retry)
+        if: steps.gate.outcome == 'failure'
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2
         with:
           image-ref: patchwright:scan
           severity: CRITICAL,HIGH
@@ -111,7 +139,10 @@ jobs:
       # problems too. Renovate bumps this image, and the report keeps it visible
       # rather than accepted.
       - name: Scan the bundled scanner (report only)
+        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2
         with:
           image-ref: patchwright:scan
           severity: CRITICAL,HIGH
