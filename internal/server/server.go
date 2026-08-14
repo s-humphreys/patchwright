@@ -63,6 +63,8 @@ type Server struct {
 	assessor Assessor
 	// configSources is the raw text of the loaded config, for GET /api/v1/config.
 	configSources []config.Source
+	// suppressRules is the loaded suppression policy, for reporting lapsed rules.
+	suppressRules []config.PolicyRule
 
 	// metricsAuth brings /metrics under the shared token. Off by default: a scrape
 	// config needing a credential is friction where it is least tolerated.
@@ -168,6 +170,7 @@ func (s *Server) Refresh(ctx context.Context) {
 	} else {
 		snap.views = buildViews(findings, s.includeSuppressed)
 		snap.summary = buildSummary(findings)
+		snap.summary.ExpiredSuppressions = s.expiredSuppressions()
 		snap.byImage = indexByImage(snap.views)
 		// Tickets first: the owner rollup counts how much of each team's work is
 		// already tracked.

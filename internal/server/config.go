@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 )
@@ -27,12 +28,30 @@ type configSource struct {
 	Redacted bool `json:"redacted,omitempty"`
 }
 
-// WithConfig attaches the loaded configuration so it can be served.
+// WithConfig attaches the loaded configuration so it can be served, and so lapsed
+// suppressions can be reported.
 func (s *Server) WithConfig(cfg *config.Config) *Server {
 	if cfg != nil {
 		s.configSources = cfg.Sources
+		s.suppressRules = cfg.Suppress
 	}
 	return s
+}
+
+// expiredSuppressions lists the suppress rules that have lapsed.
+//
+// Computed from the configuration and the clock rather than carried through the
+// assessment, because that is all it depends on — and because it must be reportable
+// even on a run where nothing happened to match the lapsed rule.
+func (s *Server) expiredSuppressions() []expiredRule {
+	now := time.Now()
+	var out []expiredRule
+	for _, r := range s.suppressRules {
+		if r.Expired(now) {
+			out = append(out, expiredRule{Name: r.Name, Until: r.Until})
+		}
+	}
+	return out
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

@@ -46,6 +46,16 @@ Writes are opt-in: `--auto-ticket` applies the plan on every refresh, and the
 endpoints work either way. Every refresh logs the plan whether or not it will be
 applied.
 
+## Pending ticket actions on the page
+
+The page lists writes that reconciliation would make — creations, rewrites, closes and
+comments — with the tracker each lands on, and says whether a scheduled refresh will
+apply them. Skips are counted rather than listed.
+
+Read-only: there is no apply button. A POST that writes to a tracker should not be one
+click away from a dashboard behind a shared token. It refreshes on demand rather than
+with the page's polling, because computing the plan queries Jira.
+
 ## Rules on the page
 
 "Show config" on the status page reveals the ownership and policy YAML the

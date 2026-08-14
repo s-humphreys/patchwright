@@ -72,8 +72,9 @@ func (s *Server) handleTicketPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta `json:"assessment"`
 		Applied    bool           `json:"applied"`
+		AutoApply  bool           `json:"auto_apply"`
 		Actions    []actionView   `json:"actions"`
-	}{s.meta(), false, viewActions(actions, nil)})
+	}{s.meta(), false, s.autoTicket, viewActions(actions, nil)})
 }
 
 func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {

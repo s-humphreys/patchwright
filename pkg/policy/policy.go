@@ -7,6 +7,8 @@ package policy
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/cel-go/cel"
 
@@ -69,7 +71,34 @@ func New(actionable, suppress []config.PolicyRule) (*Evaluator, error) {
 	if compileErr != nil {
 		return nil, compileErr
 	}
+	// Validated here rather than at first use: a mistyped expiry that silently
+	// un-suppresses findings is exactly the failure this feature is meant to
+	// prevent.
+	for _, r := range suppress {
+		if _, _, err := r.Expiry(); err != nil {
+			return nil, fmt.Errorf("suppress rule %q: %w", r.Name, err)
+		}
+	}
+	for _, r := range actionable {
+		if strings.TrimSpace(r.Until) != "" {
+			return nil, fmt.Errorf("actionable rule %q sets until, which only applies to "+
+				"suppress rules: a priority does not expire", r.Name)
+		}
+	}
 	return e, nil
+}
+
+// Expired returns the suppress rules that have lapsed as of now, so a caller can
+// report them. A lapsed rule stops hiding findings, and saying so is the point:
+// silently returning work to the queue looks like the estate got worse.
+func (e *Evaluator) Expired(now time.Time) []config.PolicyRule {
+	var out []config.PolicyRule
+	for _, cr := range e.suppress {
+		if cr.rule.Expired(now) {
+			out = append(out, cr.rule)
+		}
+	}
+	return out
 }
 
 func compileRules(env *cel.Env, rules []config.PolicyRule, kind string) ([]compiledRule, error) {
@@ -92,7 +121,14 @@ func compileRules(env *cel.Env, rules []config.PolicyRule, kind string) ([]compi
 func (e *Evaluator) Evaluate(f *model.Finding) error {
 	act := findingActivation(*f)
 
+	now := time.Now()
 	for _, cr := range e.suppress {
+		if cr.rule.Expired(now) {
+			// The rule is spent. The finding is evaluated as though it were not
+			// configured, which is the whole behaviour: an accepted risk stops being
+			// accepted on the date someone chose.
+			continue
+		}
 		matched, err := celx.EvalBool(cr.prg, act)
 		if err != nil {
 			return fmt.Errorf("suppress rule %q: evaluating for image %q: %w", cr.rule.Name, f.Image.Ref, err)

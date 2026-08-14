@@ -8,6 +8,7 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/attribute"
 	"github.com/s-humphreys/patchwright/pkg/config"
@@ -118,6 +119,13 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 		}
 	}
 	slog.InfoContext(ctx, "evaluated findings", "findings", len(findings), "actionable", actionable)
+	// Said loudly, and once per run. A lapsed suppression returns work to the queue,
+	// so without this the queue simply grows and reads as the estate getting worse.
+	for _, r := range p.evaluator.Expired(time.Now()) {
+		slog.WarnContext(ctx, "suppression rule has expired and no longer applies; "+
+			"findings it was hiding are back in the queue",
+			"rule", r.Name, "until", r.Until)
+	}
 	return findings, nil
 }
 

@@ -40,6 +40,25 @@ actionable:
     priority: low
 ```
 
+## Expiring a suppression
+
+`until: YYYY-MM-DD` on a suppress rule makes it lapse. After that date the rule stops
+matching, the findings it was hiding return to the queue, and each run warns with the
+rule name — an unexplained jump in the queue otherwise reads as the estate getting
+worse. The API reports lapsed rules as `expired_suppressions`.
+
+```yaml
+suppress:
+  - name: awaiting-upstream-fix
+    when: "image.repository == 'acme/thing'"
+    until: 2026-12-01        # last day this applies
+```
+
+The date is the final day the rule holds, evaluated at end of day UTC, so a rule
+expiring today still applies today everywhere. A malformed date fails at load rather
+than being guessed at, and `until` on an *actionable* rule is rejected: a priority
+does not expire.
+
 `priority` is free-form, but only `urgent` > `high` > `medium` > `low` are ranked for
 report ordering; any other label sorts after all of them. Add a tier to
 `model.PriorityRank` rather than inventing one in config alone.

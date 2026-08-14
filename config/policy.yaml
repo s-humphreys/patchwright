@@ -100,6 +100,10 @@ scan:
 #         high: High
 
 suppress:
+  # An `until: YYYY-MM-DD` on any suppress rule makes it expire. After that date the
+  # rule stops matching and the findings it was hiding return to the queue, with a
+  # warning naming the rule. Accepted risk with no expiry is accepted forever: nobody
+  # re-reads a config file, so a decision taken for one quarter outlives its reason.
   # Cloud-provider-managed images are not directly patchable by app or platform
   # teams; keep them out of the actionable queue (a later phase can route them
   # to a node-image-upgrade workflow instead).

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -396,6 +397,46 @@ type PolicyRule struct {
 	Name     string `yaml:"name"`
 	When     string `yaml:"when"`
 	Priority string `yaml:"priority"`
+
+	// Until is the last date a suppress rule applies, as YYYY-MM-DD. After it, the
+	// rule stops matching and the findings it was hiding return to the queue.
+	//
+	// Accepted risk with no expiry is accepted risk forever: nobody re-reads a
+	// config file, so a decision taken for one quarter silently outlives the reason
+	// for it. An expiry turns that into a review.
+	//
+	// Optional, and meaningless on an actionable rule — a priority does not expire —
+	// so it is rejected there rather than ignored.
+	Until string `yaml:"until"`
+}
+
+// untilLayout is the date format for PolicyRule.Until. Date only: an expiry with a
+// time of day invites arguments about zones for no benefit.
+const untilLayout = "2006-01-02"
+
+// Expiry parses Until, returning the instant the rule stops applying: the end of
+// that day in UTC, so a rule expiring today still applies today everywhere.
+func (r PolicyRule) Expiry() (time.Time, bool, error) {
+	if strings.TrimSpace(r.Until) == "" {
+		return time.Time{}, false, nil
+	}
+	d, err := time.Parse(untilLayout, strings.TrimSpace(r.Until))
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("until %q is not a date in YYYY-MM-DD form", r.Until)
+	}
+	return d.AddDate(0, 0, 1), true, nil
+}
+
+// Expired reports whether the rule has lapsed as of now.
+func (r PolicyRule) Expired(now time.Time) bool {
+	end, ok, err := r.Expiry()
+	if err != nil || !ok {
+		// An unparseable date is rejected at load, so it cannot reach here; treating
+		// it as unexpired is the safe reading either way, since the alternative
+		// silently un-suppresses findings because of a typo.
+		return false
+	}
+	return now.After(end)
 }
 
 // Source is one config file as loaded: its path and the text that was parsed.
