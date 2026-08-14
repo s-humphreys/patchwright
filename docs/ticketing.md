@@ -176,6 +176,20 @@ and fails loudly, because recording their work as not-done would misrepresent it
 about finished work. The comment says which case it is, so a closed-as-not-done ticket
 does not read as a decision to skip the work.
 
+`closePriorityUnworked` clears the priority on that path:
+
+```yaml
+jira:
+  closeTransitionUnworked: WON'T BE DONE
+  closePriorityUnworked: Unprioritised
+```
+
+A ticket closed as not-worked that keeps its original priority still appears in every
+"highest priority open work" filter until someone notices it is closed. Applied only
+on the unworked path — work somebody completed keeps the priority it was triaged at,
+which is a record of how urgent it was. Where a transition screen refuses the field,
+the priority is set in a follow-up edit rather than lost.
+
 ## Comments
 
 Each note carries a reference (`` `patchwright-ref: note-done` ``) and existing

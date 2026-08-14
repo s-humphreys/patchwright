@@ -128,6 +128,17 @@ type JiraConfig struct {
 	// work, so that case still fails loudly rather than settling for the nearest
 	// available transition.
 	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
+	// ClosePriorityUnworked is the priority to set when closing via the unworked
+	// transition, e.g. "Unprioritised" or "Lowest". Empty leaves priority alone.
+	//
+	// A ticket closed as not-worked that keeps its original priority still shows up
+	// in every "highest priority open work" filter and report until someone notices
+	// it is closed. Clearing the priority is part of the same statement: nobody
+	// actioned this, and nobody needs to.
+	//
+	// Applied only on the unworked path. Work somebody completed keeps the priority
+	// it was triaged at, since that is a record of how urgent it was.
+	ClosePriorityUnworked string `yaml:"closePriorityUnworked"`
 
 	// RequireRoute, when true, means a finding that matches no route gets no
 	// ticket rather than falling through to the settings above.
@@ -249,6 +260,7 @@ type TicketRoute struct {
 	AutoClose               *bool  `yaml:"autoClose"`
 	CloseTransition         string `yaml:"closeTransition"`
 	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
+	ClosePriorityUnworked   string `yaml:"closePriorityUnworked"`
 
 	Project     string            `yaml:"project"`
 	Template    string            `yaml:"template"`
@@ -280,6 +292,9 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if r.CloseTransitionUnworked != "" {
 		out.CloseTransitionUnworked = r.CloseTransitionUnworked
+	}
+	if r.ClosePriorityUnworked != "" {
+		out.ClosePriorityUnworked = r.ClosePriorityUnworked
 	}
 	if r.Project != "" {
 		out.Project = r.Project

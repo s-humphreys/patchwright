@@ -436,3 +436,129 @@ func TestPreferredTransitionWinsForUnworkedTickets(t *testing.T) {
 		t.Errorf("transitioned with id %v, want 31 (Done)", tr["id"])
 	}
 }
+
+// A ticket closed as not-worked that keeps its original priority still appears in
+// every "highest priority" filter until somebody notices it is closed.
+func TestUnworkedCloseClearsThePriority(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{
+		transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
+	}}
+	cfg := baseCfg()
+	cfg.CloseTransition = "Done"
+	cfg.CloseTransitionUnworked = "WON'T BE DONE"
+	cfg.ClosePriorityUnworked = "Unprioritised"
+
+	if err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{
+		Key: "PROJ-1", Comment: "because", Unworked: true,
+	}); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	fields, ok := ts.posted["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("transition carried no fields: %v", ts.posted)
+	}
+	pri, _ := fields["priority"].(map[string]any)
+	if pri["name"] != "Unprioritised" {
+		t.Errorf("priority = %v, want Unprioritised", pri["name"])
+	}
+}
+
+// Work somebody completed keeps the priority it was triaged at: that is a record of
+// how urgent it was, not noise to clear.
+func TestCloseViaDoneLeavesThePriorityAlone(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{
+		transition("31", "Done", "Done", "done"),
+		transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
+	}}
+	cfg := baseCfg()
+	cfg.CloseTransition = "Done"
+	cfg.CloseTransitionUnworked = "WON'T BE DONE"
+	cfg.ClosePriorityUnworked = "Unprioritised"
+
+	// Unworked, but Done is available and wins — so the priority stays.
+	if err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{
+		Key: "PROJ-1", Comment: "because", Unworked: true,
+	}); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, ok := ts.posted["fields"]; ok {
+		t.Errorf("a close via Done changed the priority: %v", ts.posted)
+	}
+}
+
+// Without the setting, nothing touches priority — enabling the unworked transition
+// must not silently start editing fields.
+func TestUnworkedCloseWithoutAPriorityLeavesItAlone(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{
+		transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
+	}}
+	cfg := baseCfg()
+	cfg.CloseTransition = "Done"
+	cfg.CloseTransitionUnworked = "WON'T BE DONE"
+
+	if err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{
+		Key: "PROJ-1", Comment: "because", Unworked: true,
+	}); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, ok := ts.posted["fields"]; ok {
+		t.Errorf("priority was changed without being configured: %v", ts.posted)
+	}
+}
+
+// A transition screen that rejects fields must still close the ticket, with the
+// priority applied separately rather than lost.
+func TestPriorityIsAppliedSeparatelyWhenTheScreenRejectsIt(t *testing.T) {
+	var transitions, edits int
+	var editedPriority string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"transitions": []map[string]any{
+				transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
+			}})
+		case r.Method == http.MethodPut:
+			edits++
+			var body struct {
+				Fields struct {
+					Priority struct{ Name string } `json:"priority"`
+				} `json:"fields"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			editedPriority = body.Fields.Priority.Name
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(r.URL.Path, "/comment"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			transitions++
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			// Reject anything carrying extra fields, as a restrictive screen would.
+			if _, ok := body["fields"]; ok {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"errorMessages":["Field 'priority' cannot be set"]}`))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := baseCfg()
+	cfg.CloseTransitionUnworked = "WON'T BE DONE"
+	cfg.ClosePriorityUnworked = "Unprioritised"
+	j := &Jira{BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
+		cfg: cfg, byRoute: map[string]config.JiraConfig{routeName: cfg}}
+
+	if err := j.Close(context.Background(), CloseRequest{
+		Key: "PROJ-1", Comment: "because", Unworked: true,
+	}); err != nil {
+		t.Fatalf("Close failed instead of retrying without the fields: %v", err)
+	}
+	if transitions != 2 {
+		t.Errorf("made %d transition attempts, want 2 (with, then without, the fields)", transitions)
+	}
+	if edits != 1 || editedPriority != "Unprioritised" {
+		t.Errorf("priority not applied separately: edits=%d priority=%q", edits, editedPriority)
+	}
+}

@@ -83,6 +83,10 @@ scan:
 #   # ticket nobody picked up can only be abandoned. Applies to unworked tickets
 #   # only; one somebody worked still fails rather than being recorded as not-done.
 #   closeTransitionUnworked: Won't Do
+#   # Clear the priority when closing that way: a not-worked ticket at Highest keeps
+#   # appearing in priority-ordered views. Only on that path — completed work keeps
+#   # the priority it was triaged at.
+#   closePriorityUnworked: Lowest
 #
 #   requireRoute: true
 #   routes:
