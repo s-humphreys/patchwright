@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -54,7 +55,11 @@ type actionView struct {
 	Summary string `json:"summary,omitempty"`
 	// Route names the routing rule that chose this action's tracker, so a caller
 	// reviewing a plan can see whose board each ticket lands on.
-	Route   string   `json:"route,omitempty"`
+	Route string `json:"route,omitempty"`
+	// URL links the existing ticket, so a plan is one click from the thing it
+	// describes rather than a key to copy. Absent for a creation, which has no
+	// ticket yet, and when the Jira base URL is unknown.
+	URL     string   `json:"url,omitempty"`
 	Images  []string `json:"images,omitempty"`
 	Comment string   `json:"comment,omitempty"`
 	// Error is set on an applied action that failed. Present so a caller sees
@@ -68,12 +73,13 @@ func (s *Server) handleTicketPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	logPlan(r.Context(), "api", actions, false)
+	logPlan(r.Context(), "api", actions, false, s.autoTicket)
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta `json:"assessment"`
 		Applied    bool           `json:"applied"`
+		AutoApply  bool           `json:"auto_apply"`
 		Actions    []actionView   `json:"actions"`
-	}{s.meta(), false, viewActions(actions, nil)})
+	}{s.meta(), false, s.autoTicket, s.viewActions(actions, nil)})
 }
 
 func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
@@ -99,11 +105,11 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 			Error   string       `json:"error"`
 			Actions []actionView `json:"actions"`
 		}{`refusing to apply without {"confirm": true}; GET this path for the plan`,
-			viewActions(actions, nil)})
+			s.viewActions(actions, nil)})
 		return
 	}
 
-	logPlan(r.Context(), "api", actions, true)
+	logPlan(r.Context(), "api", actions, true, s.autoTicket)
 	results := ticket.Apply(r.Context(), s.ticketer, actions)
 	auditWrites(r.Context(), "api", results)
 
@@ -111,7 +117,7 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 		Assessment assessmentMeta `json:"assessment"`
 		Applied    bool           `json:"applied"`
 		Actions    []actionView   `json:"actions"`
-	}{s.meta(), true, viewActions(nil, results)})
+	}{s.meta(), true, s.viewActions(nil, results)})
 }
 
 // planTickets reconciles the cached assessment against Jira.
@@ -155,7 +161,7 @@ func (s *Server) autoReconcile(ctx context.Context) {
 		slog.WarnContext(ctx, "ticket reconciliation: could not plan", "error", err)
 		return
 	}
-	logPlan(ctx, "schedule", actions, s.autoTicket)
+	logPlan(ctx, "schedule", actions, s.autoTicket, s.autoTicket)
 	if !s.autoTicket {
 		return
 	}
@@ -170,7 +176,7 @@ func (s *Server) autoReconcile(ctx context.Context) {
 // applied says whether these actions are about to be written. Logging a plan that
 // reads identically in both cases would be worse than not logging it, since the
 // reader's next question is always "did that happen?".
-func logPlan(ctx context.Context, source string, actions []ticket.Action, applied bool) {
+func logPlan(ctx context.Context, source string, actions []ticket.Action, applied, autoApply bool) {
 	counts := map[ticket.ActionKind]int{}
 	for _, a := range actions {
 		counts[a.Kind]++
@@ -184,9 +190,20 @@ func logPlan(ctx context.Context, source string, actions []ticket.Action, applie
 	if writes == 0 {
 		return
 	}
-	if !applied {
-		// Said once, not per action: the point is that something is waiting, and
-		// repeating it on every line would bury the actions themselves.
+	// Said once, not per action: the point is that something is waiting, and
+	// repeating it on every line would bury the actions themselves.
+	//
+	// "This request applied nothing" and "nothing will apply it" are different
+	// claims, and conflating them made the log assert auto-ticketing was off on a
+	// deployment where it was on.
+	switch {
+	case applied:
+		// Nothing to say: the writes are reported individually by the audit.
+	case autoApply:
+		slog.InfoContext(ctx, "ticket plan not applied by this request; the next scheduled "+
+			"refresh will apply it (auto-ticketing is on)",
+			"source", source, "pending_writes", writes)
+	default:
 		slog.InfoContext(ctx, "ticket plan will not be applied (auto-ticketing is off); "+
 			"POST /api/v1/tickets with {\"confirm\": true} to apply it",
 			"source", source, "pending_writes", writes)
@@ -243,6 +260,23 @@ func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 	}
 	attrs = append(attrs, "already_present", ticket.NoOps(results), "failed", failed)
 	slog.InfoContext(ctx, "ticket reconciliation complete", attrs...)
+}
+
+func (s *Server) viewActions(actions []ticket.Action, results []ticket.Result) []actionView {
+	out := viewActions(actions, results)
+	for i := range out {
+		out[i].URL = s.ticketURL(out[i].Ticket)
+	}
+	return out
+}
+
+// ticketURL builds a browse link for a ticket key, or "" when the base URL is not
+// known — a broken link is worse than none.
+func (s *Server) ticketURL(key string) string {
+	if key == "" || s.jiraBaseURL == "" {
+		return ""
+	}
+	return strings.TrimSuffix(s.jiraBaseURL, "/") + "/browse/" + key
 }
 
 func viewActions(actions []ticket.Action, results []ticket.Result) []actionView {

@@ -102,6 +102,10 @@
   }
   .linkish:hover { color: var(--fg); }
   .linkish:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .act { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+  .act-create { color: var(--urgent); }
+  .act-update, .act-extend { color: var(--high); }
+  .act-close { color: var(--ok); }
   .cfg-file { margin: 0.6rem 0 1rem; }
   .cfg-path { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); }
   /* YAML highlighting, written here rather than pulled from a CDN: this page is
@@ -153,6 +157,11 @@
 <div id="coverage"></div>
 
 <div class="tiles" id="tiles"></div>
+
+<h2>Pending ticket actions
+  <button id="ticketsRefresh" class="linkish">refresh</button>
+</h2>
+<div id="pending"></div>
 
 <h2>Rules
   <button id="configToggle" class="linkish" aria-expanded="false">show config</button>
@@ -883,6 +892,72 @@ function applyOwnerFilters() {
   renderFindings(rows);
 }
 
+// Pending ticket actions.
+//
+// The page showed which findings had tickets but nothing about writes waiting to
+// happen, so an imminent rewrite or close was invisible unless someone read the logs.
+// A service about to change a tracker should say so where people are looking.
+//
+// Read-only by design: there is no apply button. A POST that writes to Jira should
+// not be one stray click away from a dashboard behind a shared token.
+const PENDING_COLUMNS = [
+  { label: "Action", get: (a) => `<span class="act act-${esc(a.kind)}">${esc(a.kind)}</span>` },
+  // Linked the same way the queue links tickets: a plan naming a key you then have
+  // to search for is a plan you read once.
+  { label: "Ticket", get: (a) => {
+      if (!a.ticket) return '<span class="pct">new</span>';
+      return a.url
+        ? `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.ticket)}</a>`
+        : esc(a.ticket);
+    } },
+  { label: "Tracker", get: (a) => esc(a.route || "-") },
+  { label: "What", get: (a) => esc(a.summary || a.comment || a.why || "") },
+];
+
+async function loadPending() {
+  const el = $("#pending");
+  let plan;
+  try {
+    plan = await get("/api/v1/tickets");
+  } catch (e) {
+    // Ticketing being unconfigured is a normal state, not a fault, and must not
+    // look like one.
+    el.innerHTML = `<div class="meta">Ticket reconciliation is unavailable: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  // Skips are counted, not listed: "already correct" is worth knowing and not worth
+  // a row each.
+  const writes = (plan.actions || []).filter((a) => a.kind !== "skip");
+  const skipped = (plan.actions || []).length - writes.length;
+  if (writes.length === 0) {
+    el.innerHTML = `<div class="meta">Nothing to write.
+      ${skipped} ticket${skipped === 1 ? "" : "s"} already cover their findings.</div>`;
+    return;
+  }
+
+  const counts = {};
+  for (const a of writes) counts[a.kind] = (counts[a.kind] || 0) + 1;
+  const breakdown = Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(", ");
+
+  // Whether these will be applied is the difference between a plan and a warning.
+  const fate = plan.auto_apply
+    ? `<strong>These will be applied on the next scheduled refresh.</strong>`
+    : `These are not applied automatically: auto-ticketing is off.`;
+
+  el.innerHTML = `<div class="banner"><strong>${writes.length} pending write${
+    writes.length === 1 ? "" : "s"}</strong> (${esc(breakdown)}). ${fate}</div>
+    <div class="scroll short"><table>
+      <thead><tr>${PENDING_COLUMNS.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead>
+      <tbody>${writes.map((a) =>
+        `<tr>${PENDING_COLUMNS.map((c) => `<td>${c.get(a)}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div>`;
+}
+
+// Manual, because computing the plan queries the tracker: doing that on every poll
+// would put a Jira round trip behind an idle browser tab.
+$("#ticketsRefresh").addEventListener("click", loadPending);
+
 // The rules, on demand. Fetched on first open rather than with every refresh: they
 // change when someone deploys, not hourly, and they are the largest payload here.
 let configLoaded = false;
@@ -1010,6 +1085,8 @@ async function loadAll() {
     // needs in order to distinguish "no tickets" from "not asked".
     await loadFindings();
     renderBreakdown(owners.owners);
+    // Once per load, not per poll: see loadPending.
+    loadPending();
   } catch (e) {
     $("#freshness").textContent = `error: ${e.message}`;
     $("#freshness").className = "meta err";

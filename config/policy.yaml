@@ -79,6 +79,14 @@ scan:
 #   # routes below. For existing tickets they resolve by the issue key's project.
 #   autoClose: true
 #   closeTransition: Done   # required when the workflow has several ways to finish
+#   # For boards where Done is only reachable once a ticket has been started, so a
+#   # ticket nobody picked up can only be abandoned. Applies to unworked tickets
+#   # only; one somebody worked still fails rather than being recorded as not-done.
+#   closeTransitionUnworked: Won't Do
+#   # Clear the priority when closing that way: a not-worked ticket at Highest keeps
+#   # appearing in priority-ordered views. Only on that path — completed work keeps
+#   # the priority it was triaged at.
+#   closePriorityUnworked: Lowest
 #
 #   requireRoute: true
 #   routes:
@@ -100,6 +108,10 @@ scan:
 #         high: High
 
 suppress:
+  # An `until: YYYY-MM-DD` on any suppress rule makes it expire. After that date the
+  # rule stops matching and the findings it was hiding return to the queue, with a
+  # warning naming the rule. Accepted risk with no expiry is accepted forever: nobody
+  # re-reads a config file, so a decision taken for one quarter outlives its reason.
   # Cloud-provider-managed images are not directly patchable by app or platform
   # teams; keep them out of the actionable queue (a later phase can route them
   # to a node-image-upgrade workflow instead).

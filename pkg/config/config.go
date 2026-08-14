@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -116,6 +117,28 @@ type JiraConfig struct {
 	// category, which is right for simple workflows and wrong for boards with
 	// several ways to finish — name it explicitly there.
 	CloseTransition string `yaml:"closeTransition"`
+	// CloseTransitionUnworked is used when the work landed without anyone picking
+	// the ticket up, and CloseTransition is not available from where the ticket
+	// sits, e.g. "Won't Do" on a board whose Done transition is only reachable
+	// once a ticket has been refined and started.
+	//
+	// Restricted to unworked tickets on purpose. Nobody actioned this one — the
+	// upgrade arrived by another route — so recording it as not-done is accurate.
+	// Applying the same status to a ticket someone worked would misrepresent their
+	// work, so that case still fails loudly rather than settling for the nearest
+	// available transition.
+	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
+	// ClosePriorityUnworked is the priority to set when closing via the unworked
+	// transition, e.g. "Unprioritised" or "Lowest". Empty leaves priority alone.
+	//
+	// A ticket closed as not-worked that keeps its original priority still shows up
+	// in every "highest priority open work" filter and report until someone notices
+	// it is closed. Clearing the priority is part of the same statement: nobody
+	// actioned this, and nobody needs to.
+	//
+	// Applied only on the unworked path. Work somebody completed keeps the priority
+	// it was triaged at, since that is a record of how urgent it was.
+	ClosePriorityUnworked string `yaml:"closePriorityUnworked"`
 
 	// RequireRoute, when true, means a finding that matches no route gets no
 	// ticket rather than falling through to the settings above.
@@ -234,17 +257,20 @@ type TicketRoute struct {
 	// the tracker, not of the deployment: one team may want closing automated and
 	// another may not, and a transition named "Done" in one project says nothing
 	// about another project's workflow.
-	AutoClose       *bool             `yaml:"autoClose"`
-	CloseTransition string            `yaml:"closeTransition"`
-	Project         string            `yaml:"project"`
-	Template        string            `yaml:"template"`
-	ImageField      string            `yaml:"imageField"`
-	ImageLabel      *bool             `yaml:"imageLabel"`
-	Epic            string            `yaml:"epic"`
-	IssueType       string            `yaml:"issueType"`
-	Priority        string            `yaml:"priority"`
-	PriorityMap     map[string]string `yaml:"priorityMap"`
-	Labels          []string          `yaml:"labels"`
+	AutoClose               *bool  `yaml:"autoClose"`
+	CloseTransition         string `yaml:"closeTransition"`
+	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
+	ClosePriorityUnworked   string `yaml:"closePriorityUnworked"`
+
+	Project     string            `yaml:"project"`
+	Template    string            `yaml:"template"`
+	ImageField  string            `yaml:"imageField"`
+	ImageLabel  *bool             `yaml:"imageLabel"`
+	Epic        string            `yaml:"epic"`
+	IssueType   string            `yaml:"issueType"`
+	Priority    string            `yaml:"priority"`
+	PriorityMap map[string]string `yaml:"priorityMap"`
+	Labels      []string          `yaml:"labels"`
 }
 
 // Resolve returns the configuration for a route: the base with this route's
@@ -263,6 +289,12 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if r.CloseTransition != "" {
 		out.CloseTransition = r.CloseTransition
+	}
+	if r.CloseTransitionUnworked != "" {
+		out.CloseTransitionUnworked = r.CloseTransitionUnworked
+	}
+	if r.ClosePriorityUnworked != "" {
+		out.ClosePriorityUnworked = r.ClosePriorityUnworked
 	}
 	if r.Project != "" {
 		out.Project = r.Project
@@ -396,6 +428,46 @@ type PolicyRule struct {
 	Name     string `yaml:"name"`
 	When     string `yaml:"when"`
 	Priority string `yaml:"priority"`
+
+	// Until is the last date a suppress rule applies, as YYYY-MM-DD. After it, the
+	// rule stops matching and the findings it was hiding return to the queue.
+	//
+	// Accepted risk with no expiry is accepted risk forever: nobody re-reads a
+	// config file, so a decision taken for one quarter silently outlives the reason
+	// for it. An expiry turns that into a review.
+	//
+	// Optional, and meaningless on an actionable rule — a priority does not expire —
+	// so it is rejected there rather than ignored.
+	Until string `yaml:"until"`
+}
+
+// untilLayout is the date format for PolicyRule.Until. Date only: an expiry with a
+// time of day invites arguments about zones for no benefit.
+const untilLayout = "2006-01-02"
+
+// Expiry parses Until, returning the instant the rule stops applying: the end of
+// that day in UTC, so a rule expiring today still applies today everywhere.
+func (r PolicyRule) Expiry() (time.Time, bool, error) {
+	if strings.TrimSpace(r.Until) == "" {
+		return time.Time{}, false, nil
+	}
+	d, err := time.Parse(untilLayout, strings.TrimSpace(r.Until))
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("until %q is not a date in YYYY-MM-DD form", r.Until)
+	}
+	return d.AddDate(0, 0, 1), true, nil
+}
+
+// Expired reports whether the rule has lapsed as of now.
+func (r PolicyRule) Expired(now time.Time) bool {
+	end, ok, err := r.Expiry()
+	if err != nil || !ok {
+		// An unparseable date is rejected at load, so it cannot reach here; treating
+		// it as unexpired is the safe reading either way, since the alternative
+		// silently un-suppresses findings because of a typo.
+		return false
+	}
+	return now.After(end)
 }
 
 // Source is one config file as loaded: its path and the text that was parsed.

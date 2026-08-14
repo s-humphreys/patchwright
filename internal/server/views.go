@@ -62,6 +62,11 @@ type summaryView struct {
 	Scanned        int `json:"scanned"`
 	ExploitChecked int `json:"exploit_checked"`
 
+	// ExpiredSuppressions are suppress rules that have lapsed, so the work they were
+	// hiding is back in the queue. Reported because an unexplained jump in the queue
+	// reads as the estate getting worse rather than as a policy decision expiring.
+	ExpiredSuppressions []expiredRule `json:"expired_suppressions,omitempty"`
+
 	// UnassessedReasons counts findings by the provider's stated reason for not
 	// assessing them, worst first. This turns the coverage gap from a number
 	// into a work list: on a real estate a single registry credential accounted
@@ -109,6 +114,12 @@ type ownerStats struct {
 	// Always 0 when Jira is not configured, which is why the API reports whether it
 	// is: see the tickets field on findings.
 	Ticketed int `json:"ticketed"`
+}
+
+// expiredRule is a lapsed suppression: which rule, and the date it lapsed on.
+type expiredRule struct {
+	Name  string `json:"name"`
+	Until string `json:"until"`
 }
 
 // reasonCount is one stated reason and how many findings it accounts for.

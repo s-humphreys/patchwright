@@ -396,6 +396,13 @@ func imageClauseFor(cfg config.JiraConfig, images []string) string {
 	return "cf[" + id + "] IN (" + list + ")"
 }
 
+// matchesTransition matches a configured name against a transition or its target
+// status, case-insensitively: boards label these inconsistently ("Done", "Close
+// Issue", "WON'T BE DONE").
+func matchesTransition(name, toName, want string) bool {
+	return strings.EqualFold(name, want) || strings.EqualFold(toName, want)
+}
+
 // quoteJQL renders a JQL string literal, escaping backslashes and quotes so an
 // unusual image name cannot break the query or alter its meaning.
 func quoteJQL(s string) string {
@@ -496,11 +503,19 @@ func (j *Jira) Update(ctx context.Context, key string, d Draft) error {
 // The transition is looked up rather than assumed: transition ids are per-workflow,
 // and a hardcoded one silently moves tickets to the wrong status on any board that
 // does not share the workflow it was written against.
-func (j *Jira) Close(ctx context.Context, key, comment string) error {
+func (j *Jira) Close(ctx context.Context, req CloseRequest) error {
+	key, comment := req.Key, req.Comment
 	// Resolved by project, not by route: this ticket already exists on a specific
 	// board, and that board's workflow decides how it can be finished.
 	cfg := j.cfgForKey(key)
-	id, name, err := j.doneTransition(ctx, key, cfg.CloseTransition)
+	// The unworked transition is offered only for a ticket nobody picked up: it
+	// usually names a "won't do" status, which is an accurate record of a ticket
+	// that was never actioned and a false one of work somebody did.
+	unworked := ""
+	if req.Unworked {
+		unworked = cfg.CloseTransitionUnworked
+	}
+	id, name, usedUnworked, err := j.doneTransition(ctx, key, cfg.CloseTransition, unworked)
 	if err != nil {
 		return err
 	}
@@ -511,6 +526,17 @@ func (j *Jira) Close(ctx context.Context, key, comment string) error {
 		body["update"] = map[string]any{
 			"comment": []any{map[string]any{"add": map[string]any{"body": ADFDocument(comment)}}},
 		}
+	}
+	// A ticket closed as not-worked that keeps its original priority still appears in
+	// every "highest priority" filter until someone notices it is closed. Clearing it
+	// is part of the same statement. Only on this path: work somebody completed keeps
+	// the priority it was triaged at.
+	priority := ""
+	if usedUnworked {
+		priority = cfg.ClosePriorityUnworked
+	}
+	if priority != "" {
+		body["fields"] = map[string]any{"priority": map[string]string{"name": priority}}
 	}
 	if err := j.do(ctx, http.MethodPost,
 		"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions", body, nil); err != nil {
@@ -531,6 +557,24 @@ func (j *Jira) Close(ctx context.Context, key, comment string) error {
 			slog.WarnContext(ctx, "closed but could not post the reason",
 				"ticket", key, "error", cerr)
 		}
+		if priority != "" {
+			if perr := j.setPriority(ctx, key, priority); perr != nil {
+				// Worth saying: the ticket is closed but still carries the priority it
+				// was raised at, so it will keep appearing in priority-ordered views.
+				slog.WarnContext(ctx, "closed but could not clear the priority",
+					"ticket", key, "priority", priority, "error", perr)
+			}
+		}
+	}
+	return nil
+}
+
+// setPriority edits a ticket's priority, used when the transition screen would not
+// accept the field.
+func (j *Jira) setPriority(ctx context.Context, key, priority string) error {
+	body := map[string]any{"fields": map[string]any{"priority": map[string]string{"name": priority}}}
+	if err := j.do(ctx, http.MethodPut, "/rest/api/3/issue/"+url.PathEscape(key), body, nil); err != nil {
+		return fmt.Errorf("set priority on %s: %w", key, err)
 	}
 	return nil
 }
@@ -543,11 +587,11 @@ func (j *Jira) Close(ctx context.Context, key, comment string) error {
 // into the done status category, and more than one means the workflow offers
 // several ways to finish — patchwright refuses rather than picking, since "Won't
 // Do" and "Done" say very different things about the same work.
-func (j *Jira) doneTransition(ctx context.Context, key, want string) (id, name string, err error) {
+func (j *Jira) doneTransition(ctx context.Context, key, want, wantUnworked string) (id, name string, usedUnworked bool, err error) {
 	body, err := j.raw(ctx, http.MethodGet,
 		"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions")
 	if err != nil {
-		return "", "", fmt.Errorf("list transitions for %s: %w", key, err)
+		return "", "", false, fmt.Errorf("list transitions for %s: %w", key, err)
 	}
 	var resp struct {
 		Transitions []struct {
@@ -562,37 +606,50 @@ func (j *Jira) doneTransition(ctx context.Context, key, want string) (id, name s
 		} `json:"transitions"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", "", fmt.Errorf("decode transitions for %s: %w", key, err)
+		return "", "", false, fmt.Errorf("decode transitions for %s: %w", key, err)
 	}
 
 	var available []string
 	var done []int
+	fallbackID, fallbackName := "", ""
 	for i, t := range resp.Transitions {
 		available = append(available, fmt.Sprintf("%s -> %s", t.Name, t.To.Name))
-		if want != "" && (strings.EqualFold(t.Name, want) || strings.EqualFold(t.To.Name, want)) {
-			return t.ID, t.Name, nil
+		if want != "" && matchesTransition(t.Name, t.To.Name, want) {
+			// The preferred transition wins whenever it is available: "done" is the
+			// truer statement about finished work than "won't do", even on a ticket
+			// nobody touched.
+			return t.ID, t.Name, false, nil
+		}
+		if wantUnworked != "" && matchesTransition(t.Name, t.To.Name, wantUnworked) {
+			fallbackID, fallbackName = t.ID, t.Name
 		}
 		if t.To.StatusCategory.Key == "done" {
 			done = append(done, i)
 		}
 	}
+	if fallbackID != "" {
+		return fallbackID, fallbackName, true, nil
+	}
 	if want != "" {
-		return "", "", fmt.Errorf("no transition named %q available on %s (available: %s)",
-			want, key, strings.Join(available, ", "))
+		msg := fmt.Sprintf("no transition named %q available on %s", want, key)
+		if wantUnworked != "" {
+			msg += fmt.Sprintf(" (nor %q)", wantUnworked)
+		}
+		return "", "", false, fmt.Errorf("%s (available: %s)", msg, strings.Join(available, ", "))
 	}
 	switch len(done) {
 	case 0:
-		return "", "", fmt.Errorf("no transition into a done status available on %s (available: %s)",
+		return "", "", false, fmt.Errorf("no transition into a done status available on %s (available: %s)",
 			key, strings.Join(available, ", "))
 	case 1:
 		t := resp.Transitions[done[0]]
-		return t.ID, t.Name, nil
+		return t.ID, t.Name, false, nil
 	default:
 		names := make([]string, 0, len(done))
 		for _, i := range done {
 			names = append(names, resp.Transitions[i].Name)
 		}
-		return "", "", fmt.Errorf("%s has %d ways to finish (%s); set jira.closeTransition "+
+		return "", "", false, fmt.Errorf("%s has %d ways to finish (%s); set jira.closeTransition "+
 			"so the choice is yours rather than ours", key, len(done), strings.Join(names, ", "))
 	}
 }

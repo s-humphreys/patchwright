@@ -513,6 +513,17 @@ components:
             Newest assessment timestamp in the provider's own data, which is not the
             same as when this pipeline ran.
         provider_data_oldest: { type: string, format: date-time }
+        expired_suppressions:
+          description: |
+            Suppress rules that have lapsed, so the work they were hiding is back in
+            the queue. Reported because an unexplained jump in the queue reads as the
+            estate getting worse rather than as a policy decision expiring.
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              until: { type: string, description: "The date it lapsed, YYYY-MM-DD." }
         unassessed_reasons:
           type: array
           items:
@@ -533,7 +544,14 @@ components:
       required: [assessment, applied, actions]
       properties:
         assessment: { $ref: "#/components/schemas/AssessmentMeta" }
-        applied: { type: boolean }
+        applied:
+          type: boolean
+          description: Whether this response describes writes that were made.
+        auto_apply:
+          type: boolean
+          description: |
+            Whether a scheduled refresh will apply this plan. "Three pending writes"
+            reads very differently if they land within the hour or never.
         actions:
           type: array
           items: { $ref: "#/components/schemas/TicketAction" }
@@ -551,6 +569,11 @@ components:
         route:
           type: string
           description: The routing rule that chose the tracker.
+        url:
+          type: string
+          description: |
+            Browse link for an existing ticket. Absent for a creation, and when the
+            Jira base URL is unknown — a broken link is worse than none.
         images:
           type: array
           items: { type: string }

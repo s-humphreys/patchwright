@@ -181,6 +181,7 @@ type recorder struct {
 	comments         map[string][]string
 	updated          map[string]Draft
 	closed           map[string]string
+	closedUnworked   map[string]bool
 	alreadyCommented map[string]bool
 	failOn           ActionKind
 }
@@ -188,7 +189,7 @@ type recorder struct {
 func newRecorder() *recorder {
 	return &recorder{extended: map[string][]string{}, comments: map[string][]string{},
 		updated: map[string]Draft{}, closed: map[string]string{},
-		alreadyCommented: map[string]bool{}}
+		alreadyCommented: map[string]bool{}, closedUnworked: map[string]bool{}}
 }
 
 func (r *recorder) CommentOnce(ctx context.Context, key, dedupe, body string) (bool, error) {
@@ -202,11 +203,12 @@ func (r *recorder) CommentOnce(ctx context.Context, key, dedupe, body string) (b
 	return true, r.Comment(ctx, key, body)
 }
 
-func (r *recorder) Close(_ context.Context, key, comment string) error {
+func (r *recorder) Close(_ context.Context, req CloseRequest) error {
 	if r.failOn == ActionClose {
 		return errors.New("boom")
 	}
-	r.closed[key] = comment
+	r.closed[req.Key] = req.Comment
+	r.closedUnworked[req.Key] = req.Unworked
 	return nil
 }
 
@@ -694,5 +696,51 @@ func TestNoOpsAreNotCountedAsWrites(t *testing.T) {
 	}
 	if second[0].Err != nil {
 		t.Errorf("a no-op was reported as a failure: %v", second[0].Err)
+	}
+}
+
+// The plan has to say whether the ticket was worked, or the writer cannot choose a
+// transition honestly. And the comment has to explain a not-done status, or a closed
+// ticket reads as a decision to skip the work.
+func TestCloseCarriesWhetherTheTicketWasWorked(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		existing     Existing
+		wantUnworked bool
+		wantInBody   string
+	}{
+		{
+			name:         "nobody picked it up",
+			existing:     Existing{Key: "PROJ-1", Category: "new"},
+			wantUnworked: true,
+			wantInBody:   "Nobody picked this ticket up",
+		},
+		{
+			name:         "someone is working it",
+			existing:     Existing{Key: "PROJ-1", Category: "indeterminate", Assigned: true},
+			wantUnworked: false,
+			wantInBody:   "already on the latest available version",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actions := Reconcile(ReconcileInput{
+				Config:      autoCloseCfg(),
+				Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
+				OpenByImage: map[string][]Existing{"acme/app": {tc.existing}},
+			})
+			if len(actions) != 1 || actions[0].Kind != ActionClose {
+				t.Fatalf("actions = %+v, want one close", actions)
+			}
+			if actions[0].Unworked != tc.wantUnworked {
+				t.Errorf("Unworked = %v, want %v", actions[0].Unworked, tc.wantUnworked)
+			}
+			if !strings.Contains(actions[0].Message, tc.wantInBody) {
+				t.Errorf("comment does not mention %q: %s", tc.wantInBody, actions[0].Message)
+			}
+			// A worked ticket must not be described as unworked in its own comment.
+			if !tc.wantUnworked && strings.Contains(actions[0].Message, "Nobody picked") {
+				t.Errorf("a worked ticket was described as unworked: %s", actions[0].Message)
+			}
+		})
 	}
 }

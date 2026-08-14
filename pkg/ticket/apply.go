@@ -17,12 +17,22 @@ type Applier interface {
 	// Update rewrites an existing ticket's summary and description from a fresh
 	// draft. Used only on tickets nobody has picked up; see Existing.Untouched.
 	Update(ctx context.Context, key string, d Draft) error
-	// Close transitions a ticket into a done status, with a comment explaining
-	// why. Only called when the work is provably finished.
-	Close(ctx context.Context, key, comment string) error
+	// Close transitions a ticket into a done status, with a comment explaining why.
+	// Only called when the work is provably finished.
+	Close(ctx context.Context, req CloseRequest) error
 	// CommentOnce posts a comment unless one with the same dedupe reference is
 	// already present, reporting whether it posted. An empty dedupe always posts.
 	CommentOnce(ctx context.Context, key, dedupe, body string) (bool, error)
+}
+
+// CloseRequest is everything closing a ticket needs. A struct rather than a
+// widening parameter list, so adding a condition cannot silently reorder arguments.
+type CloseRequest struct {
+	Key     string
+	Comment string
+	// Unworked marks a ticket nobody picked up, which widens the transitions that
+	// may be used. See config.CloseTransitionUnworked.
+	Unworked bool
 }
 
 // Result records what an Apply run did, per action, so a caller can report it
@@ -62,7 +72,9 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 		case ActionUpdate:
 			r.Err = a.Update(ctx, act.TicketKey, act.Draft)
 		case ActionClose:
-			r.Err = a.Close(ctx, act.TicketKey, act.Message)
+			r.Err = a.Close(ctx, CloseRequest{
+				Key: act.TicketKey, Comment: act.Message, Unworked: act.Unworked,
+			})
 		case ActionNoteStale, ActionNoteDone:
 			var posted bool
 			posted, r.Err = a.CommentOnce(ctx, act.TicketKey, act.Dedupe, act.Message)
