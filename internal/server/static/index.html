@@ -902,7 +902,14 @@ function applyOwnerFilters() {
 // not be one stray click away from a dashboard behind a shared token.
 const PENDING_COLUMNS = [
   { label: "Action", get: (a) => `<span class="act act-${esc(a.kind)}">${esc(a.kind)}</span>` },
-  { label: "Ticket", get: (a) => (a.ticket ? esc(a.ticket) : '<span class="pct">new</span>') },
+  // Linked the same way the queue links tickets: a plan naming a key you then have
+  // to search for is a plan you read once.
+  { label: "Ticket", get: (a) => {
+      if (!a.ticket) return '<span class="pct">new</span>';
+      return a.url
+        ? `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.ticket)}</a>`
+        : esc(a.ticket);
+    } },
   { label: "Tracker", get: (a) => esc(a.route || "-") },
   { label: "What", get: (a) => esc(a.summary || a.comment || a.why || "") },
 ];

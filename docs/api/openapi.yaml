@@ -569,6 +569,11 @@ components:
         route:
           type: string
           description: The routing rule that chose the tracker.
+        url:
+          type: string
+          description: |
+            Browse link for an existing ticket. Absent for a creation, and when the
+            Jira base URL is unknown — a broken link is worse than none.
         images:
           type: array
           items: { type: string }

@@ -325,7 +325,7 @@ func TestEveryActionKindIsReported(t *testing.T) {
 				}
 				auditWrites(context.Background(), "test", results)
 			} else {
-				logPlan(context.Background(), "test", actions, false)
+				logPlan(context.Background(), "test", actions, false, false)
 			}
 
 			out := buf.String()
@@ -338,5 +338,99 @@ func TestEveryActionKindIsReported(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// "This request applied nothing" and "nothing will apply it" are different claims.
+// Conflating them made the log assert auto-ticketing was off on a deployment where it
+// was on, which is the kind of wrong that gets believed.
+func TestPlanLogDistinguishesNotNowFromNotEver(t *testing.T) {
+	actions := []ticket.Action{{Kind: ticket.ActionUpdate, TicketKey: "PROJ-1"}}
+	for _, tc := range []struct {
+		name             string
+		applied, autoApp bool
+		want, wantNot    string
+	}{
+		{
+			name:    "plan requested while auto-ticketing is on",
+			applied: false, autoApp: true,
+			want: "the next scheduled refresh will apply it", wantNot: "auto-ticketing is off",
+		},
+		{
+			name:    "plan requested while auto-ticketing is off",
+			applied: false, autoApp: false,
+			want: "auto-ticketing is off", wantNot: "will apply it",
+		},
+		{
+			name:    "already applied",
+			applied: true, autoApp: true,
+			want: "ticket plan", wantNot: "not applied",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			defer slog.SetDefault(restore)
+
+			logPlan(context.Background(), "test", actions, tc.applied, tc.autoApp)
+			out := buf.String()
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("log does not contain %q:\n%s", tc.want, out)
+			}
+			if strings.Contains(out, tc.wantNot) {
+				t.Errorf("log wrongly claims %q:\n%s", tc.wantNot, out)
+			}
+		})
+	}
+}
+
+// A plan is one click from the thing it describes, or it is a list of keys to copy.
+func TestPlanActionsCarryTicketLinks(t *testing.T) {
+	st := newStubTicketer()
+	st.open = map[string][]ticket.Existing{"acme/app": {{Key: "PROJ-7", Category: "new"}}}
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/app:1", "platform", "team", true),
+	}}).WithTickets(stubTickets{}, "https://example.atlassian.net/").
+		WithTicketing(st, false)
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets", nil))
+	var body struct {
+		Actions []actionView `json:"actions"`
+	}
+	decodeInto(t, rec, &body)
+
+	var checked bool
+	for _, a := range body.Actions {
+		if a.Ticket == "" {
+			// A creation has no ticket yet, so it must not carry a link to one.
+			if a.URL != "" {
+				t.Errorf("a creation carries a URL: %+v", a)
+			}
+			continue
+		}
+		checked = true
+		want := "https://example.atlassian.net/browse/" + a.Ticket
+		if a.URL != want {
+			t.Errorf("URL = %q, want %q", a.URL, want)
+		}
+	}
+	if !checked {
+		t.Skip("no action against an existing ticket in this plan")
+	}
+}
+
+// Without a base URL there is nothing to link to, and a broken link is worse than
+// none.
+func TestTicketLinksAreAbsentWithoutABaseURL(t *testing.T) {
+	s := New(stubAssessor{})
+	if got := s.ticketURL("PROJ-1"); got != "" {
+		t.Errorf("ticketURL = %q with no base URL, want empty", got)
+	}
+	s.jiraBaseURL = "https://example.atlassian.net"
+	if got := s.ticketURL(""); got != "" {
+		t.Errorf("ticketURL = %q for an empty key, want empty", got)
 	}
 }
