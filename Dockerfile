@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 
 # Bundle the Trivy binary so in-cluster vulnerability scanning works out of the
 # box (Trivy is a static binary and runs on distroless).
-FROM aquasec/trivy:0.73.0 AS trivy
+FROM aquasec/trivy:0.74.0 AS trivy
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/patchwright /usr/local/bin/patchwright
