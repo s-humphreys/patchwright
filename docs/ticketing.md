@@ -158,6 +158,24 @@ Set `closeTransition` where the workflow offers more than one way to finish:
 "Done" and "Won't Do" are not interchangeable, so patchwright refuses to choose and
 names the alternatives.
 
+**`closeTransitionUnworked` covers boards with no reachable Done.** Some workflows
+only allow Done once a ticket has been refined and started, so a ticket nobody touched
+cannot be completed — only abandoned:
+
+```yaml
+jira:
+  closeTransition: Done
+  closeTransitionUnworked: WON'T BE DONE
+```
+
+It applies **only to tickets nobody picked up** — unassigned and never started. For
+those, "not done" is the accurate record: the upgrade landed by another route, so the
+ticket was never actioned. A ticket somebody worked still refuses to close this way
+and fails loudly, because recording their work as not-done would misrepresent it.
+`closeTransition` wins wherever it is available, since "done" is the truer statement
+about finished work. The comment says which case it is, so a closed-as-not-done ticket
+does not read as a decision to skip the work.
+
 ## Comments
 
 Each note carries a reference (`` `patchwright-ref: note-done` ``) and existing

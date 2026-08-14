@@ -75,8 +75,8 @@ func (s *stubTicketer) CommentOnce(ctx context.Context, key, dedupe, body string
 	return true, s.Comment(ctx, key, body)
 }
 
-func (s *stubTicketer) Close(_ context.Context, key, comment string) error {
-	s.closed = append(s.closed, key)
+func (s *stubTicketer) Close(_ context.Context, req ticket.CloseRequest) error {
+	s.closed = append(s.closed, req.Key)
 	return nil
 }
 

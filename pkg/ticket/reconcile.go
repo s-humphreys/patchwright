@@ -78,6 +78,11 @@ type Action struct {
 	Images []string
 	// Message is the comment to post, for the note actions.
 	Message string
+	// Unworked marks a close on a ticket nobody picked up: unassigned and never
+	// started. It decides which transition may be used — see
+	// CloseTransitionUnworked — because "not done" is an accurate record of a
+	// ticket that was never actioned and a false one of a ticket someone worked.
+	Unworked bool
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
 	//
@@ -201,15 +206,15 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 			// rolled it out without ever seeing the ticket.
 			if in.Config.ForProject(projectOf(t.Key)).AutoClose {
 				if done, evidence := upgradeComplete(images, byRepo(in.Findings)); done {
+					// Whether anyone picked the ticket up decides which transition may
+					// be used, so the plan has to carry it: the writer cannot ask Jira
+					// after the fact without a second round trip, and the answer would
+					// be the same one already in hand.
+					unworked := t.Untouched()
 					out = append(out, Action{
-						Kind: ActionClose, TicketKey: t.Key,
-						// Brief on purpose. The one thing a reader needs is what was
-						// observed, so they can disagree with a fact rather than an
-						// argument.
-						Message: "Closing: already on the latest available version. " + evidence +
-							"\n\nChecked, not assumed — patchwright never closes a ticket because a " +
-							"finding disappeared. Reopen if this is wrong.",
-						Why: "every image it covers is already on the latest available version",
+						Kind: ActionClose, TicketKey: t.Key, Unworked: unworked,
+						Message: closeComment(evidence, unworked),
+						Why:     closeWhy(unworked),
 					})
 					continue
 				}
@@ -257,6 +262,28 @@ func latestOf(d Draft) string {
 func projectOf(key string) string {
 	project, _, _ := strings.Cut(key, "-")
 	return project
+}
+
+// closeComment explains a closure, and says plainly when the work landed without the
+// ticket being picked up — otherwise a ticket closed as "not done" reads as a
+// decision to skip the work rather than a record that it happened anyway.
+func closeComment(evidence string, unworked bool) string {
+	body := "Closing: already on the latest available version. " + evidence
+	if unworked {
+		body += "\n\nNobody picked this ticket up, so the upgrade landed by another route — a " +
+			"dependency bot, or a release that included it. It is being closed as not-worked " +
+			"rather than as completed work, which is the accurate record."
+	}
+	body += "\n\nChecked, not assumed — patchwright never closes a ticket because a finding " +
+		"disappeared. Reopen if this is wrong."
+	return body
+}
+
+func closeWhy(unworked bool) string {
+	if unworked {
+		return "every image it covers is already on the latest available version, and nobody picked the ticket up"
+	}
+	return "every image it covers is already on the latest available version"
 }
 
 // byRepo groups findings by repository, since a ticket's images are bare

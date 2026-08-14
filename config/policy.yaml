@@ -79,6 +79,10 @@ scan:
 #   # routes below. For existing tickets they resolve by the issue key's project.
 #   autoClose: true
 #   closeTransition: Done   # required when the workflow has several ways to finish
+#   # For boards where Done is only reachable once a ticket has been started, so a
+#   # ticket nobody picked up can only be abandoned. Applies to unworked tickets
+#   # only; one somebody worked still fails rather than being recorded as not-done.
+#   closeTransitionUnworked: Won't Do
 #
 #   requireRoute: true
 #   routes:

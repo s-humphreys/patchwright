@@ -117,6 +117,17 @@ type JiraConfig struct {
 	// category, which is right for simple workflows and wrong for boards with
 	// several ways to finish — name it explicitly there.
 	CloseTransition string `yaml:"closeTransition"`
+	// CloseTransitionUnworked is used when the work landed without anyone picking
+	// the ticket up, and CloseTransition is not available from where the ticket
+	// sits, e.g. "Won't Do" on a board whose Done transition is only reachable
+	// once a ticket has been refined and started.
+	//
+	// Restricted to unworked tickets on purpose. Nobody actioned this one — the
+	// upgrade arrived by another route — so recording it as not-done is accurate.
+	// Applying the same status to a ticket someone worked would misrepresent their
+	// work, so that case still fails loudly rather than settling for the nearest
+	// available transition.
+	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
 
 	// RequireRoute, when true, means a finding that matches no route gets no
 	// ticket rather than falling through to the settings above.
@@ -235,17 +246,19 @@ type TicketRoute struct {
 	// the tracker, not of the deployment: one team may want closing automated and
 	// another may not, and a transition named "Done" in one project says nothing
 	// about another project's workflow.
-	AutoClose       *bool             `yaml:"autoClose"`
-	CloseTransition string            `yaml:"closeTransition"`
-	Project         string            `yaml:"project"`
-	Template        string            `yaml:"template"`
-	ImageField      string            `yaml:"imageField"`
-	ImageLabel      *bool             `yaml:"imageLabel"`
-	Epic            string            `yaml:"epic"`
-	IssueType       string            `yaml:"issueType"`
-	Priority        string            `yaml:"priority"`
-	PriorityMap     map[string]string `yaml:"priorityMap"`
-	Labels          []string          `yaml:"labels"`
+	AutoClose               *bool  `yaml:"autoClose"`
+	CloseTransition         string `yaml:"closeTransition"`
+	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
+
+	Project     string            `yaml:"project"`
+	Template    string            `yaml:"template"`
+	ImageField  string            `yaml:"imageField"`
+	ImageLabel  *bool             `yaml:"imageLabel"`
+	Epic        string            `yaml:"epic"`
+	IssueType   string            `yaml:"issueType"`
+	Priority    string            `yaml:"priority"`
+	PriorityMap map[string]string `yaml:"priorityMap"`
+	Labels      []string          `yaml:"labels"`
 }
 
 // Resolve returns the configuration for a route: the base with this route's
@@ -264,6 +277,9 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if r.CloseTransition != "" {
 		out.CloseTransition = r.CloseTransition
+	}
+	if r.CloseTransitionUnworked != "" {
+		out.CloseTransitionUnworked = r.CloseTransitionUnworked
 	}
 	if r.Project != "" {
 		out.Project = r.Project

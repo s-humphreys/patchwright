@@ -51,7 +51,7 @@ func TestCloseUsesTheOnlyDoneTransition(t *testing.T) {
 		transition("11", "In Progress", "In Progress", "indeterminate"),
 		transition("31", "Done", "Done", "done"),
 	}}
-	if err := ts.jira(t, baseCfg()).Close(context.Background(), "PROJ-1", "because"); err != nil {
+	if err := ts.jira(t, baseCfg()).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because"}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	tr, _ := ts.posted["transition"].(map[string]any)
@@ -75,7 +75,7 @@ func TestCloseHonoursTheConfiguredTransitionName(t *testing.T) {
 		}}
 		cfg := baseCfg()
 		cfg.CloseTransition = name
-		if err := ts.jira(t, cfg).Close(context.Background(), "PROJ-1", "because"); err != nil {
+		if err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because"}); err != nil {
 			t.Fatalf("%q: Close: %v", name, err)
 		}
 		tr, _ := ts.posted["transition"].(map[string]any)
@@ -92,7 +92,7 @@ func TestCloseRefusesAmbiguousWorkflows(t *testing.T) {
 		transition("31", "Done", "Done", "done"),
 		transition("32", "Won't Do", "Won't Do", "done"),
 	}}
-	err := ts.jira(t, baseCfg()).Close(context.Background(), "PROJ-1", "because")
+	err := ts.jira(t, baseCfg()).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because"})
 	if err == nil {
 		t.Fatal("closed a ticket whose workflow has two ways to finish")
 	}
@@ -110,7 +110,7 @@ func TestCloseReportsWhenNothingCanFinishTheTicket(t *testing.T) {
 	ts := &transitionServer{transitions: []map[string]any{
 		transition("11", "Start", "In Progress", "indeterminate"),
 	}}
-	err := ts.jira(t, baseCfg()).Close(context.Background(), "PROJ-1", "because")
+	err := ts.jira(t, baseCfg()).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because"})
 	if err == nil || !strings.Contains(err.Error(), "no transition into a done status") {
 		t.Fatalf("err = %v", err)
 	}
@@ -126,7 +126,7 @@ func TestCloseReportsAMissingNamedTransition(t *testing.T) {
 	}}
 	cfg := baseCfg()
 	cfg.CloseTransition = "Ship It"
-	err := ts.jira(t, cfg).Close(context.Background(), "PROJ-1", "because")
+	err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because"})
 	if err == nil || !strings.Contains(err.Error(), `no transition named "Ship It"`) {
 		t.Fatalf("err = %v", err)
 	}
@@ -156,7 +156,7 @@ func TestCloseUsesTheRoutesTransitionForItsOwnProject(t *testing.T) {
 		j.byRoute[r.Name] = cfg.Resolve(r)
 	}
 
-	if err := j.Close(context.Background(), "SRE-7", "because"); err != nil {
+	if err := j.Close(context.Background(), CloseRequest{Key: "SRE-7", Comment: "because"}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	tr, _ := ts.posted["transition"].(map[string]any)
@@ -165,7 +165,7 @@ func TestCloseUsesTheRoutesTransitionForItsOwnProject(t *testing.T) {
 	}
 
 	ts.posted = nil
-	if err := j.Close(context.Background(), "PROJ-7", "because"); err != nil {
+	if err := j.Close(context.Background(), CloseRequest{Key: "PROJ-7", Comment: "because"}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	tr, _ = ts.posted["transition"].(map[string]any)
@@ -208,7 +208,7 @@ func TestCloseFallsBackWhenTheWorkflowRejectsTheComment(t *testing.T) {
 	cfg := baseCfg()
 	j := &Jira{BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
 		cfg: cfg, byRoute: map[string]config.JiraConfig{routeName: cfg}}
-	if err := j.Close(context.Background(), "PROJ-1", "because reasons"); err != nil {
+	if err := j.Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because reasons"}); err != nil {
 		t.Fatalf("Close failed instead of retrying without the comment: %v", err)
 	}
 	if posts != 2 {
@@ -362,5 +362,77 @@ func TestJiraOperationLabelIsBounded(t *testing.T) {
 	b := jiraOperation("GET", "/rest/api/3/issue/OTHER-42")
 	if a != b {
 		t.Errorf("issue keys leaked into the label: %q vs %q", a, b)
+	}
+}
+
+// Your DVOP workflow, as observed: from NEEDS REFINEMENT the only closing transition
+// is "WON'T BE DONE". For a ticket nobody picked up that is an accurate record — the
+// upgrade landed by another route — so it is allowed.
+func TestUnworkedTicketClosesViaTheUnworkedTransition(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{
+		transition("21", "Story Refined", "To Do", "indeterminate"),
+		transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
+	}}
+	cfg := baseCfg()
+	cfg.CloseTransition = "Done"
+	cfg.CloseTransitionUnworked = "WON'T BE DONE"
+
+	err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{
+		Key: "PROJ-1", Comment: "because", Unworked: true,
+	})
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	tr, _ := ts.posted["transition"].(map[string]any)
+	if tr["id"] != "51" {
+		t.Errorf("transitioned with id %v, want 51 (the unworked transition)", tr["id"])
+	}
+}
+
+// The same workflow, but somebody worked the ticket: recording their work as "won't
+// be done" would misrepresent it, so this still fails loudly.
+func TestWorkedTicketWillNotUseTheUnworkedTransition(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{
+		transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
+	}}
+	cfg := baseCfg()
+	cfg.CloseTransition = "Done"
+	cfg.CloseTransitionUnworked = "WON'T BE DONE"
+
+	err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{
+		Key: "PROJ-1", Comment: "because", Unworked: false,
+	})
+	if err == nil {
+		t.Fatal("a worked ticket was closed as won't-be-done")
+	}
+	for _, want := range []string{`no transition named "Done"`, "WON'T BE DONE"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q: %v", want, err)
+		}
+	}
+	if ts.posted != nil {
+		t.Errorf("posted a transition anyway: %v", ts.posted)
+	}
+}
+
+// "Done" is the truer statement about finished work, so it wins wherever it is
+// available — even on a ticket nobody touched.
+func TestPreferredTransitionWinsForUnworkedTickets(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{
+		transition("31", "Done", "Done", "done"),
+		transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
+	}}
+	cfg := baseCfg()
+	cfg.CloseTransition = "Done"
+	cfg.CloseTransitionUnworked = "WON'T BE DONE"
+
+	if err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{
+		Key: "PROJ-1", Comment: "because", Unworked: true,
+	}); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	tr, _ := ts.posted["transition"].(map[string]any)
+	if tr["id"] != "31" {
+		t.Errorf("transitioned with id %v, want 31 (Done)", tr["id"])
 	}
 }
