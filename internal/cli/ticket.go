@@ -127,9 +127,9 @@ func describePriority(cfg config.JiraConfig, findingPriority string) string {
 	}
 	mapped := cfg.JiraPriority(findingPriority)
 	if mapped == "" {
-		return assessed + " -> (Jira default)"
+		return assessed + " → (Jira default)"
 	}
-	return assessed + " -> " + mapped
+	return assessed + " → " + mapped
 }
 
 func reportSkips(w io.Writer, skips []ticket.Skip) {

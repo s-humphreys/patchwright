@@ -32,9 +32,9 @@ available but not actionable — bumping the tag would be reverted. The
 
 | Shown | Meaning |
 |---|---|
-| `current->latest` | a newer version applicable directly |
-| `chart current->latest` | a newer chart version, not the image tag |
-| `current->latest (helm\|operator)` | newer version exists but is controlled elsewhere |
+| `current→latest` | a newer version applicable directly |
+| `chart current→latest` | a newer chart version, not the image tag |
+| `current→latest (helm\|operator)` | newer version exists but is controlled elsewhere |
 | `-` | on the latest version |
 | `?` | detection did not run |
 
@@ -76,7 +76,7 @@ For those images the tag source stays quiet, and instead patchwright reads the b
 reference the image records about itself — `org.opencontainers.image.base.name`, or
 BuildKit's `image.base.ref.name`, or any key you name in `remediation.base.refLabels`
 — and checks whether that base has a newer version. The reported upgrade is the base:
-`base dotnet/aspnet/10 1.0.2 -> 1.1.1`, actionable by rebuilding.
+`base dotnet/aspnet/10 1.0.2 → 1.1.1`, actionable by rebuilding.
 
 Three behaviours worth knowing:
 
@@ -93,7 +93,7 @@ Three behaviours worth knowing:
   Dockerfile:
 
   ```
-  base mcr.microsoft.com/dotnet/aspnet:10.0-alpine moved 1e37a8236c55 -> c4b29bf36800
+  base mcr.microsoft.com/dotnet/aspnet:10.0-alpine moved 1e37a8236c55 → c4b29bf36800
   ```
 
   JSON carries `comparison: "version" | "digest"` so a consumer knows which it is

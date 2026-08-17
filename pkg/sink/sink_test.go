@@ -323,7 +323,7 @@ func TestUpgradeMarkNamesTheBaseImage(t *testing.T) {
 		Available: true, Resolved: true, Actionable: true,
 	}}
 	got := upgradeMark(f)
-	for _, want := range []string{"base", "dotnet/aspnet/10", "1.0.2->1.1.1"} {
+	for _, want := range []string{"base", "dotnet/aspnet/10", "1.0.2→1.1.1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("upgradeMark = %q, want it to contain %q", got, want)
 		}
@@ -351,7 +351,7 @@ func TestUpgradeMarkNamesTheFloatingTagThatMoved(t *testing.T) {
 		Comparison: "digest", Available: true, Resolved: true, Actionable: true,
 	}}
 	got := upgradeMark(f)
-	for _, want := range []string{"mcr.microsoft.com/dotnet/aspnet:10.0-alpine", "moved", "1e37a8236c55->c4b29bf36800"} {
+	for _, want := range []string{"mcr.microsoft.com/dotnet/aspnet:10.0-alpine", "moved", "1e37a8236c55→c4b29bf36800"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("upgradeMark = %q, want it to contain %q", got, want)
 		}
@@ -366,7 +366,7 @@ func TestUpgradeMarkQualifiesTheBaseRegistry(t *testing.T) {
 		Current: "8.0.17", Latest: "8.0.22", Comparison: "version",
 		Available: true, Resolved: true, Actionable: true,
 	}}
-	if got := upgradeMark(f); !strings.Contains(got, "mcr.microsoft.com/dotnet/aspnet 8.0.17->8.0.22") {
+	if got := upgradeMark(f); !strings.Contains(got, "mcr.microsoft.com/dotnet/aspnet 8.0.17→8.0.22") {
 		t.Errorf("upgradeMark = %q", got)
 	}
 }

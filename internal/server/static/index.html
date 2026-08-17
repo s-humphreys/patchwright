@@ -209,7 +209,7 @@ function upgradeText(f) {
   const u = f.upgrade;
   if (!u || !u.resolved) return "?";
   if (!u.available) return "-";
-  let s = `${u.current} -> ${u.latest}`;
+  let s = `${u.current} → ${u.latest}`;
   if (u.kind === "chart") s = "chart " + s;
   // Named for a base upgrade: a bare version range on a first-party image reads as
   // the application's own version moving, which is the confusion this exists to
@@ -218,8 +218,8 @@ function upgradeText(f) {
     // A digest comparison names the tag: two opaque hashes say nothing, whereas
     // "…/dotnet/aspnet:10.0-alpine moved" points at the line in the Dockerfile.
     s = u.comparison === "digest" && u.source
-      ? `base ${u.source} moved ${u.current} -> ${u.latest}`
-      : `base ${u.name} ${u.current} -> ${u.latest}`;
+      ? `base ${u.source} moved ${u.current} → ${u.latest}`
+      : `base ${u.name} ${u.current} → ${u.latest}`;
   }
   if (!u.actionable) s += ` (${u.managed || "managed"})`;
   return s;

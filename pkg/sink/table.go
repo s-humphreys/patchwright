@@ -107,8 +107,8 @@ func writeLegend(w io.Writer) {
 }
 
 // upgradeMark shows the remediation at a glance:
-//   - "current->latest" when a newer version can be applied directly (actionable)
-//   - "current->latest (managed)" when a newer version exists but is controlled
+//   - "current→latest" when a newer version can be applied directly (actionable)
+//   - "current→latest (managed)" when a newer version exists but is controlled
 //     by a chart/operator (not directly actionable)
 //   - "-" when on the latest version
 //   - "?" when no version was resolved. FIX separates the two reasons for that
@@ -125,7 +125,7 @@ func upgradeMark(f model.Finding) string {
 	if !u.Available {
 		return "-"
 	}
-	bump := u.Current + "->" + u.Latest
+	bump := u.Current + "→" + u.Latest
 	switch u.Kind {
 	case "chart":
 		bump = "chart " + bump
