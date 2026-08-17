@@ -97,7 +97,9 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
   git/OCI source revisions.
 - **Phase 5** ✅ Jira ticketing with routing, reconciliation and evidence-based
   closing. ✅ API, status page and metrics.
-- **Phase 6** GitOps PR automation to roll fixes out, and an
+- **Phase 6** Reconcile against
+  [remediation already in flight](docs/design/remediation-in-flight.md) so a fix sitting
+  in an open PR is not ticketed again, GitOps PR automation to roll fixes out, and an
   [MCP server](docs/design/mcp-server.md) for natural-language queries.
 
 ## Licence

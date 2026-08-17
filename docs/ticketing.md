@@ -94,6 +94,14 @@ gives each package its own object (a Crossplane `ProviderRevision` per provider)
 the object name is collapsed so a family groups. A grouped ticket never claims a
 single target version unless every image shares one.
 
+## Work already in flight
+
+A dependency bot raising pull requests for the same upgrades makes patchwright's tickets
+duplicates: the fix is in a review queue, not waiting on a decision. Reconciling against
+that so the queue shows "PR open" instead of raising a ticket, and so a *stale* PR becomes
+the finding, is designed in
+[design/remediation-in-flight.md](design/remediation-in-flight.md) and not built yet.
+
 ## Only ticket what is worth ticketing
 
 `minPriority` sets the lowest assessment priority that gets a ticket:
