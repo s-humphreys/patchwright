@@ -111,6 +111,11 @@ type ReconcileInput struct {
 	// Findings are all findings from the assessment, used to tell "fixed" from
 	// "no longer assessed" when a ticket's work looks finished.
 	Findings []sink.FindingView
+	// Skipped is what the planner declined to ticket, and why. Reconciliation needs
+	// it to tell a finding that was fixed from one that configuration chose not to
+	// track: both are absent from Drafts, and only the first means anything is
+	// finished.
+	Skipped []Skip
 	// Config decides whether a ticket may be closed, resolved per project so a
 	// route can enable closing for its own board without enabling it everywhere.
 	// The zero value closes nothing, which is the safe default for a caller that
@@ -225,6 +230,18 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				}
 			}
 
+			// Configuration deciding not to ticket something is not the work being
+			// done. Without this, raising a priority threshold marks every ticket it
+			// newly excludes as finished — observed on a real board, where tickets
+			// created that morning were reported done that afternoon.
+			if held := policySkipped(images, in.Skipped); len(held) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key,
+					Why: "still outstanding, but configuration no longer raises tickets for it: " +
+						strings.Join(held, "; "),
+				})
+				continue
+			}
 			// Before concluding anything: could we even check? An image whose
 			// available version could not be resolved has dropped out of the queue
 			// for want of data, not because the work is finished, and saying
@@ -409,6 +426,24 @@ func unknownImages(images []string, byImage map[string]sink.FindingView) []strin
 		}
 	}
 	return blind
+}
+
+// policySkipped returns the reasons configuration declined to ticket this ticket's
+// images, if it did.
+func policySkipped(images []string, skips []Skip) []string {
+	byImage := map[string]string{}
+	for _, s := range skips {
+		if s.Policy {
+			byImage[s.Image] = s.Reason
+		}
+	}
+	var out []string
+	for _, img := range images {
+		if reason, ok := byImage[img]; ok {
+			out = append(out, img+" ("+reason+")")
+		}
+	}
+	return out
 }
 
 // unprovenImages returns the ticket's images whose remediation state cannot support a

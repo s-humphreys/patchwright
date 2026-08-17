@@ -166,7 +166,7 @@ func run(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.P
 		return err
 	}
 	actions := ticket.Reconcile(ticket.ReconcileInput{
-		Drafts: plan.Drafts, OpenByImage: index, Findings: findings,
+		Drafts: plan.Drafts, Skipped: plan.Skips, OpenByImage: index, Findings: findings,
 		Config: cfg,
 	})
 

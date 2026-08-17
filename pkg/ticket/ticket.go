@@ -46,6 +46,15 @@ type Draft struct {
 type Skip struct {
 	Image  string
 	Reason string
+	// Policy is true when configuration chose not to ticket this — an exclusion, a
+	// priority threshold, no matching route. The work still exists.
+	//
+	// The distinction is load-bearing for reconciliation. A finding that leaves the
+	// queue because it was fixed and one that leaves because we decided not to track
+	// it look identical from the drafts, and an existing ticket for the second must
+	// not be told the work appears done. Changing a threshold would otherwise mark
+	// every ticket it newly excludes as finished.
+	Policy bool
 }
 
 // Plan is the outcome of planning: what to raise, and what was left out.
@@ -134,7 +143,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if why != "" {
 				reason += ": " + why
 			}
-			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
+			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason, Policy: true})
 			continue
 		}
 		if reason, ok := p.skipReason(f); ok {
@@ -150,7 +159,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
 			}
 			out.Skips = append(out.Skips, Skip{
-				Image: f.Image,
+				Image: f.Image, Policy: true,
 				Reason: fmt.Sprintf("no ticket route matches its owner (%s) and requireRoute is set, "+
 					"so no tracker is configured for this work", owner),
 			})
@@ -176,7 +185,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if cfg := p.routeConfig(name); !cfg.TicketsPriority(d.Priority) {
 				for _, img := range d.Images {
 					out.Skips = append(out.Skips, Skip{
-						Image: img,
+						Image: img, Policy: true,
 						Reason: fmt.Sprintf("highest priority in this change is %q, below the "+
 							"minimum ticket priority %q; it stays in the queue",
 							dashIfEmpty(d.Priority), cfg.MinPriority),

@@ -63,6 +63,13 @@ per-instance and a name that does not exist fails ticket creation.
 | `hold` | nothing can be judged yet, because the data needed is missing. **Writes nothing** |
 | `skip` | already covers the change correctly |
 
+**A policy decision is not the work being done.** A finding that leaves the queue because
+it was fixed and one that leaves because configuration declined to ticket it — an
+exclusion, a priority threshold, no matching route — are indistinguishable from the
+drafts. Reporting the second as done means raising `minPriority` marks every ticket it
+newly excludes as finished, while the upgrade it asks for is still available. Those
+tickets are held instead, naming the setting that dropped them.
+
 **A ticket nobody can judge is held, not commented on.** A finding leaves the queue
 either because the work is done or because we could not establish whether it is — an
 unreadable registry, or upgrade detection not having run. Those look identical from the

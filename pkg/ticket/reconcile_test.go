@@ -808,3 +808,61 @@ func TestApplyWritesNothingForAHold(t *testing.T) {
 			rec.comments, rec.closed, rec.updated)
 	}
 }
+
+// The bug: raising the ticket threshold marked every ticket it newly excluded as
+// finished. Observed on a real board — tickets created that morning were reported done
+// that afternoon, while the upgrade they asked for was still available.
+func TestPolicySkippedTicketsAreHeldNotReportedDone(t *testing.T) {
+	// Still actionable, still has an upgrade: nothing about this is finished.
+	outstanding := sink.FindingView{
+		Repository: "acme/app", ProviderAssessed: true, Actionable: true, Priority: "medium",
+		RemediationChecked: true,
+		Upgrade: &sink.UpgradeView{
+			Kind: "image", Current: "3.193.0", Latest: "3.194.0",
+			Available: true, Resolved: true, Actionable: true,
+		},
+	}
+	actions := Reconcile(ReconcileInput{
+		Config:   autoCloseCfg(),
+		Findings: []sink.FindingView{outstanding},
+		// The planner declined to ticket it: below the configured threshold.
+		Skipped: []Skip{{
+			Image:  "acme/app",
+			Reason: `highest priority in this change is "medium", below the minimum ticket priority "high"`,
+			Policy: true,
+		}},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1", Category: "new"}}},
+	})
+	if len(actions) != 1 {
+		t.Fatalf("got %d actions: %+v", len(actions), actions)
+	}
+	a := actions[0]
+	if a.Kind != ActionHold {
+		t.Fatalf("kind = %q, want %q — a policy decision is not the work being done", a.Kind, ActionHold)
+	}
+	if a.Message != "" {
+		t.Errorf("a hold carries a comment: %q", a.Message)
+	}
+	for _, want := range []string{"still outstanding", "minimum ticket priority"} {
+		if !strings.Contains(a.Why, want) {
+			t.Errorf("why = %q, want it to mention %q", a.Why, want)
+		}
+	}
+}
+
+// A skip that is not a policy decision — already on the latest version — still means
+// the work is done, so that path is unchanged.
+func TestNonPolicySkipsStillReportDone(t *testing.T) {
+	done := sink.FindingView{Repository: "acme/app", ProviderAssessed: true, Actionable: false}
+	actions := Reconcile(ReconcileInput{
+		Findings: []sink.FindingView{done},
+		Skipped: []Skip{{
+			Image:  "acme/app",
+			Reason: "already on the latest available version; nothing to upgrade to",
+		}},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
+	})
+	if len(actions) != 1 || actions[0].Kind != ActionNoteDone {
+		t.Fatalf("actions = %+v, want one note-done", actions)
+	}
+}
