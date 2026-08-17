@@ -300,7 +300,7 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		// Not a realistic combination — Reason accompanies an unresolved upgrade —
 		// but this asserts field mapping, not semantics, and a field left out here is
 		// a field that can silently stop being copied.
-		Reason: "could not list tags",
+		Reason: "could not list tags", Comparison: "version",
 	}
 	v := ToFindingView(model.Finding{Upgrade: &u}).Upgrade
 	if v == nil {
@@ -338,5 +338,35 @@ func TestUpgradeMarkUnresolvedStaysUnknown(t *testing.T) {
 	}}
 	if got := upgradeMark(f); got != "?" {
 		t.Errorf("upgradeMark = %q, want ?", got)
+	}
+}
+
+// A digest comparison must name the tag that moved. Two opaque hashes say nothing;
+// "mcr.microsoft.com/dotnet/aspnet:10.0-alpine moved" points at a Dockerfile line.
+func TestUpgradeMarkNamesTheFloatingTagThatMoved(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Name: "mcr.microsoft.com/dotnet/aspnet",
+		Source:  "mcr.microsoft.com/dotnet/aspnet:10.0-alpine",
+		Current: "1e37a8236c55", Latest: "c4b29bf36800",
+		Comparison: "digest", Available: true, Resolved: true, Actionable: true,
+	}}
+	got := upgradeMark(f)
+	for _, want := range []string{"mcr.microsoft.com/dotnet/aspnet:10.0-alpine", "moved", "1e37a8236c55->c4b29bf36800"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("upgradeMark = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// A version comparison keeps the registry-qualified name: "dotnet/aspnet" alone is
+// ambiguous between an internal mirror and the upstream it was copied from.
+func TestUpgradeMarkQualifiesTheBaseRegistry(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Name: "mcr.microsoft.com/dotnet/aspnet",
+		Current: "8.0.17", Latest: "8.0.22", Comparison: "version",
+		Available: true, Resolved: true, Actionable: true,
+	}}
+	if got := upgradeMark(f); !strings.Contains(got, "mcr.microsoft.com/dotnet/aspnet 8.0.17->8.0.22") {
+		t.Errorf("upgradeMark = %q", got)
 	}
 }

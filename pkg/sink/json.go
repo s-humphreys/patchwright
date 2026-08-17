@@ -88,6 +88,10 @@ type UpgradeView struct {
 	Latest    string `json:"latest,omitempty"`
 	Available bool   `json:"available"`
 	Resolved  bool   `json:"resolved"`
+	// Comparison is "version" or "digest": how the verdict was reached. A digest
+	// comparison means the reference is a floating tag, so current and latest are
+	// short digests rather than versions.
+	Comparison string `json:"comparison,omitempty"`
 	// Reason explains an unresolved upgrade: what stopped the lookup, and therefore
 	// what would fix it. An unreadable registry and an image that never recorded its
 	// base need different people to do different things.
@@ -192,6 +196,7 @@ func ToFindingView(f model.Finding) FindingView {
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
 			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
 			Reason:     f.Upgrade.Reason,
+			Comparison: f.Upgrade.Comparison,
 			Actionable: f.Upgrade.Actionable,
 			Managed:    f.Upgrade.Managed, Manager: f.Upgrade.Manager,
 			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,

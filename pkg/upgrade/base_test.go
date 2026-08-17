@@ -182,8 +182,11 @@ func TestFollowsFirstPartyBaseChains(t *testing.T) {
 	}
 	// The link that is actually behind is the one to name, so the ticket reaches
 	// whoever can move it.
-	if u.Name != "runtime" || u.Latest != "1.1.1" {
-		t.Errorf("reported %s -> %s on %q, want runtime 1.1.0 -> 1.1.1", u.Current, u.Latest, u.Name)
+	// Registry-qualified: "runtime" alone is ambiguous between an internal mirror and
+	// the upstream it was copied from.
+	if u.Name != "registry.example.com/runtime" || u.Latest != "1.1.1" {
+		t.Errorf("reported %s -> %s on %q, want registry.example.com/runtime 1.1.0 -> 1.1.1",
+			u.Current, u.Latest, u.Name)
 	}
 }
 
@@ -281,7 +284,7 @@ func TestStandardLabelTakesPrecedence(t *testing.T) {
 		tags: map[string][]string{"registry.example.com/standard": {"1.0.0", "1.0.1"}},
 	}
 	u := resolve(t, reg, cfgFor("registry.example.com"), "registry.example.com/app:1.0.0")["registry.example.com/app:1.0.0"]
-	if u.Name != "standard" {
+	if u.Name != "registry.example.com/standard" {
 		t.Errorf("read %q, want the OCI standard label to win", u.Name)
 	}
 }

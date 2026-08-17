@@ -134,7 +134,15 @@ func upgradeMark(f model.Finding) string {
 		// application's own version moving — which is the confusion this kind of
 		// upgrade exists to remove. What moves is the base, and which base matters:
 		// it is what the rebuild points at.
-		bump = "base " + u.Name + " " + bump
+		//
+		// A digest comparison names the tag as well. "1e37a823->c4b29bf3" is two
+		// opaque hashes; what a reader needs is that mcr.microsoft.com/dotnet/aspnet
+		// :10.0-alpine has moved under them, which is the line in their Dockerfile.
+		if u.Comparison == "digest" && u.Source != "" {
+			bump = "base " + u.Source + " moved " + bump
+		} else {
+			bump = "base " + u.Name + " " + bump
+		}
 	}
 	if !u.Actionable {
 		if u.Managed != "" {

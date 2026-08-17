@@ -88,7 +88,18 @@ Three behaviours worth knowing:
   `remediation.base.maxDepth` (4). An application on the newest available base whose
   base is itself behind reports that link, so the ticket reaches whoever can move it.
 - **A floating base tag** has no version to compare, so the recorded base digest is
-  compared against what the tag resolves to now.
+  compared against what the tag resolves to now. The report names the tag rather than
+  only the digests, because two hashes say nothing and the tag is the line in the
+  Dockerfile:
+
+  ```
+  base mcr.microsoft.com/dotnet/aspnet:10.0-alpine moved 1e37a8236c55 -> c4b29bf36800
+  ```
+
+  JSON carries `comparison: "version" | "digest"` so a consumer knows which it is
+  looking at. Base names are registry-qualified throughout: a bare `dotnet/aspnet` is
+  ambiguous between an internal mirror and the upstream it was copied from, and those
+  have different owners.
 
 An image that records no base is reported **unresolved with the reason**, never "no
 upgrade": the fix there is a build-system change, and naming it is the point.

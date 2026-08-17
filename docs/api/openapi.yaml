@@ -433,6 +433,19 @@ components:
           description: |
             False means versions could not be resolved, so "no upgrade available" is
             unproven.
+        reason:
+          type: string
+          description: |
+            Why an upgrade could not be determined, in terms a reader can act on — an
+            unreadable registry and an image that records no base need different people
+            to do different things.
+        comparison:
+          type: string
+          enum: [version, digest]
+          description: |
+            How the verdict was reached. `digest` means the reference is a floating tag
+            with no version, so `current` and `latest` are short digests rather than
+            versions.
         actionable:
           type: boolean
           description: True only when applicable at this level.

@@ -264,6 +264,14 @@ type Upgrade struct {
 	// be read as "already on the latest version" — an unreachable registry
 	// otherwise reports every image it holds as up to date.
 	Resolved bool
+	// Comparison says how the verdict was reached: "version" when tags were
+	// compared, "digest" when the reference is a floating tag with no version and
+	// the digest it resolves to was compared instead.
+	//
+	// Worth stating because it changes what the numbers mean. A digest comparison
+	// reports two opaque hashes, so "1e37a823 -> c4b29bf3" is only intelligible
+	// alongside the tag that moved.
+	Comparison string
 	// Reason explains an unresolved upgrade, in terms a reader can act on. "We
 	// could not find out" is only useful with the "because": an unreadable registry
 	// and an image that never recorded its base need different people to do

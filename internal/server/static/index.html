@@ -214,7 +214,13 @@ function upgradeText(f) {
   // Named for a base upgrade: a bare version range on a first-party image reads as
   // the application's own version moving, which is the confusion this exists to
   // remove. What moved is the base, and which base is what the rebuild points at.
-  if (u.kind === "base") s = `base ${u.name} ${u.current} -> ${u.latest}`;
+  if (u.kind === "base") {
+    // A digest comparison names the tag: two opaque hashes say nothing, whereas
+    // "…/dotnet/aspnet:10.0-alpine moved" points at the line in the Dockerfile.
+    s = u.comparison === "digest" && u.source
+      ? `base ${u.source} moved ${u.current} -> ${u.latest}`
+      : `base ${u.name} ${u.current} -> ${u.latest}`;
+  }
   if (!u.actionable) s += ` (${u.managed || "managed"})`;
   return s;
 }
@@ -239,6 +245,11 @@ function upgradeTitle(f) {
   if (u.kind === "base") {
     parts.push(`The base image ${u.source || u.name} is what carries these CVEs;` +
       " the fix is to rebuild on a newer one.");
+    if (u.comparison === "digest") {
+      parts.push("That base is a floating tag, so there is no version to compare:" +
+        " the digest it resolves to has changed since this image was built, and a" +
+        " rebuild would pick it up.");
+    }
   }
   if (!u.available) parts.push("Already on the latest available version.");
   if (u.managed) parts.push(`Version owned by ${u.manager || u.managed}.`);

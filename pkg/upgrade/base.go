@@ -237,8 +237,11 @@ func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache
 // baseUpgrade decides whether a base reference has a newer version.
 func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtDigest string) (model.Upgrade, error) {
 	up := model.Upgrade{
-		Kind:    "base",
-		Name:    base.Repository,
+		Kind: "base",
+		// Registry included: a bare "dotnet/aspnet" is ambiguous between an internal
+		// mirror and the upstream it was copied from, and those are different images
+		// with different owners.
+		Name:    base.Registry + "/" + base.Repository,
 		Current: base.Tag,
 		// Rebuilding is the application's own pipeline, so this is directly
 		// actionable by the team that owns the image.
@@ -258,6 +261,7 @@ func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtD
 		return unresolvedUpgrade("could not list tags for base " + base.NameTag() + ": " + err.Error()), nil
 	}
 	up.Resolved = true
+	up.Comparison = "version"
 	if latest := newestInTrack(current, tags); latest != nil {
 		up.Latest = latest.Original()
 		up.Available = true
@@ -277,6 +281,7 @@ func (r *BaseResolver) floatingBase(ctx context.Context, base model.Image, built
 		return unresolvedUpgrade("could not resolve base " + base.NameTag() + ": " + err.Error()), nil
 	}
 	up.Resolved = true
+	up.Comparison = "digest"
 	if now != builtDigest {
 		// The tag moved under it. There is no version to name, so the digest is the
 		// evidence: a rebuild would pick this up.
