@@ -313,3 +313,30 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		}
 	}
 }
+
+// A base upgrade must say it is the base, and which one. A bare version range on a
+// first-party image reads as the application's own version moving, which is the
+// confusion this kind of upgrade exists to remove.
+func TestUpgradeMarkNamesTheBaseImage(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Name: "dotnet/aspnet/10", Current: "1.0.2", Latest: "1.1.1",
+		Available: true, Resolved: true, Actionable: true,
+	}}
+	got := upgradeMark(f)
+	for _, want := range []string{"base", "dotnet/aspnet/10", "1.0.2->1.1.1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("upgradeMark = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// An unresolved base upgrade is still "?" in the column — the reason belongs in the
+// legend and the JSON, not squeezed into a cell.
+func TestUpgradeMarkUnresolvedStaysUnknown(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Resolved: false, Reason: "image records no base image",
+	}}
+	if got := upgradeMark(f); got != "?" {
+		t.Errorf("upgradeMark = %q, want ?", got)
+	}
+}

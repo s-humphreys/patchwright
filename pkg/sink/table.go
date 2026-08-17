@@ -126,8 +126,15 @@ func upgradeMark(f model.Finding) string {
 		return "-"
 	}
 	bump := u.Current + "->" + u.Latest
-	if u.Kind == "chart" {
+	switch u.Kind {
+	case "chart":
 		bump = "chart " + bump
+	case "base":
+		// Named, because for a first-party image a bare version range reads as the
+		// application's own version moving — which is the confusion this kind of
+		// upgrade exists to remove. What moves is the base, and which base matters:
+		// it is what the rebuild points at.
+		bump = "base " + u.Name + " " + bump
 	}
 	if !u.Actionable {
 		if u.Managed != "" {
