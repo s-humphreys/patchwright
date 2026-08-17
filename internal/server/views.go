@@ -1,7 +1,9 @@
 package server
 
 import (
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
@@ -66,6 +68,15 @@ type summaryView struct {
 	// hiding is back in the queue. Reported because an unexplained jump in the queue
 	// reads as the estate getting worse rather than as a policy decision expiring.
 	ExpiredSuppressions []expiredRule `json:"expired_suppressions,omitempty"`
+
+	// RemediationBlockers counts findings whose upgrade could not be resolved, by the
+	// stated reason. Worst first.
+	//
+	// Without this, a remediation source losing access looks identical to an estate
+	// with nothing to fix: the queue simply stops offering upgrades, and the only
+	// trace is a per-finding field nobody reads. On this estate an expired registry
+	// credential silently turned 700 fixable findings into "unknown".
+	RemediationBlockers []reasonCount `json:"remediation_blockers,omitempty"`
 
 	// UnassessedReasons counts findings by the provider's stated reason for not
 	// assessing them, worst first. This turns the coverage gap from a number
@@ -132,6 +143,7 @@ func buildSummary(findings []model.Finding) summaryView {
 	var s summaryView
 	images := map[string]struct{}{}
 	reasons := map[string]int{}
+	blockers := map[string]int{}
 	for i := range findings {
 		f := &findings[i]
 		images[f.Image.Key()] = struct{}{}
@@ -166,6 +178,9 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 		if !remediationResolved(f) {
 			s.RemediationUnresolved++
+			if f.Upgrade != nil && f.Upgrade.Reason != "" {
+				blockers[normalizeUpgradeReason(f.Upgrade.Reason)]++
+			}
 		}
 		if f.Scanned {
 			s.Scanned++
@@ -177,7 +192,26 @@ func buildSummary(findings []model.Finding) summaryView {
 	s.UniqueImages = len(images)
 	s.ProviderDataOldest, s.ProviderDataNewest = providerDataRange(findings)
 	s.UnassessedReasons = rankReasons(reasons)
+	s.RemediationBlockers = rankReasons(blockers)
 	return s
+}
+
+// refLike matches an image reference inside an error message.
+var refLike = regexp.MustCompile(`[a-z0-9.-]+\.[a-z]{2,}/[^\s"',]+|"[^"]*/[^"]*"`)
+
+// normalizeUpgradeReason collapses a reason into something countable.
+//
+// These messages embed the image they are about, so counting them raw would produce
+// one bucket per image — 700 buckets saying the same thing, which is no more useful
+// than the per-finding field. The reference is replaced so the shape of the failure is
+// what gets counted.
+func normalizeUpgradeReason(reason string) string {
+	out := refLike.ReplaceAllString(strings.TrimSpace(reason), "<image>")
+	const maxLen = 140
+	if len(out) > maxLen {
+		out = strings.TrimSpace(out[:maxLen]) + "…"
+	}
+	return out
 }
 
 // rankReasons orders stated reasons by how much coverage each one costs, worst

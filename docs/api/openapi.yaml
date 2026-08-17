@@ -526,6 +526,17 @@ components:
             Newest assessment timestamp in the provider's own data, which is not the
             same as when this pipeline ran.
         provider_data_oldest: { type: string, format: date-time }
+        remediation_blockers:
+          description: |
+            Findings whose upgrade could not be resolved, grouped by the stated reason,
+            worst first. Without it, a remediation source losing access looks identical
+            to an estate with nothing to fix — the queue simply stops offering upgrades.
+          type: array
+          items:
+            type: object
+            properties:
+              reason: { type: string }
+              findings: { type: integer }
         expired_suppressions:
           description: |
             Suppress rules that have lapsed, so the work they were hiding is back in

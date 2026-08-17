@@ -362,8 +362,27 @@ function renderCoverage(s) {
   el.innerHTML = `<div class="banner"><strong>${s.provider_unassessed} of ${total} findings
     were never assessed by the scan provider</strong> (${pct}% covered). Their severity counts
     are absent data rather than zero, so they cannot match a count-based rule.${scannerOnly}
-    ${s.remediation_unresolved ? `${s.remediation_unresolved} findings have no resolvable upgrade.` : ""}
-    ${reasonList(s.unassessed_reasons)}</div>${signalNotice(s)}`;
+    ${reasonList(s.unassessed_reasons)}</div>${signalNotice(s)}${blockerNotice(s)}`;
+}
+
+// blockerNotice reports why upgrades could not be resolved.
+//
+// A remediation source losing access looks exactly like an estate with nothing to fix:
+// the Fix column fills with "unknown" and the queue stops offering upgrades. The cause
+// is per-finding and nobody reads per-finding fields, so it is stated once, here, with
+// the count — an expired registry credential turned 700 fixable findings into unknowns
+// on this estate and nothing said so.
+function blockerNotice(s) {
+  const blockers = s.remediation_blockers || [];
+  if (!blockers.length) return "";
+  const top = blockers.slice(0, 3);
+  const rest = blockers.length - top.length;
+  return `<div class="banner"><strong>${s.remediation_unresolved} findings have no
+    resolvable upgrade.</strong> These are unknowns rather than "nothing to fix":
+    <div class="reasons"><ul>${top.map((b) =>
+      `<li><strong>${b.findings}</strong> ${esc(b.reason)}</li>`).join("")}</ul>
+    ${rest > 0 ? `<div class="reasons-more">and ${rest} other reason${rest === 1 ? "" : "s"}.</div>` : ""}
+    </div></div>`;
 }
 
 // signalNotice reports a missing signal by its consequence, not its name.
