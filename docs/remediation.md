@@ -64,9 +64,36 @@ different day's work from 32 direct bumps:
 ## First-party images
 
 For an application image you build yourself, a newer tag is a release number, not a
-fix — the CVEs live in the base image. Answering "is a fix available" there means
-finding the base and checking whether *it* has moved. Design:
-[design/base-image-remediation.md](design/base-image-remediation.md).
+fix — the CVEs live in the base image. Name your registries and the base becomes the
+remediation path:
+
+```yaml
+remediation:
+  firstPartyRegistries: [registry.example.com]
+```
+
+For those images the tag source stays quiet, and instead patchwright reads the base
+reference the image records about itself — `org.opencontainers.image.base.name`, or
+BuildKit's `image.base.ref.name`, or any key you name in `remediation.base.refLabels`
+— and checks whether that base has a newer version. The reported upgrade is the base:
+`base dotnet/aspnet/10 1.0.2 -> 1.1.1`, actionable by rebuilding.
+
+Three behaviours worth knowing:
+
+- **Comparison stays on the same track**: same major, and same suffix. Base images use
+  the semver prerelease slot to mark a variant, so `10.0.3-azurelinux3.0` upgrades to
+  `10.0.11-azurelinux3.0` and never to plain `10.0.11`, which would swap the operating
+  system and call it a patch.
+- **Chains are followed** while each base is first-party, up to
+  `remediation.base.maxDepth` (4). An application on the newest available base whose
+  base is itself behind reports that link, so the ticket reaches whoever can move it.
+- **A floating base tag** has no version to compare, so the recorded base digest is
+  compared against what the tag resolves to now.
+
+An image that records no base is reported **unresolved with the reason**, never "no
+upgrade": the fix there is a build-system change, and naming it is the point.
+
+Design notes: [design/base-image-remediation.md](design/base-image-remediation.md).
 
 Git/OCI source revisions are also outstanding:
 [design/remediation-availability.md](design/remediation-availability.md).

@@ -264,6 +264,11 @@ type Upgrade struct {
 	// be read as "already on the latest version" — an unreachable registry
 	// otherwise reports every image it holds as up to date.
 	Resolved bool
+	// Reason explains an unresolved upgrade, in terms a reader can act on. "We
+	// could not find out" is only useful with the "because": an unreadable registry
+	// and an image that never recorded its base need different people to do
+	// different things, and both are fixable once named.
+	Reason string
 
 	// Actionable reports whether the upgrade can be applied directly at this
 	// level. A newer image tag for a workload managed by a Helm chart or an

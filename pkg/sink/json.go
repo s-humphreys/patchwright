@@ -82,12 +82,16 @@ type OwnerView struct {
 
 // UpgradeView is the newer version available for how an image is deployed.
 type UpgradeView struct {
-	Kind       string `json:"kind"`
-	Name       string `json:"name"`
-	Current    string `json:"current"`
-	Latest     string `json:"latest,omitempty"`
-	Available  bool   `json:"available"`
-	Resolved   bool   `json:"resolved"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Current   string `json:"current"`
+	Latest    string `json:"latest,omitempty"`
+	Available bool   `json:"available"`
+	Resolved  bool   `json:"resolved"`
+	// Reason explains an unresolved upgrade: what stopped the lookup, and therefore
+	// what would fix it. An unreadable registry and an image that never recorded its
+	// base need different people to do different things.
+	Reason     string `json:"reason,omitempty"`
 	Actionable bool   `json:"actionable"`
 	Managed    string `json:"managed,omitempty"`
 	Manager    string `json:"manager,omitempty"`
@@ -187,6 +191,7 @@ func ToFindingView(f model.Finding) FindingView {
 			Kind: f.Upgrade.Kind, Name: f.Upgrade.Name,
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
 			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
+			Reason:     f.Upgrade.Reason,
 			Actionable: f.Upgrade.Actionable,
 			Managed:    f.Upgrade.Managed, Manager: f.Upgrade.Manager,
 			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,

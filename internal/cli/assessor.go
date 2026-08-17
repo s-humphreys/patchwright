@@ -13,6 +13,7 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/provider"
+	"github.com/s-humphreys/patchwright/pkg/upgrade"
 )
 
 // assessInputs are the flags describing how to run an assessment. They are
@@ -86,8 +87,16 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		}
 	}
 	if in.remediation {
+		// Base images first: for an image you build yourself, a newer tag of your own
+		// image is a release number rather than a fix, so the base has to be asked
+		// about before the tag source gets a chance to answer.
+		if len(cfg.Remediation.FirstPartyRegistries) > 0 {
+			base := upgrade.NewBaseResolver(cfg.Remediation, upgrade.NewRegistryInspector(), upgrade.NewTagLister())
+			upgradeSources = append(upgradeSources, base)
+		}
 		reg := registry.New()
 		reg.Contexts = deployContexts
+		reg.SkipRegistries = cfg.Remediation.FirstPartyRegistries
 		upgradeSources = append(upgradeSources, reg)
 		r := enrich.NewRemediationEnricher(upgradeSources...)
 		popts = append(popts, pipeline.WithRemediationEnricher(&r))

@@ -30,6 +30,8 @@ type Config struct {
 	Suppress []PolicyRule `yaml:"suppress"`
 	// Scan tunes image vulnerability scanning.
 	Scan ScanConfig `yaml:"scan"`
+	// Remediation tunes how upgrades are detected.
+	Remediation RemediationConfig `yaml:"remediation"`
 	// Jira configures ticket creation (the `ticket` command). Optional; only
 	// validated when that command runs.
 	Jira JiraConfig `yaml:"jira"`
@@ -37,6 +39,85 @@ type Config struct {
 	// Sources is the raw text of each file this config was loaded from, in order.
 	// Not settable from YAML: it describes the load, not the configuration.
 	Sources []Source `yaml:"-"`
+}
+
+// RemediationConfig tunes upgrade detection.
+type RemediationConfig struct {
+	// FirstPartyRegistries name the registries whose images you build yourself.
+	//
+	// For those, a newer image tag is a release number rather than a fix: the tags
+	// are your versioning scheme, and the vulnerabilities are almost always in the
+	// base image. Naming them here stops a tag bump being reported as remediation
+	// and turns on base-image detection instead.
+	//
+	// Empty means every image is treated as third-party, which is the right default
+	// for a deployment that only runs other people's images.
+	FirstPartyRegistries []string `yaml:"firstPartyRegistries"`
+
+	// Base tunes how a first-party image's base is found.
+	Base BaseImageConfig `yaml:"base"`
+}
+
+// BaseImageConfig describes where an image records its base, and how far to follow
+// the chain.
+//
+// Configuration rather than constants because the conventions differ: the OCI
+// standard keys are what a spec-compliant builder writes, BuildKit and various CI
+// systems write their own, and some organisations set a label by hand. Naming them
+// is a two-line config change; guessing wrongly is a silent wrong answer.
+type BaseImageConfig struct {
+	// RefLabels are the image config labels that may hold the base reference, in
+	// preference order. Defaults to the OCI standard key followed by BuildKit's.
+	RefLabels []string `yaml:"refLabels"`
+	// DigestLabels hold the digest of the base that was actually built against.
+	// Used where the base reference is a floating tag, so "is it current" is a
+	// digest comparison rather than a version comparison.
+	DigestLabels []string `yaml:"digestLabels"`
+	// MaxDepth bounds how far a chain of first-party bases is followed — an image
+	// on a language base which is itself built on a runtime base. Defaults to 4.
+	// The walk always stops at the first base that is not first-party.
+	MaxDepth int `yaml:"maxDepth"`
+}
+
+// Default label keys. The OCI standard first, then BuildKit's, which is what
+// buildx writes today and is far more common in the wild than the standard one.
+var (
+	defaultBaseRefLabels    = []string{"org.opencontainers.image.base.name", "image.base.ref.name"}
+	defaultBaseDigestLabels = []string{"org.opencontainers.image.base.digest", "image.base.digest"}
+)
+
+// EffectiveRefLabels returns the configured keys, or the defaults.
+func (b BaseImageConfig) EffectiveRefLabels() []string {
+	if len(b.RefLabels) > 0 {
+		return b.RefLabels
+	}
+	return defaultBaseRefLabels
+}
+
+// EffectiveDigestLabels returns the configured keys, or the defaults.
+func (b BaseImageConfig) EffectiveDigestLabels() []string {
+	if len(b.DigestLabels) > 0 {
+		return b.DigestLabels
+	}
+	return defaultBaseDigestLabels
+}
+
+// EffectiveMaxDepth returns the configured chain depth, or 4.
+func (b BaseImageConfig) EffectiveMaxDepth() int {
+	if b.MaxDepth > 0 {
+		return b.MaxDepth
+	}
+	return 4
+}
+
+// IsFirstParty reports whether an image registry is one you build into.
+func (r RemediationConfig) IsFirstParty(registry string) bool {
+	for _, reg := range r.FirstPartyRegistries {
+		if strings.EqualFold(strings.TrimSpace(reg), registry) {
+			return true
+		}
+	}
+	return false
 }
 
 // JiraConfig describes where tickets go and what they look like. Everything
@@ -506,6 +587,20 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Scan.SkipRegistries != nil {
 			cfg.Scan.SkipRegistries = part.Scan.SkipRegistries
+		}
+		// remediation is a singleton section, merged per field so the knobs can live
+		// in different files.
+		if part.Remediation.FirstPartyRegistries != nil {
+			cfg.Remediation.FirstPartyRegistries = part.Remediation.FirstPartyRegistries
+		}
+		if part.Remediation.Base.RefLabels != nil {
+			cfg.Remediation.Base.RefLabels = part.Remediation.Base.RefLabels
+		}
+		if part.Remediation.Base.DigestLabels != nil {
+			cfg.Remediation.Base.DigestLabels = part.Remediation.Base.DigestLabels
+		}
+		if part.Remediation.Base.MaxDepth != 0 {
+			cfg.Remediation.Base.MaxDepth = part.Remediation.Base.MaxDepth
 		}
 		// jira is a singleton section; the last file that sets it wins.
 		if part.Jira.isSet() {

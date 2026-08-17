@@ -40,6 +40,13 @@ func (craneLister) Tags(ctx context.Context, repo string) ([]string, error) {
 
 // Resolver reports a newer semver image tag per image.
 type Resolver struct {
+	// SkipRegistries are registries this source does not answer for. Used for
+	// first-party images, where a newer tag is a release number rather than a fix
+	// and the base image is the remediation — see pkg/upgrade.BaseResolver. Without
+	// this the tag source would answer first and report "1.0.79 -> 1.0.80" as
+	// remediation, which looks like an answer and is not one.
+	SkipRegistries []string
+
 	Lister TagLister
 	// Contexts, when set, returns the deployment context per image NameTag so a
 	// newer tag can be judged actionable and pointed at the right change target
@@ -55,6 +62,16 @@ func New() *Resolver { return &Resolver{Lister: craneLister{}} }
 // current tag is not semver (e.g. a build number or "latest") are skipped, as
 // are repositories that can't be listed (logged, not fatal). Each repository is
 // listed once.
+// skip reports whether this source declines to answer for a registry.
+func (r *Resolver) skip(registry string) bool {
+	for _, s := range r.SkipRegistries {
+		if strings.EqualFold(strings.TrimSpace(s), registry) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (map[string]model.Upgrade, error) {
 	var contexts map[string]enrich.DeployContext
 	if r.Contexts != nil {
@@ -73,6 +90,9 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 
 	for i := range images {
 		img := images[i].Image
+		if r.skip(img.Registry) {
+			continue // first-party: the base image is the remediation, not the tag
+		}
 		current, err := strictSemver(img.Tag)
 		if err != nil {
 			continue // non-semver tag: nothing to compare

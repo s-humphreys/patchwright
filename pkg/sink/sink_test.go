@@ -297,6 +297,10 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		Available: true, Resolved: true, Source: "https://example.com/repo",
 		SourcePath: "bases/app", Actionable: true, Managed: "operator",
 		Manager: "acme-operator",
+		// Not a realistic combination — Reason accompanies an unresolved upgrade —
+		// but this asserts field mapping, not semantics, and a field left out here is
+		// a field that can silently stop being copied.
+		Reason: "could not list tags",
 	}
 	v := ToFindingView(model.Finding{Upgrade: &u}).Upgrade
 	if v == nil {
