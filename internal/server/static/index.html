@@ -35,6 +35,19 @@
   .brand { display: flex; align-items: center; gap: 0.5rem; }
   .logo { display: block; }
   .meta { color: var(--muted); font-size: 0.82rem; }
+  /* One panel for every data gap. Quiet by default: a page that opens with three
+     paragraphs of caveats buries the queue it exists to show. */
+  .gaps { margin: 0.9rem 0; }
+  .gaps-quiet {
+    padding: 0.6rem 0.9rem; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card);
+  }
+  .gaps-title { display: flex; align-items: baseline; gap: 0.2rem; margin-bottom: 0.35rem; }
+  .gap { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; margin: 0.2rem 0; }
+  .gap-count { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  /* Severe gaps change what the queue means; the rest merely trim it. */
+  .gap-severe .gap-count { color: var(--urgent); }
+  .gap-detail { grid-column: 2; margin: 0.25rem 0 0.5rem; opacity: 0.85; font-size: 0.86rem; }
   .reasons { margin-top: 0.6rem; }
   .reasons-head { font-weight: 600; }
   .reasons ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
@@ -340,106 +353,117 @@ function renderDataAge(s) {
     + " this assessment ran. A stale export produces a fresh-looking assessment of old data.";
 }
 
+// Data gaps: what this assessment cannot tell you, in one place.
+//
+// These were three stacked full-width banners of prose. Every one shouted equally, so
+// the page led with several paragraphs of caveats and buried the queue — and one of
+// them was good news dressed as a warning: 96% coverage is not the same alarm as 9%.
+//
+// One panel now. Each gap gets a single line stating the count and the consequence,
+// and the explanation sits behind a toggle. The lines are never hidden: a gap nobody
+// can see is the failure this whole section exists to prevent. Only the prose folds.
+// Survives the re-render that follows every refresh, so an hourly poll does not fold
+// the detail away while somebody is reading it.
+let gapsExpanded = false;
+
 function renderCoverage(s) {
-  const total = s.provider_assessed + s.provider_unassessed;
-  if (!total) return;
-  const pct = Math.round((s.provider_assessed / total) * 100);
-  // Lead with coverage, not the actionable count: "N actionable" out of an estate
-  // nobody scanned is not good news, and reading it as such is the mistake.
   const el = $("#coverage");
-  if (s.provider_unassessed === 0) {
+  const gaps = dataGaps(s);
+  if (gaps.length === 0) {
     el.innerHTML = "";
     return;
   }
-  // Deliberately does not claim the actionable figure covers only assessed
-  // findings: a vulnerability scanner can find fixable CVEs the provider never
-  // looked for, and on a real estate 14 of 35 actionable findings came from that
-  // alone. Overstating in the other direction would be the same kind of error.
-  const scannerOnly = s.actionable_unassessed
-    ? ` ${s.actionable_unassessed} of the ${s.actionable} actionable findings are on
-        images the provider never assessed, found by the vulnerability scanner alone.`
-    : "";
-  el.innerHTML = `<div class="banner"><strong>${s.provider_unassessed} of ${total} findings
-    were never assessed by the scan provider</strong> (${pct}% covered). Their severity counts
-    are absent data rather than zero, so they cannot match a count-based rule.${scannerOnly}
-    ${reasonList(s.unassessed_reasons)}</div>${signalNotice(s)}${blockerNotice(s)}`;
+  const worst = gaps.some((g) => g.severe);
+  const rows = gaps.map((g) => `
+    <div class="gap${g.severe ? " gap-severe" : ""}">
+      <span class="gap-count">${esc(g.count)}</span>
+      <span class="gap-head">${g.headline}</span>
+      <div class="gap-detail"${gapsExpanded ? "" : " hidden"}>${g.detail}</div>
+    </div>`).join("");
+  el.innerHTML = `<div class="gaps${worst ? " banner" : " gaps-quiet"}">
+    <div class="gaps-title">
+      <strong>${gaps.length} data gap${gaps.length === 1 ? "" : "s"}</strong>
+      <button id="gapsToggle" class="linkish" aria-expanded="${gapsExpanded}">${
+        gapsExpanded ? "hide detail" : "why this matters"}</button>
+    </div>${rows}</div>`;
+
+  $("#gapsToggle").addEventListener("click", () => {
+    gapsExpanded = !gapsExpanded;
+    renderCoverage(s);
+  });
 }
 
-// blockerNotice reports why upgrades could not be resolved.
+// dataGaps describes each gap once: a count, a one-line consequence, and the detail.
 //
-// A remediation source losing access looks exactly like an estate with nothing to fix:
-// the Fix column fills with "unknown" and the queue stops offering upgrades. The cause
-// is per-finding and nobody reads per-finding fields, so it is stated once, here, with
-// the count — an expired registry credential turned 700 fixable findings into unknowns
-// on this estate and nothing said so.
-function blockerNotice(s) {
-  const blockers = s.remediation_blockers || [];
-  if (!blockers.length) return "";
-  const top = blockers.slice(0, 3);
-  const rest = blockers.length - top.length;
-  return `<div class="banner"><strong>${s.remediation_unresolved} findings have no
-    resolvable upgrade.</strong> These are unknowns rather than "nothing to fix":
-    <div class="reasons"><ul>${top.map((b) =>
-      `<li><strong>${b.findings}</strong> ${esc(b.reason)}</li>`).join("")}</ul>
-    ${rest > 0 ? `<div class="reasons-more">and ${rest} other reason${rest === 1 ? "" : "s"}.</div>` : ""}
-    </div></div>`;
-}
+// severe marks the ones that change what the queue means rather than merely trimming
+// it. A missing vuln source disables whole priority tiers, so nothing can be urgent
+// however bad it is; 4% of images unassessed does not deserve the same colour as that.
+function dataGaps(s) {
+  const gaps = [];
+  const total = (s.provider_assessed || 0) + (s.provider_unassessed || 0);
 
-// signalNotice reports a missing signal by its consequence, not its name.
-//
-// A column of dashes says "no EPSS here". It does not say the thing that matters:
-// every rule of the form vulns.exists(...) is false without per-CVE detail, so the
-// urgent and high tiers cannot fire at all and the queue reads as calm when it is
-// merely uninformed. That is worth a sentence at the top rather than a dash
-// repeated down a column.
-//
-// The column stays either way. Removing it would hide the gap instead of naming
-// it, and an absent column reads as "this does not apply" rather than "this was
-// not gathered".
-function signalNotice(s) {
-  if (s.scanned === undefined) return "";       // older API, say nothing
+  if (s.provider_unassessed > 0 && total > 0) {
+    const share = s.provider_unassessed / total;
+    gaps.push({
+      // Proportion decides the alarm: most of an estate unassessed is a different
+      // problem from a handful of unsupported registries.
+      severe: share >= 0.25,
+      count: `${s.provider_unassessed} of ${total}`,
+      headline: `findings never assessed by the scan provider (${Math.round((1 - share) * 100)}% covered)`,
+      detail: `Their severity counts are absent data rather than zero, so they cannot match a
+        count-based rule.${s.actionable_unassessed
+          ? ` ${s.actionable_unassessed} of the ${s.actionable} actionable findings are on images the
+             provider never assessed, found by a vulnerability scanner alone.` : ""}
+        ${reasonList(s.unassessed_reasons)}`,
+    });
+  }
+
   if (s.scanned === 0) {
-    return `<div class="banner"><strong>No image was scanned for per-CVE detail.</strong>
-      Fix availability, EPSS and KEV are therefore absent, and every rule requiring
-      <code>vulns</code> is false — so no finding can reach the priorities that depend on
-      them, however bad it is. Counts from the scan provider still work. Add
-      <code>--vuln-source trivy</code> (chart: <code>scan.enabled</code>) to populate it.</div>`;
+    gaps.push({
+      severe: true,
+      count: "no",
+      headline: "image was scanned for per-CVE detail, so no finding can reach the priorities that need it",
+      detail: `Fix availability, EPSS and KEV are absent, and every rule requiring <code>vulns</code>
+        is false — however bad a finding is. Counts from the scan provider still work. Add
+        <code>--vuln-source trivy</code> (chart: <code>scan.enabled</code>) to populate it.`,
+    });
+  } else if (s.exploit_checked === 0) {
+    gaps.push({
+      severe: false,
+      count: `${s.scanned}`,
+      headline: "findings have per-CVE detail but no exploit intelligence, so EPSS and KEV are unknown",
+      detail: `Rules requiring exploitation pressure cannot fire, and the EPSS column reads "-"
+        rather than 0. Add <code>--exploit-source public</code> (chart:
+        <code>scan.exploitSource</code>).`,
+    });
   }
-  if (s.exploit_checked === 0) {
-    return `<div class="banner"><strong>Exploit intelligence was not gathered.</strong>
-      ${s.scanned} findings have per-CVE detail, but none carry EPSS or KEV, so rules
-      requiring exploitation pressure cannot fire and the EPSS column reads "-" rather
-      than 0. Add <code>--exploit-source public</code> (chart:
-      <code>scan.exploitSource</code>).</div>`;
+
+  if (s.remediation_unresolved > 0) {
+    const share = total > 0 ? s.remediation_unresolved / total : 0;
+    gaps.push({
+      severe: share >= 0.25,
+      count: `${s.remediation_unresolved}`,
+      headline: "findings have no resolvable upgrade — unknowns, not \"nothing to fix\"",
+      detail: reasonList(s.remediation_blockers) ||
+        "No reason was recorded, which is itself worth chasing.",
+    });
   }
-  // Partial coverage is worth stating too: it is the case most easily mistaken for
-  // full coverage, since the columns are populated for some rows.
-  if (s.exploit_checked < s.scanned) {
-    return `<div class="banner">${s.scanned - s.exploit_checked} of ${s.scanned} scanned
-      findings have no exploit intelligence, so their EPSS is unknown rather than low.</div>`;
-  }
-  return "";
+  return gaps;
 }
 
-// reasonList renders the provider's own reasons for the coverage gap, largest
-// first.
+// reasonList renders provider- or source-supplied reasons, largest first.
 //
-// This is the difference between a statistic and a work list. A percentage
-// invites resignation; "cannot authenticate to the registry, 734 findings" names
-// something one person can fix in an afternoon, and on a real estate a single
-// cause accounted for nearly the whole gap. It stays on the page until it is
-// fixed, rather than living in one Slack thread.
-//
-// Absent when the provider states no reasons — the CSV export never does — which
-// is not the same as there being no cause.
+// This is the difference between a statistic and a work list. A percentage invites
+// resignation; "cannot authenticate to the registry, 734 findings" names something one
+// person can fix in an afternoon. Absent when nothing states a reason, which is not the
+// same as there being no cause.
 function reasonList(reasons) {
   if (!reasons || !reasons.length) return "";
   const top = reasons.slice(0, 4);
   const rest = reasons.length - top.length;
   const items = top.map((r) =>
     `<li><strong>${r.findings}</strong> ${esc(r.reason)}</li>`).join("");
-  return `<div class="reasons"><div class="reasons-head">Why the provider has no data:</div>
-    <ul>${items}</ul>
+  return `<div class="reasons"><ul>${items}</ul>
     ${rest > 0 ? `<div class="reasons-more">and ${rest} other reason${rest === 1 ? "" : "s"}.</div>` : ""}
     </div>`;
 }

@@ -56,6 +56,20 @@ Read-only: there is no apply button. A POST that writes to a tracker should not 
 click away from a dashboard behind a shared token. It refreshes on demand rather than
 with the page's polling, because computing the plan queries Jira.
 
+## Data gaps on the page
+
+What the assessment cannot tell you is stated once, in a single panel above the tiles:
+one line per gap with its count and consequence, and the explanation behind a toggle.
+
+Gaps are ranked rather than shouted equally. A missing vulnerability source is severe
+because it disables whole priority tiers — nothing can be urgent, however bad it is —
+whereas 4% of images unassessed is worth a line, not a colour. Severity follows the
+proportion affected, so the same gap reads differently on an estate where it covers
+everything.
+
+The lines are never hidden, only the prose. A gap nobody can see is the failure the
+section exists to prevent.
+
 ## Rules on the page
 
 "Show config" on the status page reveals the ownership and policy YAML the
