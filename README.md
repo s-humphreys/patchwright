@@ -92,7 +92,9 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
   (`--exploit-source public`). Remaining: per-CVE detail from the Rapid7 API, digest
   cache, VEX, reachability.
 - **Phase 4** ✅ [Remediation availability](docs/design/remediation-availability.md):
-  Flux charts and registry tags. Remaining: git/OCI source revisions.
+  Flux charts and registry tags. Remaining:
+  [base-image upgrades for first-party images](docs/design/base-image-remediation.md),
+  git/OCI source revisions.
 - **Phase 5** ✅ Jira ticketing with routing, reconciliation and evidence-based
   closing. ✅ API, status page and metrics.
 - **Phase 6** GitOps PR automation to roll fixes out, and an

@@ -61,5 +61,12 @@ different day's work from 32 direct bumps:
 == owner class: platform (32 findings, 32 actionable: 9 direct, 20 managed, 3 none) ==
 ```
 
-Git/OCI source revisions are next:
+## First-party images
+
+For an application image you build yourself, a newer tag is a release number, not a
+fix — the CVEs live in the base image. Answering "is a fix available" there means
+finding the base and checking whether *it* has moved. Design:
+[design/base-image-remediation.md](design/base-image-remediation.md).
+
+Git/OCI source revisions are also outstanding:
 [design/remediation-availability.md](design/remediation-availability.md).
