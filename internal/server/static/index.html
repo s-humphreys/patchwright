@@ -984,18 +984,35 @@ function applyOwnerFilters() {
 //
 // Read-only by design: there is no apply button. A POST that writes to Jira should
 // not be one stray click away from a dashboard behind a shared token.
+// What each action does, in words somebody who did not build this would use. The kind
+// itself ("note-done", "extend") is internal vocabulary: useful for matching a row to a
+// log line, which is why it stays in the hover, but meaningless as a column.
+const ACTION_LABELS = {
+  create: "Raise a new ticket",
+  extend: "Add more images to this ticket",
+  update: "Rewrite the summary and description",
+  close: "Close it",
+  "note-stale": "Comment: the version it asks for has moved on",
+  "note-done": "Comment: the work may already be done",
+  hold: "Nothing yet — waiting on data",
+};
+
 const PENDING_COLUMNS = [
-  { label: "Action", get: (a) => `<span class="act act-${esc(a.kind)}">${esc(a.kind)}</span>` },
-  // Linked the same way the queue links tickets: a plan naming a key you then have
-  // to search for is a plan you read once.
+  { label: "What will happen", title: (a) => `action: ${a.kind}`,
+    get: (a) => `<span class="act act-${esc(a.kind)}">${esc(ACTION_LABELS[a.kind] || a.kind)}</span>` },
+  // The project is in the issue key for anything that already exists, so it is only
+  // worth stating for a ticket that does not exist yet.
   { label: "Ticket", get: (a) => {
-      if (!a.ticket) return '<span class="pct">new</span>';
+      if (!a.ticket) {
+        return a.route
+          ? `<span class="pct">new (${esc(a.route)})</span>`
+          : '<span class="pct">new</span>';
+      }
       return a.url
         ? `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.ticket)}</a>`
         : esc(a.ticket);
     } },
-  { label: "Tracker", get: (a) => esc(a.route || "-") },
-  { label: "What", get: (a) => esc(a.summary || a.comment || a.why || "") },
+  { label: "Why", get: (a) => esc(a.why || a.summary || a.comment || "") },
 ];
 
 async function loadPending() {
@@ -1010,27 +1027,33 @@ async function loadPending() {
     return;
   }
 
-  // Skips are counted, not listed: "already correct" is worth knowing and not worth
-  // a row each.
-  const writes = (plan.actions || []).filter((a) => a.kind !== "skip");
-  const skipped = (plan.actions || []).length - writes.length;
+  const all = plan.actions || [];
+  // Skips and holds are counted, not listed. One is already correct; the other writes
+  // nothing and is waiting on data, so neither belongs in a list of pending writes —
+  // that list is meant to answer "what is about to change?".
+  const writes = all.filter((a) => a.kind !== "skip" && a.kind !== "hold");
+  const skipped = all.filter((a) => a.kind === "skip").length;
+  const held = all.filter((a) => a.kind === "hold").length;
+  const context = [
+    skipped ? (skipped === 1
+      ? "1 ticket already covers its findings"
+      : `${skipped} tickets already cover their findings`) : "",
+    held ? `${held} cannot be judged yet, because an upgrade could not be resolved` : "",
+  ].filter(Boolean).join("; ");
+
   if (writes.length === 0) {
-    el.innerHTML = `<div class="meta">Nothing to write.
-      ${skipped} ticket${skipped === 1 ? "" : "s"} already cover their findings.</div>`;
+    el.innerHTML = `<div class="meta">Nothing will be written.${context ? ` ${esc(context)}.` : ""}</div>`;
     return;
   }
-
-  const counts = {};
-  for (const a of writes) counts[a.kind] = (counts[a.kind] || 0) + 1;
-  const breakdown = Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(", ");
 
   // Whether these will be applied is the difference between a plan and a warning.
   const fate = plan.auto_apply
     ? `<strong>These will be applied on the next scheduled refresh.</strong>`
     : `These are not applied automatically: auto-ticketing is off.`;
 
-  el.innerHTML = `<div class="banner"><strong>${writes.length} pending write${
-    writes.length === 1 ? "" : "s"}</strong> (${esc(breakdown)}). ${fate}</div>
+  el.innerHTML = `<div class="banner"><strong>${writes.length} change${
+    writes.length === 1 ? "" : "s"} waiting</strong>. ${fate}${
+    context ? `<div class="reasons-more">${esc(context)}.</div>` : ""}</div>
     <div class="scroll short"><table>
       <thead><tr>${PENDING_COLUMNS.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead>
       <tbody>${writes.map((a) =>

@@ -48,9 +48,14 @@ applied.
 
 ## Pending ticket actions on the page
 
-The page lists writes that reconciliation would make — creations, rewrites, closes and
-comments — with the tracker each lands on, and says whether a scheduled refresh will
-apply them. Skips are counted rather than listed.
+The page lists changes reconciliation would make, in plain terms — "Raise a new ticket",
+"Rewrite the summary and description", "Close it", "Comment: the work may already be
+done" — with the ticket each concerns and why. The internal action name is in the hover,
+for matching a row to a log line.
+
+Skips and holds are counted rather than listed: one is already correct, the other writes
+nothing while waiting on data, and neither answers "what is about to change?". The banner
+says whether a scheduled refresh will apply the rest.
 
 Read-only: there is no apply button. A POST that writes to a tracker should not be one
 click away from a dashboard behind a shared token. It refreshes on demand rather than
