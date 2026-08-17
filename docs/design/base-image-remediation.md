@@ -50,6 +50,47 @@ Also in the labels, for free: the ADO repository, build definition, branch and c
 that produced the image. The remediation is "re-run that pipeline once the base moves",
 and we can name the pipeline.
 
+## Survey of the estate
+
+All 707 first-party images running across the clusters, read from the registry:
+
+| | |
+|---|---|
+| Declare a base image in their config labels | **699 (99%)** |
+| Carry a base digest label | 698 |
+| Carry a SLSA provenance attestation | 665 |
+| Name their ADO repository | 700 |
+| Pin their base by digest instead of a tag | 0 |
+
+Every one of the 699 uses the key `image.base.ref.name`, not the OCI standard
+`org.opencontainers.image.base.name`. Both are worth reading, in that order.
+
+Of those, 459 are built on a **first-party** base, and only **nine** base repositories
+account for all of them:
+
+| Images | Base | On | Newest | Behind |
+|---|---|---|---|---|
+| 183 | `dotnet/aspnet/10` | 1.0.2 | 1.1.1 | 5 |
+| 88 | `dotnet/aspnet/10` | 1.0.5 | 1.1.1 | 2 |
+| 46 | `dotnet/aspnet` | 8.0.13 | see below | — |
+| 38 | `dotnet/runtime/10` | 1.0.2 | 1.1.1 | 5 |
+| 17 | `dotnet/aspnet/10` | 1.0.4 | 1.1.1 | 3 |
+
+**445 of 459 (97%) are on an outdated base.** One bump — `dotnet/aspnet/10` to 1.1.1 —
+covers 183 images by itself.
+
+The internal bases are mostly current with upstream, so the work is in the
+applications rather than the base pipelines:
+
+```
+dotnet/aspnet/10:1.1.1   → mcr.microsoft.com/dotnet/aspnet:10.0.11-azurelinux3.0  (current)
+dotnet/runtime/10:1.1.1  → mcr.microsoft.com/dotnet/runtime:10.0.11-azurelinux3.0 (current)
+dotnet/aspnet:10.0.1     → mcr.microsoft.com/dotnet/aspnet:10.0.1-azurelinux3.0   (10 patches behind)
+```
+
+The last is the legacy repository naming (`dotnet/aspnet` rather than
+`dotnet/aspnet/10`); images still on it are behind twice over.
+
 ## Three remediations, three owners
 
 The single word "fix" hides three different jobs, and conflating them is what makes a
@@ -82,6 +123,25 @@ For each image:
    and the same shape as the registry-credential finding.
 4. With a base reference in hand, run the **existing registry tag lister** against it.
    The base is a normal image in a registry; nothing new is needed.
+
+Three refinements the survey forced, each of which would otherwise produce a wrong
+answer:
+
+**Compare within a track, not across the repository.** `dotnet/aspnet` holds both
+`8.0.13` and `10.0.1`. Taking the newest semver would tell a .NET 8 application to
+move to a .NET 10 base, which is a framework migration presented as a patch. The
+comparison is restricted to the same major, and a newer major is reported separately
+as "a newer track exists" rather than as the upgrade.
+
+**Follow the chain while it stays first-party.** `dotnet/aspnet-ironpdf/10:2.0.0` is
+built on `dotnet/aspnet/10:1.1.0`, so an application on the ironpdf base is two hops
+from upstream. The walk continues while each base is first-party, capped at four hops,
+and reports the first outdated link — which is the one whose owner can act.
+
+**A floating tag has no newer version.** Nine images sit on `dotnet/aspnet:10`, where
+tag comparison is meaningless. There, the base digest label is compared against the
+digest the tag currently resolves to: equal means current, different means the base
+moved and a rebuild would pick it up.
 
 Layer-digest matching against a catalogue of known bases is the usual fallback when
 no labels exist. It is deliberately **out of scope**: it is heuristic, needs a
