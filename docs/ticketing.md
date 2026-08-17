@@ -72,6 +72,29 @@ gives each package its own object (a Crossplane `ProviderRevision` per provider)
 the object name is collapsed so a family groups. A grouped ticket never claims a
 single target version unless every image shares one.
 
+## Only ticket what is worth ticketing
+
+`minPriority` sets the lowest assessment priority that gets a ticket:
+
+```yaml
+jira:
+  minPriority: high        # urgent and high are ticketed; medium and low are not
+```
+
+The queue and the tracker answer different questions. A queue holds a hundred
+low-priority findings usefully; a tracker holding a hundred tickets nobody will action
+this quarter is one people stop reading, and it takes the urgent ones down with it.
+
+Judged on the **ticket**, not each finding: a low-priority image that shares an upgrade
+with an urgent one still rides along, because it is one change. Filtering findings
+before grouping would split that change and send half of it nowhere.
+
+Below-threshold findings are reported as skipped with the reason, so this decides what
+gets a ticket and never what is visible. It is per route as well as global, so one team
+can take only urgent work while another takes everything. A value that is not on the
+ranked ladder (`urgent` > `high` > `medium` > `low`) fails at load: a typo would rank
+below everything and silently ticket the lot.
+
 ## Skips
 
 No ticket is raised for a finding with nothing to upgrade to; `requireUpgrade: false`

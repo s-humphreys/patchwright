@@ -88,6 +88,12 @@ scan:
 #   # the priority it was triaged at.
 #   closePriorityUnworked: Lowest
 #
+#   # Lowest assessment priority worth a ticket. The queue can hold a hundred low
+#   # findings usefully; a tracker holding a hundred nobody will action becomes one
+#   # people stop reading. Below-threshold findings are reported as skipped, not
+#   # hidden. Per route as well as here.
+#   minPriority: high
+#
 #   requireRoute: true
 #   routes:
 #     - name: sre

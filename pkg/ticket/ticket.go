@@ -169,10 +169,43 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Judged on the draft rather than on each finding, so a low-priority image
+			// that shares an upgrade with an urgent one still rides along: one change,
+			// one ticket. Filtering findings before grouping would split that change
+			// in two and send half of it nowhere.
+			if cfg := p.routeConfig(name); !cfg.TicketsPriority(d.Priority) {
+				for _, img := range d.Images {
+					out.Skips = append(out.Skips, Skip{
+						Image: img,
+						Reason: fmt.Sprintf("highest priority in this change is %q, below the "+
+							"minimum ticket priority %q; it stays in the queue",
+							dashIfEmpty(d.Priority), cfg.MinPriority),
+					})
+				}
+				continue
+			}
 			out.Drafts = append(out.Drafts, d)
 		}
 	}
 	return out, nil
+}
+
+// routeConfig resolves the settings for a route name, so a per-team threshold is
+// honoured rather than only the top-level one.
+func (p *Planner) routeConfig(name string) config.JiraConfig {
+	for _, r := range p.cfg.Routes {
+		if r.Name == name {
+			return p.cfg.Resolve(r)
+		}
+	}
+	return p.cfg
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
 
 // routeOrder returns the route names present in these findings, in configuration

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
 // Config is the complete rule set. Ownership rules attribute each occurrence to
@@ -221,6 +223,19 @@ type JiraConfig struct {
 	// it was triaged at, since that is a record of how urgent it was.
 	ClosePriorityUnworked string `yaml:"closePriorityUnworked"`
 
+	// MinPriority is the lowest assessment priority worth a ticket: "high" raises
+	// urgent and high findings and leaves the rest in the queue. Empty means every
+	// actionable finding is ticketed.
+	//
+	// The queue and the tracker answer different questions. A queue can hold a
+	// hundred low-priority findings usefully; a tracker holding a hundred tickets
+	// nobody will action this quarter is a tracker people stop reading, and it takes
+	// the urgent ones down with it.
+	//
+	// Findings below the threshold are reported as skipped with the reason, so this
+	// decides what gets a ticket, never what is visible.
+	MinPriority string `yaml:"minPriority"`
+
 	// RequireRoute, when true, means a finding that matches no route gets no
 	// ticket rather than falling through to the settings above.
 	//
@@ -300,6 +315,9 @@ func (j JiraConfig) Validate() error {
 	// is a merge, so it can only break the result by overriding something into an
 	// invalid combination, and that has to fail at load rather than at the first
 	// ticket it tries to raise.
+	if err := validateMinPriority(j.MinPriority); err != nil {
+		return err
+	}
 	names := map[string]bool{}
 	for i, r := range j.Routes {
 		switch {
@@ -317,6 +335,30 @@ func (j JiraConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateMinPriority rejects a threshold that is not on the ranked ladder.
+//
+// An unranked label ranks below everything, so a typo would quietly raise tickets for
+// every finding — the opposite of what the setting is for, with nothing to notice.
+func validateMinPriority(p string) error {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return nil
+	}
+	if model.PriorityRank(p) == 0 {
+		return fmt.Errorf("jira minPriority %q is not a ranked priority (want one of urgent, high, medium, low)", p)
+	}
+	return nil
+}
+
+// TicketsPriority reports whether a finding at this priority clears the threshold.
+func (j JiraConfig) TicketsPriority(priority string) bool {
+	min := strings.TrimSpace(j.MinPriority)
+	if min == "" {
+		return true
+	}
+	return model.PriorityRank(priority) >= model.PriorityRank(min)
 }
 
 // TicketRoute overrides ticket settings for the findings it matches.
@@ -342,6 +384,7 @@ type TicketRoute struct {
 	CloseTransition         string `yaml:"closeTransition"`
 	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
 	ClosePriorityUnworked   string `yaml:"closePriorityUnworked"`
+	MinPriority             string `yaml:"minPriority"`
 
 	Project     string            `yaml:"project"`
 	Template    string            `yaml:"template"`
@@ -376,6 +419,9 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if r.ClosePriorityUnworked != "" {
 		out.ClosePriorityUnworked = r.ClosePriorityUnworked
+	}
+	if r.MinPriority != "" {
+		out.MinPriority = r.MinPriority
 	}
 	if r.Project != "" {
 		out.Project = r.Project
