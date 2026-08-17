@@ -59,8 +59,23 @@ per-instance and a name that does not exist fails ticket creation.
 | `update` | the target moved on and nobody has picked the ticket up |
 | `close` | the work is provably finished (needs `autoClose`) |
 | `note-stale` | the target moved on, but someone has picked the ticket up |
-| `note-done` | nothing is reported for the ticket's images any more |
+| `note-done` | the finding no longer asks for anything, so the work appears done |
+| `hold` | nothing can be judged yet, because the data needed is missing. **Writes nothing** |
 | `skip` | already covers the change correctly |
+
+**A ticket nobody can judge is held, not commented on.** A finding leaves the queue
+either because the work is done or because we could not establish whether it is — an
+unreadable registry, or upgrade detection not having run. Those look identical from the
+queue, and only the first means anything is finished.
+
+So `note-done` now requires the finding to have stopped asking for anything. A finding
+that is still actionable but whose upgrade could not be resolved produces a `hold`,
+which **writes nothing at all**: our own blind spot is not news for somebody else's
+tracker, and a comment saying "this looks done" on work that is merely unmeasurable is
+worse than silence. Holds appear in the plan and the logs, with the blocker named.
+
+Before this, an expired registry credential turned every ticket it touched into a
+comment claiming the work looked finished.
 
 Duplicates are prevented by asking Jira, not by local state: a state file drifts the
 moment someone closes a ticket by hand. Tickets in a Done status do not suppress a

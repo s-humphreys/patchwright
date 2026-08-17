@@ -744,3 +744,67 @@ func TestCloseCarriesWhetherTheTicketWasWorked(t *testing.T) {
 		})
 	}
 }
+
+// The bug this exists for: an unreadable registry turned every ticket it touched into a
+// false "the work looks done". No available version could be resolved, so the finding
+// left the queue for want of data, not because anyone fixed anything.
+func TestUnresolvableUpgradeHoldsRatherThanClaimingDone(t *testing.T) {
+	stuck := sink.FindingView{
+		Repository: "acme/app", ProviderAssessed: true, Actionable: true,
+		RemediationChecked: true,
+		Upgrade: &sink.UpgradeView{
+			Kind: "base", Resolved: false,
+			Reason: "read image config: UNAUTHORIZED: authentication required",
+		},
+	}
+	actions := Reconcile(ReconcileInput{
+		Config:      autoCloseCfg(),
+		Findings:    []sink.FindingView{stuck},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1", Category: "new"}}},
+	})
+	if len(actions) != 1 {
+		t.Fatalf("got %d actions: %+v", len(actions), actions)
+	}
+	a := actions[0]
+	if a.Kind != ActionHold {
+		t.Fatalf("kind = %q, want %q — an unresolvable upgrade is not evidence of completion",
+			a.Kind, ActionHold)
+	}
+	// Nothing is written, so there must be no comment to write.
+	if a.Message != "" {
+		t.Errorf("a hold carries a comment: %q", a.Message)
+	}
+	// The reason names the blocker, since that is the thing to fix.
+	if !strings.Contains(a.Why, "UNAUTHORIZED") {
+		t.Errorf("why = %q, want it to name the blocker", a.Why)
+	}
+}
+
+// A finding that no longer asks for anything is done, whatever the remediation state:
+// it left the queue because the CVEs went away.
+func TestNoLongerActionableStillReportsDone(t *testing.T) {
+	fixed := sink.FindingView{Repository: "acme/app", ProviderAssessed: true, Actionable: false}
+	actions := Reconcile(ReconcileInput{
+		Findings:    []sink.FindingView{fixed},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1"}}},
+	})
+	if len(actions) != 1 || actions[0].Kind != ActionNoteDone {
+		t.Fatalf("actions = %+v, want one note-done", actions)
+	}
+}
+
+// A hold writes nothing at all: our own blind spot is not news for somebody else's
+// tracker.
+func TestApplyWritesNothingForAHold(t *testing.T) {
+	rec := newRecorder()
+	results := Apply(context.Background(), rec, []Action{
+		{Kind: ActionHold, TicketKey: "PROJ-1", Why: "cannot tell"},
+	})
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("results = %+v", results)
+	}
+	if len(rec.comments) != 0 || len(rec.closed) != 0 || len(rec.updated) != 0 {
+		t.Errorf("a hold wrote to the tracker: comments=%v closed=%v updated=%v",
+			rec.comments, rec.closed, rec.updated)
+	}
+}

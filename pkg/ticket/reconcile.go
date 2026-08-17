@@ -50,6 +50,11 @@ const (
 	// checked, and every one is already on the latest available version — never on
 	// a finding having disappeared.
 	ActionClose ActionKind = "close"
+	// ActionHold records a ticket nothing can be said about yet, because the data
+	// needed to judge it is missing. Nothing is written: our own blind spot is not
+	// news for somebody else's tracker, and a comment about it would be noise on a
+	// ticket that is probably fine. Reported so the silence is visible.
+	ActionHold ActionKind = "hold"
 	// ActionSkip records a ticket that already covers its group correctly.
 	ActionSkip ActionKind = "skip"
 )
@@ -63,7 +68,7 @@ const (
 func ActionKinds() []ActionKind {
 	return []ActionKind{
 		ActionCreate, ActionExtend, ActionUpdate, ActionClose,
-		ActionNoteStale, ActionNoteDone, ActionSkip,
+		ActionNoteStale, ActionNoteDone, ActionHold, ActionSkip,
 	}
 }
 
@@ -220,6 +225,18 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				}
 			}
 
+			// Before concluding anything: could we even check? An image whose
+			// available version could not be resolved has dropped out of the queue
+			// for want of data, not because the work is finished, and saying
+			// otherwise on a ticket someone is waiting on is worse than silence.
+			if unproven := unprovenImages(images, byImage); len(unproven) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key,
+					Why: "cannot tell whether this is done: no available version could be " +
+						"resolved for " + strings.Join(unproven, ", "),
+				})
+				continue
+			}
 			if blind := unknownImages(images, byImage); len(blind) > 0 {
 				out = append(out, Action{
 					Kind: ActionNoteDone, TicketKey: t.Key,
@@ -392,6 +409,44 @@ func unknownImages(images []string, byImage map[string]sink.FindingView) []strin
 		}
 	}
 	return blind
+}
+
+// unprovenImages returns the ticket's images whose remediation state cannot support a
+// conclusion either way, with the reason.
+//
+// This is the difference between "there is no newer version" and "we could not find
+// out". Both leave a finding out of the queue, so both make a ticket look unaccounted
+// for, and only the first means the work is done. An unreadable registry otherwise
+// turns every ticket it touches into a false "looks finished".
+func unprovenImages(images []string, byImage map[string]sink.FindingView) []string {
+	var out []string
+	for _, img := range images {
+		f, ok := byImage[img]
+		if !ok {
+			continue // absent entirely: handled as a coverage gap by unknownImages
+		}
+		if !f.Actionable {
+			// The finding no longer asks for anything, so it left the queue because the
+			// work is done — whatever the remediation state. This is the case the
+			// note-done comment exists for.
+			continue
+		}
+		// Still actionable, yet nothing was raised for it: the only reason is that no
+		// upgrade could be established, which is not the same as there being none.
+		switch {
+		case !f.RemediationChecked:
+			out = append(out, img+" (upgrade detection did not run)")
+		case f.Upgrade == nil:
+			out = append(out, img+" (no upgrade information)")
+		case !f.Upgrade.Resolved:
+			reason := f.Upgrade.Reason
+			if reason == "" {
+				reason = "no reason given"
+			}
+			out = append(out, img+" ("+reason+")")
+		}
+	}
+	return out
 }
 
 // split partitions a draft's images by whether an open ticket covers them.
