@@ -118,7 +118,9 @@ remediation:
     provider: azuredevops
     organisation: example
     projects: [DevOps, Apps]
-    authors: [renovate.automations]   # optional; empty means any author
+    authors: [renovate@example.com]   # optional; empty means any author
+    # Author matching is exact, and a bot's identity is usually an email: check
+    # what your provider reports before relying on this filter.
     branchPrefixes: [renovate/]       # optional; empty means any branch
     staleAfterDays: 14
   base:

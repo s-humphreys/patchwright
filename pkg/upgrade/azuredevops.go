@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,12 +86,33 @@ type adoPullRequests struct {
 	} `json:"value"`
 }
 
+// pageSize is how many pull requests are requested at a time. Paging matters more
+// than it looks: a project with more active pull requests than one page holds would
+// otherwise return a truncated list, and a missing pull request reads as "nobody is
+// working on this" rather than as a truncated read.
+const pageSize = 200
+
 func (a *AzureDevOps) project(ctx context.Context, project string) ([]PullRequest, error) {
+	var all []PullRequest
+	for skip := 0; ; skip += pageSize {
+		page, err := a.page(ctx, project, skip)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page...)
+		if len(page) < pageSize {
+			return all, nil
+		}
+	}
+}
+
+func (a *AzureDevOps) page(ctx context.Context, project string, skip int) ([]PullRequest, error) {
 	endpoint := fmt.Sprintf("%s/%s/%s/_apis/git/pullrequests",
 		strings.TrimRight(a.BaseURL, "/"), url.PathEscape(a.Organisation), url.PathEscape(project))
 	q := url.Values{}
 	q.Set("searchCriteria.status", "active")
-	q.Set("$top", "1000")
+	q.Set("$top", strconv.Itoa(pageSize))
+	q.Set("$skip", strconv.Itoa(skip))
 	q.Set("api-version", "7.1")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+q.Encode(), nil)
@@ -106,9 +128,10 @@ func (a *AzureDevOps) project(ctx context.Context, project string) ([]PullReques
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		// A PAT that has expired or lacks scope answers 203 with an HTML sign-in
-		// page rather than 401, so anything other than 200 is treated as a failure
-		// with its status named.
+		// A PAT that has expired or lacks scope answers 302 to a sign-in page rather
+		// than 401, so anything other than 200 is treated as a failure with its
+		// status named. Following that redirect would yield HTML and decode to zero
+		// pull requests, which reads as "nothing in flight".
 		return nil, fmt.Errorf("unexpected status %s", resp.Status)
 	}
 	var body adoPullRequests
