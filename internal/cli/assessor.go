@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
@@ -100,6 +101,18 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		upgradeSources = append(upgradeSources, reg)
 		r := enrich.NewRemediationEnricher(upgradeSources...)
 		popts = append(popts, pipeline.WithRemediationEnricher(&r))
+
+		// Remediation already under way, so an upgrade with an open pull request
+		// can be told apart from one nobody has started.
+		if cfg.Remediation.InFlight.Enabled() {
+			src, err := newPullRequestSource(cfg.Remediation.InFlight)
+			if err != nil {
+				return nil, err
+			}
+			popts = append(popts, pipeline.WithInFlightEnricher(&upgrade.InFlightEnricher{
+				Cfg: cfg.Remediation, Source: src, Inspector: upgrade.NewRegistryInspector(),
+			}))
+		}
 	}
 
 	if in.vulnSource != "" {
@@ -267,4 +280,16 @@ func topAssessmentIssue(findings []model.Finding) (string, int) {
 		}
 	}
 	return topReason, topCount
+}
+
+// newPullRequestSource builds the in-flight provider named in config. Unknown
+// providers are an error rather than a no-op: a typo would otherwise silently
+// mean "nothing is in flight".
+func newPullRequestSource(cfg config.InFlightConfig) (upgrade.PullRequestSource, error) {
+	switch strings.ToLower(cfg.Provider) {
+	case "azuredevops":
+		return upgrade.NewAzureDevOps(cfg)
+	default:
+		return nil, fmt.Errorf("unknown in-flight provider %q: supported providers are azuredevops", cfg.Provider)
+	}
 }

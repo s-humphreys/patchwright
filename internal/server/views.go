@@ -64,6 +64,20 @@ type summaryView struct {
 	Scanned        int `json:"scanned"`
 	ExploitChecked int `json:"exploit_checked"`
 
+	// InFlight counts findings whose upgrade already has an open pull request in the
+	// repository that builds the image, and InFlightStale how many of those have been
+	// open past the configured threshold. InFlightPossible counts weaker matches: a
+	// pull request bumping the same dependency to a different version, which is
+	// somebody working nearby rather than this fix.
+	//
+	// InFlightChecked counts findings where detection ran at all. Without it, zero
+	// matches would be indistinguishable from detection being switched off, which is
+	// the difference between "nobody has started" and "we did not look".
+	InFlight         int `json:"in_flight"`
+	InFlightPossible int `json:"in_flight_possible"`
+	InFlightStale    int `json:"in_flight_stale"`
+	InFlightChecked  int `json:"in_flight_checked"`
+
 	// ExpiredSuppressions are suppress rules that have lapsed, so the work they were
 	// hiding is back in the queue. Reported because an unexplained jump in the queue
 	// reads as the estate getting worse rather than as a policy decision expiring.
@@ -180,6 +194,16 @@ func buildSummary(findings []model.Finding) summaryView {
 			s.RemediationUnresolved++
 			if f.Upgrade != nil && f.Upgrade.Reason != "" {
 				blockers[normalizeUpgradeReason(f.Upgrade.Reason)]++
+			}
+		}
+		if f.InFlightChecked {
+			s.InFlightChecked++
+		}
+		if f.InFlight != nil {
+			if f.InFlight.Exact {
+				s.InFlight++
+			} else {
+				s.InFlightPossible++
 			}
 		}
 		if f.Scanned {

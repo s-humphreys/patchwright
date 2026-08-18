@@ -393,6 +393,12 @@ components:
             without an upgrade must check this, or it silently skips images whose
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
+        in_flight: { $ref: "#/components/schemas/InFlight" }
+        in_flight_checked:
+          type: boolean
+          description: |
+            False means in-flight detection did not run, so an absent `in_flight` says
+            nothing about whether remediation has been started.
         liveness:
           type: object
           description: Present only when reconciliation ran.
@@ -411,6 +417,30 @@ components:
         vulns:
           type: array
           items: { $ref: "#/components/schemas/Vulnerability" }
+
+    InFlight:
+      type: object
+      description: |
+        An open pull request that would apply this finding's upgrade, in the
+        repository that builds the image. Absent means no pull request was matched,
+        which includes in-flight detection not running at all: absence is not
+        evidence that nobody is working on it.
+      required: [repository, title, opened, open_days, exact]
+      properties:
+        repository:
+          type: string
+          description: The repository the pull request is in, which is the one that builds this image.
+        title: { type: string }
+        url: { type: string }
+        author: { type: string }
+        opened: { type: string, format: date-time }
+        open_days: { type: integer }
+        exact:
+          type: boolean
+          description: |
+            False when the pull request bumps this dependency to a different version
+            than the one recommended. A non-exact match must not be read as this
+            upgrade being applied.
 
     Owner:
       type: object
@@ -519,6 +549,24 @@ components:
             only because a scanner looked where the provider did not.
         scanned: { type: integer }
         exploit_checked: { type: integer }
+        in_flight:
+          type: integer
+          description: |
+            Findings whose upgrade has an open pull request in the repository that
+            builds the image, matched on dependency and target version.
+        in_flight_possible:
+          type: integer
+          description: |
+            Weaker matches: a pull request bumping the same dependency to a different
+            version. Somebody working nearby, not this fix.
+        in_flight_stale:
+          type: integer
+          description: Matched pull requests open past the configured threshold.
+        in_flight_checked:
+          type: integer
+          description: |
+            Findings where in-flight detection ran. Zero means it did not, so zero
+            matches says nothing about whether remediation has been started.
         provider_data_newest:
           type: string
           format: date-time

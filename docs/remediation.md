@@ -106,5 +106,55 @@ upgrade": the fix there is a build-system change, and naming it is the point.
 
 Design notes: [design/base-image-remediation.md](design/base-image-remediation.md).
 
+## Remediation already in flight
+
+An upgrade somebody has already opened a pull request for is not work waiting on a
+decision, it is work waiting on a review. Detection reports it so the two can be told
+apart:
+
+```yaml
+remediation:
+  inFlight:
+    provider: azuredevops
+    organisation: example
+    projects: [DevOps, Apps]
+    authors: [renovate.automations]   # optional; empty means any author
+    branchPrefixes: [renovate/]       # optional; empty means any branch
+    staleAfterDays: 14
+  base:
+    repoLabels:
+      - com.azure.dev.image.build.repository.name
+      - org.opencontainers.image.source
+```
+
+The token comes from `AZURE_DEVOPS_PAT` (code read scope). A missing token is an
+error rather than an empty result: an unauthenticated run would report no pull
+requests at all, which is indistinguishable from nothing being in progress.
+
+A match requires all three of:
+
+1. **The pull request is in the repository that builds this image**, read from
+   `remediation.base.repoLabels`. A pull request bumping a shared base image in the
+   base-image repository does not fix the applications consuming that base, which
+   still have to rebuild. Without this constraint one such pull request silences
+   every finding that asks for exactly that rebuild.
+2. **The dependency matches exactly.** The pull request title is parsed for the
+   dependency and target version rather than searched for a substring, because
+   `dotnet/aspnet` is a prefix of `dotnet/aspnet/10` and a substring check reports
+   the wrong dependency with full confidence.
+3. **The target version matches.** A pull request bumping the same dependency to a
+   different version is reported as a possible match (`exact: false`, shown as
+   `PR?`) and must never be read as this upgrade being applied.
+
+Output: `in_flight` per finding in JSON, an **In flight** column on the queue, and
+`in_flight` / `in_flight_possible` / `in_flight_stale` in the summary. Every one of
+them is paired with `in_flight_checked`, because zero matches with detection off
+means "we did not look", not "nobody has started".
+
+Ticketing is unchanged: nothing is suppressed, closed or deprioritised on the basis
+of a match. Match quality has to be judged against a real estate first.
+
+Design notes: [design/remediation-in-flight.md](design/remediation-in-flight.md).
+
 Git/OCI source revisions are also outstanding:
 [design/remediation-availability.md](design/remediation-availability.md).

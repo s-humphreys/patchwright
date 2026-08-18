@@ -27,6 +27,7 @@ type Pipeline struct {
 	exploit     *enrich.ExploitEnricher     // optional: EPSS/KEV enrichment after scan
 	age         *enrich.AgeEnricher         // optional: CVE first-seen enrichment after scan
 	remediation *enrich.RemediationEnricher // optional: deployment upgrade detection
+	inFlight    ImageEnricher               // optional: open pull requests applying those upgrades
 }
 
 // Option customizes a Pipeline.
@@ -48,6 +49,19 @@ func WithExploitEnricher(e *enrich.ExploitEnricher) Option {
 // stamps ages onto vulnerabilities that already exist.
 func WithAgeEnricher(a *enrich.AgeEnricher) Option {
 	return func(p *Pipeline) { p.age = a }
+}
+
+// ImageEnricher annotates assessed images in place. Satisfied by the in-flight
+// enricher, which has to run after remediation because it needs the upgrade it
+// is looking for a pull request for.
+type ImageEnricher interface {
+	EnrichImages(ctx context.Context, images []model.AssessedImage) error
+}
+
+// WithInFlightEnricher enables detection of remediation already under way, after
+// upgrade detection.
+func WithInFlightEnricher(e ImageEnricher) Option {
+	return func(p *Pipeline) { p.inFlight = e }
 }
 
 // WithRemediationEnricher enables detection of available upgrades (e.g. a newer
@@ -103,6 +117,11 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	}
 	if p.remediation != nil {
 		if err := p.remediation.EnrichImages(ctx, images); err != nil {
+			return nil, err
+		}
+	}
+	if p.inFlight != nil {
+		if err := p.inFlight.EnrichImages(ctx, images); err != nil {
 			return nil, err
 		}
 	}
@@ -169,6 +188,8 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				ExploitChecked:     ai.ExploitChecked,
 				Upgrade:            ai.Upgrade,
 				RemediationChecked: ai.RemediationChecked,
+				InFlight:           ai.InFlight,
+				InFlightChecked:    ai.InFlightChecked,
 			})
 		}
 	}

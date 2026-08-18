@@ -137,9 +137,10 @@ exact or possible. Then:
 
 ## Phasing
 
-1. Read pull requests, match exactly, expose `in_flight` in the JSON and on the queue.
-   No behaviour change to ticketing yet, so the match rate can be judged against reality
-   before anything is suppressed.
+1. **Done.** Read pull requests, match exactly, expose `in_flight` in the JSON and on
+   the queue. No behaviour change to ticketing, so the match rate can be judged against
+   reality before anything is suppressed. Shipped as `remediation.inFlight` with the
+   Azure DevOps provider; see [../remediation.md](../remediation.md#remediation-already-in-flight).
 2. Suppress ticketing on exact matches; surface possible matches without suppressing.
 3. Stale-PR reporting, section and metric, and a ticket for the stale ones.
 4. GitHub as a second provider.

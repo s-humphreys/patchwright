@@ -206,6 +206,31 @@ type Occurrence struct {
 	Live       bool
 }
 
+// InFlight is remediation somebody has already started: an open pull request that
+// would apply this upgrade.
+//
+// A finding with one is not work waiting on a decision, it is work waiting on a review.
+// Raising a ticket for it duplicates a queue that already exists, and the useful signal
+// is the opposite one — a fix that has been sitting in review for weeks.
+type InFlight struct {
+	// Repository is the repository the pull request is in, which is also the
+	// repository that builds this image. A pull request only remediates the image
+	// built from it; one that bumps a shared base image does not fix the images
+	// consuming that base, which still have to rebuild.
+	Repository string
+	Title      string
+	URL        string
+	Author     string
+	Opened     time.Time
+	// Exact is true when both the dependency and the target version matched. When
+	// false the dependency matched but the version did not, so something is being
+	// worked on and it may not be this: consumers must not treat it as remediation.
+	Exact bool
+}
+
+// Age reports how long the pull request has been open.
+func (i InFlight) Age() time.Duration { return time.Since(i.Opened) }
+
 // AssessedImage is the dedupe unit: one image plus every occurrence of it.
 type AssessedImage struct {
 	Image       Image
@@ -219,6 +244,12 @@ type AssessedImage struct {
 	// private image with no credentials). A failed scan does not fail the run.
 	Scanned   bool
 	ScanError string
+
+	// InFlight is set when an open pull request would apply this image's upgrade.
+	// InFlightChecked reports whether detection ran, so a nil InFlight can be told
+	// apart from "nobody has started this".
+	InFlight        *InFlight
+	InFlightChecked bool
 
 	// ExploitChecked is true once an exploit source has run, so consumers can
 	// distinguish "0 known-exploited CVEs" from "exploit intel not gathered".
@@ -320,6 +351,10 @@ type Finding struct {
 	// detection ran, so a nil Upgrade can be told apart from an unresolved one.
 	Upgrade            *Upgrade
 	RemediationChecked bool
+	// InFlight is set when an open pull request would apply that upgrade.
+	// InFlightChecked reports whether detection ran.
+	InFlight        *InFlight
+	InFlightChecked bool
 
 	Actionable bool
 	Suppressed bool

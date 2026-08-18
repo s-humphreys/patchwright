@@ -269,6 +269,36 @@ function upgradeTitle(f) {
   return parts.join(" ");
 }
 
+// inFlightCell reports whether somebody has already opened a pull request that
+// applies this upgrade. "?" means in-flight detection did not run, which is a
+// different answer from "-": absence of a pull request is only news if we looked.
+function inFlightCell(f) {
+  if (!f.in_flight_checked) {
+    return '<span class="unknown" title="In-flight detection did not run, so it is not known whether anyone has started this.">?</span>';
+  }
+  const p = f.in_flight;
+  if (!p) return '<span class="muted" title="No open pull request in the repository that builds this image applies this upgrade.">-</span>';
+  const days = p.open_days;
+  const label = p.exact ? `PR ${days}d` : `PR? ${days}d`;
+  const why = p.exact
+    ? `${p.title} — open ${days}d in ${p.repository}. This applies the recommended version, so the fix is in review rather than unstarted.`
+    : `${p.title} — open ${days}d in ${p.repository}. This bumps the same dependency to a different version, so it may not apply this upgrade.`;
+  const cls = p.exact ? "act-direct" : "act-unknown";
+  return p.url
+    ? `<a class="${cls}" href="${esc(p.url)}" target="_blank" rel="noreferrer" title="${esc(why)}">${esc(label)}</a>`
+    : `<span class="${cls}" title="${esc(why)}">${esc(label)}</span>`;
+}
+
+// Sort key: an exact match outranks a possible one, both outrank no pull request,
+// and "did not look" sorts to the bottom in either direction. Within a rank, the
+// longest-open pull request comes first: a fix stuck in review for three weeks is
+// the one worth chasing.
+function inFlightSort(f) {
+  if (!f.in_flight_checked) return UNKNOWN;
+  if (!f.in_flight) return 0;
+  return (f.in_flight.exact ? 2000000 : 1000000) + (f.in_flight.open_days || 0);
+}
+
 // Provider counts are only meaningful if the provider actually assessed the image.
 const count = (f, sev) => (f.provider_assessed ? (f.counts?.[sev] ?? 0) : "?");
 const epss = (f) => (f.exploit_checked ? maxEPSS(f).toFixed(2) : "-");
@@ -475,6 +505,9 @@ function renderTiles(s) {
     ["Upgradable", s.upgradable], ["Known exploited", s.known_exploited],
     ["Unique images", s.unique_images],
   ];
+  // Only shown when detection ran. A "0 in flight" tile on a run without a
+  // provider configured would claim nobody is working on any of this.
+  if (s.in_flight_checked > 0) tiles.push(["In flight", s.in_flight]);
   $("#tiles").innerHTML = tiles.map(([l, n]) =>
     `<div class="tile"><div class="n">${n ?? "-"}</div><div class="l">${esc(l)}</div></div>`).join("");
 }
@@ -544,6 +577,8 @@ const FINDING_COLUMNS = [
     sort: (f) => upgradeText(f),
     help: "The version move available. Chart versions are prefixed \"chart\" because they are the chart's, not the image tag shown in Image.",
     title: (f) => (f.upgrade?.source ? `change in ${f.upgrade.source}${f.upgrade.source_path ? " path " + f.upgrade.source_path : ""}` : "") },
+  { label: "In flight", get: (f) => inFlightCell(f), sort: (f) => inFlightSort(f),
+    help: "Whether an open pull request in the repository that builds this image already applies this upgrade. \"PR\" is an exact match on dependency and version; \"PR?\" bumps the same dependency to a different version, so it may not be this fix. \"-\" means none found; \"?\" means detection did not run." },
   { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f),
     help: "Open Jira tickets covering this image. \"-\" means no open ticket; \"?\" means Jira is not configured, so ticket state is unknown." },
 ];
@@ -951,6 +986,7 @@ function haystack(f) {
     (f.dimensions?.namespace || []).join(" "),
     (f.dimensions?.account || []).join(" "),
     upgradeText(f), fixPath(f),
+    f.in_flight ? `${f.in_flight.title} ${f.in_flight.repository}` : "",
     ticketsFor(f).map((t) => `${t.key} ${t.status}`).join(" "),
   ];
   return parts.filter(Boolean).join(" ").toLowerCase();

@@ -58,6 +58,57 @@ type RemediationConfig struct {
 
 	// Base tunes how a first-party image's base is found.
 	Base BaseImageConfig `yaml:"base"`
+
+	// InFlight configures detection of remediation that is already under way, so
+	// an upgrade with an open pull request can be told apart from one nobody has
+	// started. Disabled when Provider is empty.
+	InFlight InFlightConfig `yaml:"inFlight"`
+}
+
+// InFlightConfig describes where to look for open pull requests that would apply
+// an upgrade.
+//
+// Credentials are never configured here: the provider reads its token from the
+// environment, so a config file can be committed and a chart can ship without a
+// secret in a values file.
+type InFlightConfig struct {
+	// Provider is the pull request host. "azuredevops" today. Empty disables
+	// in-flight detection entirely.
+	Provider string `yaml:"provider"`
+	// Organisation is the provider account the projects live under.
+	Organisation string `yaml:"organisation"`
+	// Projects are the provider projects to search. Pull requests are listed per
+	// project, so this bounds the work: naming the projects that build images is
+	// enough, and naming none disables detection.
+	Projects []string `yaml:"projects"`
+	// Authors, when set, restricts matching to pull requests opened by these
+	// identities — the automation account a dependency bot uses. Empty means any
+	// author, which includes a person doing the upgrade by hand.
+	Authors []string `yaml:"authors"`
+	// BranchPrefixes, when set, restricts matching to pull requests from source
+	// branches with one of these prefixes (e.g. "renovate/"). Empty means any
+	// branch. Combined with Authors as an AND: both filters must pass.
+	BranchPrefixes []string `yaml:"branchPrefixes"`
+	// StaleAfterDays is how long an open pull request has to have been open before
+	// it counts as stalled rather than progress. 0 means never flag one as stale.
+	StaleAfterDays int `yaml:"staleAfterDays"`
+}
+
+// Enabled reports whether in-flight detection is configured well enough to run.
+// A provider with no projects cannot be searched, so it is not enabled: better
+// to do nothing visibly than to report "no pull request found" for every image
+// after searching nowhere.
+func (i InFlightConfig) Enabled() bool {
+	return i.Provider != "" && i.Organisation != "" && len(i.Projects) > 0
+}
+
+// Stale reports whether a pull request opened at t has been open long enough to
+// count as stalled.
+func (i InFlightConfig) Stale(age time.Duration) bool {
+	if i.StaleAfterDays <= 0 {
+		return false
+	}
+	return age >= time.Duration(i.StaleAfterDays)*24*time.Hour
 }
 
 // BaseImageConfig describes where an image records its base, and how far to follow
@@ -75,6 +126,15 @@ type BaseImageConfig struct {
 	// Used where the base reference is a floating tag, so "is it current" is a
 	// digest comparison rather than a version comparison.
 	DigestLabels []string `yaml:"digestLabels"`
+	// RepoLabels are the image config labels that record which source repository
+	// built this image, in preference order. There is no default: the OCI standard
+	// key names a project's source, and CI systems write the repository that ran
+	// the build, and only the second answers "would a pull request here rebuild
+	// this image".
+	//
+	// Without one of these labels present an image cannot be matched to a pull
+	// request at all, and is reported as unmatched rather than as having none.
+	RepoLabels []string `yaml:"repoLabels"`
 	// MaxDepth bounds how far a chain of first-party bases is followed — an image
 	// on a language base which is itself built on a runtime base. Defaults to 4.
 	// The walk always stops at the first base that is not first-party.
@@ -644,6 +704,12 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Remediation.Base.DigestLabels != nil {
 			cfg.Remediation.Base.DigestLabels = part.Remediation.Base.DigestLabels
+		}
+		if part.Remediation.Base.RepoLabels != nil {
+			cfg.Remediation.Base.RepoLabels = part.Remediation.Base.RepoLabels
+		}
+		if part.Remediation.InFlight.Provider != "" {
+			cfg.Remediation.InFlight = part.Remediation.InFlight
 		}
 		if part.Remediation.Base.MaxDepth != 0 {
 			cfg.Remediation.Base.MaxDepth = part.Remediation.Base.MaxDepth

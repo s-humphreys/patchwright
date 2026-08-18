@@ -59,12 +59,20 @@ type FindingView struct {
 	// RemediationChecked distinguishes "no upgrade found" from "we never looked".
 	// A consumer that skips findings without an upgrade MUST check this, or it
 	// will silently skip images whose versions simply could not be resolved.
-	RemediationChecked bool                `json:"remediation_checked"`
-	Upgrade            *UpgradeView        `json:"upgrade,omitempty"`
-	Liveness           *LivenessView       `json:"liveness,omitempty"`
-	Dimensions         map[string][]string `json:"dimensions"`
-	Labels             map[string][]string `json:"labels,omitempty"`
-	Vulns              []VulnView          `json:"vulns,omitempty"`
+	RemediationChecked bool         `json:"remediation_checked"`
+	Upgrade            *UpgradeView `json:"upgrade,omitempty"`
+	// InFlight is set when an open pull request would apply this finding's
+	// upgrade. Absent means no pull request was matched, which includes the case
+	// where in-flight detection did not run at all — consumers must not read its
+	// absence as "nobody is working on this".
+	InFlight *InFlightView `json:"in_flight,omitempty"`
+	// InFlightChecked distinguishes "no pull request found" from "we never looked".
+	// Always emitted: false is the meaningful value.
+	InFlightChecked bool                `json:"in_flight_checked"`
+	Liveness        *LivenessView       `json:"liveness,omitempty"`
+	Dimensions      map[string][]string `json:"dimensions"`
+	Labels          map[string][]string `json:"labels,omitempty"`
+	Vulns           []VulnView          `json:"vulns,omitempty"`
 }
 
 // LivenessView is emitted only when reconciliation ran, so output for
@@ -101,6 +109,22 @@ type UpgradeView struct {
 	Manager    string `json:"manager,omitempty"`
 	Source     string `json:"source,omitempty"`
 	SourcePath string `json:"source_path,omitempty"`
+}
+
+// InFlightView is remediation already under way for a finding.
+type InFlightView struct {
+	// Repository is the repository the pull request is in, which is the repository
+	// that builds this image.
+	Repository string    `json:"repository"`
+	Title      string    `json:"title"`
+	URL        string    `json:"url,omitempty"`
+	Author     string    `json:"author,omitempty"`
+	Opened     time.Time `json:"opened"`
+	OpenDays   int       `json:"open_days"`
+	// Exact is false when the pull request bumps the same dependency to a
+	// different version than the one recommended. Consumers MUST NOT treat a
+	// non-exact match as this upgrade being applied.
+	Exact bool `json:"exact"`
 }
 
 // VulnView is one CVE affecting an image.
@@ -202,6 +226,16 @@ func ToFindingView(f model.Finding) FindingView {
 			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,
 		}
 	}
+	var inflight *InFlightView
+	if f.InFlight != nil {
+		inflight = &InFlightView{
+			Repository: f.InFlight.Repository, Title: f.InFlight.Title,
+			URL: f.InFlight.URL, Author: f.InFlight.Author,
+			Opened:   f.InFlight.Opened,
+			OpenDays: int(f.InFlight.Age().Hours() / 24),
+			Exact:    f.InFlight.Exact,
+		}
+	}
 	return FindingView{
 		Image:              f.Image.Ref,
 		Registry:           f.Image.Registry,
@@ -228,6 +262,8 @@ func ToFindingView(f model.Finding) FindingView {
 		RemediationChecked: f.RemediationChecked,
 		Liveness:           liveness,
 		Upgrade:            upgrade,
+		InFlight:           inflight,
+		InFlightChecked:    f.InFlightChecked,
 		Dimensions:         f.Dimensions,
 		Labels:             f.Labels,
 		Vulns:              vulns,
