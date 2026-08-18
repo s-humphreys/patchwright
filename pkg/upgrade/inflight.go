@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
@@ -49,6 +50,15 @@ type InFlightEnricher struct {
 	Source PullRequestSource
 	// Inspector reads image labels, to find which repository builds an image.
 	Inspector ImageInspector
+	// Concurrency bounds registry calls in flight. Zero means the default.
+	Concurrency int
+}
+
+func (e *InFlightEnricher) concurrency() int {
+	if e.Concurrency > 0 {
+		return e.Concurrency
+	}
+	return defaultConcurrency
 }
 
 // EnrichImages implements the image enrichment stage. It never fails the run:
@@ -66,6 +76,14 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 		byRepo[key] = append(byRepo[key], pr)
 	}
 
+	// Label reads are registry round trips, one per image. Serially that is half an
+	// hour on an estate of this size, which makes the whole stage unusable; bounded
+	// concurrency keeps it to minutes without hammering the registry.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, e.concurrency())
+	repos := make(map[string]string, len(images))
+
 	matched, unmatchedRepo := 0, 0
 	for i := range images {
 		img := &images[i]
@@ -73,13 +91,34 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 		if img.Upgrade == nil || !img.Upgrade.Available {
 			continue // nothing to be in flight for
 		}
-		repo, err := e.buildRepo(ctx, img.Image.Ref)
-		if err != nil || repo == "" {
+		wg.Add(1)
+		go func(ref string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			repo, err := e.buildRepo(ctx, ref)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil || repo == "" {
+				return
+			}
+			repos[ref] = repo
+		}(img.Image.Ref)
+	}
+	wg.Wait()
+
+	for i := range images {
+		img := &images[i]
+		if img.Upgrade == nil || !img.Upgrade.Available {
+			continue
+		}
+		repo, ok := repos[img.Image.Ref]
+		if !ok {
 			unmatchedRepo++
 			continue
 		}
-		fl, ok := match(byRepo[strings.ToLower(repo)], *img.Upgrade)
-		if !ok {
+		fl, matchedOne := match(byRepo[strings.ToLower(repo)], *img.Upgrade)
+		if !matchedOne {
 			continue
 		}
 		img.InFlight = &fl
