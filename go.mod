@@ -6,7 +6,7 @@ go 1.26.0
 // (crypto/x509, mime, net/textproto, crypto/tls). Without it a build picks whatever
 // 1.26.x is to hand, which can silently be a vulnerable toolchain: govulncheck
 // reports four affected paths on 1.26.3.
-toolchain go1.26.6
+toolchain go1.27.0
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
