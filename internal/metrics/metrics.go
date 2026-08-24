@@ -332,9 +332,17 @@ func normalizeReason(reason string) string {
 	if reason == "" {
 		return "unknown"
 	}
-	if i := strings.IndexAny(reason, ".:"); i > 0 {
-		reason = reason[:i]
+	// Cut at the end of the first clause. The delimiter must be followed by a space
+	// or end the string: a bare "." also appears inside dotted identifiers, and
+	// splitting there turned "add one of org.opencontainers.image.base.name" into
+	// "add one of org", which reads as a different reason rather than a shortened one.
+	for _, d := range []string{". ", "; ", ": ", ", "} {
+		if i := strings.Index(reason, d); i > 0 {
+			reason = reason[:i]
+			break
+		}
 	}
+	reason = strings.TrimRight(reason, ".;:,")
 	const maxLen = 80
 	if len(reason) > maxLen {
 		// At a word boundary: cutting mid-word produced labels like "add one of org",
