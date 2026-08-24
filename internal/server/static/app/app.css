@@ -185,6 +185,10 @@ tbody tr.openable:hover, tbody tr.openable:focus-visible {
    somebody comparing two findings does not lose their place. */
 /* A column with a fixed head and one scrolling region. The head was sticky inside a
    scrolling panel, which left a strip of scrolled content visible above it. */
+/* display: flex beats the browser's own display: none for [hidden], so the attribute
+   has to be honoured explicitly. Without this the panel sits open and empty on every
+   page load, which is how it shipped. */
+.detail[hidden] { display: none; }
 .detail {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(46rem, 100%);
   display: flex; flex-direction: column; z-index: 20;

@@ -162,6 +162,21 @@ test('the panel lists CVEs worst first, and says when there are none to list', (
   closeDetail();
 });
 
+test('anything hidden by attribute stays hidden despite its own display rule', () => {
+  // An author rule setting `display` beats the browser's display:none for [hidden].
+  // The detail panel shipped stuck open and empty because of exactly this, so every
+  // selector that sets display needs a matching [hidden] rule.
+  const css = readFileSync(new URL('./app.css', import.meta.url), 'utf8');
+  const sets = new Set([...css.matchAll(/^([.#][\w-]+)\s*\{[^}]*\bdisplay:/gm)].map((m) => m[1]));
+  const guarded = new Set([...css.matchAll(/^([.#][\w-]+)\[hidden\]/gm)].map((m) => m[1]));
+  const toggled = ['.detail', '.tab-panel'];
+  for (const sel of toggled) {
+    if (sets.has(sel)) {
+      assert.ok(guarded.has(sel), `${sel} sets display but has no [hidden] rule`);
+    }
+  }
+});
+
 test('every stylesheet token it uses is defined', () => {
   // A CSS class used before it existed shipped twice. The same mistake with a custom
   // property fails silently in exactly the same way.
