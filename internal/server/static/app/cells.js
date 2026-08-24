@@ -241,7 +241,23 @@ export function urgencyCell(f) {
     .filter((s) => s === "exposed" || s === "kev")
     .map((s) => badge(SIGNAL_BADGES[s], s))
     .join(" ");
-  return `${priorityText(f)}${marks ? ` ${marks}` : ""}`;
+  // The rule that decided it, beneath the verdict. Without this the column is
+  // unreadable in the case that matters most: four tags of one image, identical
+  // counts, four different verdicts, because each runs in a different environment.
+  // The verdict alone looks arbitrary; the rule name says what the difference was.
+  return `${priorityText(f)}${marks ? ` ${marks}` : ""}` +
+    `<div class="sub">${esc(ruleName(f))}</div>`;
+}
+
+// ruleName pulls the rule out of the reason a policy recorded. Reasons read
+// `matched actionable rule "production-critical"`, and the quoted part is the half
+// worth showing in a cell this narrow.
+export function ruleName(f) {
+  const reason = (f.reasons || [])[0] || "";
+  const quoted = reason.match(/"([^"]+)"/);
+  if (quoted) return quoted[1];
+  if (reason) return reason;
+  return f.suppressed ? "suppressed" : "no rule matched";
 }
 
 // severityCell: criticals and highs, the two that drive decisions, as "3C/10H".

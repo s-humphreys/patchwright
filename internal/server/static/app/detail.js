@@ -216,6 +216,15 @@ export function initDetail() {
   document.addEventListener("keydown", (e) => {
     if (/** @type {any} */ (e).key === "Escape" && !$("#detail").hidden) closeDetail();
   });
+  // Clicking away closes it. The tables are excluded because they open panels
+  // themselves: their handlers run first, so closing here would immediately shut the
+  // panel that a click on another row had just opened.
+  document.addEventListener("click", (e) => {
+    if (/** @type {any} */ ($("#detail")).hidden) return;
+    const t = /** @type {any} */ (e.target);
+    if (t.closest("#detail") || t.closest("#findings") || t.closest("#cves")) return;
+    closeDetail();
+  });
 }
 
 /** openCVEDetail shows one CVE and every image carrying it. */

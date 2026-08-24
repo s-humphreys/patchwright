@@ -60,6 +60,22 @@ test('severity says "?" when the provider never assessed the image', () => {
   assert.match(col.get(finding({ counts: {} })), /0/);
 });
 
+test('urgency names the rule that decided it', () => {
+  // The case this exists for: four tags of one image with identical counts and four
+  // different verdicts, because each runs in a different environment. Without the
+  // rule the column looks arbitrary.
+  const prod = FINDING_COLUMNS[0].get(finding({
+    priority: 'high', reasons: ['matched actionable rule "production-critical"'],
+  }));
+  const dev = FINDING_COLUMNS[0].get(finding({
+    priority: 'low', reasons: ['matched actionable rule "any-critical"'],
+  }));
+  assert.match(prod, /production-critical/);
+  assert.match(dev, /any-critical/);
+  // Nothing recorded a reason: say so rather than leaving the cell looking complete.
+  assert.match(FINDING_COLUMNS[0].get(finding({ reasons: [] })), /no rule matched/);
+});
+
 test('the image cell carries its owner and namespace instead of two more columns', () => {
   const html = FINDING_COLUMNS[2].get(finding());
   assert.match(html, /reg\/app:1/);

@@ -183,20 +183,22 @@ tbody tr.openable:hover, tbody tr.openable:focus-visible {
 
 /* The detail panel. A side sheet rather than a modal: the queue stays visible, so
    somebody comparing two findings does not lose their place. */
+/* A column with a fixed head and one scrolling region. The head was sticky inside a
+   scrolling panel, which left a strip of scrolled content visible above it. */
 .detail {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(46rem, 100%);
-  overflow-y: auto; z-index: 20;
+  display: flex; flex-direction: column; z-index: 20;
   background: var(--card);
   border-left: 1px solid var(--line);
   box-shadow: -0.5rem 0 1.5rem rgba(0, 0, 0, 0.35);
-  padding: 1rem 1.25rem 3rem;
 }
 .detail-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
-  position: sticky; top: 0; padding: 0.25rem 0 0.75rem;
-  background: var(--card);
+  flex: 0 0 auto; padding: 1rem 1.25rem 0.75rem;
   border-bottom: 1px solid var(--line);
 }
+/* Only this scrolls, so nothing can appear above the head. */
+.detail-body { flex: 1 1 auto; overflow-y: auto; padding: 0 1.25rem 3rem; }
 .detail-title { font-size: 1.05em; word-break: break-all; }
 /* Sections are cards with their own rule, so the eye can tell where one subject ends
    and the next begins. Flat headings over flat rows read as one long list, which is
