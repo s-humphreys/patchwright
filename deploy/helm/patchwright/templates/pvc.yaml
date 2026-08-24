@@ -1,0 +1,25 @@
+{{- if and .Values.scan.cache.persistence.enabled (not .Values.scan.cache.persistence.existingClaim) }}
+{{- if not .Values.scan.enabled }}
+{{- fail "scan.cache.persistence.enabled needs scan.enabled: there is no Trivy cache to persist otherwise" }}
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "patchwright.fullname" . }}-trivy-cache
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+  annotations:
+    # Kept when the release is uninstalled: the point of the volume is to avoid
+    # re-downloading the DB, and a reinstall that starts empty defeats it. Delete it
+    # by hand if you want the space back.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.scan.cache.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.scan.cache.persistence.size }}
+  {{- with .Values.scan.cache.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
@@ -53,4 +55,77 @@ func NewTagLister() TagLister { return craneTagLister{} }
 
 func (craneTagLister) Tags(ctx context.Context, repo string) ([]string, error) {
 	return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(authn.DefaultKeychain))
+}
+
+// CachingInspector memoises label reads for the length of a run.
+//
+// The base resolver and the in-flight enricher both read the image config of every
+// first-party image, minutes apart, for different labels out of the same map. On an
+// estate of 700 images that is two full passes over the registry for one pass worth
+// of data.
+//
+// The cache is deliberately time-bounded rather than permanent. Entries are keyed by
+// reference, and a tag can be republished — an application tag rebuilt, a floating
+// base tag moved — so an entry that outlived the run would answer for an image that
+// has been superseded, which is a wrong answer rather than a slow one. The TTL only
+// has to cover a single assessment.
+//
+// Digests are not cached: they are the thing a floating-tag comparison is measuring,
+// and the saving is not where the cost is.
+type CachingInspector struct {
+	Inner ImageInspector
+	// TTL bounds how long a label read is reused. Zero means the default.
+	TTL time.Duration
+
+	mu      sync.Mutex
+	entries map[string]labelEntry
+}
+
+type labelEntry struct {
+	labels map[string]string
+	err    error
+	at     time.Time
+}
+
+// defaultInspectTTL comfortably covers one assessment (the slowest observed pass over
+// 700 images was four minutes) without spanning the next one.
+const defaultInspectTTL = 15 * time.Minute
+
+// NewCachingInspector wraps an inspector with a run-scoped label cache.
+func NewCachingInspector(inner ImageInspector) *CachingInspector {
+	return &CachingInspector{Inner: inner, entries: map[string]labelEntry{}}
+}
+
+func (c *CachingInspector) ttl() time.Duration {
+	if c.TTL > 0 {
+		return c.TTL
+	}
+	return defaultInspectTTL
+}
+
+// Labels returns the cached labels for a reference, reading through on a miss or an
+// expired entry.
+//
+// Failures are cached too, and for the same reason the successes are: an unreadable
+// image is unreadable for both callers, and retrying it per stage doubles the wait
+// for an answer that will not change within a run.
+func (c *CachingInspector) Labels(ctx context.Context, ref string) (map[string]string, error) {
+	c.mu.Lock()
+	e, ok := c.entries[ref]
+	fresh := ok && time.Since(e.at) < c.ttl()
+	c.mu.Unlock()
+	if fresh {
+		return e.labels, e.err
+	}
+
+	labels, err := c.Inner.Labels(ctx, ref)
+	c.mu.Lock()
+	c.entries[ref] = labelEntry{labels: labels, err: err, at: time.Now()}
+	c.mu.Unlock()
+	return labels, err
+}
+
+// Digest passes straight through: see the type comment.
+func (c *CachingInspector) Digest(ctx context.Context, ref string) (string, error) {
+	return c.Inner.Digest(ctx, ref)
 }

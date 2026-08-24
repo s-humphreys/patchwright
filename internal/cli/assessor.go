@@ -91,8 +91,12 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		// Base images first: for an image you build yourself, a newer tag of your own
 		// image is a release number rather than a fix, so the base has to be asked
 		// about before the tag source gets a chance to answer.
+		// One inspector shared by both stages: the base resolver and the in-flight
+		// matcher read the same image configs for different labels, so without this
+		// every first-party image is fetched twice per run.
+		inspector := upgrade.NewCachingInspector(upgrade.NewRegistryInspector())
 		if len(cfg.Remediation.FirstPartyRegistries) > 0 {
-			base := upgrade.NewBaseResolver(cfg.Remediation, upgrade.NewRegistryInspector(), upgrade.NewTagLister())
+			base := upgrade.NewBaseResolver(cfg.Remediation, inspector, upgrade.NewTagLister())
 			upgradeSources = append(upgradeSources, base)
 		}
 		reg := registry.New()
@@ -110,7 +114,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 				return nil, err
 			}
 			popts = append(popts, pipeline.WithInFlightEnricher(&upgrade.InFlightEnricher{
-				Cfg: cfg.Remediation, Source: src, Inspector: upgrade.NewRegistryInspector(),
+				Cfg: cfg.Remediation, Source: src, Inspector: inspector,
 			}))
 		}
 	}

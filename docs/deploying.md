@@ -78,6 +78,32 @@ helm install pw deploy/helm/patchwright \
 Trivy needs egress to its vuln DB (`ghcr.io/aquasecurity/trivy-db`) and, for
 `exploitSource: public`, to the CISA and FIRST feeds.
 
+## Persisting the Trivy database
+
+Trivy's vulnerability DB is several hundred MB and is downloaded on every pod start.
+`scan.cache.persistence.enabled` mounts a PVC at the cache directory so a reschedule
+or an upgrade does not pay for it again:
+
+```yaml
+scan:
+  enabled: true
+  cache:
+    persistence:
+      enabled: true
+      size: 2Gi
+      storageClass: managed-csi
+```
+
+The claim is kept when the release is uninstalled (`helm.sh/resource-policy: keep`),
+since a reinstall that starts empty defeats the point. `existingClaim` uses one you
+manage instead.
+
+Only the DB is persisted. Tag listings and digests are re-read every run on purpose:
+detecting that a floating tag moved is the whole basis of the base-image comparison,
+and a cached answer there would report "unchanged" indefinitely. Scan results are left
+to Trivy's own cache, which is keyed on the DB version, so a result can never outlive
+the data that produced it.
+
 ## Ticketing and metrics
 
 ```sh
