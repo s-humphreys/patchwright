@@ -93,6 +93,7 @@
   .medium { color: var(--medium); }
   .low { color: var(--low); }
   .unknown { color: var(--muted); }
+  .muted { color: var(--muted); }
   /* Actionability, coloured consistently across the three columns that describe it:
      green means someone can do it now, amber means it is real work applied
      elsewhere, grey means there is nothing to do or nothing known. */
@@ -269,7 +270,14 @@ function badge(spec, fallbackLabel) {
 function upgradeCell(f) {
   const u = f.upgrade;
   if (!u || !u.resolved || !u.available) return esc(upgradeText(f));
-  const parts = [badge(KIND_BADGES[u.kind], u.kind)];
+  // When something else owns the version, that badge leads: "who applies this" is
+  // the more useful answer than "what did we compare", and an image badge in front
+  // of a chart-owned upgrade reads as though the tag were the place to change it.
+  const parts = [];
+  if (!u.actionable) {
+    parts.push(badge(MANAGED_BADGES[(u.managed || "").toLowerCase()], u.managed || "managed"));
+  }
+  parts.push(badge(KIND_BADGES[u.kind], u.kind));
   let detail = `${u.current} → ${u.latest}`;
   if (u.kind === "base") {
     detail = u.comparison === "digest" && u.source
@@ -277,9 +285,10 @@ function upgradeCell(f) {
       : `${u.name} ${u.current} → ${u.latest}`;
   }
   parts.push(esc(detail));
-  if (!u.actionable) {
-    const key = (u.managed || "").toLowerCase();
-    parts.push(badge(MANAGED_BADGES[key], u.managed || "managed"));
+  // Name the thing that owns it where we know it: "helm" says the tag is the wrong
+  // place to look, "flux-operator-0.33.0" says where to look instead.
+  if (!u.actionable && (u.manager || u.source)) {
+    parts.push(`<span class="ticket-status">${esc(u.manager || u.source)}</span>`);
   }
   return parts.join(" ");
 }
@@ -373,6 +382,31 @@ function inFlightSort(f) {
 // Provider counts are only meaningful if the provider actually assessed the image.
 const count = (f, sev) => (f.provider_assessed ? (f.counts?.[sev] ?? 0) : "?");
 const epss = (f) => (f.exploit_checked ? maxEPSS(f).toFixed(2) : "-");
+
+// The scan provider's own composite ranking, highest across the image's CVEs.
+// Deliberately its own column rather than folded into EPSS: Rapid7's scale runs to
+// roughly 1000 and EPSS is a probability, so one column holding both would be a
+// column of numbers that mean different things.
+function maxRisk(f) {
+  let top = 0;
+  for (const v of f.vulns || []) {
+    if ((v.risk_score || 0) > top) top = v.risk_score;
+  }
+  return top;
+}
+
+// Three states, kept apart: a score, "-" for checked but unscored by this provider,
+// and "?" for no exploit source at all.
+function riskCell(f) {
+  if (!f.exploit_checked) {
+    return '<span class="unknown" title="No exploit source ran, so no risk score was gathered.">?</span>';
+  }
+  const top = maxRisk(f);
+  if (!top) {
+    return '<span class="muted" title="The scan provider returned no risk score for this image\u2019s CVEs \u2014 either it does not score them, or it has never seen them.">-</span>';
+  }
+  return esc(Math.round(top).toString());
+}
 const live = (f) => (f.liveness ? (f.liveness.live ? "yes" : "no") : "?");
 // cell renders a multi-value dimension compactly: the first value, then how many
 // more, with the full list on hover and one click to expand. Joining seven
@@ -637,6 +671,9 @@ const FINDING_COLUMNS = [
   { label: "EPSS", num: true, get: (f) => esc(epss(f)),
     sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN),
     help: "Highest EPSS across this image's CVEs: the predicted probability of exploitation in the next 30 days (0-1). A CVSS 10 at EPSS 0.008 is less urgent than a CVSS 5 at 0.93. \"-\" means exploit intel was not gathered." },
+  { label: "Risk", num: true, get: (f) => riskCell(f),
+    sort: (f) => (f.exploit_checked ? maxRisk(f) : UNKNOWN),
+    help: "The scan provider's own composite risk score, highest across this image's CVEs (Rapid7's runs to roughly 1000). NOT comparable with EPSS, which is a probability: this is a severity-and-exposure weighting. \"-\" means the provider scored none of these CVEs; \"?\" means no exploit source ran." },
   { label: "Live", get: (f) => esc(live(f)),
     sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0),
     help: "Whether this image is running in a cluster right now. \"?\" means no live reconciliation ran." },

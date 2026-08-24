@@ -153,7 +153,7 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources map[string]kustSource, fetch crFetcher, crCache map[string]*unstructured.Unstructured) (enrich.DeployContext, bool) {
 	for _, l := range helmToolkitLabels {
 		if meta.Labels[l] != "" {
-			return enrich.DeployContext{Mechanism: "helm", Actionable: false}, true
+			return helmContext(meta.Labels), true
 		}
 	}
 	if name := meta.Labels["kustomize.toolkit.fluxcd.io/name"]; name != "" {
@@ -193,7 +193,7 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 	if by := meta.Labels["app.kubernetes.io/managed-by"]; by != "" {
 		switch strings.ToLower(by) {
 		case "helm":
-			return enrich.DeployContext{Mechanism: "helm", Actionable: false}, true
+			return helmContext(meta.Labels), true
 		case "kubectl", "kustomize":
 			// applied directly — treat as manifest below.
 		default:
@@ -376,4 +376,26 @@ func ownerGroupIsCustom(apiVersion string) bool {
 	default:
 		return strings.Contains(group, ".")
 	}
+}
+
+// helmContext names the Helm release and chart that own a workload's version.
+//
+// Helm's own labels carry both, and they are the only place to find them when the
+// release was not created by a Flux HelmRelease — bootstrapped components (the Flux
+// operator itself, anything installed by Terraform or the CLI) have no HelmRelease
+// object to read. Without this the report can only say "helm", which tells someone
+// the image tag is not the place to change it but not where is.
+func helmContext(labels map[string]string) enrich.DeployContext {
+	dc := enrich.DeployContext{Mechanism: "helm", Actionable: false}
+	// helm.sh/chart is "<chart>-<version>", which names the chart to bump and the
+	// version it is on. Flux's own label names the HelmRelease instead.
+	if chart := labels["helm.sh/chart"]; chart != "" {
+		dc.Manager = chart
+	} else if hr := labels["helm.toolkit.fluxcd.io/name"]; hr != "" {
+		dc.Manager = hr
+	}
+	if release := labels["app.kubernetes.io/instance"]; release != "" {
+		dc.Source = release
+	}
+	return dc
 }
