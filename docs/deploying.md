@@ -78,6 +78,27 @@ helm install pw deploy/helm/patchwright \
 Trivy needs egress to its vuln DB (`ghcr.io/aquasecurity/trivy-db`) and, for
 `exploitSource: public`, to the CISA and FIRST feeds.
 
+## CronJob mode
+
+`server.enabled: false` runs one assessment per schedule instead of a long-lived
+server, writing findings to the log:
+
+```yaml
+server:
+  enabled: false
+cronjob:
+  schedule: "0 7 * * *"
+  format: ndjson       # one finding per line for a log pipeline
+```
+
+No API, no status page and no metrics: a CronJob has exited by the time anything
+scrapes it, and the chart refuses to render a monitor alongside one. Auto ticketing is
+refused too, since `--auto-ticket` is a server flag and a CronJob would report a ticket
+plan it never applies.
+
+This is also where persisting the Trivy database earns its keep, because every run
+starts a fresh pod.
+
 ## Persisting the Trivy database
 
 Trivy's vulnerability DB is several hundred MB and is downloaded on every pod start.
