@@ -101,6 +101,20 @@
   .act-none { color: var(--idle); }
   .act-unknown { color: var(--muted); font-style: italic; }
   .ticket-status { color: var(--muted); font-size: 0.9em; }
+  /* Kind badges. One glyph per kind of change, used everywhere that kind appears, so
+     "what sort of upgrade is this" is answerable at a glance rather than by reading.
+     The glyph never stands alone: it is paired with the word, because a symbol nobody
+     has been taught is decoration. */
+  .badge { display: inline-flex; gap: 0.25em; align-items: baseline; padding: 0 0.4em;
+           border: 1px solid currentColor; border-radius: 0.6em; font-size: 0.82em;
+           line-height: 1.5; white-space: nowrap; opacity: 0.95; }
+  .badge .g { font-size: 0.95em; }
+  .badge-base { color: var(--accent, #7aa2f7); }
+  .badge-chart { color: #56b6c2; }
+  .badge-image { color: var(--muted); }
+  .badge-helm { color: var(--high); }
+  .badge-operator { color: var(--high); }
+  .badge-other { color: var(--muted); }
   /* Class rows are totals for the teams indented beneath them. */
   tr.rollup td { font-weight: 600; }
   td.indent { padding-left: 1.6rem; }
@@ -218,6 +232,58 @@ function fixPath(f) {
   return u.actionable ? "direct" : "managed";
 }
 
+// One glyph per kind of change. Helm's wheel for a chart, layers for a base image,
+// a cog for a controller that owns the version, a hexagon for a plain image tag.
+const KIND_BADGES = {
+  base:  { glyph: "\u25a4", label: "base",  cls: "badge-base",
+           help: "The fix is in the base image this is built on: rebuild on a newer base." },
+  chart: { glyph: "\u2388", label: "chart", cls: "badge-chart",
+           help: "The version comes from a Helm chart, so the bump is applied to the chart." },
+  image: { glyph: "\u2b21", label: "image", cls: "badge-image",
+           help: "A newer tag of this image itself." },
+};
+
+// Who owns the version, when it is not this image's own tag. Same vocabulary as the
+// upgrade kinds so the two read as one system.
+const MANAGED_BADGES = {
+  helm:      { glyph: "\u2388", label: "helm",      cls: "badge-helm",
+               help: "A Helm chart owns this tag: bump the chart, not the image." },
+  operator:  { glyph: "\u2699", label: "operator",  cls: "badge-operator",
+               help: "An operator owns this tag: upgrade the operator or its custom resource." },
+  kustomize: { glyph: "\u25c7", label: "kustomize", cls: "badge-other",
+               help: "The tag is set in Kustomize overlays." },
+  manifest:  { glyph: "\u25c7", label: "manifest",  cls: "badge-other",
+               help: "The tag is set directly in a manifest." },
+};
+
+function badge(spec, fallbackLabel) {
+  const b = spec || { glyph: "\u25cb", label: fallbackLabel || "other", cls: "badge-other",
+                      help: "Version owned elsewhere." };
+  return `<span class="badge ${b.cls}" title="${esc(b.help)}">` +
+         `<span class="g" aria-hidden="true">${b.glyph}</span>${esc(b.label)}</span>`;
+}
+
+// upgradeCell is the rendered form: badges for the kind and, where something else
+// owns the version, for the owner. upgradeText stays the plain-text form, because it
+// is also the sort key and what the search box matches.
+function upgradeCell(f) {
+  const u = f.upgrade;
+  if (!u || !u.resolved || !u.available) return esc(upgradeText(f));
+  const parts = [badge(KIND_BADGES[u.kind], u.kind)];
+  let detail = `${u.current} → ${u.latest}`;
+  if (u.kind === "base") {
+    detail = u.comparison === "digest" && u.source
+      ? `${u.source} moved ${u.current} → ${u.latest}`
+      : `${u.name} ${u.current} → ${u.latest}`;
+  }
+  parts.push(esc(detail));
+  if (!u.actionable) {
+    const key = (u.managed || "").toLowerCase();
+    parts.push(badge(MANAGED_BADGES[key], u.managed || "managed"));
+  }
+  return parts.join(" ");
+}
+
 function upgradeText(f) {
   const u = f.upgrade;
   if (!u || !u.resolved) return "?";
@@ -266,6 +332,11 @@ function upgradeTitle(f) {
   }
   if (!u.available) parts.push("Already on the latest available version.");
   if (u.managed) parts.push(`Version owned by ${u.manager || u.managed}.`);
+  // Where the change lands. This used to be a second `title` on the column, which
+  // silently overrode this whole function, so the explanation never showed.
+  if (u.source) {
+    parts.push(`Change in ${u.source}${u.source_path ? ` path ${u.source_path}` : ""}.`);
+  }
   return parts.join(" ");
 }
 
@@ -573,10 +644,9 @@ const FINDING_COLUMNS = [
     sort: (f) => FIX_RANK[fixPath(f)] ?? 0,
     help: "Whether there is a version to move to, and where the change is applied: direct, managed (via a chart or operator), none (already latest), unknown (could not resolve), ? (detection did not run).",
     title: (f) => FIX_HELP[fixPath(f)] || "" },
-  { label: "Upgrade", cls: fixClass, get: (f) => esc(upgradeText(f)), title: upgradeTitle,
+  { label: "Upgrade", cls: fixClass, get: (f) => upgradeCell(f), title: upgradeTitle,
     sort: (f) => upgradeText(f),
-    help: "The version move available. Chart versions are prefixed \"chart\" because they are the chart's, not the image tag shown in Image.",
-    title: (f) => (f.upgrade?.source ? `change in ${f.upgrade.source}${f.upgrade.source_path ? " path " + f.upgrade.source_path : ""}` : "") },
+    help: "The version move available, badged by what kind of change it is: base image, Helm chart, or image tag. A second badge names whatever owns the version when it is not this image's own tag.", },
   { label: "In flight", get: (f) => inFlightCell(f), sort: (f) => inFlightSort(f),
     help: "Whether an open pull request in the repository that builds this image already applies this upgrade. \"PR\" is an exact match on dependency and version; \"PR?\" bumps the same dependency to a different version, so it may not be this fix. \"-\" means none found; \"?\" means detection did not run." },
   { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f),
