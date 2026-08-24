@@ -6,6 +6,11 @@ image:
 # patchwright runs as a long-lived Deployment (`serve`) exposing the read-only
 # assessment API (findings/owners/summary), refreshed on an interval.
 server:
+  # Deploy the long-running server. Set false to run as a CronJob instead: one
+  # assessment per schedule, written to the log, with no API and no status page.
+  # Metrics need the server, since a CronJob has exited by the time anything scrapes
+  # it.
+  enabled: true
   # How often the server re-runs the assessment.
   interval: 1h
   port: 8080
@@ -25,6 +30,22 @@ server:
   auth:
     secretName: ""      # e.g. "patchwright-api"; empty leaves the API open
     secretKey: token
+
+# Used when server.enabled is false.
+cronjob:
+  schedule: "0 7 * * *"
+  # Forbid rather than Allow: two assessments of the same estate at once duplicate
+  # every registry call for one answer, and a shared cache PVC has a single writer.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # A run that hangs on an unreachable registry should be killed rather than block
+  # the next schedule. Generous by default: a first run over a large estate with
+  # scanning on can take a while.
+  activeDeadlineSeconds: 3600
+  backoffLimit: 1
+  # ndjson so each finding is one line for a log pipeline. "table" is for humans.
+  format: ndjson
 
 # Prometheus metrics, prefixed patchwright_, served at /metrics in server mode.
 #
@@ -206,7 +227,31 @@ scan:
   enabled: false
   vulnSource: trivy
   # Also annotate CVEs with EPSS + CISA KEV (needs egress to first.org + cisa.gov).
-  exploitSource: ""          # set to "public" to enable
+  # Comma-separated: "public" gives EPSS + KEV, "rapid7" adds the platform's own
+  # risk score. They are not interchangeable — see docs/scanning.md.
+  exploitSource: ""          # e.g. "public" or "public,rapid7"
+
+  # Trivy's vulnerability DB is several hundred MB and is downloaded on every pod
+  # start. On an ephemeral volume that means every CronJob run pays for it.
+  #
+  # Persisting it is safe: the DB is immutable per version and Trivy keys its own
+  # result cache on the DB version, so a cached result can never outlive the data
+  # that produced it. Nothing else is cached here — tag listings and digests are
+  # deliberately re-read, since detecting that they moved is the point.
+  cache:
+    persistence:
+      # Off by default: the chart should not require storage to work. In server mode
+      # the emptyDir already survives container restarts, so this buys the DB download
+      # back across rescheduling, upgrades and node drains. In CronJob mode every run
+      # starts a fresh pod, so it pays for itself immediately.
+      enabled: false
+      # Reuse a claim you manage yourself instead of letting the chart create one.
+      existingClaim: ""
+      size: 2Gi
+      storageClass: ""
+      # ReadWriteOnce is right for a single writer. There is only ever one — the
+      # Deployment runs one replica, and the CronJob sets concurrencyPolicy: Forbid.
+      accessMode: ReadWriteOnce
 
 registryAuth:
   # Credentials for Trivy to pull PRIVATE images. Use your cloud's workload

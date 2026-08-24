@@ -27,6 +27,7 @@
     "scanned": false,
     "exploit_checked": false,
     "remediation_checked": false,
+    "in_flight_checked": false,
     "dimensions": {
       "account": [
         "Development US",
@@ -81,6 +82,7 @@
     "scanned": false,
     "exploit_checked": false,
     "remediation_checked": false,
+    "in_flight_checked": false,
     "dimensions": {
       "account": [
         "Production UK"
@@ -131,6 +133,7 @@
     "scanned": false,
     "exploit_checked": false,
     "remediation_checked": false,
+    "in_flight_checked": false,
     "dimensions": {
       "account": [
         "Development UK"
@@ -181,6 +184,7 @@
     "scanned": false,
     "exploit_checked": false,
     "remediation_checked": false,
+    "in_flight_checked": false,
     "dimensions": {
       "account": [
         "Production UK"
@@ -231,6 +235,7 @@
     "scanned": false,
     "exploit_checked": false,
     "remediation_checked": false,
+    "in_flight_checked": false,
     "dimensions": {
       "account": [
         "Production UK"

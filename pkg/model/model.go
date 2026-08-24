@@ -107,6 +107,15 @@ type Vulnerability struct {
 	// Vulnerabilities catalog (exploited in the wild).
 	EPSS float64
 	KEV  bool
+	// RiskScore is a scanner's own composite ranking for this CVE, on whatever
+	// scale that scanner uses (Rapid7's is roughly 0..1000). Deliberately kept
+	// apart from EPSS: EPSS is a calibrated probability, this is a weighting, and
+	// a rule thresholding one at 0.5 would fire on every CVE if given the other.
+	// Zero means unknown, since no scanner scores a real CVE at zero.
+	RiskScore float64
+	// ExploitKnown reports that the scanner has a public exploit on record for
+	// this CVE. Weaker than KEV, which is confirmed exploitation in the wild.
+	ExploitKnown bool
 }
 
 // Counts holds aggregate vulnerability counts keyed by severity name. A map
@@ -206,6 +215,31 @@ type Occurrence struct {
 	Live       bool
 }
 
+// InFlight is remediation somebody has already started: an open pull request that
+// would apply this upgrade.
+//
+// A finding with one is not work waiting on a decision, it is work waiting on a review.
+// Raising a ticket for it duplicates a queue that already exists, and the useful signal
+// is the opposite one — a fix that has been sitting in review for weeks.
+type InFlight struct {
+	// Repository is the repository the pull request is in, which is also the
+	// repository that builds this image. A pull request only remediates the image
+	// built from it; one that bumps a shared base image does not fix the images
+	// consuming that base, which still have to rebuild.
+	Repository string
+	Title      string
+	URL        string
+	Author     string
+	Opened     time.Time
+	// Exact is true when both the dependency and the target version matched. When
+	// false the dependency matched but the version did not, so something is being
+	// worked on and it may not be this: consumers must not treat it as remediation.
+	Exact bool
+}
+
+// Age reports how long the pull request has been open.
+func (i InFlight) Age() time.Duration { return time.Since(i.Opened) }
+
 // AssessedImage is the dedupe unit: one image plus every occurrence of it.
 type AssessedImage struct {
 	Image       Image
@@ -219,6 +253,18 @@ type AssessedImage struct {
 	// private image with no credentials). A failed scan does not fail the run.
 	Scanned   bool
 	ScanError string
+
+	// InFlight is set when an open pull request would apply this image's upgrade.
+	// InFlightChecked reports whether detection ran, so a nil InFlight can be told
+	// apart from "nobody has started this".
+	InFlight        *InFlight
+	InFlightChecked bool
+	// InFlightReason is set when detection ran but this image could never be
+	// matched — it records no build repository, so no pull request can be tied to
+	// it. Distinct from a nil InFlight with no reason, which means the repository
+	// was known and no pull request was found. "Cannot be matched" is a build
+	// pipeline fix; "no pull request" is work nobody has started.
+	InFlightReason string
 
 	// ExploitChecked is true once an exploit source has run, so consumers can
 	// distinguish "0 known-exploited CVEs" from "exploit intel not gathered".
@@ -264,6 +310,19 @@ type Upgrade struct {
 	// be read as "already on the latest version" — an unreachable registry
 	// otherwise reports every image it holds as up to date.
 	Resolved bool
+	// Comparison says how the verdict was reached: "version" when tags were
+	// compared, "digest" when the reference is a floating tag with no version and
+	// the digest it resolves to was compared instead.
+	//
+	// Worth stating because it changes what the numbers mean. A digest comparison
+	// reports two opaque hashes, so "1e37a823 -> c4b29bf3" is only intelligible
+	// alongside the tag that moved.
+	Comparison string
+	// Reason explains an unresolved upgrade, in terms a reader can act on. "We
+	// could not find out" is only useful with the "because": an unreadable registry
+	// and an image that never recorded its base need different people to do
+	// different things, and both are fixable once named.
+	Reason string
 
 	// Actionable reports whether the upgrade can be applied directly at this
 	// level. A newer image tag for a workload managed by a Helm chart or an
@@ -307,6 +366,12 @@ type Finding struct {
 	// detection ran, so a nil Upgrade can be told apart from an unresolved one.
 	Upgrade            *Upgrade
 	RemediationChecked bool
+	// InFlight is set when an open pull request would apply that upgrade.
+	// InFlightChecked reports whether detection ran, and InFlightReason why an
+	// image could never be matched.
+	InFlight        *InFlight
+	InFlightChecked bool
+	InFlightReason  string
 
 	Actionable bool
 	Suppressed bool

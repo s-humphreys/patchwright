@@ -1,0 +1,50 @@
+{{- if not .Values.server.enabled }}
+{{- if .Values.ticketing.autoTicket }}
+{{- fail "ticketing.autoTicket needs server.enabled: --auto-ticket is a server flag, so a CronJob would report a ticket plan and never apply it" }}
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "patchwright.fullname" . }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronjob.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.cronjob.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "patchwright.labels" . | nindent 12 }}
+            {{- if .Values.registryAuth.azure.workloadIdentity.enabled }}
+            azure.workload.identity/use: "true"
+            {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "patchwright.serviceAccountName" . }}
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            {{- include "patchwright.container" (dict "root" . "command" "assess" "remediation" .Values.reconcile.remediation "ports" false "modeArgs" (list (printf "--format=%s" .Values.cronjob.format))) | nindent 12 }}
+          volumes:
+            {{- include "patchwright.volumes" (dict "root" .) | nindent 12 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

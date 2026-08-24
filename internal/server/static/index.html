@@ -35,6 +35,19 @@
   .brand { display: flex; align-items: center; gap: 0.5rem; }
   .logo { display: block; }
   .meta { color: var(--muted); font-size: 0.82rem; }
+  /* One panel for every data gap. Quiet by default: a page that opens with three
+     paragraphs of caveats buries the queue it exists to show. */
+  .gaps { margin: 0.9rem 0; }
+  .gaps-quiet {
+    padding: 0.6rem 0.9rem; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card);
+  }
+  .gaps-title { display: flex; align-items: baseline; gap: 0.2rem; margin-bottom: 0.35rem; }
+  .gap { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; margin: 0.2rem 0; }
+  .gap-count { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  /* Severe gaps change what the queue means; the rest merely trim it. */
+  .gap-severe .gap-count { color: var(--urgent); }
+  .gap-detail { grid-column: 2; margin: 0.25rem 0 0.5rem; opacity: 0.85; font-size: 0.86rem; }
   .reasons { margin-top: 0.6rem; }
   .reasons-head { font-weight: 600; }
   .reasons ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
@@ -80,6 +93,7 @@
   .medium { color: var(--medium); }
   .low { color: var(--low); }
   .unknown { color: var(--muted); }
+  .muted { color: var(--muted); }
   /* Actionability, coloured consistently across the three columns that describe it:
      green means someone can do it now, amber means it is real work applied
      elsewhere, grey means there is nothing to do or nothing known. */
@@ -88,6 +102,20 @@
   .act-none { color: var(--idle); }
   .act-unknown { color: var(--muted); font-style: italic; }
   .ticket-status { color: var(--muted); font-size: 0.9em; }
+  /* Kind badges. One glyph per kind of change, used everywhere that kind appears, so
+     "what sort of upgrade is this" is answerable at a glance rather than by reading.
+     The glyph never stands alone: it is paired with the word, because a symbol nobody
+     has been taught is decoration. */
+  .badge { display: inline-flex; gap: 0.25em; align-items: baseline; padding: 0 0.4em;
+           border: 1px solid currentColor; border-radius: 0.6em; font-size: 0.82em;
+           line-height: 1.5; white-space: nowrap; opacity: 0.95; }
+  .badge .g { font-size: 0.95em; }
+  .badge-base { color: var(--accent, #7aa2f7); }
+  .badge-chart { color: #56b6c2; }
+  .badge-image { color: var(--muted); }
+  .badge-helm { color: var(--high); }
+  .badge-operator { color: var(--high); }
+  .badge-other { color: var(--muted); }
   /* Class rows are totals for the teams indented beneath them. */
   tr.rollup td { font-weight: 600; }
   td.indent { padding-left: 1.6rem; }
@@ -205,19 +233,186 @@ function fixPath(f) {
   return u.actionable ? "direct" : "managed";
 }
 
+// One glyph per kind of change. Helm's wheel for a chart, layers for a base image,
+// a cog for a controller that owns the version, a hexagon for a plain image tag.
+const KIND_BADGES = {
+  base:  { glyph: "\u25a4", label: "base",  cls: "badge-base",
+           help: "The fix is in the base image this is built on: rebuild on a newer base." },
+  chart: { glyph: "\u2388", label: "chart", cls: "badge-chart",
+           help: "The version comes from a Helm chart, so the bump is applied to the chart." },
+  image: { glyph: "\u2b21", label: "image", cls: "badge-image",
+           help: "A newer tag of this image itself." },
+};
+
+// Who owns the version, when it is not this image's own tag. Same vocabulary as the
+// upgrade kinds so the two read as one system.
+const MANAGED_BADGES = {
+  helm:      { glyph: "\u2388", label: "helm",      cls: "badge-helm",
+               help: "A Helm chart owns this tag: bump the chart, not the image." },
+  operator:  { glyph: "\u2699", label: "operator",  cls: "badge-operator",
+               help: "An operator owns this tag: upgrade the operator or its custom resource." },
+  kustomize: { glyph: "\u25c7", label: "kustomize", cls: "badge-other",
+               help: "The tag is set in Kustomize overlays." },
+  manifest:  { glyph: "\u25c7", label: "manifest",  cls: "badge-other",
+               help: "The tag is set directly in a manifest." },
+};
+
+function badge(spec, fallbackLabel) {
+  const b = spec || { glyph: "\u25cb", label: fallbackLabel || "other", cls: "badge-other",
+                      help: "Version owned elsewhere." };
+  return `<span class="badge ${b.cls}" title="${esc(b.help)}">` +
+         `<span class="g" aria-hidden="true">${b.glyph}</span>${esc(b.label)}</span>`;
+}
+
+// upgradeCell is the rendered form: badges for the kind and, where something else
+// owns the version, for the owner. upgradeText stays the plain-text form, because it
+// is also the sort key and what the search box matches.
+function upgradeCell(f) {
+  const u = f.upgrade;
+  if (!u || !u.resolved || !u.available) return esc(upgradeText(f));
+  // When something else owns the version, that badge leads: "who applies this" is
+  // the more useful answer than "what did we compare", and an image badge in front
+  // of a chart-owned upgrade reads as though the tag were the place to change it.
+  const parts = [];
+  if (!u.actionable) {
+    parts.push(badge(MANAGED_BADGES[(u.managed || "").toLowerCase()], u.managed || "managed"));
+  }
+  parts.push(badge(KIND_BADGES[u.kind], u.kind));
+  let detail = `${u.current} → ${u.latest}`;
+  if (u.kind === "base") {
+    detail = u.comparison === "digest" && u.source
+      ? `${u.source} moved ${u.current} → ${u.latest}`
+      : `${u.name} ${u.current} → ${u.latest}`;
+  }
+  parts.push(esc(detail));
+  // Name the thing that owns it where we know it: "helm" says the tag is the wrong
+  // place to look, "flux-operator-0.33.0" says where to look instead.
+  if (!u.actionable && (u.manager || u.source)) {
+    parts.push(`<span class="ticket-status">${esc(u.manager || u.source)}</span>`);
+  }
+  return parts.join(" ");
+}
+
 function upgradeText(f) {
   const u = f.upgrade;
   if (!u || !u.resolved) return "?";
   if (!u.available) return "-";
-  let s = `${u.current} -> ${u.latest}`;
+  let s = `${u.current} → ${u.latest}`;
   if (u.kind === "chart") s = "chart " + s;
+  // Named for a base upgrade: a bare version range on a first-party image reads as
+  // the application's own version moving, which is the confusion this exists to
+  // remove. What moved is the base, and which base is what the rebuild points at.
+  if (u.kind === "base") {
+    // A digest comparison names the tag: two opaque hashes say nothing, whereas
+    // "…/dotnet/aspnet:10.0-alpine moved" points at the line in the Dockerfile.
+    s = u.comparison === "digest" && u.source
+      ? `base ${u.source} moved ${u.current} → ${u.latest}`
+      : `base ${u.name} ${u.current} → ${u.latest}`;
+  }
   if (!u.actionable) s += ` (${u.managed || "managed"})`;
   return s;
+}
+
+// upgradeTitle puts the detail behind a hover: the full base reference, or the reason
+// a lookup could not answer. "?" with no explanation is the least useful thing a
+// column can say, and the reason is usually the actionable part — "this image records
+// no base" is a build-system fix somebody can make today.
+function upgradeTitle(f) {
+  const u = f.upgrade;
+  if (!u) {
+    return f.remediation_checked
+      ? "No upgrade information for this image."
+      : "Upgrade detection did not run (no --remediation).";
+  }
+  if (!u.resolved) {
+    return u.reason
+      ? `Could not determine an upgrade: ${u.reason}`
+      : "Could not determine an upgrade, and no reason was given.";
+  }
+  const parts = [];
+  if (u.kind === "base") {
+    parts.push(`The base image ${u.source || u.name} is what carries these CVEs;` +
+      " the fix is to rebuild on a newer one.");
+    if (u.comparison === "digest") {
+      parts.push("That base is a floating tag, so there is no version to compare:" +
+        " the digest it resolves to has changed since this image was built, and a" +
+        " rebuild would pick it up.");
+    }
+  }
+  if (!u.available) parts.push("Already on the latest available version.");
+  if (u.managed) parts.push(`Version owned by ${u.manager || u.managed}.`);
+  // Where the change lands. This used to be a second `title` on the column, which
+  // silently overrode this whole function, so the explanation never showed.
+  if (u.source) {
+    parts.push(`Change in ${u.source}${u.source_path ? ` path ${u.source_path}` : ""}.`);
+  }
+  return parts.join(" ");
+}
+
+// inFlightCell reports whether somebody has already opened a pull request that
+// applies this upgrade. "?" means in-flight detection did not run, which is a
+// different answer from "-": absence of a pull request is only news if we looked.
+function inFlightCell(f) {
+  if (!f.in_flight_checked) {
+    return '<span class="unknown" title="In-flight detection did not run, so it is not known whether anyone has started this.">?</span>';
+  }
+  const p = f.in_flight;
+  // "Cannot be matched" is not "nobody has started this". An image that records no
+  // build repository can never match any pull request, and the fix is a label in its
+  // build pipeline — so it must not render as an ordinary absence.
+  if (!p && f.in_flight_reason) {
+    return `<span class="act-unknown" title="${esc(f.in_flight_reason)}">n/a</span>`;
+  }
+  if (!p) return '<span class="muted" title="No open pull request in the repository that builds this image applies this upgrade.">-</span>';
+  const days = p.open_days;
+  const label = p.exact ? `PR ${days}d` : `PR? ${days}d`;
+  const why = p.exact
+    ? `${p.title} — open ${days}d in ${p.repository}. This applies the recommended version, so the fix is in review rather than unstarted.`
+    : `${p.title} — open ${days}d in ${p.repository}. This bumps the same dependency to a different version, so it may not apply this upgrade.`;
+  const cls = p.exact ? "act-direct" : "act-unknown";
+  return p.url
+    ? `<a class="${cls}" href="${esc(p.url)}" target="_blank" rel="noreferrer" title="${esc(why)}">${esc(label)}</a>`
+    : `<span class="${cls}" title="${esc(why)}">${esc(label)}</span>`;
+}
+
+// Sort key: an exact match outranks a possible one, both outrank no pull request,
+// and "did not look" sorts to the bottom in either direction. Within a rank, the
+// longest-open pull request comes first: a fix stuck in review for three weeks is
+// the one worth chasing.
+function inFlightSort(f) {
+  if (!f.in_flight_checked) return UNKNOWN;
+  if (!f.in_flight) return 0;
+  return (f.in_flight.exact ? 2000000 : 1000000) + (f.in_flight.open_days || 0);
 }
 
 // Provider counts are only meaningful if the provider actually assessed the image.
 const count = (f, sev) => (f.provider_assessed ? (f.counts?.[sev] ?? 0) : "?");
 const epss = (f) => (f.exploit_checked ? maxEPSS(f).toFixed(2) : "-");
+
+// The scan provider's own composite ranking, highest across the image's CVEs.
+// Deliberately its own column rather than folded into EPSS: Rapid7's scale runs to
+// roughly 1000 and EPSS is a probability, so one column holding both would be a
+// column of numbers that mean different things.
+function maxRisk(f) {
+  let top = 0;
+  for (const v of f.vulns || []) {
+    if ((v.risk_score || 0) > top) top = v.risk_score;
+  }
+  return top;
+}
+
+// Three states, kept apart: a score, "-" for checked but unscored by this provider,
+// and "?" for no exploit source at all.
+function riskCell(f) {
+  if (!f.exploit_checked) {
+    return '<span class="unknown" title="No exploit source ran, so no risk score was gathered.">?</span>';
+  }
+  const top = maxRisk(f);
+  if (!top) {
+    return '<span class="muted" title="The scan provider returned no risk score for this image\u2019s CVEs \u2014 either it does not score them, or it has never seen them.">-</span>';
+  }
+  return esc(Math.round(top).toString());
+}
 const live = (f) => (f.liveness ? (f.liveness.live ? "yes" : "no") : "?");
 // cell renders a multi-value dimension compactly: the first value, then how many
 // more, with the full list on hover and one click to expand. Joining seven
@@ -299,87 +494,156 @@ function renderDataAge(s) {
     + " this assessment ran. A stale export produces a fresh-looking assessment of old data.";
 }
 
+// Data gaps: what this assessment cannot tell you, in one place.
+//
+// These were three stacked full-width banners of prose. Every one shouted equally, so
+// the page led with several paragraphs of caveats and buried the queue — and one of
+// them was good news dressed as a warning: 96% coverage is not the same alarm as 9%.
+//
+// One panel now. Each gap gets a single line stating the count and the consequence,
+// and the explanation sits behind a toggle. The lines are never hidden: a gap nobody
+// can see is the failure this whole section exists to prevent. Only the prose folds.
+// Survives the re-render that follows every refresh, so an hourly poll does not fold
+// the detail away while somebody is reading it.
+let gapsExpanded = false;
+
 function renderCoverage(s) {
-  const total = s.provider_assessed + s.provider_unassessed;
-  if (!total) return;
-  const pct = Math.round((s.provider_assessed / total) * 100);
-  // Lead with coverage, not the actionable count: "N actionable" out of an estate
-  // nobody scanned is not good news, and reading it as such is the mistake.
   const el = $("#coverage");
-  if (s.provider_unassessed === 0) {
+  const gaps = dataGaps(s);
+  if (gaps.length === 0) {
     el.innerHTML = "";
     return;
   }
-  // Deliberately does not claim the actionable figure covers only assessed
-  // findings: a vulnerability scanner can find fixable CVEs the provider never
-  // looked for, and on a real estate 14 of 35 actionable findings came from that
-  // alone. Overstating in the other direction would be the same kind of error.
-  const scannerOnly = s.actionable_unassessed
-    ? ` ${s.actionable_unassessed} of the ${s.actionable} actionable findings are on
-        images the provider never assessed, found by the vulnerability scanner alone.`
-    : "";
-  el.innerHTML = `<div class="banner"><strong>${s.provider_unassessed} of ${total} findings
-    were never assessed by the scan provider</strong> (${pct}% covered). Their severity counts
-    are absent data rather than zero, so they cannot match a count-based rule.${scannerOnly}
-    ${s.remediation_unresolved ? `${s.remediation_unresolved} findings have no resolvable upgrade.` : ""}
-    ${reasonList(s.unassessed_reasons)}</div>${signalNotice(s)}`;
+  const worst = gaps.some((g) => g.severe);
+  const rows = gaps.map((g) => `
+    <div class="gap${g.severe ? " gap-severe" : ""}">
+      <span class="gap-count">${esc(g.count)}</span>
+      <span class="gap-head">${g.headline}</span>
+      <div class="gap-detail"${gapsExpanded ? "" : " hidden"}>${g.detail}</div>
+    </div>`).join("");
+  el.innerHTML = `<div class="gaps${worst ? " banner" : " gaps-quiet"}">
+    <div class="gaps-title">
+      <strong>${gaps.length} data gap${gaps.length === 1 ? "" : "s"}</strong>
+      <button id="gapsToggle" class="linkish" aria-expanded="${gapsExpanded}">${
+        gapsExpanded ? "hide detail" : "why this matters"}</button>
+    </div>${rows}</div>`;
+
+  $("#gapsToggle").addEventListener("click", () => {
+    gapsExpanded = !gapsExpanded;
+    renderCoverage(s);
+  });
 }
 
-// signalNotice reports a missing signal by its consequence, not its name.
+// dataGaps describes each gap once: a count, a one-line consequence, and the detail.
 //
-// A column of dashes says "no EPSS here". It does not say the thing that matters:
-// every rule of the form vulns.exists(...) is false without per-CVE detail, so the
-// urgent and high tiers cannot fire at all and the queue reads as calm when it is
-// merely uninformed. That is worth a sentence at the top rather than a dash
-// repeated down a column.
-//
-// The column stays either way. Removing it would hide the gap instead of naming
-// it, and an absent column reads as "this does not apply" rather than "this was
-// not gathered".
-function signalNotice(s) {
-  if (s.scanned === undefined) return "";       // older API, say nothing
+// severe marks the ones that change what the queue means rather than merely trimming
+// it. A missing vuln source disables whole priority tiers, so nothing can be urgent
+// however bad it is; 4% of images unassessed does not deserve the same colour as that.
+function dataGaps(s) {
+  const gaps = [];
+  const total = (s.provider_assessed || 0) + (s.provider_unassessed || 0);
+
+  if (s.provider_unassessed > 0 && total > 0) {
+    const share = s.provider_unassessed / total;
+    gaps.push({
+      // Proportion decides the alarm: most of an estate unassessed is a different
+      // problem from a handful of unsupported registries.
+      severe: share >= 0.25,
+      count: `${s.provider_unassessed} of ${total}`,
+      headline: `findings never assessed by the scan provider (${Math.round((1 - share) * 100)}% covered)`,
+      detail: `Their severity counts are absent data rather than zero, so they cannot match a
+        count-based rule.${s.actionable_unassessed
+          ? ` ${s.actionable_unassessed} of the ${s.actionable} actionable findings are on images the
+             provider never assessed, found by a vulnerability scanner alone.` : ""}
+        ${reasonList(s.unassessed_reasons)}`,
+    });
+  }
+
   if (s.scanned === 0) {
-    return `<div class="banner"><strong>No image was scanned for per-CVE detail.</strong>
-      Fix availability, EPSS and KEV are therefore absent, and every rule requiring
-      <code>vulns</code> is false — so no finding can reach the priorities that depend on
-      them, however bad it is. Counts from the scan provider still work. Add
-      <code>--vuln-source trivy</code> (chart: <code>scan.enabled</code>) to populate it.</div>`;
+    gaps.push({
+      severe: true,
+      count: "no",
+      headline: "image was scanned for per-CVE detail, so no finding can reach the priorities that need it",
+      detail: `Fix availability, EPSS and KEV are absent, and every rule requiring <code>vulns</code>
+        is false — however bad a finding is. Counts from the scan provider still work. Add
+        <code>--vuln-source trivy</code> (chart: <code>scan.enabled</code>) to populate it.`,
+    });
+  } else if (s.exploit_checked === 0) {
+    gaps.push({
+      severe: false,
+      count: `${s.scanned}`,
+      headline: "findings have per-CVE detail but no exploit intelligence, so EPSS and KEV are unknown",
+      detail: `Rules requiring exploitation pressure cannot fire, and the EPSS column reads "-"
+        rather than 0. Add <code>--exploit-source public</code> (chart:
+        <code>scan.exploitSource</code>).`,
+    });
   }
-  if (s.exploit_checked === 0) {
-    return `<div class="banner"><strong>Exploit intelligence was not gathered.</strong>
-      ${s.scanned} findings have per-CVE detail, but none carry EPSS or KEV, so rules
-      requiring exploitation pressure cannot fire and the EPSS column reads "-" rather
-      than 0. Add <code>--exploit-source public</code> (chart:
-      <code>scan.exploitSource</code>).</div>`;
+
+  if (s.in_flight_unmatchable > 0) {
+    gaps.push({
+      severe: false,
+      count: `${s.in_flight_unmatchable}`,
+      headline: "findings can never be matched to a pull request, because their image records no build repository",
+      detail: `These render as "n/a" rather than "-": nothing can tie them to remediation in
+        flight, whoever opens it. The fix is in the build pipeline — set one of
+        <code>remediation.base.repoLabels</code> on the image
+        (e.g. <code>org.opencontainers.image.source</code>) so a pull request can be
+        matched to what it rebuilds.`,
+    });
   }
-  // Partial coverage is worth stating too: it is the case most easily mistaken for
-  // full coverage, since the columns are populated for some rows.
-  if (s.exploit_checked < s.scanned) {
-    return `<div class="banner">${s.scanned - s.exploit_checked} of ${s.scanned} scanned
-      findings have no exploit intelligence, so their EPSS is unknown rather than low.</div>`;
+
+  if (s.remediation_unresolved > 0) {
+    const share = total > 0 ? s.remediation_unresolved / total : 0;
+    // When one cause accounts for most of it, name that cause in the headline rather
+    // than behind the toggle. An expired registry credential has flattened this queue
+    // three times, and each time it took someone deliberately expanding the detail to
+    // find out why. A single fixable cause should not need a click.
+    const top = (s.remediation_blockers || [])[0];
+    const dominant = top && top.findings / s.remediation_unresolved >= 0.5 ? top : null;
+    gaps.push({
+      severe: share >= 0.25,
+      count: `${s.remediation_unresolved}`,
+      headline: dominant
+        ? `findings have no resolvable upgrade, ${dominant.findings} of them for one reason: ${esc(shortReason(dominant.reason))}`
+        : "findings have no resolvable upgrade — unknowns, not \"nothing to fix\"",
+      detail: reasonList(s.remediation_blockers) ||
+        "No reason was recorded, which is itself worth chasing.",
+    });
   }
-  return "";
+  return gaps;
 }
 
-// reasonList renders the provider's own reasons for the coverage gap, largest
-// first.
+// shortReason trims a provider or registry error to its point. These arrive as whole
+// HTTP errors ("read image config for x: reading image x: POST https://… UNAUTHORIZED:
+// authentication required, visit https://… for m…"), and a headline has to be readable
+// at a glance or it is no better than the toggle it replaced.
+function shortReason(reason) {
+  const r = String(reason || "");
+  for (const [pattern, plain] of [
+    [/UNAUTHORIZED|authentication required|401/i, "cannot authenticate to the registry"],
+    [/DENIED|forbidden|403/i, "registry denied access"],
+    [/no such host|dial tcp|timeout|deadline/i, "cannot reach the registry"],
+    [/not found|404|MANIFEST_UNKNOWN/i, "image or tag not found in the registry"],
+    [/records no base|no base image/i, "image records no base image"],
+  ]) {
+    if (pattern.test(r)) return plain;
+  }
+  return r.length > 90 ? r.slice(0, 87) + "…" : r;
+}
+
+// reasonList renders provider- or source-supplied reasons, largest first.
 //
-// This is the difference between a statistic and a work list. A percentage
-// invites resignation; "cannot authenticate to the registry, 734 findings" names
-// something one person can fix in an afternoon, and on a real estate a single
-// cause accounted for nearly the whole gap. It stays on the page until it is
-// fixed, rather than living in one Slack thread.
-//
-// Absent when the provider states no reasons — the CSV export never does — which
-// is not the same as there being no cause.
+// This is the difference between a statistic and a work list. A percentage invites
+// resignation; "cannot authenticate to the registry, 734 findings" names something one
+// person can fix in an afternoon. Absent when nothing states a reason, which is not the
+// same as there being no cause.
 function reasonList(reasons) {
   if (!reasons || !reasons.length) return "";
   const top = reasons.slice(0, 4);
   const rest = reasons.length - top.length;
   const items = top.map((r) =>
     `<li><strong>${r.findings}</strong> ${esc(r.reason)}</li>`).join("");
-  return `<div class="reasons"><div class="reasons-head">Why the provider has no data:</div>
-    <ul>${items}</ul>
+  return `<div class="reasons"><ul>${items}</ul>
     ${rest > 0 ? `<div class="reasons-more">and ${rest} other reason${rest === 1 ? "" : "s"}.</div>` : ""}
     </div>`;
 }
@@ -391,6 +655,9 @@ function renderTiles(s) {
     ["Upgradable", s.upgradable], ["Known exploited", s.known_exploited],
     ["Unique images", s.unique_images],
   ];
+  // Only shown when detection ran. A "0 in flight" tile on a run without a
+  // provider configured would claim nobody is working on any of this.
+  if (s.in_flight_checked > 0) tiles.push(["In flight", s.in_flight]);
   $("#tiles").innerHTML = tiles.map(([l, n]) =>
     `<div class="tile"><div class="n">${n ?? "-"}</div><div class="l">${esc(l)}</div></div>`).join("");
 }
@@ -449,6 +716,9 @@ const FINDING_COLUMNS = [
   { label: "EPSS", num: true, get: (f) => esc(epss(f)),
     sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN),
     help: "Highest EPSS across this image's CVEs: the predicted probability of exploitation in the next 30 days (0-1). A CVSS 10 at EPSS 0.008 is less urgent than a CVSS 5 at 0.93. \"-\" means exploit intel was not gathered." },
+  { label: "Risk", num: true, get: (f) => riskCell(f),
+    sort: (f) => (f.exploit_checked ? maxRisk(f) : UNKNOWN),
+    help: "The scan provider's own composite risk score, highest across this image's CVEs (Rapid7's runs to roughly 1000). NOT comparable with EPSS, which is a probability: this is a severity-and-exposure weighting. \"-\" means the provider scored none of these CVEs; \"?\" means no exploit source ran." },
   { label: "Live", get: (f) => esc(live(f)),
     sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0),
     help: "Whether this image is running in a cluster right now. \"?\" means no live reconciliation ran." },
@@ -456,10 +726,11 @@ const FINDING_COLUMNS = [
     sort: (f) => FIX_RANK[fixPath(f)] ?? 0,
     help: "Whether there is a version to move to, and where the change is applied: direct, managed (via a chart or operator), none (already latest), unknown (could not resolve), ? (detection did not run).",
     title: (f) => FIX_HELP[fixPath(f)] || "" },
-  { label: "Upgrade", cls: fixClass, get: (f) => esc(upgradeText(f)),
+  { label: "Upgrade", cls: fixClass, get: (f) => upgradeCell(f), title: upgradeTitle,
     sort: (f) => upgradeText(f),
-    help: "The version move available. Chart versions are prefixed \"chart\" because they are the chart's, not the image tag shown in Image.",
-    title: (f) => (f.upgrade?.source ? `change in ${f.upgrade.source}${f.upgrade.source_path ? " path " + f.upgrade.source_path : ""}` : "") },
+    help: "The version move available, badged by what kind of change it is: base image, Helm chart, or image tag. A second badge names whatever owns the version when it is not this image's own tag.", },
+  { label: "In flight", get: (f) => inFlightCell(f), sort: (f) => inFlightSort(f),
+    help: "Whether an open pull request in the repository that builds this image already applies this upgrade. \"PR\" is an exact match on dependency and version; \"PR?\" bumps the same dependency to a different version, so it may not be this fix. \"-\" means none found; \"?\" means detection did not run." },
   { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f),
     help: "Open Jira tickets covering this image. \"-\" means no open ticket; \"?\" means Jira is not configured, so ticket state is unknown." },
 ];
@@ -867,6 +1138,7 @@ function haystack(f) {
     (f.dimensions?.namespace || []).join(" "),
     (f.dimensions?.account || []).join(" "),
     upgradeText(f), fixPath(f),
+    f.in_flight ? `${f.in_flight.title} ${f.in_flight.repository}` : "",
     ticketsFor(f).map((t) => `${t.key} ${t.status}`).join(" "),
   ];
   return parts.filter(Boolean).join(" ").toLowerCase();
@@ -900,18 +1172,35 @@ function applyOwnerFilters() {
 //
 // Read-only by design: there is no apply button. A POST that writes to Jira should
 // not be one stray click away from a dashboard behind a shared token.
+// What each action does, in words somebody who did not build this would use. The kind
+// itself ("note-done", "extend") is internal vocabulary: useful for matching a row to a
+// log line, which is why it stays in the hover, but meaningless as a column.
+const ACTION_LABELS = {
+  create: "Raise a new ticket",
+  extend: "Add more images to this ticket",
+  update: "Rewrite the summary and description",
+  close: "Close it",
+  "note-stale": "Comment: the version it asks for has moved on",
+  "note-done": "Comment: the work may already be done",
+  hold: "Nothing yet — waiting on data",
+};
+
 const PENDING_COLUMNS = [
-  { label: "Action", get: (a) => `<span class="act act-${esc(a.kind)}">${esc(a.kind)}</span>` },
-  // Linked the same way the queue links tickets: a plan naming a key you then have
-  // to search for is a plan you read once.
+  { label: "What will happen", title: (a) => `action: ${a.kind}`,
+    get: (a) => `<span class="act act-${esc(a.kind)}">${esc(ACTION_LABELS[a.kind] || a.kind)}</span>` },
+  // The project is in the issue key for anything that already exists, so it is only
+  // worth stating for a ticket that does not exist yet.
   { label: "Ticket", get: (a) => {
-      if (!a.ticket) return '<span class="pct">new</span>';
+      if (!a.ticket) {
+        return a.route
+          ? `<span class="pct">new (${esc(a.route)})</span>`
+          : '<span class="pct">new</span>';
+      }
       return a.url
         ? `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.ticket)}</a>`
         : esc(a.ticket);
     } },
-  { label: "Tracker", get: (a) => esc(a.route || "-") },
-  { label: "What", get: (a) => esc(a.summary || a.comment || a.why || "") },
+  { label: "Why", get: (a) => esc(a.why || a.summary || a.comment || "") },
 ];
 
 async function loadPending() {
@@ -926,27 +1215,33 @@ async function loadPending() {
     return;
   }
 
-  // Skips are counted, not listed: "already correct" is worth knowing and not worth
-  // a row each.
-  const writes = (plan.actions || []).filter((a) => a.kind !== "skip");
-  const skipped = (plan.actions || []).length - writes.length;
+  const all = plan.actions || [];
+  // Skips and holds are counted, not listed. One is already correct; the other writes
+  // nothing and is waiting on data, so neither belongs in a list of pending writes —
+  // that list is meant to answer "what is about to change?".
+  const writes = all.filter((a) => a.kind !== "skip" && a.kind !== "hold");
+  const skipped = all.filter((a) => a.kind === "skip").length;
+  const held = all.filter((a) => a.kind === "hold").length;
+  const context = [
+    skipped ? (skipped === 1
+      ? "1 ticket already covers its findings"
+      : `${skipped} tickets already cover their findings`) : "",
+    held ? `${held} cannot be judged yet, because an upgrade could not be resolved` : "",
+  ].filter(Boolean).join("; ");
+
   if (writes.length === 0) {
-    el.innerHTML = `<div class="meta">Nothing to write.
-      ${skipped} ticket${skipped === 1 ? "" : "s"} already cover their findings.</div>`;
+    el.innerHTML = `<div class="meta">Nothing will be written.${context ? ` ${esc(context)}.` : ""}</div>`;
     return;
   }
-
-  const counts = {};
-  for (const a of writes) counts[a.kind] = (counts[a.kind] || 0) + 1;
-  const breakdown = Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(", ");
 
   // Whether these will be applied is the difference between a plan and a warning.
   const fate = plan.auto_apply
     ? `<strong>These will be applied on the next scheduled refresh.</strong>`
     : `These are not applied automatically: auto-ticketing is off.`;
 
-  el.innerHTML = `<div class="banner"><strong>${writes.length} pending write${
-    writes.length === 1 ? "" : "s"}</strong> (${esc(breakdown)}). ${fate}</div>
+  el.innerHTML = `<div class="banner"><strong>${writes.length} change${
+    writes.length === 1 ? "" : "s"} waiting</strong>. ${fate}${
+    context ? `<div class="reasons-more">${esc(context)}.</div>` : ""}</div>
     <div class="scroll short"><table>
       <thead><tr>${PENDING_COLUMNS.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead>
       <tbody>${writes.map((a) =>

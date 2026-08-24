@@ -72,7 +72,7 @@ report ordering; any other label sorts after all of them. Add a tier to
 **Policy**, per finding: `image`, `counts`, `risk`, `owner` `{class, team}`,
 `dimensions` `map<string,list<string>>` (union across workloads), `labels`
 `map<string,list<string>>`, `vulns` list of
-`{id, severity, cvss, fix_available, fixed_version, epss, kev}`, plus `reconciled`,
+`{id, severity, cvss, fix_available, fixed_version, epss, kev, risk_score, exploit_known}`, plus `reconciled`,
 `live`, `upgrade_available`, `remediation_checked`.
 
 ## What "actionable" means

@@ -138,7 +138,7 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 		return nil, err
 	}
 	return ticket.Reconcile(ticket.ReconcileInput{
-		Drafts: plan.Drafts, OpenByImage: index, Findings: snap.views,
+		Drafts: plan.Drafts, Skipped: plan.Skips, OpenByImage: index, Findings: snap.views,
 		Config: s.ticketer.Config(),
 	}), nil
 }
@@ -181,7 +181,10 @@ func logPlan(ctx context.Context, source string, actions []ticket.Action, applie
 	for _, a := range actions {
 		counts[a.Kind]++
 	}
-	writes := len(actions) - counts[ticket.ActionSkip]
+	// Neither skips nor holds are writes: one is already correct, the other is
+	// waiting on data. Counting them as pending would overstate what is about to
+	// happen.
+	writes := len(actions) - counts[ticket.ActionSkip] - counts[ticket.ActionHold]
 	attrs := []any{"source", source, "applied", applied}
 	for _, kind := range ticket.ActionKinds() {
 		attrs = append(attrs, string(kind), counts[kind])
@@ -210,6 +213,13 @@ func logPlan(ctx context.Context, source string, actions []ticket.Action, applie
 	}
 	for _, a := range actions {
 		if a.Kind == ticket.ActionSkip {
+			continue
+		}
+		if a.Kind == ticket.ActionHold {
+			// Logged, because a ticket nobody can judge is worth seeing, but at debug:
+			// on a broken credential this is every ticket at once.
+			slog.DebugContext(ctx, "ticket plan hold",
+				"source", source, "ticket", a.TicketKey, "why", a.Why)
 			continue
 		}
 		slog.InfoContext(ctx, "ticket plan action",

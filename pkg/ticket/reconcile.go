@@ -50,6 +50,11 @@ const (
 	// checked, and every one is already on the latest available version — never on
 	// a finding having disappeared.
 	ActionClose ActionKind = "close"
+	// ActionHold records a ticket nothing can be said about yet, because the data
+	// needed to judge it is missing. Nothing is written: our own blind spot is not
+	// news for somebody else's tracker, and a comment about it would be noise on a
+	// ticket that is probably fine. Reported so the silence is visible.
+	ActionHold ActionKind = "hold"
 	// ActionSkip records a ticket that already covers its group correctly.
 	ActionSkip ActionKind = "skip"
 )
@@ -63,7 +68,7 @@ const (
 func ActionKinds() []ActionKind {
 	return []ActionKind{
 		ActionCreate, ActionExtend, ActionUpdate, ActionClose,
-		ActionNoteStale, ActionNoteDone, ActionSkip,
+		ActionNoteStale, ActionNoteDone, ActionHold, ActionSkip,
 	}
 }
 
@@ -106,6 +111,11 @@ type ReconcileInput struct {
 	// Findings are all findings from the assessment, used to tell "fixed" from
 	// "no longer assessed" when a ticket's work looks finished.
 	Findings []sink.FindingView
+	// Skipped is what the planner declined to ticket, and why. Reconciliation needs
+	// it to tell a finding that was fixed from one that configuration chose not to
+	// track: both are absent from Drafts, and only the first means anything is
+	// finished.
+	Skipped []Skip
 	// Config decides whether a ticket may be closed, resolved per project so a
 	// route can enable closing for its own board without enabling it everywhere.
 	// The zero value closes nothing, which is the safe default for a caller that
@@ -220,6 +230,30 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				}
 			}
 
+			// Configuration deciding not to ticket something is not the work being
+			// done. Without this, raising a priority threshold marks every ticket it
+			// newly excludes as finished — observed on a real board, where tickets
+			// created that morning were reported done that afternoon.
+			if held := policySkipped(images, in.Skipped); len(held) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key,
+					Why: "still outstanding, but configuration no longer raises tickets for it: " +
+						strings.Join(held, "; "),
+				})
+				continue
+			}
+			// Before concluding anything: could we even check? An image whose
+			// available version could not be resolved has dropped out of the queue
+			// for want of data, not because the work is finished, and saying
+			// otherwise on a ticket someone is waiting on is worse than silence.
+			if unproven := unprovenImages(images, byImage); len(unproven) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key,
+					Why: "cannot tell whether this is done: no available version could be " +
+						"resolved for " + strings.Join(unproven, ", "),
+				})
+				continue
+			}
 			if blind := unknownImages(images, byImage); len(blind) > 0 {
 				out = append(out, Action{
 					Kind: ActionNoteDone, TicketKey: t.Key,
@@ -392,6 +426,62 @@ func unknownImages(images []string, byImage map[string]sink.FindingView) []strin
 		}
 	}
 	return blind
+}
+
+// policySkipped returns the reasons configuration declined to ticket this ticket's
+// images, if it did.
+func policySkipped(images []string, skips []Skip) []string {
+	byImage := map[string]string{}
+	for _, s := range skips {
+		if s.Policy {
+			byImage[s.Image] = s.Reason
+		}
+	}
+	var out []string
+	for _, img := range images {
+		if reason, ok := byImage[img]; ok {
+			out = append(out, img+" ("+reason+")")
+		}
+	}
+	return out
+}
+
+// unprovenImages returns the ticket's images whose remediation state cannot support a
+// conclusion either way, with the reason.
+//
+// This is the difference between "there is no newer version" and "we could not find
+// out". Both leave a finding out of the queue, so both make a ticket look unaccounted
+// for, and only the first means the work is done. An unreadable registry otherwise
+// turns every ticket it touches into a false "looks finished".
+func unprovenImages(images []string, byImage map[string]sink.FindingView) []string {
+	var out []string
+	for _, img := range images {
+		f, ok := byImage[img]
+		if !ok {
+			continue // absent entirely: handled as a coverage gap by unknownImages
+		}
+		if !f.Actionable {
+			// The finding no longer asks for anything, so it left the queue because the
+			// work is done — whatever the remediation state. This is the case the
+			// note-done comment exists for.
+			continue
+		}
+		// Still actionable, yet nothing was raised for it: the only reason is that no
+		// upgrade could be established, which is not the same as there being none.
+		switch {
+		case !f.RemediationChecked:
+			out = append(out, img+" (upgrade detection did not run)")
+		case f.Upgrade == nil:
+			out = append(out, img+" (no upgrade information)")
+		case !f.Upgrade.Resolved:
+			reason := f.Upgrade.Reason
+			if reason == "" {
+				reason = "no reason given"
+			}
+			out = append(out, img+" ("+reason+")")
+		}
+	}
+	return out
 }
 
 // split partitions a draft's images by whether an open ticket covers them.

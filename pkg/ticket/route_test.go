@@ -293,3 +293,164 @@ func TestWithoutRequireRouteUnroutedWorkUsesTheDefault(t *testing.T) {
 		t.Fatalf("got %d drafts %+v, want one on the default route", len(plan.Drafts), plan.Drafts)
 	}
 }
+
+// minPriority: a tracker holding a hundred tickets nobody will action this quarter is
+// one people stop reading, and it takes the urgent ones down with it.
+func TestMinPriorityKeepsLowFindingsOutOfTheTracker(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/t.tmpl"
+	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.JiraConfig{
+		Board: 1, Project: "P", Template: tmpl, ImageField: "customfield_1",
+		MinPriority: "high",
+	}
+	p, err := NewPlanner(cfg)
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+
+	urgent := routedView("platform", "cpo", "acr.io/urgent")
+	urgent.Priority = "urgent"
+	high := routedView("platform", "cpo", "acr.io/high")
+	high.Priority = "high"
+	medium := routedView("platform", "cpo", "acr.io/medium")
+	medium.Priority = "medium"
+	low := routedView("platform", "cpo", "acr.io/low")
+	low.Priority = "low"
+
+	plan, err := p.Plan([]sink.FindingView{urgent, high, medium, low})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	ticketed := map[string]bool{}
+	for _, d := range plan.Drafts {
+		for _, img := range d.Images {
+			ticketed[img] = true
+		}
+	}
+	for _, want := range []string{"acr.io/urgent", "acr.io/high"} {
+		if !ticketed[want] {
+			t.Errorf("%s was not ticketed despite clearing the threshold", want)
+		}
+	}
+	for _, notWant := range []string{"acr.io/medium", "acr.io/low"} {
+		if ticketed[notWant] {
+			t.Errorf("%s was ticketed below the threshold", notWant)
+		}
+	}
+	// Skipped, not hidden: the reason has to name the threshold and the finding's own
+	// priority, or the queue and the tracker disagreeing looks like a bug.
+	var reported int
+	for _, s := range plan.Skips {
+		if s.Image == "acr.io/medium" || s.Image == "acr.io/low" {
+			reported++
+			for _, want := range []string{"below the minimum ticket priority", "high", "stays in the queue"} {
+				if !strings.Contains(s.Reason, want) {
+					t.Errorf("skip reason for %s does not mention %q: %s", s.Image, want, s.Reason)
+				}
+			}
+		}
+	}
+	if reported != 2 {
+		t.Errorf("reported %d skips for the below-threshold findings, want 2", reported)
+	}
+}
+
+// No threshold means every actionable finding is ticketed, so existing configuration
+// is unchanged.
+func TestNoMinPriorityTicketsEverything(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/t.tmpl"
+	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(config.JiraConfig{
+		Board: 1, Project: "P", Template: tmpl, ImageField: "customfield_1",
+	})
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	low := routedView("platform", "cpo", "acr.io/low")
+	low.Priority = "low"
+	plan, err := p.Plan([]sink.FindingView{low})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 {
+		t.Errorf("got %d drafts, want 1 with no threshold set", len(plan.Drafts))
+	}
+}
+
+// A route can hold a stricter threshold than the deployment: one team may want only
+// urgent work in its tracker.
+func TestMinPriorityIsPerRoute(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/t.tmpl"
+	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.JiraConfig{
+		Board: 1, Project: "P", Template: tmpl, ImageField: "customfield_1",
+		MinPriority: "low",
+		Routes: []config.TicketRoute{
+			{Name: "strict", When: "owner['team'] == 'sre'", Project: "SRE", MinPriority: "urgent"},
+		},
+	}
+	p, err := NewPlanner(cfg)
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	sreHigh := routedView("platform", "sre", "acr.io/sre-high")
+	sreHigh.Priority = "high"
+	otherHigh := routedView("platform", "cpo", "acr.io/other-high")
+	otherHigh.Priority = "high"
+
+	plan, err := p.Plan([]sink.FindingView{sreHigh, otherHigh})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	ticketed := map[string]bool{}
+	for _, d := range plan.Drafts {
+		for _, img := range d.Images {
+			ticketed[img] = true
+		}
+	}
+	if ticketed["acr.io/sre-high"] {
+		t.Error("a high finding was ticketed on a route requiring urgent")
+	}
+	if !ticketed["acr.io/other-high"] {
+		t.Error("a high finding was not ticketed on a route allowing low and above")
+	}
+}
+
+// A typo would rank below everything and silently ticket the lot, which is the
+// opposite of what the setting is for.
+func TestMinPriorityMustBeARankedLabel(t *testing.T) {
+	for _, bad := range []string{"High", "critical", "sev1", "urgentish"} {
+		cfg := config.JiraConfig{
+			Board: 1, Project: "P", Template: "t", ImageField: "customfield_1",
+			MinPriority: bad,
+		}
+		err := cfg.Validate()
+		if bad == "High" {
+			// Case matters: the ladder is lowercase, and accepting "High" here while
+			// the rules emit "high" would work by accident.
+			if err == nil {
+				t.Errorf("minPriority %q was accepted", bad)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "not a ranked priority") {
+			t.Errorf("minPriority %q: err = %v", bad, err)
+		}
+	}
+	ok := config.JiraConfig{
+		Board: 1, Project: "P", Template: "t", ImageField: "customfield_1",
+		MinPriority: "high",
+	}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("a valid threshold was rejected: %v", err)
+	}
+}

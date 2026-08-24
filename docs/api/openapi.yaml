@@ -393,6 +393,19 @@ components:
             without an upgrade must check this, or it silently skips images whose
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
+        in_flight: { $ref: "#/components/schemas/InFlight" }
+        in_flight_reason:
+          type: string
+          description: |
+            Why this image can never be matched to a pull request — it records no build
+            repository label. Distinct from an absent `in_flight` with no reason, which
+            means the repository was known and no pull request was found: the first is a
+            build pipeline fix, the second is work nobody has started.
+        in_flight_checked:
+          type: boolean
+          description: |
+            False means in-flight detection did not run, so an absent `in_flight` says
+            nothing about whether remediation has been started.
         liveness:
           type: object
           description: Present only when reconciliation ran.
@@ -411,6 +424,30 @@ components:
         vulns:
           type: array
           items: { $ref: "#/components/schemas/Vulnerability" }
+
+    InFlight:
+      type: object
+      description: |
+        An open pull request that would apply this finding's upgrade, in the
+        repository that builds the image. Absent means no pull request was matched,
+        which includes in-flight detection not running at all: absence is not
+        evidence that nobody is working on it.
+      required: [repository, title, opened, open_days, exact]
+      properties:
+        repository:
+          type: string
+          description: The repository the pull request is in, which is the one that builds this image.
+        title: { type: string }
+        url: { type: string }
+        author: { type: string }
+        opened: { type: string, format: date-time }
+        open_days: { type: integer }
+        exact:
+          type: boolean
+          description: |
+            False when the pull request bumps this dependency to a different version
+            than the one recommended. A non-exact match must not be read as this
+            upgrade being applied.
 
     Owner:
       type: object
@@ -433,6 +470,19 @@ components:
           description: |
             False means versions could not be resolved, so "no upgrade available" is
             unproven.
+        reason:
+          type: string
+          description: |
+            Why an upgrade could not be determined, in terms a reader can act on — an
+            unreadable registry and an image that records no base need different people
+            to do different things.
+        comparison:
+          type: string
+          enum: [version, digest]
+          description: |
+            How the verdict was reached. `digest` means the reference is a floating tag
+            with no version, so `current` and `latest` are short digests rather than
+            versions.
         actionable:
           type: boolean
           description: True only when applicable at this level.
@@ -458,6 +508,17 @@ components:
         cvss: { type: number }
         fix_available: { type: boolean }
         fixed_version: { type: string }
+        risk_score:
+          type: number
+          description: |
+            The scan provider's own composite ranking for this CVE, on that provider's
+            scale (Rapid7's runs to roughly 1000). NOT comparable with `epss`, which is
+            a probability between 0 and 1. Absent means unscored.
+        exploit_known:
+          type: boolean
+          description: |
+            The provider has a public exploit on record. Weaker evidence than `kev`,
+            which is confirmed exploitation in the wild.
         epss:
           type: number
           description: Probability of exploitation in 30 days. Needs an exploit source.
@@ -506,6 +567,30 @@ components:
             only because a scanner looked where the provider did not.
         scanned: { type: integer }
         exploit_checked: { type: integer }
+        in_flight:
+          type: integer
+          description: |
+            Findings whose upgrade has an open pull request in the repository that
+            builds the image, matched on dependency and target version.
+        in_flight_possible:
+          type: integer
+          description: |
+            Weaker matches: a pull request bumping the same dependency to a different
+            version. Somebody working nearby, not this fix.
+        in_flight_stale:
+          type: integer
+          description: Matched pull requests open past the configured threshold.
+        in_flight_unmatchable:
+          type: integer
+          description: |
+            Findings that can never be matched to a pull request, because their image
+            records no build repository. A build pipeline gap rather than an absence of
+            remediation.
+        in_flight_checked:
+          type: integer
+          description: |
+            Findings where in-flight detection ran. Zero means it did not, so zero
+            matches says nothing about whether remediation has been started.
         provider_data_newest:
           type: string
           format: date-time
@@ -513,6 +598,17 @@ components:
             Newest assessment timestamp in the provider's own data, which is not the
             same as when this pipeline ran.
         provider_data_oldest: { type: string, format: date-time }
+        remediation_blockers:
+          description: |
+            Findings whose upgrade could not be resolved, grouped by the stated reason,
+            worst first. Without it, a remediation source losing access looks identical
+            to an estate with nothing to fix — the queue simply stops offering upgrades.
+          type: array
+          items:
+            type: object
+            properties:
+              reason: { type: string }
+              findings: { type: integer }
         expired_suppressions:
           description: |
             Suppress rules that have lapsed, so the work they were hiding is back in

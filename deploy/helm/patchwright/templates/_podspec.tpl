@@ -126,6 +126,10 @@ so they stay in sync. Callers pass a dict:
     {{- if .root.Values.scan.enabled }}
     - name: tmp
       mountPath: /tmp
+    {{- if .root.Values.scan.cache.persistence.enabled }}
+    - name: trivy-cache
+      mountPath: /tmp/trivy-cache
+    {{- end }}
     {{- end }}
     {{- if .root.Values.registryAuth.dockerConfigSecret }}
     - name: dockerconfig
@@ -151,6 +155,11 @@ so they stay in sync. Callers pass a dict:
 {{- if .root.Values.scan.enabled }}
 - name: tmp
   emptyDir: {}
+{{- if .root.Values.scan.cache.persistence.enabled }}
+- name: trivy-cache
+  persistentVolumeClaim:
+    claimName: {{ .root.Values.scan.cache.persistence.existingClaim | default (printf "%s-trivy-cache" (include "patchwright.fullname" .root)) }}
+{{- end }}
 {{- end }}
 {{- if .root.Values.registryAuth.dockerConfigSecret }}
 - name: dockerconfig

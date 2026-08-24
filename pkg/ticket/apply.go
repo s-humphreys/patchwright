@@ -79,8 +79,9 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 			var posted bool
 			posted, r.Err = a.CommentOnce(ctx, act.TicketKey, act.Dedupe, act.Message)
 			r.NoOp = r.Err == nil && !posted
-		case ActionSkip:
-			// Nothing to do.
+		case ActionHold, ActionSkip:
+			// Nothing to do. A hold is waiting on data rather than already correct,
+			// which is why it is a separate kind rather than folded into skip.
 		default:
 			r.Err = fmt.Errorf("unknown action %q", act.Kind)
 		}

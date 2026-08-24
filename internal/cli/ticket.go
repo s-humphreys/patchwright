@@ -127,9 +127,9 @@ func describePriority(cfg config.JiraConfig, findingPriority string) string {
 	}
 	mapped := cfg.JiraPriority(findingPriority)
 	if mapped == "" {
-		return assessed + " -> (Jira default)"
+		return assessed + " → (Jira default)"
 	}
-	return assessed + " -> " + mapped
+	return assessed + " → " + mapped
 }
 
 func reportSkips(w io.Writer, skips []ticket.Skip) {
@@ -166,7 +166,7 @@ func run(ctx context.Context, w io.Writer, cfg config.JiraConfig, plan *ticket.P
 		return err
 	}
 	actions := ticket.Reconcile(ticket.ReconcileInput{
-		Drafts: plan.Drafts, OpenByImage: index, Findings: findings,
+		Drafts: plan.Drafts, Skipped: plan.Skips, OpenByImage: index, Findings: findings,
 		Config: cfg,
 	})
 

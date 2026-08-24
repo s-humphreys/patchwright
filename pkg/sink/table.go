@@ -107,8 +107,8 @@ func writeLegend(w io.Writer) {
 }
 
 // upgradeMark shows the remediation at a glance:
-//   - "current->latest" when a newer version can be applied directly (actionable)
-//   - "current->latest (managed)" when a newer version exists but is controlled
+//   - "current→latest" when a newer version can be applied directly (actionable)
+//   - "current→latest (managed)" when a newer version exists but is controlled
 //     by a chart/operator (not directly actionable)
 //   - "-" when on the latest version
 //   - "?" when no version was resolved. FIX separates the two reasons for that
@@ -125,9 +125,24 @@ func upgradeMark(f model.Finding) string {
 	if !u.Available {
 		return "-"
 	}
-	bump := u.Current + "->" + u.Latest
-	if u.Kind == "chart" {
+	bump := u.Current + "→" + u.Latest
+	switch u.Kind {
+	case "chart":
 		bump = "chart " + bump
+	case "base":
+		// Named, because for a first-party image a bare version range reads as the
+		// application's own version moving — which is the confusion this kind of
+		// upgrade exists to remove. What moves is the base, and which base matters:
+		// it is what the rebuild points at.
+		//
+		// A digest comparison names the tag as well. "1e37a823->c4b29bf3" is two
+		// opaque hashes; what a reader needs is that mcr.microsoft.com/dotnet/aspnet
+		// :10.0-alpine has moved under them, which is the line in their Dockerfile.
+		if u.Comparison == "digest" && u.Source != "" {
+			bump = "base " + u.Source + " moved " + bump
+		} else {
+			bump = "base " + u.Name + " " + bump
+		}
 	}
 	if !u.Actionable {
 		if u.Managed != "" {

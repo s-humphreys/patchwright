@@ -46,6 +46,15 @@ type Draft struct {
 type Skip struct {
 	Image  string
 	Reason string
+	// Policy is true when configuration chose not to ticket this — an exclusion, a
+	// priority threshold, no matching route. The work still exists.
+	//
+	// The distinction is load-bearing for reconciliation. A finding that leaves the
+	// queue because it was fixed and one that leaves because we decided not to track
+	// it look identical from the drafts, and an existing ticket for the second must
+	// not be told the work appears done. Changing a threshold would otherwise mark
+	// every ticket it newly excludes as finished.
+	Policy bool
 }
 
 // Plan is the outcome of planning: what to raise, and what was left out.
@@ -134,7 +143,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if why != "" {
 				reason += ": " + why
 			}
-			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
+			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason, Policy: true})
 			continue
 		}
 		if reason, ok := p.skipReason(f); ok {
@@ -150,7 +159,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
 			}
 			out.Skips = append(out.Skips, Skip{
-				Image: f.Image,
+				Image: f.Image, Policy: true,
 				Reason: fmt.Sprintf("no ticket route matches its owner (%s) and requireRoute is set, "+
 					"so no tracker is configured for this work", owner),
 			})
@@ -169,10 +178,43 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Judged on the draft rather than on each finding, so a low-priority image
+			// that shares an upgrade with an urgent one still rides along: one change,
+			// one ticket. Filtering findings before grouping would split that change
+			// in two and send half of it nowhere.
+			if cfg := p.routeConfig(name); !cfg.TicketsPriority(d.Priority) {
+				for _, img := range d.Images {
+					out.Skips = append(out.Skips, Skip{
+						Image: img, Policy: true,
+						Reason: fmt.Sprintf("highest priority in this change is %q, below the "+
+							"minimum ticket priority %q; it stays in the queue",
+							dashIfEmpty(d.Priority), cfg.MinPriority),
+					})
+				}
+				continue
+			}
 			out.Drafts = append(out.Drafts, d)
 		}
 	}
 	return out, nil
+}
+
+// routeConfig resolves the settings for a route name, so a per-team threshold is
+// honoured rather than only the top-level one.
+func (p *Planner) routeConfig(name string) config.JiraConfig {
+	for _, r := range p.cfg.Routes {
+		if r.Name == name {
+			return p.cfg.Resolve(r)
+		}
+	}
+	return p.cfg
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
 
 // routeOrder returns the route names present in these findings, in configuration

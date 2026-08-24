@@ -88,6 +88,12 @@ scan:
 #   # the priority it was triaged at.
 #   closePriorityUnworked: Lowest
 #
+#   # Lowest assessment priority worth a ticket. The queue can hold a hundred low
+#   # findings usefully; a tracker holding a hundred nobody will action becomes one
+#   # people stop reading. Below-threshold findings are reported as skipped, not
+#   # hidden. Per route as well as here.
+#   minPriority: high
+#
 #   requireRoute: true
 #   routes:
 #     - name: sre
@@ -106,6 +112,26 @@ scan:
 #       priorityMap:
 #         urgent: Highest
 #         high: High
+
+# Remediation tuning. Optional; without it every image is treated as third-party.
+#
+# remediation:
+#   # Registries whose images you build yourself. For those, a newer tag of your own
+#   # image is a release number rather than a fix — the CVEs are in the base image — so
+#   # the tag source stays quiet and the base image becomes the remediation path.
+#   firstPartyRegistries: [registry.example.com]
+#   base:
+#     # Config labels that may hold the base reference, in preference order. Defaults
+#     # to the OCI standard key then BuildKit's, which covers most builders.
+#     refLabels:
+#       - org.opencontainers.image.base.name
+#       - image.base.ref.name
+#     digestLabels:
+#       - org.opencontainers.image.base.digest
+#       - image.base.digest
+#     # How far to follow a chain of first-party bases. Defaults to 4; the walk always
+#     # stops at the first base that is not first-party.
+#     maxDepth: 4
 
 suppress:
   # An `until: YYYY-MM-DD` on any suppress rule makes it expire. After that date the

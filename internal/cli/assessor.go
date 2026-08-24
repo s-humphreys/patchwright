@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
@@ -13,6 +14,7 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/provider"
+	"github.com/s-humphreys/patchwright/pkg/upgrade"
 )
 
 // assessInputs are the flags describing how to run an assessment. They are
@@ -86,14 +88,42 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		}
 	}
 	if in.remediation {
+		// Base images first: for an image you build yourself, a newer tag of your own
+		// image is a release number rather than a fix, so the base has to be asked
+		// about before the tag source gets a chance to answer.
+		// One inspector shared by both stages: the base resolver and the in-flight
+		// matcher read the same image configs for different labels, so without this
+		// every first-party image is fetched twice per run.
+		inspector := upgrade.NewCachingInspector(upgrade.NewRegistryInspector())
+		if len(cfg.Remediation.FirstPartyRegistries) > 0 {
+			base := upgrade.NewBaseResolver(cfg.Remediation, inspector, upgrade.NewTagLister())
+			upgradeSources = append(upgradeSources, base)
+		}
 		reg := registry.New()
 		reg.Contexts = deployContexts
+		reg.SkipRegistries = cfg.Remediation.FirstPartyRegistries
 		upgradeSources = append(upgradeSources, reg)
 		r := enrich.NewRemediationEnricher(upgradeSources...)
 		popts = append(popts, pipeline.WithRemediationEnricher(&r))
+
+		// Remediation already under way, so an upgrade with an open pull request
+		// can be told apart from one nobody has started.
+		if cfg.Remediation.InFlight.Enabled() {
+			src, err := newPullRequestSource(cfg.Remediation.InFlight)
+			if err != nil {
+				return nil, err
+			}
+			popts = append(popts, pipeline.WithInFlightEnricher(&upgrade.InFlightEnricher{
+				Cfg: cfg.Remediation, Source: src, Inspector: inspector,
+			}))
+		}
 	}
 
-	if in.vulnSource != "" {
+	if in.vulnSource != "" && cfg.Scan.Disabled {
+		slog.Warn("image scanning disabled by config (scan.disabled); vulnerability data will be absent",
+			"vuln_source", in.vulnSource)
+	}
+	if in.vulnSource != "" && !cfg.Scan.Disabled {
 		scanner, err := buildScanner(in.vulnSource, in.vulnOptions,
 			cfg.Scan.EffectiveSkipOwnerClasses(), cfg.Scan.SkipRegistries)
 		if err != nil {
@@ -258,4 +288,16 @@ func topAssessmentIssue(findings []model.Finding) (string, int) {
 		}
 	}
 	return topReason, topCount
+}
+
+// newPullRequestSource builds the in-flight provider named in config. Unknown
+// providers are an error rather than a no-op: a typo would otherwise silently
+// mean "nothing is in flight".
+func newPullRequestSource(cfg config.InFlightConfig) (upgrade.PullRequestSource, error) {
+	switch strings.ToLower(cfg.Provider) {
+	case "azuredevops":
+		return upgrade.NewAzureDevOps(cfg)
+	default:
+		return nil, fmt.Errorf("unknown in-flight provider %q: supported providers are azuredevops", cfg.Provider)
+	}
 }

@@ -297,6 +297,10 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		Available: true, Resolved: true, Source: "https://example.com/repo",
 		SourcePath: "bases/app", Actionable: true, Managed: "operator",
 		Manager: "acme-operator",
+		// Not a realistic combination — Reason accompanies an unresolved upgrade —
+		// but this asserts field mapping, not semantics, and a field left out here is
+		// a field that can silently stop being copied.
+		Reason: "could not list tags", Comparison: "version",
 	}
 	v := ToFindingView(model.Finding{Upgrade: &u}).Upgrade
 	if v == nil {
@@ -307,5 +311,62 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		if rv.Field(i).IsZero() {
 			t.Errorf("UpgradeView.%s is zero: ToFindingView does not assign it", rv.Type().Field(i).Name)
 		}
+	}
+}
+
+// A base upgrade must say it is the base, and which one. A bare version range on a
+// first-party image reads as the application's own version moving, which is the
+// confusion this kind of upgrade exists to remove.
+func TestUpgradeMarkNamesTheBaseImage(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Name: "dotnet/aspnet/10", Current: "1.0.2", Latest: "1.1.1",
+		Available: true, Resolved: true, Actionable: true,
+	}}
+	got := upgradeMark(f)
+	for _, want := range []string{"base", "dotnet/aspnet/10", "1.0.2→1.1.1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("upgradeMark = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// An unresolved base upgrade is still "?" in the column — the reason belongs in the
+// legend and the JSON, not squeezed into a cell.
+func TestUpgradeMarkUnresolvedStaysUnknown(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Resolved: false, Reason: "image records no base image",
+	}}
+	if got := upgradeMark(f); got != "?" {
+		t.Errorf("upgradeMark = %q, want ?", got)
+	}
+}
+
+// A digest comparison must name the tag that moved. Two opaque hashes say nothing;
+// "mcr.microsoft.com/dotnet/aspnet:10.0-alpine moved" points at a Dockerfile line.
+func TestUpgradeMarkNamesTheFloatingTagThatMoved(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Name: "mcr.microsoft.com/dotnet/aspnet",
+		Source:  "mcr.microsoft.com/dotnet/aspnet:10.0-alpine",
+		Current: "1e37a8236c55", Latest: "c4b29bf36800",
+		Comparison: "digest", Available: true, Resolved: true, Actionable: true,
+	}}
+	got := upgradeMark(f)
+	for _, want := range []string{"mcr.microsoft.com/dotnet/aspnet:10.0-alpine", "moved", "1e37a8236c55→c4b29bf36800"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("upgradeMark = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// A version comparison keeps the registry-qualified name: "dotnet/aspnet" alone is
+// ambiguous between an internal mirror and the upstream it was copied from.
+func TestUpgradeMarkQualifiesTheBaseRegistry(t *testing.T) {
+	f := model.Finding{Upgrade: &model.Upgrade{
+		Kind: "base", Name: "mcr.microsoft.com/dotnet/aspnet",
+		Current: "8.0.17", Latest: "8.0.22", Comparison: "version",
+		Available: true, Resolved: true, Actionable: true,
+	}}
+	if got := upgradeMark(f); !strings.Contains(got, "mcr.microsoft.com/dotnet/aspnet 8.0.17→8.0.22") {
+		t.Errorf("upgradeMark = %q", got)
 	}
 }

@@ -101,6 +101,14 @@ var (
 	unassessedReasons = gaugeVec("findings_unassessed_by_reason",
 		"Findings the scan provider did not assess, by its stated reason.",
 		[]string{"reason"})
+
+	// remediationBlockers does the same for remediation. An expired registry
+	// credential silently turned 700 fixable findings into "unknown" on this estate,
+	// three times, and nothing on a dashboard moved except the upgradable count
+	// falling — which reads like progress.
+	remediationBlockers = gaugeVec("remediation_blocked_by_reason",
+		"Findings whose upgrade could not be resolved, by the stated reason.",
+		[]string{"reason"})
 )
 
 // Failures.
@@ -183,8 +191,20 @@ type Snapshot struct {
 	// rather than published as a huge number that would fire every alert.
 	ProviderDataNewest time.Time
 
-	Owners  []OwnerSnapshot
-	Reasons []ReasonCount
+	// InFlight counts findings whose upgrade already has an open pull request, and
+	// InFlightUnmatchable those that can never be matched for want of a build
+	// repository label. Both are published so "nobody has started" and "we cannot
+	// tell" are separable on a dashboard.
+	InFlight            int
+	InFlightUnmatchable int
+
+	Owners []OwnerSnapshot
+	// Reasons are the provider's reasons for missing coverage, and Blockers the
+	// reasons an upgrade could not be resolved. Kept apart: one is a scan-coverage
+	// problem and the other a registry-access problem, and they are fixed by
+	// different people.
+	Reasons  []ReasonCount
+	Blockers []ReasonCount
 }
 
 // OwnerSnapshot is one team's slice of the queue.
@@ -234,6 +254,8 @@ func Observe(s Snapshot) {
 		"known_exploited":       s.KnownExploited,
 		"remediation_unknown":   s.RemediationUnknown,
 		"actionable_unassessed": s.ActionableBlind,
+		"in_flight":             s.InFlight,
+		"in_flight_unmatchable": s.InFlightUnmatchable,
 	} {
 		findingsByState.WithLabelValues(state).Set(float64(n))
 	}
@@ -262,6 +284,14 @@ func Observe(s Snapshot) {
 	unassessedReasons.Reset()
 	for reason, n := range foldReasons(s.Reasons) {
 		unassessedReasons.WithLabelValues(reason).Set(float64(n))
+	}
+
+	// Alertable by cause: an expired registry credential turns hundreds of fixable
+	// findings into "unknown", and the only trace on a dashboard was the queue going
+	// quiet.
+	remediationBlockers.Reset()
+	for reason, n := range foldReasons(s.Blockers) {
+		remediationBlockers.WithLabelValues(reason).Set(float64(n))
 	}
 
 	if s.ProviderDataNewest.IsZero() {
@@ -302,12 +332,26 @@ func normalizeReason(reason string) string {
 	if reason == "" {
 		return "unknown"
 	}
-	if i := strings.IndexAny(reason, ".:"); i > 0 {
-		reason = reason[:i]
+	// Cut at the end of the first clause. The delimiter must be followed by a space
+	// or end the string: a bare "." also appears inside dotted identifiers, and
+	// splitting there turned "add one of org.opencontainers.image.base.name" into
+	// "add one of org", which reads as a different reason rather than a shortened one.
+	for _, d := range []string{". ", "; ", ": ", ", "} {
+		if i := strings.Index(reason, d); i > 0 {
+			reason = reason[:i]
+			break
+		}
 	}
+	reason = strings.TrimRight(reason, ".;:,")
 	const maxLen = 80
 	if len(reason) > maxLen {
-		reason = strings.TrimSpace(reason[:maxLen])
+		// At a word boundary: cutting mid-word produced labels like "add one of org",
+		// which reads as a different reason rather than a truncated one.
+		cut := reason[:maxLen]
+		if i := strings.LastIndex(cut, " "); i > maxLen/2 {
+			cut = cut[:i]
+		}
+		reason = strings.TrimSpace(cut)
 	}
 	return reason
 }

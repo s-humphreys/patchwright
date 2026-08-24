@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
 // Config is the complete rule set. Ownership rules attribute each occurrence to
@@ -30,6 +32,8 @@ type Config struct {
 	Suppress []PolicyRule `yaml:"suppress"`
 	// Scan tunes image vulnerability scanning.
 	Scan ScanConfig `yaml:"scan"`
+	// Remediation tunes how upgrades are detected.
+	Remediation RemediationConfig `yaml:"remediation"`
 	// Jira configures ticket creation (the `ticket` command). Optional; only
 	// validated when that command runs.
 	Jira JiraConfig `yaml:"jira"`
@@ -37,6 +41,145 @@ type Config struct {
 	// Sources is the raw text of each file this config was loaded from, in order.
 	// Not settable from YAML: it describes the load, not the configuration.
 	Sources []Source `yaml:"-"`
+}
+
+// RemediationConfig tunes upgrade detection.
+type RemediationConfig struct {
+	// FirstPartyRegistries name the registries whose images you build yourself.
+	//
+	// For those, a newer image tag is a release number rather than a fix: the tags
+	// are your versioning scheme, and the vulnerabilities are almost always in the
+	// base image. Naming them here stops a tag bump being reported as remediation
+	// and turns on base-image detection instead.
+	//
+	// Empty means every image is treated as third-party, which is the right default
+	// for a deployment that only runs other people's images.
+	FirstPartyRegistries []string `yaml:"firstPartyRegistries"`
+
+	// Base tunes how a first-party image's base is found.
+	Base BaseImageConfig `yaml:"base"`
+
+	// InFlight configures detection of remediation that is already under way, so
+	// an upgrade with an open pull request can be told apart from one nobody has
+	// started. Disabled when Provider is empty.
+	InFlight InFlightConfig `yaml:"inFlight"`
+}
+
+// InFlightConfig describes where to look for open pull requests that would apply
+// an upgrade.
+//
+// Credentials are never configured here: the provider reads its token from the
+// environment, so a config file can be committed and a chart can ship without a
+// secret in a values file.
+type InFlightConfig struct {
+	// Provider is the pull request host. "azuredevops" today. Empty disables
+	// in-flight detection entirely.
+	Provider string `yaml:"provider"`
+	// Organisation is the provider account the projects live under.
+	Organisation string `yaml:"organisation"`
+	// Projects are the provider projects to search. Pull requests are listed per
+	// project, so this bounds the work: naming the projects that build images is
+	// enough, and naming none disables detection.
+	Projects []string `yaml:"projects"`
+	// Authors, when set, restricts matching to pull requests opened by these
+	// identities — the automation account a dependency bot uses. Empty means any
+	// author, which includes a person doing the upgrade by hand.
+	Authors []string `yaml:"authors"`
+	// BranchPrefixes, when set, restricts matching to pull requests from source
+	// branches with one of these prefixes (e.g. "renovate/"). Empty means any
+	// branch. Combined with Authors as an AND: both filters must pass.
+	BranchPrefixes []string `yaml:"branchPrefixes"`
+	// StaleAfterDays is how long an open pull request has to have been open before
+	// it counts as stalled rather than progress. 0 means never flag one as stale.
+	StaleAfterDays int `yaml:"staleAfterDays"`
+}
+
+// Enabled reports whether in-flight detection is configured well enough to run.
+// A provider with no projects cannot be searched, so it is not enabled: better
+// to do nothing visibly than to report "no pull request found" for every image
+// after searching nowhere.
+func (i InFlightConfig) Enabled() bool {
+	return i.Provider != "" && i.Organisation != "" && len(i.Projects) > 0
+}
+
+// Stale reports whether a pull request opened at t has been open long enough to
+// count as stalled.
+func (i InFlightConfig) Stale(age time.Duration) bool {
+	if i.StaleAfterDays <= 0 {
+		return false
+	}
+	return age >= time.Duration(i.StaleAfterDays)*24*time.Hour
+}
+
+// BaseImageConfig describes where an image records its base, and how far to follow
+// the chain.
+//
+// Configuration rather than constants because the conventions differ: the OCI
+// standard keys are what a spec-compliant builder writes, BuildKit and various CI
+// systems write their own, and some organisations set a label by hand. Naming them
+// is a two-line config change; guessing wrongly is a silent wrong answer.
+type BaseImageConfig struct {
+	// RefLabels are the image config labels that may hold the base reference, in
+	// preference order. Defaults to the OCI standard key followed by BuildKit's.
+	RefLabels []string `yaml:"refLabels"`
+	// DigestLabels hold the digest of the base that was actually built against.
+	// Used where the base reference is a floating tag, so "is it current" is a
+	// digest comparison rather than a version comparison.
+	DigestLabels []string `yaml:"digestLabels"`
+	// RepoLabels are the image config labels that record which source repository
+	// built this image, in preference order. There is no default: the OCI standard
+	// key names a project's source, and CI systems write the repository that ran
+	// the build, and only the second answers "would a pull request here rebuild
+	// this image".
+	//
+	// Without one of these labels present an image cannot be matched to a pull
+	// request at all, and is reported as unmatched rather than as having none.
+	RepoLabels []string `yaml:"repoLabels"`
+	// MaxDepth bounds how far a chain of first-party bases is followed — an image
+	// on a language base which is itself built on a runtime base. Defaults to 4.
+	// The walk always stops at the first base that is not first-party.
+	MaxDepth int `yaml:"maxDepth"`
+}
+
+// Default label keys. The OCI standard first, then BuildKit's, which is what
+// buildx writes today and is far more common in the wild than the standard one.
+var (
+	defaultBaseRefLabels    = []string{"org.opencontainers.image.base.name", "image.base.ref.name"}
+	defaultBaseDigestLabels = []string{"org.opencontainers.image.base.digest", "image.base.digest"}
+)
+
+// EffectiveRefLabels returns the configured keys, or the defaults.
+func (b BaseImageConfig) EffectiveRefLabels() []string {
+	if len(b.RefLabels) > 0 {
+		return b.RefLabels
+	}
+	return defaultBaseRefLabels
+}
+
+// EffectiveDigestLabels returns the configured keys, or the defaults.
+func (b BaseImageConfig) EffectiveDigestLabels() []string {
+	if len(b.DigestLabels) > 0 {
+		return b.DigestLabels
+	}
+	return defaultBaseDigestLabels
+}
+
+// EffectiveMaxDepth returns the configured chain depth, or 4.
+func (b BaseImageConfig) EffectiveMaxDepth() int {
+	if b.MaxDepth > 0 {
+		return b.MaxDepth
+	}
+	return 4
+}
+
+// IsFirstParty reports whether an image registry is one you build into.
+func (r RemediationConfig) IsFirstParty(registry string) bool {
+	for _, reg := range r.FirstPartyRegistries {
+		if strings.EqualFold(strings.TrimSpace(reg), registry) {
+			return true
+		}
+	}
+	return false
 }
 
 // JiraConfig describes where tickets go and what they look like. Everything
@@ -140,6 +283,19 @@ type JiraConfig struct {
 	// it was triaged at, since that is a record of how urgent it was.
 	ClosePriorityUnworked string `yaml:"closePriorityUnworked"`
 
+	// MinPriority is the lowest assessment priority worth a ticket: "high" raises
+	// urgent and high findings and leaves the rest in the queue. Empty means every
+	// actionable finding is ticketed.
+	//
+	// The queue and the tracker answer different questions. A queue can hold a
+	// hundred low-priority findings usefully; a tracker holding a hundred tickets
+	// nobody will action this quarter is a tracker people stop reading, and it takes
+	// the urgent ones down with it.
+	//
+	// Findings below the threshold are reported as skipped with the reason, so this
+	// decides what gets a ticket, never what is visible.
+	MinPriority string `yaml:"minPriority"`
+
 	// RequireRoute, when true, means a finding that matches no route gets no
 	// ticket rather than falling through to the settings above.
 	//
@@ -219,6 +375,9 @@ func (j JiraConfig) Validate() error {
 	// is a merge, so it can only break the result by overriding something into an
 	// invalid combination, and that has to fail at load rather than at the first
 	// ticket it tries to raise.
+	if err := validateMinPriority(j.MinPriority); err != nil {
+		return err
+	}
 	names := map[string]bool{}
 	for i, r := range j.Routes {
 		switch {
@@ -236,6 +395,30 @@ func (j JiraConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateMinPriority rejects a threshold that is not on the ranked ladder.
+//
+// An unranked label ranks below everything, so a typo would quietly raise tickets for
+// every finding — the opposite of what the setting is for, with nothing to notice.
+func validateMinPriority(p string) error {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return nil
+	}
+	if model.PriorityRank(p) == 0 {
+		return fmt.Errorf("jira minPriority %q is not a ranked priority (want one of urgent, high, medium, low)", p)
+	}
+	return nil
+}
+
+// TicketsPriority reports whether a finding at this priority clears the threshold.
+func (j JiraConfig) TicketsPriority(priority string) bool {
+	min := strings.TrimSpace(j.MinPriority)
+	if min == "" {
+		return true
+	}
+	return model.PriorityRank(priority) >= model.PriorityRank(min)
 }
 
 // TicketRoute overrides ticket settings for the findings it matches.
@@ -261,6 +444,7 @@ type TicketRoute struct {
 	CloseTransition         string `yaml:"closeTransition"`
 	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
 	ClosePriorityUnworked   string `yaml:"closePriorityUnworked"`
+	MinPriority             string `yaml:"minPriority"`
 
 	Project     string            `yaml:"project"`
 	Template    string            `yaml:"template"`
@@ -295,6 +479,9 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if r.ClosePriorityUnworked != "" {
 		out.ClosePriorityUnworked = r.ClosePriorityUnworked
+	}
+	if r.MinPriority != "" {
+		out.MinPriority = r.MinPriority
 	}
 	if r.Project != "" {
 		out.Project = r.Project
@@ -381,6 +568,18 @@ type ExcludeRule struct {
 
 // ScanConfig tunes which images are worth scanning for vulnerabilities.
 type ScanConfig struct {
+	// Disabled turns image scanning off even when --vuln-source is passed.
+	//
+	// This exists so the same flags can be used locally and in a cluster: a laptop
+	// often has no pull credentials for a private registry, and scanning there
+	// produces nothing but failures and minutes of waiting. Set it in the local
+	// config file and leave it unset in the deployed one.
+	//
+	// It is deliberately loud rather than silent: findings still report
+	// scanned:false, so a run with scanning off is never mistaken for a run that
+	// scanned and found nothing.
+	Disabled bool `yaml:"disabled"`
+
 	// SkipOwnerClasses lists owner classes whose images are not scanned —
 	// typically ones you can't remediate and already suppress (e.g.
 	// cloud-provider-managed images). An image is skipped only if every one of
@@ -504,8 +703,31 @@ func Load(paths ...string) (*Config, error) {
 		if part.Scan.SkipOwnerClasses != nil {
 			cfg.Scan.SkipOwnerClasses = part.Scan.SkipOwnerClasses
 		}
+		if part.Scan.Disabled {
+			cfg.Scan.Disabled = true
+		}
 		if part.Scan.SkipRegistries != nil {
 			cfg.Scan.SkipRegistries = part.Scan.SkipRegistries
+		}
+		// remediation is a singleton section, merged per field so the knobs can live
+		// in different files.
+		if part.Remediation.FirstPartyRegistries != nil {
+			cfg.Remediation.FirstPartyRegistries = part.Remediation.FirstPartyRegistries
+		}
+		if part.Remediation.Base.RefLabels != nil {
+			cfg.Remediation.Base.RefLabels = part.Remediation.Base.RefLabels
+		}
+		if part.Remediation.Base.DigestLabels != nil {
+			cfg.Remediation.Base.DigestLabels = part.Remediation.Base.DigestLabels
+		}
+		if part.Remediation.Base.RepoLabels != nil {
+			cfg.Remediation.Base.RepoLabels = part.Remediation.Base.RepoLabels
+		}
+		if part.Remediation.InFlight.Provider != "" {
+			cfg.Remediation.InFlight = part.Remediation.InFlight
+		}
+		if part.Remediation.Base.MaxDepth != 0 {
+			cfg.Remediation.Base.MaxDepth = part.Remediation.Base.MaxDepth
 		}
 		// jira is a singleton section; the last file that sets it wins.
 		if part.Jira.isSet() {

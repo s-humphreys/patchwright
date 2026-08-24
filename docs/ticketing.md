@@ -59,8 +59,30 @@ per-instance and a name that does not exist fails ticket creation.
 | `update` | the target moved on and nobody has picked the ticket up |
 | `close` | the work is provably finished (needs `autoClose`) |
 | `note-stale` | the target moved on, but someone has picked the ticket up |
-| `note-done` | nothing is reported for the ticket's images any more |
+| `note-done` | the finding no longer asks for anything, so the work appears done |
+| `hold` | nothing can be judged yet, because the data needed is missing. **Writes nothing** |
 | `skip` | already covers the change correctly |
+
+**A policy decision is not the work being done.** A finding that leaves the queue because
+it was fixed and one that leaves because configuration declined to ticket it — an
+exclusion, a priority threshold, no matching route — are indistinguishable from the
+drafts. Reporting the second as done means raising `minPriority` marks every ticket it
+newly excludes as finished, while the upgrade it asks for is still available. Those
+tickets are held instead, naming the setting that dropped them.
+
+**A ticket nobody can judge is held, not commented on.** A finding leaves the queue
+either because the work is done or because we could not establish whether it is — an
+unreadable registry, or upgrade detection not having run. Those look identical from the
+queue, and only the first means anything is finished.
+
+So `note-done` now requires the finding to have stopped asking for anything. A finding
+that is still actionable but whose upgrade could not be resolved produces a `hold`,
+which **writes nothing at all**: our own blind spot is not news for somebody else's
+tracker, and a comment saying "this looks done" on work that is merely unmeasurable is
+worse than silence. Holds appear in the plan and the logs, with the blocker named.
+
+Before this, an expired registry credential turned every ticket it touched into a
+comment claiming the work looked finished.
 
 Duplicates are prevented by asking Jira, not by local state: a state file drifts the
 moment someone closes a ticket by hand. Tickets in a Done status do not suppress a
@@ -71,6 +93,37 @@ a set of controllers owned by one operator becomes one ticket. Where a controlle
 gives each package its own object (a Crossplane `ProviderRevision` per provider),
 the object name is collapsed so a family groups. A grouped ticket never claims a
 single target version unless every image shares one.
+
+## Work already in flight
+
+A dependency bot raising pull requests for the same upgrades makes patchwright's tickets
+duplicates: the fix is in a review queue, not waiting on a decision. Reconciling against
+that so the queue shows "PR open" instead of raising a ticket, and so a *stale* PR becomes
+the finding, is designed in
+[design/remediation-in-flight.md](design/remediation-in-flight.md) and not built yet.
+
+## Only ticket what is worth ticketing
+
+`minPriority` sets the lowest assessment priority that gets a ticket:
+
+```yaml
+jira:
+  minPriority: high        # urgent and high are ticketed; medium and low are not
+```
+
+The queue and the tracker answer different questions. A queue holds a hundred
+low-priority findings usefully; a tracker holding a hundred tickets nobody will action
+this quarter is one people stop reading, and it takes the urgent ones down with it.
+
+Judged on the **ticket**, not each finding: a low-priority image that shares an upgrade
+with an urgent one still rides along, because it is one change. Filtering findings
+before grouping would split that change and send half of it nowhere.
+
+Below-threshold findings are reported as skipped with the reason, so this decides what
+gets a ticket and never what is visible. It is per route as well as global, so one team
+can take only urgent work while another takes everything. A value that is not on the
+ranked ladder (`urgent` > `high` > `medium` > `low`) fails at load: a typo would rank
+below everything and silently ticket the lot.
 
 ## Skips
 
