@@ -1,0 +1,173 @@
+  :root {
+    --bg: #fbfbfa; --fg: #1c1c1a; --muted: #6b6b66; --line: #e3e3df;
+    --card: #ffffff; --warn-bg: #fff6e5; --warn-line: #e0b050; --warn-fg: #6b4c00;
+    --urgent: #a4262c; --high: #b8590a; --medium: #6b6b00; --low: #4a6b4a;
+    --ok: #1f6b3a; --idle: #6b6b66;
+    --hover: #f0f0ed; --accent: #4a6b8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161615; --fg: #ebebe8; --muted: #9a9a94; --line: #2e2e2b;
+      --card: #1e1e1c; --warn-bg: #2d2408; --warn-line: #8a6a1f; --warn-fg: #f0d491;
+      --urgent: #f08a8f; --high: #e8a765; --medium: #cfcf7a; --low: #9ec49e;
+      --ok: #7fd39a; --idle: #9a9a94;
+      --hover: #262623; --accent: #7fa8cf;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 1.1rem; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
+       color: var(--muted); margin: 2rem 0 0.6rem; font-weight: 600; }
+  header { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+           border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; }
+  /* The same asset as the tab icon, 64px served and drawn at 24, so it stays crisp
+     on a high-density display without embedding a second copy. */
+  .brand { display: flex; align-items: center; gap: 0.5rem; }
+  .logo { display: block; }
+  .meta { color: var(--muted); font-size: 0.82rem; }
+  /* One panel for every data gap. Quiet by default: a page that opens with three
+     paragraphs of caveats buries the queue it exists to show. */
+  .gaps { margin: 0.9rem 0; }
+  .gaps-quiet {
+    padding: 0.6rem 0.9rem; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card);
+  }
+  .gaps-title { display: flex; align-items: baseline; gap: 0.2rem; margin-bottom: 0.35rem; }
+  .gap { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; margin: 0.2rem 0; }
+  .gap-count { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  /* Severe gaps change what the queue means; the rest merely trim it. */
+  .gap-severe .gap-count { color: var(--urgent); }
+  .gap-detail { grid-column: 2; margin: 0.25rem 0 0.5rem; opacity: 0.85; font-size: 0.86rem; }
+  .reasons { margin-top: 0.6rem; }
+  .reasons-head { font-weight: 600; }
+  .reasons ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+  .reasons li { margin: 0.15rem 0; }
+  .reasons-more { margin-top: 0.3rem; opacity: 0.8; }
+  .banner {
+    margin: 1rem 0 0; padding: 0.7rem 0.9rem; border-radius: 6px;
+    background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg);
+    font-size: 0.88rem;
+  }
+  .tiles { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 1rem; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+          padding: 0.6rem 0.9rem; min-width: 7.5rem; }
+  .tile .n { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 0.75rem; text-transform: uppercase;
+             letter-spacing: 0.05em; }
+  /* Fixed-height, scrollable table areas. Without a cap, 700 rows push the second
+     table and every summary number off the screen, so the page can only be read
+     top to bottom once. */
+  .scroll { overflow: auto; max-height: 60vh; border: 1px solid var(--line);
+            border-radius: 6px; background: var(--card); }
+  .scroll.short { max-height: 34vh; }
+  .scroll table { margin: 0; }
+  .scroll th { position: sticky; top: 0; z-index: 1; background: var(--card);
+               box-shadow: inset 0 -1px 0 var(--line); }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--fg); }
+  th .arrow { opacity: 0.55; font-size: 0.9em; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 0.42rem 0.7rem; white-space: nowrap;
+           border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.74rem;
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* One workload in seven namespaces must not push every other column off screen.
+     The full list stays available on hover and via the expander. */
+  td.clip { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+  .more { cursor: pointer; color: var(--muted); border-bottom: 1px dotted var(--muted); }
+  .more:hover { color: var(--fg); }
+  code { font: 0.84em ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .urgent { color: var(--urgent); font-weight: 600; }
+  .high { color: var(--high); font-weight: 600; }
+  .medium { color: var(--medium); }
+  .low { color: var(--low); }
+  .unknown { color: var(--muted); }
+  .muted { color: var(--muted); }
+  /* Actionability, coloured consistently across the three columns that describe it:
+     green means someone can do it now, amber means it is real work applied
+     elsewhere, grey means there is nothing to do or nothing known. */
+  .act-direct { color: var(--ok); font-weight: 600; }
+  .act-managed { color: var(--high); }
+  .act-none { color: var(--idle); }
+  .act-unknown { color: var(--muted); font-style: italic; }
+  .ticket-status { color: var(--muted); font-size: 0.9em; }
+  /* Kind badges. One glyph per kind of change, used everywhere that kind appears, so
+     "what sort of upgrade is this" is answerable at a glance rather than by reading.
+     The glyph never stands alone: it is paired with the word, because a symbol nobody
+     has been taught is decoration. */
+  .badge { display: inline-flex; gap: 0.25em; align-items: baseline; padding: 0 0.4em;
+           border: 1px solid currentColor; border-radius: 0.6em; font-size: 0.82em;
+           line-height: 1.5; white-space: nowrap; opacity: 0.95; }
+  .badge .g { font-size: 0.95em; }
+  .badge-base { color: var(--accent, #7aa2f7); }
+  .badge-chart { color: #56b6c2; }
+  .badge-image { color: var(--muted); }
+  .badge-helm { color: var(--high); }
+  .badge-operator { color: var(--high); }
+  .badge-other { color: var(--muted); }
+  .badge-exposed { color: var(--urgent); font-weight: 600; }
+  .badge-kev { color: var(--urgent); }
+  .badge-inflight { color: var(--ok); }
+  .badge-stale { color: var(--high); font-weight: 600; }
+  .badge-unassessed { color: var(--muted); font-style: italic; }
+  /* Class rows are totals for the teams indented beneath them. */
+  tr.rollup td { font-weight: 600; }
+  td.indent { padding-left: 1.6rem; }
+  tr.expandable { cursor: pointer; }
+  tr.expandable:hover td, tr.expandable:focus-visible td { background: var(--hover); }
+  tr.expandable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .caret { display: inline-block; width: 1rem; color: var(--muted); }
+  .linkish {
+    font: inherit; font-size: 0.78rem; font-weight: 500; margin-left: 0.6rem;
+    background: none; border: 1px solid var(--line); border-radius: 4px;
+    padding: 0.1rem 0.45rem; color: var(--muted); cursor: pointer;
+  }
+  .linkish:hover { color: var(--fg); }
+  .linkish:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .act { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+  .act-create { color: var(--urgent); }
+  .act-update, .act-extend { color: var(--high); }
+  .act-close { color: var(--ok); }
+  .cfg-file { margin: 0.6rem 0 1rem; }
+  .cfg-path { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); }
+  /* YAML highlighting, written here rather than pulled from a CDN: this page is
+     served inside a cluster whose browsers may have no egress, and a security tool
+     should not add a third-party script to its own status page. */
+  .y-com { color: var(--muted); font-style: italic; }
+  .y-key { color: var(--accent); }
+  .y-str { color: var(--ok); }
+  .y-lit { color: var(--high); }
+  .y-dash { color: var(--muted); }
+  .cfg-yaml {
+    margin: 0.3rem 0 0; padding: 0.6rem 0.8rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 6px; overflow-x: auto;
+    font-family: ui-monospace, monospace; font-size: 0.78rem; line-height: 1.45;
+    max-height: 26rem; overflow-y: auto;
+  }
+  th.sev-toggle { cursor: pointer; }
+  th.sev-toggle:hover { color: var(--fg); }
+  th.sev-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.sev-critical { color: var(--urgent); }
+  td.sev-high { color: var(--high); }
+  .pct { color: var(--muted); font-size: 0.9em; }
+  .ticket-active { color: var(--ok); font-size: 0.9em; }
+  .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+              margin: 0.4rem 0 0.9rem; font-size: 0.85rem; color: var(--muted); }
+  button { font: inherit; padding: 0.35rem 0.7rem; border-radius: 5px;
+           border: 1px solid var(--line); background: var(--card); color: var(--fg);
+           cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  input[type="search"] { font: inherit; font-size: 0.85rem; padding: 0.25rem 0.45rem;
+    border-radius: 5px; border: 1px solid var(--line); background: var(--card);
+    color: var(--fg); min-width: 17rem; }
+  select { font: inherit; font-size: 0.85rem; padding: 0.2rem 0.3rem; border-radius: 5px;
+           border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  .err { color: var(--urgent); }
+  a { color: inherit; text-decoration: underline; text-underline-offset: 2px;
+      text-decoration-color: var(--muted); }
+  a:hover { text-decoration-color: currentColor; }

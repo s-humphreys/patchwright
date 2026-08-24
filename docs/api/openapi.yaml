@@ -277,6 +277,28 @@ paths:
         "200": { description: An assessment is cached }
         "503": { description: No assessment cached yet }
 
+  # A prefix route rather than a templated path: the mux serves this subtree, and the
+  # drift test compares the served pattern with what is documented here, so the two
+  # have to be written the same way.
+  /static/app/:
+    get:
+      tags: [operations]
+      summary: Status page assets
+      description: |
+        The page's JavaScript modules and stylesheet, appended to this prefix (e.g.
+        `/static/app/main.js`), from the same embedded tree as the page. Behind the same
+        auth as the page, since together they are the page.
+      responses:
+        "200":
+          description: The asset
+          content:
+            text/javascript:
+              schema: { type: string }
+            text/css:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such asset }
+
   /favicon.png:
     get:
       tags: [operations]

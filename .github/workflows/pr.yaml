@@ -31,6 +31,25 @@ jobs:
         run: |
           go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  # The status page is plain ES modules served from the binary, so there is nothing to
+  # build — but "it parses" is not a standard. Type-checking catches what actually
+  # shipped broken: a duplicate object key that silently overrode a column's hover
+  # text, and a CSS class used before it existed.
+  ui:
+    name: ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Type-check the page
+        run: npm run check
+      - name: Run page tests
+        run: npm test
+
   helm-lint:
     name: helm-lint
     runs-on: ubuntu-latest

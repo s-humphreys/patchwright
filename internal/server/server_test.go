@@ -341,6 +341,18 @@ func TestUIServesPage(t *testing.T) {
 	}
 	body := rec.Body.String()
 
+	// The page is a shell that loads ES modules, so the assertions below read the
+	// modules it pulls in. Checking only the shell would pass no matter what the
+	// modules did, which is worse than not checking at all.
+	if !strings.Contains(body, `src="/static/app/main.js"`) {
+		t.Fatal("page does not load its entry module")
+	}
+	app, err := appSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body += app
+
 	// The page must read the API rather than embed numbers, so the two cannot
 	// disagree about what is true.
 	for _, want := range []string{"/api/v1/summary", "/api/v1/owners", "/api/v1/findings"} {
@@ -916,4 +928,21 @@ func TestConfigRedactsSecretLookingValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+// appSources concatenates the embedded page modules, so a test can assert on what
+// the page actually does now that its behaviour lives in modules rather than in one
+// inline script. Reading them through the server's own handler would test the route;
+// reading the tree tests the content, which is what these assertions are about.
+func appSources() (string, error) {
+	entries, err := staticAppFiles()
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		b.WriteString(e)
+		b.WriteString("\n")
+	}
+	return b.String(), nil
 }

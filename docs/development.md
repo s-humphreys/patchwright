@@ -49,3 +49,28 @@ pipeline mark running images live and completed or absent ones not-running.
 | `internal/server` | HTTP API, status page |
 | `internal/metrics` | Prometheus metrics |
 | `internal/cli` | Commands |
+
+## The status page
+
+The page is plain ES modules under `internal/server/static/app/`, served from the Go
+binary's embedded tree. There is no build step and nothing is bundled: browsers load
+modules natively, so the single-binary deploy stays intact and a security tool ships no
+npm dependencies.
+
+The tooling in `package.json` is dev-only:
+
+```sh
+npm ci
+npm run check   # tsc --noEmit --checkJs over the modules
+npm test        # node --test + jsdom over the rendering
+```
+
+Both run in CI. They exist because two bugs shipped invisibly: a duplicate `title` key
+that silently overrode a column's hover text, and a CSS class used before it existed.
+Type-checking catches both, and the tests assert the thing this project keeps getting
+wrong — that absent data never renders as good news (`?` not `-`, unknown not
+internal).
+
+Modules must not touch the DOM at import time. Listeners live in `init*()` functions
+called from `main.js`, so a module can be imported by a test without standing up the
+whole page.

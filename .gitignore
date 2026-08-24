@@ -10,3 +10,7 @@
 /local/
 
 bin/
+
+# Dev-only UI tooling (type checker, test harness). Nothing here ships: the page is
+# plain ES modules served from the Go binary.
+node_modules/

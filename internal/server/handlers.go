@@ -42,6 +42,7 @@ func (s *Server) routes() map[string]http.Handler {
 		// there is no second deployment and no build step.
 		"GET /":                    http.HandlerFunc(s.handleUI),
 		"GET /favicon.png":         http.HandlerFunc(s.handleFavicon),
+		"GET /static/app/":         http.HandlerFunc(s.handleAsset),
 		"GET /healthz":             http.HandlerFunc(s.handleHealthz),
 		"GET /readyz":              http.HandlerFunc(s.handleReadyz),
 		"GET /metrics":             metrics.Handler(),
