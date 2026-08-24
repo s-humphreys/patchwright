@@ -187,6 +187,12 @@ type Occurrence struct {
 	LastSeen  time.Time
 	Owner     Owner // assigned by the attribution stage
 
+	// Exposed reports whether this workload is reachable from the internet, when
+	// something knows. Nil means unknown, which is not the same as internal: a
+	// provider that does not report reachability, or an export without the column,
+	// must not make everything look safely internal.
+	Exposed *bool
+
 	// Assessed reports whether the scan provider actually assessed this
 	// workload's image. It is NOT the same as "has no vulnerabilities": a
 	// provider that never scanned an image (e.g. a private registry it has no
@@ -235,6 +241,10 @@ type InFlight struct {
 	// false the dependency matched but the version did not, so something is being
 	// worked on and it may not be this: consumers must not treat it as remediation.
 	Exact bool
+	// Stale is true when the pull request has been open past the configured
+	// threshold. A fix nobody has merged in four months is a different problem from
+	// one opened this morning, and the more urgent of the two.
+	Stale bool
 }
 
 // Age reports how long the pull request has been open.
@@ -437,4 +447,77 @@ func (f Finding) ProviderAssessed() bool {
 		}
 	}
 	return false
+}
+
+// Exposure values. Unknown is its own answer: an estate where nothing reports
+// reachability must not read as an estate where nothing is reachable.
+const (
+	ExposurePublic   = "public"
+	ExposureInternal = "internal"
+	ExposureUnknown  = "unknown"
+)
+
+// Exposure aggregates reachability across a finding's workloads. Any workload
+// reachable from the internet makes the finding public: the image is exposed
+// somewhere, and that is the fact that matters for prioritising it.
+func (f Finding) Exposure() string {
+	known := false
+	for _, o := range f.Occurrences {
+		if o.Exposed == nil {
+			continue
+		}
+		known = true
+		if *o.Exposed {
+			return ExposurePublic
+		}
+	}
+	if known {
+		return ExposureInternal
+	}
+	return ExposureUnknown
+}
+
+// Signal names one notable fact about a finding, for display and for rules.
+//
+// A set rather than a column each: the table cannot grow a column per attribute,
+// and a signal that is also available to policy can change the ordering instead of
+// merely being readable.
+const (
+	SignalExposed      = "exposed"
+	SignalKnownExploit = "kev"
+	SignalInFlight     = "in-flight"
+	SignalStaleFix     = "stale-fix"
+	SignalUnassessed   = "unassessed"
+	SignalSuppressed   = "suppressed"
+)
+
+// Signals lists what is notable about this finding, in a stable order.
+//
+// Every signal is a positive statement. Absence of a signal never asserts the
+// opposite: no "exposed" signal covers both an internal workload and one whose
+// reachability nobody reported, which is why Exposure() exists alongside this.
+func (f Finding) Signals() []string {
+	var out []string
+	if f.Exposure() == ExposurePublic {
+		out = append(out, SignalExposed)
+	}
+	for _, v := range f.Vulns {
+		if v.KEV {
+			out = append(out, SignalKnownExploit)
+			break
+		}
+	}
+	if f.InFlight != nil {
+		out = append(out, SignalInFlight)
+		if f.InFlight.Stale {
+			out = append(out, SignalStaleFix)
+		}
+	}
+	if !f.ProviderAssessed() {
+		out = append(out, SignalUnassessed)
+	}
+	if f.Suppressed {
+		out = append(out, SignalSuppressed)
+	}
+	return out
 }

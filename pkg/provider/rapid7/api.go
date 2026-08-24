@@ -269,6 +269,7 @@ func rowToOccurrence(r *resourceVulnRow) model.Occurrence {
 			Labels:     map[string]string{}, // the API does not carry them; live reconciliation supplies them
 		},
 		Counts:           counts,
+		Exposed:          &r.PublicAccess,
 		RiskScore:        r.RiskScore,
 		LastSeen:         assessmentTime(r),
 		Assessed:         assessed,

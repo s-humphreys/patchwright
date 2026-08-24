@@ -125,7 +125,7 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 			}
 			continue
 		}
-		fl, matchedOne := match(byRepo[strings.ToLower(repo)], *img.Upgrade)
+		fl, matchedOne := match(byRepo[strings.ToLower(repo)], *img.Upgrade, e.Cfg.InFlight)
 		if !matchedOne {
 			continue
 		}
@@ -218,7 +218,7 @@ func parseTitle(title string) (dep, version string, ok bool) {
 // dependency, preferring an exact version match. A dependency match with a
 // different target version is returned with Exact false: something is being
 // worked on, but it is not necessarily this.
-func match(prs []PullRequest, up model.Upgrade) (model.InFlight, bool) {
+func match(prs []PullRequest, up model.Upgrade, cfg config.InFlightConfig) (model.InFlight, bool) {
 	var partial *PullRequest
 	for i := range prs {
 		pr := prs[i]
@@ -227,7 +227,7 @@ func match(prs []PullRequest, up model.Upgrade) (model.InFlight, bool) {
 			continue
 		}
 		if sameVersion(version, up.Latest) {
-			return inFlight(pr, true), true
+			return inFlight(pr, true, cfg), true
 		}
 		if partial == nil {
 			p := pr
@@ -235,18 +235,22 @@ func match(prs []PullRequest, up model.Upgrade) (model.InFlight, bool) {
 		}
 	}
 	if partial != nil {
-		return inFlight(*partial, false), true
+		return inFlight(*partial, false, cfg), true
 	}
 	return model.InFlight{}, false
 }
 
 // inFlight converts a matched pull request into the model type carried on a
 // finding.
-func inFlight(pr PullRequest, exact bool) model.InFlight {
-	return model.InFlight{
+func inFlight(pr PullRequest, exact bool, cfg config.InFlightConfig) model.InFlight {
+	fl := model.InFlight{
 		Repository: pr.Repository, Title: pr.Title, URL: pr.URL,
 		Author: pr.Author, Opened: pr.Created, Exact: exact,
 	}
+	if !pr.Created.IsZero() {
+		fl.Stale = cfg.Stale(time.Since(pr.Created))
+	}
+	return fl
 }
 
 // sameDependency compares two image references for equality, tolerating only a

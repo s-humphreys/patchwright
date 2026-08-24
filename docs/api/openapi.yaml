@@ -362,6 +362,22 @@ components:
           type: array
           items: { type: string }
           description: Which rules produced this verdict.
+        exposure:
+          type: string
+          enum: [public, internal, unknown]
+          description: |
+            Reachability from the internet, where something reports it. `unknown` is a
+            real answer and must not be read as `internal`: a fleet whose provider does
+            not report reachability would otherwise look entirely internal.
+        signals:
+          type: array
+          items:
+            type: string
+            enum: [exposed, kev, in-flight, stale-fix, unassessed, suppressed]
+          description: |
+            The notable facts about this finding. Each is a positive statement, so the
+            absence of one asserts nothing — no `exposed` covers both an internal
+            workload and one whose reachability nobody reported.
         workload_count: { type: integer }
         fixable_critical:
           type: integer
@@ -442,6 +458,11 @@ components:
         author: { type: string }
         opened: { type: string, format: date-time }
         open_days: { type: integer }
+        stale:
+          type: boolean
+          description: |
+            Open past the configured threshold (remediation.inFlight.staleAfterDays):
+            a fix nobody has merged, rather than progress.
         exact:
           type: boolean
           description: |
@@ -580,6 +601,14 @@ components:
         in_flight_stale:
           type: integer
           description: Matched pull requests open past the configured threshold.
+        exposed:
+          type: integer
+          description: Findings on a workload reachable from the internet.
+        exposure_unknown:
+          type: integer
+          description: |
+            Findings where nothing reported reachability. Published because a fleet with
+            no exposure data would otherwise look entirely internal.
         in_flight_unmatchable:
           type: integer
           description: |

@@ -92,3 +92,14 @@ The breakdown rolls up per owner class, with teams beneath, and states every cou
 as a share of a named denominator. Classes with more than one team expand. The
 `CVEs` column splits by severity on click, and reads `?` where nothing in the row
 was assessed.
+
+## Signals
+
+Each finding carries a `signals` list — `exposed`, `kev`, `in-flight`, `stale-fix`,
+`unassessed`, `suppressed` — and the queue renders it as one column of badges rather
+than a column per attribute. The same set is available to rules, so a signal can change
+the ordering instead of only being readable.
+
+Every signal is a positive statement. The absence of one asserts nothing: no `exposed`
+covers both an internal workload and one whose reachability nobody reported, which is
+why `exposure` is a separate three-valued field (`public`, `internal`, `unknown`).

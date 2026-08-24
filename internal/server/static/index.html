@@ -116,6 +116,11 @@
   .badge-helm { color: var(--high); }
   .badge-operator { color: var(--high); }
   .badge-other { color: var(--muted); }
+  .badge-exposed { color: var(--urgent); font-weight: 600; }
+  .badge-kev { color: var(--urgent); }
+  .badge-inflight { color: var(--ok); }
+  .badge-stale { color: var(--high); font-weight: 600; }
+  .badge-unassessed { color: var(--muted); font-style: italic; }
   /* Class rows are totals for the teams indented beneath them. */
   tr.rollup td { font-weight: 600; }
   td.indent { padding-left: 1.6rem; }
@@ -209,6 +214,7 @@
   <label>class <select id="classFilter"><option value="">all</option></select></label>
   <label>team <select id="teamFilter"><option value="">all</option></select></label>
   <label>fix <select id="fixFilter"><option value="">all</option></select></label>
+  <label>signal <select id="signalFilter"><option value="">all</option></select></label>
   <label title="Only findings with a version to move to: a direct image bump, or one applied via a chart or operator. Hides those already on their latest release and those whose versions could not be resolved."><input type="checkbox" id="onlyFixable"> has a fix</label>
   <label title="Actionable is the policy verdict: this warrants action. It is not the same as having a version to move to, which is the Fix column - an image already on its latest release can still be actionable, and needs a decision rather than a bump."><input type="checkbox" id="onlyActionable" checked> actionable only</label>
   <label><input type="checkbox" id="showSuppressed"> include suppressed</label>
@@ -349,40 +355,71 @@ function upgradeTitle(f) {
   return parts.join(" ");
 }
 
-// inFlightCell reports whether somebody has already opened a pull request that
-// applies this upgrade. "?" means in-flight detection did not run, which is a
-// different answer from "-": absence of a pull request is only news if we looked.
-function inFlightCell(f) {
-  if (!f.in_flight_checked) {
-    return '<span class="unknown" title="In-flight detection did not run, so it is not known whether anyone has started this.">?</span>';
+// Signals: one column of badges rather than a column per attribute. The table cannot
+// grow a column for every fact worth knowing, and a signal that is also a filter and a
+// rule input changes the ordering rather than merely being readable.
+//
+// Every badge is a positive statement. Nothing here means "internal" or "no pull
+// request" — absence of a badge asserts nothing, which is why exposure has its own
+// three-valued cell in the hover rather than a missing globe standing for "safe".
+const SIGNAL_BADGES = {
+  exposed:      { glyph: "\u25c9", label: "exposed", cls: "badge-exposed",
+                  help: "Reachable from the internet, per the scan provider. An exposed critical is a different proposition from an internal one." },
+  kev:          { glyph: "\u26a1", label: "kev", cls: "badge-kev",
+                  help: "Carries a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation in the wild, not a prediction." },
+  "in-flight":  { glyph: "\u21c4", label: "pr", cls: "badge-inflight",
+                  help: "An open pull request in the repository that builds this image applies the upgrade." },
+  "stale-fix":  { glyph: "\u23f1", label: "stale", cls: "badge-stale",
+                  help: "That pull request has been open past the configured threshold. The fix exists and nobody has merged it." },
+  unassessed:   { glyph: "\u25cc", label: "unassessed", cls: "badge-unassessed",
+                  help: "The scan provider never assessed this image, so its zero counts are absent data rather than a clean result." },
+  suppressed:   { glyph: "\u2298", label: "suppressed", cls: "badge-other",
+                  help: "A suppress rule matched, so this is out of the actionable queue." },
+};
+
+// Ordered by how much each should change what somebody does next, so the badges read
+// left to right in that order regardless of the order the API returns them.
+const SIGNAL_ORDER = ["exposed", "kev", "stale-fix", "in-flight", "unassessed", "suppressed"];
+const SIGNAL_WEIGHT = { exposed: 32, kev: 16, "stale-fix": 8, "in-flight": 4, unassessed: 2, suppressed: 1 };
+
+function signalsCell(f) {
+  const set = new Set(f.signals || []);
+  const out = [];
+  for (const name of SIGNAL_ORDER) {
+    if (!set.has(name)) continue;
+    let spec = SIGNAL_BADGES[name];
+    // The pull request badge earns its age: "pr" says someone started, "pr 340d"
+    // says the fix has been sitting in review since last spring.
+    if (name === "in-flight" && f.in_flight) {
+      spec = { ...spec, label: `pr ${f.in_flight.open_days}d`,
+               help: `${f.in_flight.title} — open ${f.in_flight.open_days}d in ${f.in_flight.repository}.` +
+                     (f.in_flight.exact ? "" : " Bumps the same dependency to a different version, so it may not be this fix.") };
+    }
+    out.push(f.in_flight?.url && (name === "in-flight" || name === "stale-fix")
+      ? `<a href="${esc(f.in_flight.url)}" target="_blank" rel="noreferrer" class="badge ${spec.cls}" title="${esc(spec.help)}"><span class="g" aria-hidden="true">${spec.glyph}</span>${esc(spec.label)}</a>`
+      : badge(spec, name));
   }
-  const p = f.in_flight;
-  // "Cannot be matched" is not "nobody has started this". An image that records no
-  // build repository can never match any pull request, and the fix is a label in its
-  // build pipeline — so it must not render as an ordinary absence.
-  if (!p && f.in_flight_reason) {
-    return `<span class="act-unknown" title="${esc(f.in_flight_reason)}">n/a</span>`;
+  // Exposure is three-valued, and "nobody reported it" must not look like internal.
+  if (!set.has("exposed")) {
+    out.push(f.exposure === "internal"
+      ? '<span class="muted" title="Not reachable from the internet, per the scan provider.">internal</span>'
+      : '<span class="unknown" title="Nothing reported whether this is reachable from the internet. Not the same as internal.">?</span>');
   }
-  if (!p) return '<span class="muted" title="No open pull request in the repository that builds this image applies this upgrade.">-</span>';
-  const days = p.open_days;
-  const label = p.exact ? `PR ${days}d` : `PR? ${days}d`;
-  const why = p.exact
-    ? `${p.title} — open ${days}d in ${p.repository}. This applies the recommended version, so the fix is in review rather than unstarted.`
-    : `${p.title} — open ${days}d in ${p.repository}. This bumps the same dependency to a different version, so it may not apply this upgrade.`;
-  const cls = p.exact ? "act-direct" : "act-unknown";
-  return p.url
-    ? `<a class="${cls}" href="${esc(p.url)}" target="_blank" rel="noreferrer" title="${esc(why)}">${esc(label)}</a>`
-    : `<span class="${cls}" title="${esc(why)}">${esc(label)}</span>`;
+  if (!f.in_flight_checked && f.upgrade?.available) {
+    out.push('<span class="unknown" title="In-flight detection did not run, so it is not known whether anyone has started this.">pr?</span>');
+  }
+  if (f.in_flight_reason) {
+    out.push(`<span class="act-unknown" title="${esc(f.in_flight_reason)}">unmatchable</span>`);
+  }
+  return out.join(" ");
 }
 
-// Sort key: an exact match outranks a possible one, both outrank no pull request,
-// and "did not look" sorts to the bottom in either direction. Within a rank, the
-// longest-open pull request comes first: a fix stuck in review for three weeks is
-// the one worth chasing.
-function inFlightSort(f) {
-  if (!f.in_flight_checked) return UNKNOWN;
-  if (!f.in_flight) return 0;
-  return (f.in_flight.exact ? 2000000 : 1000000) + (f.in_flight.open_days || 0);
+// Sort by the weight of what a finding carries, so the exposed, exploited and stalled
+// rise together rather than alphabetically.
+function signalsSort(f) {
+  let w = 0;
+  for (const s of f.signals || []) w += SIGNAL_WEIGHT[s] || 0;
+  return w;
 }
 
 // Provider counts are only meaningful if the provider actually assessed the image.
@@ -729,8 +766,8 @@ const FINDING_COLUMNS = [
   { label: "Upgrade", cls: fixClass, get: (f) => upgradeCell(f), title: upgradeTitle,
     sort: (f) => upgradeText(f),
     help: "The version move available, badged by what kind of change it is: base image, Helm chart, or image tag. A second badge names whatever owns the version when it is not this image's own tag.", },
-  { label: "In flight", get: (f) => inFlightCell(f), sort: (f) => inFlightSort(f),
-    help: "Whether an open pull request in the repository that builds this image already applies this upgrade. \"PR\" is an exact match on dependency and version; \"PR?\" bumps the same dependency to a different version, so it may not be this fix. \"-\" means none found; \"?\" means detection did not run." },
+  { label: "Signals", get: (f) => signalsCell(f), sort: (f) => signalsSort(f),
+    help: "What is notable about this finding, as badges: exposed to the internet, KEV-listed, a pull request already open (with its age), that pull request gone stale, never assessed by the provider, suppressed. Each badge is a positive statement — nothing here means \"internal\" or \"no pull request\", which are shown explicitly." },
   { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f),
     help: "Open Jira tickets covering this image. \"-\" means no open ticket; \"?\" means Jira is not configured, so ticket state is unknown." },
 ];
@@ -1127,6 +1164,21 @@ function populateOwnerFilters(rows) {
     .concat(ordered.map((k) => `<option value="${esc(k)}">${esc(k)} (${fixCounts.get(k)})</option>`))
     .join("");
   fixSel.value = [...fixSel.options].some((o) => o.value === chosenFix) ? chosenFix : "";
+
+  // Only signals actually present are offered. An option that can only ever return
+  // nothing is a worse answer than no option.
+  const sigSel = $("#signalFilter");
+  const chosenSignal = sigSel.value;
+  const sigCounts = new Map();
+  for (const f of rows) {
+    if (chosenClass && (f.owner?.class || "-") !== chosenClass) continue;
+    for (const sig of f.signals || []) sigCounts.set(sig, (sigCounts.get(sig) || 0) + 1);
+  }
+  sigSel.innerHTML = [`<option value="">any signal (${rows.length})</option>`]
+    .concat(SIGNAL_ORDER.filter((k) => sigCounts.has(k))
+      .map((k) => `<option value="${esc(k)}">${esc(k)} (${sigCounts.get(k)})</option>`))
+    .join("");
+  sigSel.value = [...sigSel.options].some((o) => o.value === chosenSignal) ? chosenSignal : "";
 }
 
 // haystack is what the search box matches against: the fields someone would
@@ -1139,6 +1191,7 @@ function haystack(f) {
     (f.dimensions?.account || []).join(" "),
     upgradeText(f), fixPath(f),
     f.in_flight ? `${f.in_flight.title} ${f.in_flight.repository}` : "",
+    (f.signals || []).join(" "), f.exposure,
     ticketsFor(f).map((t) => `${t.key} ${t.status}`).join(" "),
   ];
   return parts.filter(Boolean).join(" ").toLowerCase();
@@ -1146,6 +1199,7 @@ function haystack(f) {
 
 function applyOwnerFilters() {
   const c = $("#classFilter").value, t = $("#teamFilter").value, x = $("#fixFilter").value;
+  const sig = $("#signalFilter").value;
   const q = $("#search").value.trim().toLowerCase();
   const rows = queueRows.filter((f) => {
     if (c && (f.owner?.class || "-") !== c) return false;
@@ -1155,6 +1209,7 @@ function applyOwnerFilters() {
     // "is there a version to move to". An image on its latest release can be both
     // actionable and unfixable, which is a decision rather than a bump.
     if (x && fixPath(f) !== x) return false;
+    if (sig && !(f.signals || []).includes(sig)) return false;
     // "Has a fix" is the common case of the dropdown: something to move to,
     // whether applied here or via a chart or operator.
     if ($("#onlyFixable").checked && !["direct", "managed"].includes(fixPath(f))) return false;
@@ -1397,6 +1452,7 @@ $("#classFilter").addEventListener("change", () => {
 });
 $("#teamFilter").addEventListener("change", applyOwnerFilters);
 $("#fixFilter").addEventListener("change", applyOwnerFilters);
+$("#signalFilter").addEventListener("change", applyOwnerFilters);
 $("#onlyFixable").addEventListener("change", applyOwnerFilters);
 $("#search").addEventListener("input", applyOwnerFilters);
 $("#refresh").addEventListener("click", async () => {
