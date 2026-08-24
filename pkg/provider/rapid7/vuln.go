@@ -87,8 +87,17 @@ func (v *vulnSource) buildMap(ctx context.Context) (map[string]string, error) {
 			}
 			out[img], assessed[img] = r.ResourceID, ok
 		}
-		if len(resp.Data) == 0 || page >= resp.TotalPages {
+		if page >= resp.TotalPages {
 			break
+		}
+		// An empty page before the last one does NOT mean the end. Under load this
+		// API returns one, and treating it as the end truncated the map — which then
+		// reported "no resource runs this image" for everything missing, i.e. a
+		// coverage gap dressed up as an answer. On a live run that silently cost 193
+		// of 840 images.
+		if len(resp.Data) == 0 {
+			slog.WarnContext(ctx, "rapid7 returned an empty page mid-listing; continuing",
+				"page", page, "of", resp.TotalPages)
 		}
 	}
 	slog.InfoContext(ctx, "mapped images to rapid7 resources", "images", len(out))
@@ -102,10 +111,7 @@ func (v *vulnSource) Scan(ctx context.Context, image model.Image) ([]model.Vulne
 		return nil, v.mapErr
 	}
 
-	resource, ok := v.resources[image.NameTag()]
-	if !ok {
-		resource, ok = v.resources[image.Ref]
-	}
+	resource, ok := v.lookup(image)
 	if !ok {
 		// The platform has no resource running this image, so it has nothing to say
 		// about it. An error rather than an empty list: empty would be recorded as a
@@ -164,4 +170,27 @@ func (r cveRow) vulnerability() model.Vulnerability {
 		v.FirstSeen = t
 	}
 	return v
+}
+
+// lookup finds the resource for an image, tolerating how the platform writes a
+// reference. Docker Hub images are recorded without a registry ("n8nio/n8n:2.36.1")
+// while an image parsed from a cluster carries the implied one, so an exact match on
+// the qualified form misses every Docker Hub image in the estate.
+func (v *vulnSource) lookup(image model.Image) (string, bool) {
+	for _, key := range []string{image.NameTag(), image.Ref} {
+		if key == "" {
+			continue
+		}
+		if r, ok := v.resources[key]; ok {
+			return r, true
+		}
+		for _, implied := range []string{"docker.io/library/", "docker.io/", "index.docker.io/"} {
+			if bare := strings.TrimPrefix(key, implied); bare != key {
+				if r, ok := v.resources[bare]; ok {
+					return r, true
+				}
+			}
+		}
+	}
+	return "", false
 }
