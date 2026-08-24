@@ -337,7 +337,13 @@ func normalizeReason(reason string) string {
 	}
 	const maxLen = 80
 	if len(reason) > maxLen {
-		reason = strings.TrimSpace(reason[:maxLen])
+		// At a word boundary: cutting mid-word produced labels like "add one of org",
+		// which reads as a different reason rather than a truncated one.
+		cut := reason[:maxLen]
+		if i := strings.LastIndex(cut, " "); i > maxLen/2 {
+			cut = cut[:i]
+		}
+		reason = strings.TrimSpace(cut)
 	}
 	return reason
 }

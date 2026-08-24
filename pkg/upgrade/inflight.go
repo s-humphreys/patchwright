@@ -115,10 +115,14 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 		repo, ok := repos[img.Image.Ref]
 		if !ok {
 			unmatchedRepo++
-			// Say why, rather than leaving it as an ordinary "no pull request found".
-			// An image that records no build repository cannot be matched by anything,
-			// ever, and the fix is a label in its build pipeline.
-			img.InFlightReason = e.unmatchableReason()
+			// Say why, but only where the missing label is something anybody here can
+			// fix. Someone else's image records no repository of ours because we do not
+			// build it, which is not a gap in our pipeline and must not be reported as
+			// one: the first run of this counted 21 such images and invited the team to
+			// go and label Kiali's.
+			if e.Cfg.IsFirstParty(img.Image.Registry) {
+				img.InFlightReason = e.unmatchableReason()
+			}
 			continue
 		}
 		fl, matchedOne := match(byRepo[strings.ToLower(repo)], *img.Upgrade)

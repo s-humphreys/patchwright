@@ -33,8 +33,11 @@ const repoLabel = "com.example.build.repository"
 func enricher(prs []PullRequest, labels map[string]map[string]string, cfg config.InFlightConfig) *InFlightEnricher {
 	return &InFlightEnricher{
 		Cfg: config.RemediationConfig{
-			Base:     config.BaseImageConfig{RepoLabels: []string{repoLabel}},
-			InFlight: cfg,
+			// "reg" is first-party in these tests: a missing build label is only a gap
+			// worth reporting where we own the build.
+			FirstPartyRegistries: []string{"reg"},
+			Base:                 config.BaseImageConfig{RepoLabels: []string{repoLabel}},
+			InFlight:             cfg,
 		},
 		Source:    stubPRs{prs: prs},
 		Inspector: stubInspector{labels: labels},
@@ -43,7 +46,7 @@ func enricher(prs []PullRequest, labels map[string]map[string]string, cfg config
 
 func image(ref, name, latest string) model.AssessedImage {
 	return model.AssessedImage{
-		Image:   model.Image{Ref: ref},
+		Image:   model.Image{Ref: ref, Registry: "reg"},
 		Upgrade: &model.Upgrade{Kind: "base", Name: name, Latest: latest, Available: true},
 	}
 }
@@ -269,5 +272,29 @@ func TestStaleAfterDays(t *testing.T) {
 	}
 	if (config.InFlightConfig{}).Stale(365 * 24 * time.Hour) {
 		t.Fatal("no threshold configured means nothing is stale")
+	}
+}
+
+func TestAThirdPartyImageIsNotReportedAsAPipelineGap(t *testing.T) {
+	// Someone else's image records no repository of ours because we do not build it.
+	// Reporting that as a missing label invites the team to go and label images they
+	// have no control over.
+	e := &InFlightEnricher{
+		Cfg: config.RemediationConfig{
+			FirstPartyRegistries: []string{"reg"},
+			Base:                 config.BaseImageConfig{RepoLabels: []string{repoLabel}},
+		},
+		Source:    stubPRs{},
+		Inspector: stubInspector{labels: map[string]map[string]string{}},
+	}
+	images := []model.AssessedImage{{
+		Image:   model.Image{Ref: "quay.io/vendor/app:1", Registry: "quay.io"},
+		Upgrade: &model.Upgrade{Kind: "image", Name: "quay.io/vendor/app", Latest: "2", Available: true},
+	}}
+	if err := e.EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if images[0].InFlightReason != "" {
+		t.Fatalf("third-party image reported as a build pipeline gap: %q", images[0].InFlightReason)
 	}
 }

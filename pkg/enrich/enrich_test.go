@@ -209,8 +209,9 @@ func (f fakeExploitSource) Lookup(_ context.Context, ids []string) (map[string]e
 
 func TestExploitEnricherAnnotatesVulns(t *testing.T) {
 	images := []model.AssessedImage{
-		{Image: model.ParseImageRef("acr.io/app:1"), Vulns: []model.Vulnerability{{ID: "CVE-1"}, {ID: "CVE-2"}}},
-		{Image: model.ParseImageRef("acr.io/clean:1")}, // no CVEs
+		{Image: model.ParseImageRef("acr.io/app:1"), Scanned: true,
+			Vulns: []model.Vulnerability{{ID: "CVE-1"}, {ID: "CVE-2"}}},
+		{Image: model.ParseImageRef("acr.io/clean:1"), Scanned: true}, // scanned, no CVEs
 	}
 	src := fakeExploitSource{info: map[string]enrich.ExploitInfo{
 		"CVE-1": {EPSS: 0.9, KEV: true},
@@ -225,7 +226,7 @@ func TestExploitEnricherAnnotatesVulns(t *testing.T) {
 	if v[1].KEV || v[1].EPSS != 0 {
 		t.Errorf("CVE-2 should be unannotated, got %+v", v[1])
 	}
-	// Both images must be marked checked — even the one with no CVEs — so the
+	// Both scanned images must be marked checked — even the one with no CVEs — so the
 	// report can tell "0 known-exploited" from "not checked".
 	if !images[0].ExploitChecked || !images[1].ExploitChecked {
 		t.Errorf("all images should be ExploitChecked, got %v / %v", images[0].ExploitChecked, images[1].ExploitChecked)
@@ -333,5 +334,18 @@ func TestFileSourceRequiresPath(t *testing.T) {
 func TestUnknownLiveSource(t *testing.T) {
 	if _, err := enrich.NewLiveSource("nope", enrich.Options{}); err == nil {
 		t.Error("expected error for unknown live source")
+	}
+}
+
+func TestExploitEnricherDoesNotClaimToHaveCheckedUnscannedImages(t *testing.T) {
+	// Marking an unscanned image checked claims coverage over nothing: on a run with
+	// scanning off, every EPSS and risk cell then reads "-" (checked, no score)
+	// instead of "?" (never looked).
+	images := []model.AssessedImage{{Image: model.ParseImageRef("acr.io/app:1")}}
+	if err := enrich.NewExploitEnricher(fakeExploitSource{}).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if images[0].ExploitChecked {
+		t.Fatal("an unscanned image must not be reported as exploit-checked")
 	}
 }
