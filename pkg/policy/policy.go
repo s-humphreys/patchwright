@@ -180,6 +180,8 @@ func findingActivation(f model.Finding) map[string]any {
 			"fixed_version": v.FixedVersion,
 			"epss":          v.EPSS,
 			"kev":           v.KEV,
+			"risk_score":    v.RiskScore,
+			"exploit_known": v.ExploitKnown,
 		})
 	}
 	// When reconciliation has not run, liveness is unknown; default live to

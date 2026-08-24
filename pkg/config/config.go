@@ -568,6 +568,18 @@ type ExcludeRule struct {
 
 // ScanConfig tunes which images are worth scanning for vulnerabilities.
 type ScanConfig struct {
+	// Disabled turns image scanning off even when --vuln-source is passed.
+	//
+	// This exists so the same flags can be used locally and in a cluster: a laptop
+	// often has no pull credentials for a private registry, and scanning there
+	// produces nothing but failures and minutes of waiting. Set it in the local
+	// config file and leave it unset in the deployed one.
+	//
+	// It is deliberately loud rather than silent: findings still report
+	// scanned:false, so a run with scanning off is never mistaken for a run that
+	// scanned and found nothing.
+	Disabled bool `yaml:"disabled"`
+
 	// SkipOwnerClasses lists owner classes whose images are not scanned —
 	// typically ones you can't remediate and already suppress (e.g.
 	// cloud-provider-managed images). An image is skipped only if every one of
@@ -690,6 +702,9 @@ func Load(paths ...string) (*Config, error) {
 		// it wins (so the two knobs can live in different files).
 		if part.Scan.SkipOwnerClasses != nil {
 			cfg.Scan.SkipOwnerClasses = part.Scan.SkipOwnerClasses
+		}
+		if part.Scan.Disabled {
+			cfg.Scan.Disabled = true
 		}
 		if part.Scan.SkipRegistries != nil {
 			cfg.Scan.SkipRegistries = part.Scan.SkipRegistries

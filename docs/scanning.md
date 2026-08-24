@@ -51,6 +51,30 @@ patchwright assess -i export.csv -c config/ \
 when: "vulns.exists(v, v.fix_available && (v.kev || v.epss > 0.5))"
 ```
 
+### Combining sources
+
+`--exploit-source` accepts a comma-separated list, and the fields are merged with the
+first source to set one winning:
+
+```
+--exploit-source public,rapid7
+```
+
+- `public` supplies **EPSS** (FIRST.org, a probability between 0 and 1 of exploitation
+  in the next 30 days) and **KEV** (membership of CISA's Known Exploited Vulnerabilities
+  catalogue).
+- `rapid7` supplies **`risk_score`**, the platform's own composite ranking, and
+  `exploit_known` where it has a public exploit on record.
+
+Keep them apart in rules. A risk score is a severity-and-exposure weighting on a scale
+running to roughly 1000; EPSS is a probability. Writing `v.epss > 0.5` against a risk
+score would match every CVE in an estate. Rapid7 exposes no EPSS and no KEV field at
+all, so `public` is not optional if you want either — and KEV is worth taking from
+CISA directly regardless, since any scanner's KEV flag is a copy of that catalogue.
+
+A source that fails fails the run rather than being dropped, because an absent EPSS
+reads as "not exploitable" to every rule that thresholds it.
+
 `EPSS` is the highest score across the image's CVEs: one CVE at 0.93 makes the
 image urgent however many quiet ones sit beside it.
 
@@ -83,6 +107,16 @@ One limit worth knowing: the provider reports when it first saw a CVE **anywhere
 the estate**, not on this image. For "how long have we known about this" that is
 right; for "how long has this image been exposed" it can be earlier than the truth if
 the image adopted the CVE later.
+
+## Turning scanning off in one environment
+
+`scan.disabled: true` in a config file turns scanning off even when `--vuln-source` is
+passed, so the same flags work on a laptop with no registry credentials and in a
+cluster that has them. Set it in the local config file and leave it out of the
+deployed one.
+
+The run says so on startup, and findings still report `scanned: false`, so a run with
+scanning off is never mistaken for one that scanned and found nothing.
 
 ## Without a vuln source
 

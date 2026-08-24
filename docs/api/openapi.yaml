@@ -501,6 +501,17 @@ components:
         cvss: { type: number }
         fix_available: { type: boolean }
         fixed_version: { type: string }
+        risk_score:
+          type: number
+          description: |
+            The scan provider's own composite ranking for this CVE, on that provider's
+            scale (Rapid7's runs to roughly 1000). NOT comparable with `epss`, which is
+            a probability between 0 and 1. Absent means unscored.
+        exploit_known:
+          type: boolean
+          description: |
+            The provider has a public exploit on record. Weaker evidence than `kev`,
+            which is confirmed exploitation in the wild.
         epss:
           type: number
           description: Probability of exploitation in 30 days. Needs an exploit source.

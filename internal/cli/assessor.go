@@ -115,7 +115,11 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		}
 	}
 
-	if in.vulnSource != "" {
+	if in.vulnSource != "" && cfg.Scan.Disabled {
+		slog.Warn("image scanning disabled by config (scan.disabled); vulnerability data will be absent",
+			"vuln_source", in.vulnSource)
+	}
+	if in.vulnSource != "" && !cfg.Scan.Disabled {
 		scanner, err := buildScanner(in.vulnSource, in.vulnOptions,
 			cfg.Scan.EffectiveSkipOwnerClasses(), cfg.Scan.SkipRegistries)
 		if err != nil {

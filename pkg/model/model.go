@@ -107,6 +107,15 @@ type Vulnerability struct {
 	// Vulnerabilities catalog (exploited in the wild).
 	EPSS float64
 	KEV  bool
+	// RiskScore is a scanner's own composite ranking for this CVE, on whatever
+	// scale that scanner uses (Rapid7's is roughly 0..1000). Deliberately kept
+	// apart from EPSS: EPSS is a calibrated probability, this is a weighting, and
+	// a rule thresholding one at 0.5 would fire on every CVE if given the other.
+	// Zero means unknown, since no scanner scores a real CVE at zero.
+	RiskScore float64
+	// ExploitKnown reports that the scanner has a public exploit on record for
+	// this CVE. Weaker than KEV, which is confirmed exploitation in the wild.
+	ExploitKnown bool
 }
 
 // Counts holds aggregate vulnerability counts keyed by severity name. A map

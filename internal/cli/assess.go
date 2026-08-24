@@ -130,11 +130,28 @@ func buildExploitEnricher(name string, options []string) (*enrich.ExploitEnriche
 		}
 		opts[k] = v
 	}
-	src, err := enrich.NewExploitSource(name, opts)
-	if err != nil {
-		return nil, err
+	// Comma-separated: EPSS and KEV come from the public feeds, a scanner's own
+	// risk score from the scanner, and neither substitutes for the other.
+	var sources []enrich.ExploitSource
+	for _, n := range strings.Split(name, ",") {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		src, err := enrich.NewExploitSource(n, opts)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, src)
 	}
-	enricher := enrich.NewExploitEnricher(src)
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("--exploit-source names no source")
+	}
+	if len(sources) == 1 {
+		enricher := enrich.NewExploitEnricher(sources[0])
+		return &enricher, nil
+	}
+	enricher := enrich.NewExploitEnricher(enrich.MultiExploitSource{Sources: sources})
 	return &enricher, nil
 }
 

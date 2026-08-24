@@ -137,6 +137,11 @@ type VulnView struct {
 	FixedVersion string     `json:"fixed_version,omitempty"`
 	EPSS         float64    `json:"epss,omitempty"`
 	KEV          bool       `json:"kev,omitempty"`
+	// RiskScore is the scan provider's own composite ranking, on its own scale
+	// (Rapid7's is roughly 0..1000). Not comparable with epss, which is a
+	// probability. Absent means unscored.
+	RiskScore    float64 `json:"risk_score,omitempty"`
+	ExploitKnown bool    `json:"exploit_known,omitempty"`
 }
 
 // Emit implements Sink.
@@ -199,6 +204,8 @@ func ToFindingView(f model.Finding) FindingView {
 			FixedVersion: v.FixedVersion,
 			EPSS:         v.EPSS,
 			KEV:          v.KEV,
+			RiskScore:    v.RiskScore,
+			ExploitKnown: v.ExploitKnown,
 		})
 	}
 	var liveness *LivenessView
