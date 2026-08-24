@@ -217,3 +217,79 @@ export function initDetail() {
     if (/** @type {any} */ (e).key === "Escape" && !$("#detail").hidden) closeDetail();
   });
 }
+
+/** openCVEDetail shows one CVE and every image carrying it. */
+export function openCVEDetail(g) {
+  shown = { image: null, cve: g.id };
+  const el = $("#detail");
+  const rows = g.images.slice()
+    .sort((a, b) => a.image.localeCompare(b.image))
+    .map((i) => `<tr>
+      <td class="wrap"><code>${esc(i.image)}</code></td>
+      <td>${i.team ? esc(i.team) : unknown("unattributed", "No ownership rule matched this workload.")}</td>
+      <td>${i.fixed ? `<span class="act-direct">${esc(i.fixed)}</span>` : '<span class="muted">no fix</span>'}</td>
+      <td>${esc(i.fix)}</td>
+    </tr>`).join("");
+  const teams = [...g.teams].sort();
+  el.innerHTML = `
+    <div class="detail-head">
+      <div>
+        <code class="detail-title">${esc(g.id)}</code>
+        <div class="sub">${esc(g.severity)}${g.kev ? " · known exploited" : ""} · ${g.images.length} image${g.images.length === 1 ? "" : "s"}</div>
+      </div>
+      <button id="detailClose" class="linkish" aria-label="Close details">close</button>
+    </div>
+    <div class="detail-body">
+      <section><h4>Assessment</h4><dl>
+        ${row("Severity", `<span class="${esc(g.severity)}">${esc(g.severity)}</span>`)}
+        ${row("CVSS", g.cvss ? g.cvss.toFixed(1) : unknown("unknown", "No CVSS score was reported for this CVE."))}
+        ${row("EPSS", g.epss ? g.epss.toFixed(2) : unknown("?", "No exploit source ran, so exploitation pressure is unknown."))}
+        ${row("Risk score", g.risk ? String(Math.round(g.risk)) : unknown("-", "The scan provider scored this CVE for none of these images."))}
+        ${row("Known exploited", g.kev ? badge(SIGNAL_BADGES.kev, "kev") : '<span class="muted">not in CISA KEV</span>')}
+      </dl></section>
+      <section><h4>Scope</h4><dl>
+        ${row("Images affected", String(g.images.length))}
+        ${row("Teams involved", teams.length ? teams.map((t) => esc(t)).join(", ") : unknown("none attributed", "No ownership rule matched any affected workload."))}
+        ${row("Fix available on", g.fixable
+          ? `${g.fixable} of ${g.images.length} images`
+          : unknown("none", "No affected image has a fix available: there is nothing to upgrade to yet."))}
+      </dl></section>
+      <section><h4>Affected images</h4>
+        <div class="scroll-x"><table class="mini">
+          <thead><tr><th>Image</th><th>Team</th><th>Fixed in</th><th>Fix path</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+      </section>
+    </div>`;
+  el.hidden = false;
+  document.body.classList.add("detail-open");
+  restoreFocus = document.activeElement;
+  $("#detailClose").addEventListener("click", closeDetail);
+  /** @type {any} */ ($("#detailClose")).focus();
+}
+
+/** shownCVE reports which CVE the panel is on, so a refresh can re-render it. */
+export function shownCVE() {
+  return shown && shown.cve ? shown.cve : null;
+}
+
+// initCVEDetail opens a CVE's scope from the CVE table.
+export function initCVEDetail(lookup) {
+  const open = (target) => {
+    const tr = target.closest("tbody tr");
+    if (!tr) return false;
+    const g = lookup(/** @type {any} */ (tr).dataset.cve);
+    if (!g) return false;
+    openCVEDetail(g);
+    return true;
+  };
+  $("#cves").addEventListener("click", (e) => {
+    const t = /** @type {any} */ (e.target);
+    if (t.closest("a")) return;
+    open(t);
+  });
+  $("#cves").addEventListener("keydown", (e) => {
+    const ke = /** @type {any} */ (e);
+    if (ke.key !== "Enter" && ke.key !== " ") return;
+    if (open(ke.target)) ke.preventDefault();
+  });
+}

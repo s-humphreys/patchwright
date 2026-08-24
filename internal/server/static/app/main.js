@@ -1,7 +1,9 @@
 import { readURL } from './urlstate.js';
 import { initConfig } from './config.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
-import { initDetail, openDetail, shownImage } from './detail.js';
+import { initCVEDetail, initDetail, openCVEDetail, openDetail, shownCVE, shownImage } from './detail.js';
+import { cveGroup, renderCVEs } from './cves.js';
+import { current as currentView, initTabs } from './tabs.js';
 import { initPending, loadPending } from './pending.js';
 import { applyOwnerFilters, loadFindings, populateOwnerFilters } from './queue.js';
 import { S } from './state.js';
@@ -45,12 +47,18 @@ export async function loadAll() {
       if (readURL()) applyOwnerFilters();
     }
     renderBreakdown(owners.owners);
+    if (currentView() === "cves") renderCVEs(S.queueRows);
     // Re-render an open panel against the new data rather than leaving it showing
     // figures from the previous run, or closing it under somebody mid-read.
-    const open = shownImage();
-    if (open) {
-      const fresh = S.queueRows.find((f) => f.image === open);
+    const openImage = shownImage();
+    if (openImage) {
+      const fresh = S.queueRows.find((f) => f.image === openImage);
       if (fresh) openDetail(fresh);
+    }
+    const openCVE = shownCVE();
+    if (openCVE) {
+      const fresh = cveGroup(openCVE);
+      if (fresh) openCVEDetail(fresh);
     }
     // Once per load, not per poll: see loadPending.
     loadPending();
@@ -65,6 +73,10 @@ export async function loadAll() {
 export function init() {
   initTable();
   initDetail();
+  initCVEDetail(cveGroup);
+  // Rendered on switch as well as on load: aggregating every CVE across the estate is
+  // wasted work for a reader who never opens the view.
+  initTabs((view) => { if (view === "cves") renderCVEs(S.queueRows); });
   initConfig();
   initPending();
   $("#onlyActionable").addEventListener("change", loadFindings);

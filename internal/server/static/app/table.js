@@ -79,9 +79,11 @@ export function renderTable(id, columns, rows) {
 
   // Rows in the findings table are openable: they carry the image so a click can find
   // the finding again, and a tabindex so the keyboard reaches them.
-  const openable = id === "findings";
+  const openable = id === "findings" || id === "cves";
   document.querySelector(`#${id} tbody`).innerHTML = data.map((row) => (openable
-    ? `<tr class="openable" tabindex="0" data-image="${esc(row.image)}" aria-label="Show details for ${esc(row.image)}">`
+    ? `<tr class="openable" tabindex="0" ${id === "cves"
+        ? `data-cve="${esc(row.id)}" aria-label="Show scope of ${esc(row.id)}"`
+        : `data-image="${esc(row.image)}" aria-label="Show details for ${esc(row.image)}"`}>`
     : "<tr>") +
     columns.map((c) => {
       const cls = [c.num ? "num" : "", typeof c.td === "string" ? c.td : "",

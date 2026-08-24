@@ -46,12 +46,31 @@
   <label><input type="checkbox" id="showSuppressed"> include suppressed</label>
   <span id="queueCount"></span>
 </div>
+<div class="tabs" role="tablist">
+  <button class="tab" id="tabQueue" role="tab" aria-selected="true" aria-controls="panelQueue">Queue</button>
+  <button class="tab" id="tabCVEs" role="tab" aria-selected="false" aria-controls="panelCVEs">CVEs</button>
+</div>
+
+<div id="panelQueue" class="tab-panel" role="tabpanel" aria-labelledby="tabQueue">
 <div class="scroll"><table id="findings">
   <thead><tr></tr></thead>
   <tbody></tbody>
 </table></div>
 <p class="meta">Select a row for everything known about it: CVEs, exposure, coverage, the
   fix path and what is already in progress.</p>
+</div>
+
+<!-- The same data by CVE rather than by image: what security asks is how far one CVE
+     reaches, which the queue can only answer by reading every row. -->
+<div id="panelCVEs" class="tab-panel" role="tabpanel" aria-labelledby="tabCVEs" hidden>
+  <p class="meta" id="cveNote"></p>
+  <div class="scroll"><table id="cves">
+    <thead><tr></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p class="meta">Select a CVE for every image carrying it, the teams involved, and where
+    a fix exists.</p>
+</div>
 
 <!-- The detail panel. Everything the queue no longer carries as a column lives here,
      per finding, on demand. -->

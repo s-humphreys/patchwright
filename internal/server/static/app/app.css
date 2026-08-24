@@ -198,16 +198,31 @@ tbody tr.openable:hover, tbody tr.openable:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 .detail-title { font-size: 1.05em; word-break: break-all; }
-.detail section { margin: 1.25rem 0 0; }
+/* Sections are cards with their own rule, so the eye can tell where one subject ends
+   and the next begins. Flat headings over flat rows read as one long list, which is
+   what the first pass looked like. */
+.detail section {
+  margin: 1rem 0 0; padding: 0.75rem 0.9rem;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 0.4rem;
+}
 .detail h4 {
-  margin: 0 0 0.5rem; font-size: 0.82em; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--muted);
+  margin: 0 0 0.6rem; padding-bottom: 0.45rem;
+  font-size: 0.78em; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--accent); border-bottom: 1px solid var(--line);
 }
 .detail dl { margin: 0; }
-/* Two columns, label and value, so the eye can run down the labels. */
-.dr { display: grid; grid-template-columns: 11rem 1fr; gap: 0.4rem 1rem; padding: 0.22rem 0; }
+/* Two columns, label and value, with a rule between rows: twenty label/value pairs
+   with nothing between them force the reader to track alignment by eye. */
+.dr {
+  display: grid; grid-template-columns: 10.5rem 1fr; gap: 0.4rem 1rem;
+  padding: 0.4rem 0; border-top: 1px solid var(--line);
+}
+.dr:first-child { border-top: 0; padding-top: 0; }
 .dr dt { color: var(--muted); }
 .dr dd { margin: 0; word-break: break-word; }
+/* Long opaque values (a digest, a base reference) get their own line rather than
+   wrapping mid-token across the value column. */
+.dr dd code { word-break: break-all; }
 @media (max-width: 40rem) { .dr { grid-template-columns: 1fr; gap: 0.1rem; } }
 
 /* The CVE list inside the panel: dense, its own scroll, never widening the sheet. */
@@ -215,3 +230,18 @@ table.mini { width: 100%; border-collapse: collapse; font-size: 0.9em; }
 table.mini th { text-align: left; color: var(--muted); font-weight: 500; }
 table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: nowrap; }
 .scroll-x { overflow-x: auto; }
+
+/* Tabs. The queue and the CVE view answer different questions from the same data —
+   "what should this team do" and "how far does this CVE reach" — so they are peers
+   rather than one being buried inside the other. */
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); margin: 0 0 0.75rem; }
+.tab {
+  appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); font: inherit; padding: 0.45rem 0.8rem; cursor: pointer;
+}
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-panel[hidden] { display: none; }
+
+/* The affected-image list inside a CVE's panel. */
+.detail table.mini td.wrap { white-space: normal; }

@@ -103,3 +103,20 @@ the ordering instead of only being readable.
 Every signal is a positive statement. The absence of one asserts nothing: no `exposed`
 covers both an internal workload and one whose reachability nobody reported, which is
 why `exposure` is a separate three-valued field (`public`, `internal`, `unknown`).
+
+## Views
+
+The status page shows the same assessment two ways, as tabs, with the view in the URL:
+
+- **Queue** — by image, five columns: urgency, severity, the image with its owner and
+  namespace, the fix, and whether anything is already in progress. Selecting a row opens
+  a panel with everything else, including every CVE on that image.
+- **CVEs** — by CVE, ranked KEV first, then severity, then exploitation pressure, then
+  how many images carry it. Selecting a CVE lists every affected image, the teams
+  involved, and where a fix exists. This is the scope-of-work question, which the queue
+  can only answer by reading every row.
+
+The CVE view is aggregated in the browser from the findings the API already returns, so
+there is no second endpoint that could disagree with the first. It needs a vuln source:
+the scan provider reports severity totals rather than individual CVEs, so without
+`--vuln-source` the view says so rather than showing an empty list.
