@@ -4,6 +4,7 @@
 {{- if and .Values.ticketing.autoTicket (not .Values.ticketing.template) }}
 {{- fail "ticketing.autoTicket requires ticketing.template: jira.template is a path and the image ships no default ticket template" }}
 {{- end }}
+{{- if .Values.server.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,3 +70,4 @@ spec:
     - name: http
       port: {{ .Values.server.port }}
       targetPort: http
+{{- end }}

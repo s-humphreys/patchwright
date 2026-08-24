@@ -77,6 +77,11 @@ type summaryView struct {
 	InFlightPossible int `json:"in_flight_possible"`
 	InFlightStale    int `json:"in_flight_stale"`
 	InFlightChecked  int `json:"in_flight_checked"`
+	// InFlightUnmatchable counts findings that could never be matched to a pull
+	// request because their image records no build repository. Reported separately
+	// because it is a build pipeline gap, not an absence of remediation: without it
+	// these render identically to "nobody has started this".
+	InFlightUnmatchable int `json:"in_flight_unmatchable"`
 
 	// ExpiredSuppressions are suppress rules that have lapsed, so the work they were
 	// hiding is back in the queue. Reported because an unexplained jump in the queue
@@ -198,6 +203,9 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 		if f.InFlightChecked {
 			s.InFlightChecked++
+		}
+		if f.InFlightReason != "" {
+			s.InFlightUnmatchable++
 		}
 		if f.InFlight != nil {
 			if f.InFlight.Exact {
@@ -405,18 +413,20 @@ func remediationResolved(f *model.Finding) bool {
 // rename here silently renaming a metric someone is alerting on.
 func metricsSnapshot(snap *snapshot) metrics.Snapshot {
 	out := metrics.Snapshot{
-		Findings:           snap.summary.Findings,
-		Actionable:         snap.summary.Actionable,
-		Suppressed:         snap.summary.Suppressed,
-		ProviderAssessed:   snap.summary.ProviderAssessed,
-		ProviderUnassessed: snap.summary.ProviderUnassessed,
-		Scanned:            snap.summary.Scanned,
-		ExploitChecked:     snap.summary.ExploitChecked,
-		Upgradable:         snap.summary.Upgradable,
-		KnownExploited:     snap.summary.KnownExploited,
-		RemediationUnknown: snap.summary.RemediationUnresolved,
-		ActionableBlind:    snap.summary.ActionableUnassessed,
-		UniqueImages:       snap.summary.UniqueImages,
+		Findings:            snap.summary.Findings,
+		Actionable:          snap.summary.Actionable,
+		Suppressed:          snap.summary.Suppressed,
+		ProviderAssessed:    snap.summary.ProviderAssessed,
+		ProviderUnassessed:  snap.summary.ProviderUnassessed,
+		Scanned:             snap.summary.Scanned,
+		ExploitChecked:      snap.summary.ExploitChecked,
+		Upgradable:          snap.summary.Upgradable,
+		KnownExploited:      snap.summary.KnownExploited,
+		RemediationUnknown:  snap.summary.RemediationUnresolved,
+		ActionableBlind:     snap.summary.ActionableUnassessed,
+		InFlight:            snap.summary.InFlight,
+		InFlightUnmatchable: snap.summary.InFlightUnmatchable,
+		UniqueImages:        snap.summary.UniqueImages,
 	}
 	if snap.summary.ProviderDataNewest != nil {
 		out.ProviderDataNewest = *snap.summary.ProviderDataNewest
@@ -426,6 +436,9 @@ func metricsSnapshot(snap *snapshot) metrics.Snapshot {
 			Class: o.Class, Team: o.Team, Findings: o.Total,
 			Actionable: o.Actionable, Unassessed: o.Unassessed, Ticketed: o.Ticketed,
 		})
+	}
+	for _, r := range snap.summary.RemediationBlockers {
+		out.Blockers = append(out.Blockers, metrics.ReasonCount{Reason: r.Reason, Findings: r.Findings})
 	}
 	for _, r := range snap.summary.UnassessedReasons {
 		out.Reasons = append(out.Reasons, metrics.ReasonCount{Reason: r.Reason, Findings: r.Findings})

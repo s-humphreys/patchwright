@@ -115,6 +115,10 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 		repo, ok := repos[img.Image.Ref]
 		if !ok {
 			unmatchedRepo++
+			// Say why, rather than leaving it as an ordinary "no pull request found".
+			// An image that records no build repository cannot be matched by anything,
+			// ever, and the fix is a label in its build pipeline.
+			img.InFlightReason = e.unmatchableReason()
 			continue
 		}
 		fl, matchedOne := match(byRepo[strings.ToLower(repo)], *img.Upgrade)
@@ -128,6 +132,15 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 		"provider", e.Source.Name(), "open_pull_requests", len(prs),
 		"matched", matched, "no_build_repo", unmatchedRepo)
 	return nil
+}
+
+// unmatchableReason names why an image could not be tied to a repository, so the
+// report can distinguish it from an image with no pull request.
+func (e *InFlightEnricher) unmatchableReason() string {
+	if len(e.Cfg.Base.RepoLabels) == 0 {
+		return "no remediation.base.repoLabels configured, so no image can be matched to a repository"
+	}
+	return "image records no build repository label, so no pull request can be tied to it"
 }
 
 // eligible filters to the pull requests the config says may count.

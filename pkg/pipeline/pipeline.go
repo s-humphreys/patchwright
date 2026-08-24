@@ -190,6 +190,7 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				RemediationChecked: ai.RemediationChecked,
 				InFlight:           ai.InFlight,
 				InFlightChecked:    ai.InFlightChecked,
+				InFlightReason:     ai.InFlightReason,
 			})
 		}
 	}

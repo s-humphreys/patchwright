@@ -6,6 +6,11 @@ image:
 # patchwright runs as a long-lived Deployment (`serve`) exposing the read-only
 # assessment API (findings/owners/summary), refreshed on an interval.
 server:
+  # Deploy the long-running server. Set false to run as a CronJob instead: one
+  # assessment per schedule, written to the log, with no API and no status page.
+  # Metrics need the server, since a CronJob has exited by the time anything scrapes
+  # it.
+  enabled: true
   # How often the server re-runs the assessment.
   interval: 1h
   port: 8080
@@ -25,6 +30,22 @@ server:
   auth:
     secretName: ""      # e.g. "patchwright-api"; empty leaves the API open
     secretKey: token
+
+# Used when server.enabled is false.
+cronjob:
+  schedule: "0 7 * * *"
+  # Forbid rather than Allow: two assessments of the same estate at once duplicate
+  # every registry call for one answer, and a shared cache PVC has a single writer.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # A run that hangs on an unreachable registry should be killed rather than block
+  # the next schedule. Generous by default: a first run over a large estate with
+  # scanning on can take a while.
+  activeDeadlineSeconds: 3600
+  backoffLimit: 1
+  # ndjson so each finding is one line for a log pipeline. "table" is for humans.
+  format: ndjson
 
 # Prometheus metrics, prefixed patchwright_, served at /metrics in server mode.
 #
@@ -219,10 +240,10 @@ scan:
   # deliberately re-read, since detecting that they moved is the point.
   cache:
     persistence:
-      # Off by default: the chart should not require storage to work. The chart
-      # deploys a long-running server, whose emptyDir already survives container
-      # restarts, so this buys the DB download back across rescheduling, upgrades and
-      # node drains rather than on every run. Worth more if this ever ships a CronJob.
+      # Off by default: the chart should not require storage to work. In server mode
+      # the emptyDir already survives container restarts, so this buys the DB download
+      # back across rescheduling, upgrades and node drains. In CronJob mode every run
+      # starts a fresh pod, so it pays for itself immediately.
       enabled: false
       # Reuse a claim you manage yourself instead of letting the chart create one.
       existingClaim: ""

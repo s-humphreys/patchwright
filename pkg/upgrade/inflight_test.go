@@ -183,6 +183,27 @@ func TestNoBuildRepoLabelMeansNoMatch(t *testing.T) {
 	if images[0].InFlight != nil {
 		t.Fatal("matched without knowing which repository builds the image")
 	}
+	// And it must say so, rather than looking like an image nobody has started work
+	// on: this one can never be matched, and the fix is a label in its build.
+	if images[0].InFlightReason == "" {
+		t.Fatal("an unmatchable image must carry the reason it cannot be matched")
+	}
+}
+
+func TestAMatchedImageCarriesNoUnmatchableReason(t *testing.T) {
+	prs := []PullRequest{{
+		Repository: "app-service",
+		Title:      "chore(deps): Update dotnet/aspnet Docker tag to v10.0.11",
+		Created:    time.Now(),
+	}}
+	labels := map[string]map[string]string{"reg/app:v1": {repoLabel: "app-service"}}
+	images := []model.AssessedImage{image("reg/app:v1", "example.io/dotnet/aspnet", "10.0.11")}
+	if err := enricher(prs, labels, config.InFlightConfig{}).EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	if images[0].InFlightReason != "" {
+		t.Fatalf("a matched image must carry no unmatchable reason: %q", images[0].InFlightReason)
+	}
 }
 
 func TestImagesWithoutAnAvailableUpgradeAreNotMatched(t *testing.T) {

@@ -259,6 +259,12 @@ type AssessedImage struct {
 	// apart from "nobody has started this".
 	InFlight        *InFlight
 	InFlightChecked bool
+	// InFlightReason is set when detection ran but this image could never be
+	// matched — it records no build repository, so no pull request can be tied to
+	// it. Distinct from a nil InFlight with no reason, which means the repository
+	// was known and no pull request was found. "Cannot be matched" is a build
+	// pipeline fix; "no pull request" is work nobody has started.
+	InFlightReason string
 
 	// ExploitChecked is true once an exploit source has run, so consumers can
 	// distinguish "0 known-exploited CVEs" from "exploit intel not gathered".
@@ -361,9 +367,11 @@ type Finding struct {
 	Upgrade            *Upgrade
 	RemediationChecked bool
 	// InFlight is set when an open pull request would apply that upgrade.
-	// InFlightChecked reports whether detection ran.
+	// InFlightChecked reports whether detection ran, and InFlightReason why an
+	// image could never be matched.
 	InFlight        *InFlight
 	InFlightChecked bool
+	InFlightReason  string
 
 	Actionable bool
 	Suppressed bool

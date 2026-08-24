@@ -357,6 +357,12 @@ function inFlightCell(f) {
     return '<span class="unknown" title="In-flight detection did not run, so it is not known whether anyone has started this.">?</span>';
   }
   const p = f.in_flight;
+  // "Cannot be matched" is not "nobody has started this". An image that records no
+  // build repository can never match any pull request, and the fix is a label in its
+  // build pipeline — so it must not render as an ordinary absence.
+  if (!p && f.in_flight_reason) {
+    return `<span class="act-unknown" title="${esc(f.in_flight_reason)}">n/a</span>`;
+  }
   if (!p) return '<span class="muted" title="No open pull request in the repository that builds this image applies this upgrade.">-</span>';
   const days = p.open_days;
   const label = p.exact ? `PR ${days}d` : `PR? ${days}d`;
@@ -573,17 +579,56 @@ function dataGaps(s) {
     });
   }
 
+  if (s.in_flight_unmatchable > 0) {
+    gaps.push({
+      severe: false,
+      count: `${s.in_flight_unmatchable}`,
+      headline: "findings can never be matched to a pull request, because their image records no build repository",
+      detail: `These render as "n/a" rather than "-": nothing can tie them to remediation in
+        flight, whoever opens it. The fix is in the build pipeline — set one of
+        <code>remediation.base.repoLabels</code> on the image
+        (e.g. <code>org.opencontainers.image.source</code>) so a pull request can be
+        matched to what it rebuilds.`,
+    });
+  }
+
   if (s.remediation_unresolved > 0) {
     const share = total > 0 ? s.remediation_unresolved / total : 0;
+    // When one cause accounts for most of it, name that cause in the headline rather
+    // than behind the toggle. An expired registry credential has flattened this queue
+    // three times, and each time it took someone deliberately expanding the detail to
+    // find out why. A single fixable cause should not need a click.
+    const top = (s.remediation_blockers || [])[0];
+    const dominant = top && top.findings / s.remediation_unresolved >= 0.5 ? top : null;
     gaps.push({
       severe: share >= 0.25,
       count: `${s.remediation_unresolved}`,
-      headline: "findings have no resolvable upgrade — unknowns, not \"nothing to fix\"",
+      headline: dominant
+        ? `findings have no resolvable upgrade, ${dominant.findings} of them for one reason: ${esc(shortReason(dominant.reason))}`
+        : "findings have no resolvable upgrade — unknowns, not \"nothing to fix\"",
       detail: reasonList(s.remediation_blockers) ||
         "No reason was recorded, which is itself worth chasing.",
     });
   }
   return gaps;
+}
+
+// shortReason trims a provider or registry error to its point. These arrive as whole
+// HTTP errors ("read image config for x: reading image x: POST https://… UNAUTHORIZED:
+// authentication required, visit https://… for m…"), and a headline has to be readable
+// at a glance or it is no better than the toggle it replaced.
+function shortReason(reason) {
+  const r = String(reason || "");
+  for (const [pattern, plain] of [
+    [/UNAUTHORIZED|authentication required|401/i, "cannot authenticate to the registry"],
+    [/DENIED|forbidden|403/i, "registry denied access"],
+    [/no such host|dial tcp|timeout|deadline/i, "cannot reach the registry"],
+    [/not found|404|MANIFEST_UNKNOWN/i, "image or tag not found in the registry"],
+    [/records no base|no base image/i, "image records no base image"],
+  ]) {
+    if (pattern.test(r)) return plain;
+  }
+  return r.length > 90 ? r.slice(0, 87) + "…" : r;
 }
 
 // reasonList renders provider- or source-supplied reasons, largest first.

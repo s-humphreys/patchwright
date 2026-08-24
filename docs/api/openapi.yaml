@@ -394,6 +394,13 @@ components:
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
         in_flight: { $ref: "#/components/schemas/InFlight" }
+        in_flight_reason:
+          type: string
+          description: |
+            Why this image can never be matched to a pull request — it records no build
+            repository label. Distinct from an absent `in_flight` with no reason, which
+            means the repository was known and no pull request was found: the first is a
+            build pipeline fix, the second is work nobody has started.
         in_flight_checked:
           type: boolean
           description: |
@@ -573,6 +580,12 @@ components:
         in_flight_stale:
           type: integer
           description: Matched pull requests open past the configured threshold.
+        in_flight_unmatchable:
+          type: integer
+          description: |
+            Findings that can never be matched to a pull request, because their image
+            records no build repository. A build pipeline gap rather than an absence of
+            remediation.
         in_flight_checked:
           type: integer
           description: |

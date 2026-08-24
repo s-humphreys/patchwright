@@ -68,11 +68,14 @@ type FindingView struct {
 	InFlight *InFlightView `json:"in_flight,omitempty"`
 	// InFlightChecked distinguishes "no pull request found" from "we never looked".
 	// Always emitted: false is the meaningful value.
-	InFlightChecked bool                `json:"in_flight_checked"`
-	Liveness        *LivenessView       `json:"liveness,omitempty"`
-	Dimensions      map[string][]string `json:"dimensions"`
-	Labels          map[string][]string `json:"labels,omitempty"`
-	Vulns           []VulnView          `json:"vulns,omitempty"`
+	InFlightChecked bool `json:"in_flight_checked"`
+	// InFlightReason explains an image that can never be matched (it records no
+	// build repository), as opposed to one with no open pull request.
+	InFlightReason string              `json:"in_flight_reason,omitempty"`
+	Liveness       *LivenessView       `json:"liveness,omitempty"`
+	Dimensions     map[string][]string `json:"dimensions"`
+	Labels         map[string][]string `json:"labels,omitempty"`
+	Vulns          []VulnView          `json:"vulns,omitempty"`
 }
 
 // LivenessView is emitted only when reconciliation ran, so output for
@@ -271,6 +274,7 @@ func ToFindingView(f model.Finding) FindingView {
 		Upgrade:            upgrade,
 		InFlight:           inflight,
 		InFlightChecked:    f.InFlightChecked,
+		InFlightReason:     f.InFlightReason,
 		Dimensions:         f.Dimensions,
 		Labels:             f.Labels,
 		Vulns:              vulns,
