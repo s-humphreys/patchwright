@@ -1,54 +1,39 @@
-import { count, epss, signalsCell, signalsSort } from './badges.js';
-import { FIX_HELP, FIX_RANK, PRI_RANK, SEVERITIES, cveColumns, fixClass, fixPath, fixcrit, isScanned, live, maxEPSS, maxRisk, priorityClass, priorityText, riskCell, sortState, ticketCell, ticketSort, upgradeCell, upgradeText, upgradeTitle } from './cells.js';
+import { signalsSort } from './badges.js';
+import { FIX_RANK, PRI_RANK, SEVERITIES, actionCell, actionSort, cveColumns, fixCell, fixClass, fixPath, priorityClass, severityCell, sortState, sourceCell, upgradeTitle, urgencyCell } from './cells.js';
 import { S } from './state.js';
-import { $, UNKNOWN, cell, countPct, esc, pct } from './util.js';
+import { $, UNKNOWN, countPct, esc, pct } from './util.js';
 
+// The queue answers four questions at a glance: how urgent, what is it and whose,
+// is there a fix, and is anything already happening. Five columns, and everything
+// else in the detail panel a row opens.
+//
+// It had fourteen. Every one of them was defensible on its own and the whole was
+// unreadable: a reader scanning for urgency had to skip eight columns to find it, and
+// the columns that mattered least (EPSS, Risk, Live) were as wide as the ones that
+// mattered most. Nothing has been dropped — the detail panel shows more than the
+// table ever did, on demand, per finding.
+/** @type {any[]} */
 export const FINDING_COLUMNS = [
-  { label: "Priority", cls: (f) => priorityClass(f), get: (f) => priorityText(f),
-    sort: (f) => (f.suppressed ? 0 : PRI_RANK[f.priority] ?? 0),
-    help: "The policy verdict, set by your rules. urgent means a fixable CVE that is exploited or likely to be (KEV or high EPSS), which outranks severity alone. This is NOT the same as having something to upgrade to; see Fix.",
+  { label: "Urgency", cls: (f) => priorityClass(f), get: (f) => urgencyCell(f),
+    sort: (f) => (f.suppressed ? 0 : (PRI_RANK[f.priority] ?? 0) * 100 + signalsSort(f) / 100),
+    help: "The policy verdict, with what drives it: an exposed or KEV-listed finding is a different proposition from a quiet critical. Sorting ranks the verdict first, then the weight of those signals.",
     title: (f) => (f.suppressed
       ? "Suppressed by policy: " + ((f.reasons || [])[0] || "no reason recorded")
       : (f.reasons || [])[0] || "") },
-  { label: "Team", get: (f) => esc(f.owner?.team || "-"), sort: (f) => f.owner?.team || "",
-    help: "The attributed owning team. \"-\" means no ownership rule could attribute this workload, which is usually a missing namespace label rather than a vulnerability.",
-    title: (f) => (f.owner?.team ? `owner rule: ${f.owner.rule || "unknown"}` : "No ownership rule matched") },
-  { label: "Namespace", td: "clip", get: (f) => cell(f.dimensions?.namespace),
-    sort: (f) => (f.dimensions?.namespace || [])[0] || "",
-    help: "Namespaces this image runs in. Click a \"+N\" to expand the full list." },
-  { label: "Image", td: "clip", title: (f) => f.image,
-    get: (f) => `<code>${esc(f.image)}</code>`, sort: (f) => f.image || "",
-    help: "The image reference as deployed, digest included where pinned." },
-  { label: "Crit", num: true, get: (f) => esc(count(f, "critical")),
-    sort: (f) => (f.provider_assessed ? f.counts?.critical ?? 0 : UNKNOWN),
-    help: "Critical count from the scan provider. \"?\" means the provider never assessed this image, so nothing is known about it. That is not the same as zero.",
+  { label: "Severity", num: true, get: (f) => severityCell(f),
+    sort: (f) => (f.provider_assessed
+      ? (f.counts?.critical ?? 0) * 1000 + (f.counts?.high ?? 0) : UNKNOWN),
+    help: "Criticals and highs from the scan provider, as C/H. \"?\" means the provider never assessed this image, so nothing is known — which is not the same as zero.",
     title: (f) => (f.provider_assessed ? "" : "The scan provider never assessed this image; its counts are absent, not zero.") },
-  { label: "Fixcrit", num: true, get: (f) => esc(fixcrit(f)),
-    sort: (f) => (isScanned(f) ? f.fixable_critical ?? 0 : UNKNOWN),
-    help: "Critical CVEs with a fix available, from the vulnerability scanner. \"-\" means the image was not scanned.",
-    title: (f) => (isScanned(f) ? "" : "Not scanned, so fix availability is unknown.") },
-  // Kept even when nothing gathered it: a column of "-" says the signal was not
-  // collected, whereas removing the column says the signal does not exist.
-  { label: "EPSS", num: true, get: (f) => esc(epss(f)),
-    sort: (f) => (f.exploit_checked ? maxEPSS(f) : UNKNOWN),
-    help: "Highest EPSS across this image's CVEs: the predicted probability of exploitation in the next 30 days (0-1). A CVSS 10 at EPSS 0.008 is less urgent than a CVSS 5 at 0.93. \"-\" means exploit intel was not gathered." },
-  { label: "Risk", num: true, get: (f) => riskCell(f),
-    sort: (f) => (f.exploit_checked ? maxRisk(f) : UNKNOWN),
-    help: "The scan provider's own composite risk score, highest across this image's CVEs (Rapid7's runs to roughly 1000). NOT comparable with EPSS, which is a probability: this is a severity-and-exposure weighting. \"-\" means the provider scored none of these CVEs; \"?\" means no exploit source ran." },
-  { label: "Live", get: (f) => esc(live(f)),
-    sort: (f) => (!f.liveness ? UNKNOWN : f.liveness.live ? 1 : 0),
-    help: "Whether this image is running in a cluster right now. \"?\" means no live reconciliation ran." },
-  { label: "Fix", cls: fixClass, get: (f) => fixPath(f),
-    sort: (f) => FIX_RANK[fixPath(f)] ?? 0,
-    help: "Whether there is a version to move to, and where the change is applied: direct, managed (via a chart or operator), none (already latest), unknown (could not resolve), ? (detection did not run).",
-    title: (f) => FIX_HELP[fixPath(f)] || "" },
-  { label: "Upgrade", cls: fixClass, get: (f) => upgradeCell(f), title: upgradeTitle,
-    sort: (f) => upgradeText(f),
-    help: "The version move available, badged by what kind of change it is: base image, Helm chart, or image tag. A second badge names whatever owns the version when it is not this image's own tag.", },
-  { label: "Signals", get: (f) => signalsCell(f), sort: (f) => signalsSort(f),
-    help: "What is notable about this finding, as badges: exposed to the internet, KEV-listed, a pull request already open (with its age), that pull request gone stale, never assessed by the provider, suppressed. Each badge is a positive statement — nothing here means \"internal\" or \"no pull request\", which are shown explicitly." },
-  { label: "Ticket", get: (f) => ticketCell(f), sort: (f) => ticketSort(f),
-    help: "Open Jira tickets covering this image. \"-\" means no open ticket; \"?\" means Jira is not configured, so ticket state is unknown." },
+  { label: "Image", td: "clip", get: (f) => sourceCell(f), sort: (f) => f.image || "",
+    help: "The image as deployed, with the owning team and the namespaces it runs in beneath it.",
+    title: (f) => f.image },
+  { label: "Fix", cls: fixClass, get: (f) => fixCell(f), sort: (f) => FIX_RANK[fixPath(f)] ?? 0,
+    help: "Whether there is a version to move to and what kind of change it is. \"none\" means already latest, \"unknown\" means the lookup could not answer, \"?\" means detection did not run — three different things.",
+    title: (f) => upgradeTitle(f) },
+  { label: "Action", get: (f) => actionCell(f), sort: (f) => actionSort(f),
+    help: "Whether anything is already happening: an open pull request that applies the upgrade, or an open ticket. \"-\" means neither; \"?\" means we could not look.",
+    title: (f) => (f.in_flight ? f.in_flight.title : "") },
 ];
 
 export function compare(col, dir) {
@@ -92,7 +77,12 @@ export function renderTable(id, columns, rows) {
     };
   });
 
-  document.querySelector(`#${id} tbody`).innerHTML = data.map((row) => "<tr>" +
+  // Rows in the findings table are openable: they carry the image so a click can find
+  // the finding again, and a tabindex so the keyboard reaches them.
+  const openable = id === "findings";
+  document.querySelector(`#${id} tbody`).innerHTML = data.map((row) => (openable
+    ? `<tr class="openable" tabindex="0" data-image="${esc(row.image)}" aria-label="Show details for ${esc(row.image)}">`
+    : "<tr>") +
     columns.map((c) => {
       const cls = [c.num ? "num" : "", typeof c.td === "string" ? c.td : "",
                    c.cls ? c.cls(row) : ""].filter(Boolean).join(" ");

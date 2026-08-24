@@ -1,6 +1,6 @@
-import { KIND_BADGES, MANAGED_BADGES, badge } from './badges.js';
+import { KIND_BADGES, MANAGED_BADGES, SIGNAL_BADGES, badge } from './badges.js';
 import { S } from './state.js';
-import { esc } from './util.js';
+import { UNKNOWN, esc } from './util.js';
 
 export function fixPath(f) {
   const u = f.upgrade;
@@ -228,4 +228,100 @@ export function cveColumns() {
     get: (r) => cveCell(r, r.cves?.[sev] || 0),
     help: `${sev[0].toUpperCase()}${sev.slice(1)} CVEs the provider counted, from provider-assessed findings only. Click to collapse back to a total.`,
   }));
+}
+
+// The five queue cells. Each answers one question and defers the rest to the detail
+// panel, so the table can be read across rather than studied.
+
+// urgencyCell: the verdict, plus what makes it urgent. A KEV-listed or internet-facing
+// finding reads differently from a quiet critical, and that difference belongs next to
+// the verdict rather than eight columns away.
+export function urgencyCell(f) {
+  const marks = (f.signals || [])
+    .filter((s) => s === "exposed" || s === "kev")
+    .map((s) => badge(SIGNAL_BADGES[s], s))
+    .join(" ");
+  return `${priorityText(f)}${marks ? ` ${marks}` : ""}`;
+}
+
+// severityCell: criticals and highs, the two that drive decisions, as "3C/10H".
+// "?" when the provider never assessed the image — absent data, not a clean result.
+export function severityCell(f) {
+  if (!f.provider_assessed) {
+    return '<span class="unknown" title="The scan provider never assessed this image; its counts are absent, not zero.">?</span>';
+  }
+  const c = f.counts?.critical ?? 0, h = f.counts?.high ?? 0;
+  if (!c && !h) return '<span class="muted">0</span>';
+  const parts = [];
+  if (c) parts.push(`<span class="urgent">${c}C</span>`);
+  if (h) parts.push(`<span class="high">${h}H</span>`);
+  return parts.join("/");
+}
+
+// sourceCell: what it is and whose it is, in one cell over two lines. Team and
+// namespace were columns of their own; they are context for the image rather than
+// things anybody scans down.
+export function sourceCell(f) {
+  const team = f.owner?.team
+    ? esc(f.owner.team)
+    : '<span class="unknown" title="No ownership rule matched this workload, usually a missing namespace label.">unattributed</span>';
+  const ns = (f.dimensions?.namespace || []);
+  const where = ns.length === 0 ? "" : ns.length === 1 ? esc(ns[0]) : `${esc(ns[0])} +${ns.length - 1}`;
+  return `<code>${esc(f.image)}</code>` +
+    `<div class="sub">${team}${where ? ` · ${where}` : ""}</div>`;
+}
+
+// fixCell: the fix path and the move itself. "none", "unknown" and "?" stay distinct —
+// already latest, could not resolve, and never looked are three different answers.
+export function fixCell(f) {
+  const path = fixPath(f);
+  if (path === "?" || path === "unknown" || path === "none") {
+    return `<span class="${FIX_CLASS[path] || "act-unknown"}" title="${esc(FIX_HELP[path] || "")}">${esc(path)}</span>`;
+  }
+  return upgradeCell(f);
+}
+
+// actionCell: is anything already happening. A pull request that applies the upgrade,
+// or an open ticket. Both, when both.
+export function actionCell(f) {
+  const parts = [];
+  if (f.in_flight) {
+    const p = f.in_flight;
+    const label = `pr ${p.open_days}d`;
+    const cls = p.stale ? "badge-stale" : p.exact ? "badge-inflight" : "badge-other";
+    const why = `${p.title} — open ${p.open_days}d in ${p.repository}.` +
+      (p.exact ? "" : " Bumps the same dependency to a different version, so it may not be this fix.") +
+      (p.stale ? " Open past the staleness threshold: the fix exists and nobody has merged it." : "");
+    parts.push(p.url
+      ? `<a class="badge ${cls}" href="${esc(p.url)}" target="_blank" rel="noreferrer" title="${esc(why)}"><span class="g" aria-hidden="true">⇄</span>${esc(label)}</a>`
+      : `<span class="badge ${cls}" title="${esc(why)}">${esc(label)}</span>`);
+  }
+  const tickets = ticketsFor(f);
+  if (tickets.length) parts.push(ticketCell(f));
+  if (parts.length) return parts.join(" ");
+  // Nothing happening. Which "nothing" it is matters: Jira unconfigured and in-flight
+  // detection not run are both "we did not look", and must not read as "nobody has
+  // started".
+  if (!S.ticketsByRepo && !f.in_flight_checked) {
+    return '<span class="unknown" title="Neither the tracker nor pull requests were checked, so it is not known whether anything is happening.">?</span>';
+  }
+  if (f.in_flight_reason) {
+    return `<span class="act-unknown" title="${esc(f.in_flight_reason)}">unmatchable</span>`;
+  }
+  if (!S.ticketsByRepo) {
+    return '<span class="unknown" title="Jira is not configured, so ticket state is unknown. No open pull request applies this upgrade.">no pr, ticket ?</span>';
+  }
+  if (!f.in_flight_checked) {
+    return '<span class="unknown" title="In-flight detection did not run, so it is not known whether a pull request exists. No open ticket.">no ticket, pr ?</span>';
+  }
+  return '<span class="muted" title="No open pull request and no open ticket.">-</span>';
+}
+
+// Ranks what is happening: a stale pull request first (somebody has to unblock it),
+// then an open one, then a ticket, then nothing, with "we did not look" at the bottom.
+export function actionSort(f) {
+  if (f.in_flight) return f.in_flight.stale ? 5 : f.in_flight.exact ? 4 : 3;
+  if (ticketsFor(f).length) return 2;
+  if (!S.ticketsByRepo || !f.in_flight_checked) return UNKNOWN;
+  return 1;
 }

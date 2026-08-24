@@ -171,3 +171,47 @@
   a { color: inherit; text-decoration: underline; text-underline-offset: 2px;
       text-decoration-color: var(--muted); }
   a:hover { text-decoration-color: currentColor; }
+
+/* The queue is five columns now, so rows can breathe and the image can carry its own
+   context on a second line rather than costing two more columns. */
+tbody tr.openable { cursor: pointer; }
+tbody tr.openable:hover, tbody tr.openable:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.sub { color: var(--muted); font-size: 0.85em; margin-top: 0.15em; }
+
+/* The detail panel. A side sheet rather than a modal: the queue stays visible, so
+   somebody comparing two findings does not lose their place. */
+.detail {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(46rem, 100%);
+  overflow-y: auto; z-index: 20;
+  background: var(--card);
+  border-left: 1px solid var(--line);
+  box-shadow: -0.5rem 0 1.5rem rgba(0, 0, 0, 0.35);
+  padding: 1rem 1.25rem 3rem;
+}
+.detail-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
+  position: sticky; top: 0; padding: 0.25rem 0 0.75rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.detail-title { font-size: 1.05em; word-break: break-all; }
+.detail section { margin: 1.25rem 0 0; }
+.detail h4 {
+  margin: 0 0 0.5rem; font-size: 0.82em; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.detail dl { margin: 0; }
+/* Two columns, label and value, so the eye can run down the labels. */
+.dr { display: grid; grid-template-columns: 11rem 1fr; gap: 0.4rem 1rem; padding: 0.22rem 0; }
+.dr dt { color: var(--muted); }
+.dr dd { margin: 0; word-break: break-word; }
+@media (max-width: 40rem) { .dr { grid-template-columns: 1fr; gap: 0.1rem; } }
+
+/* The CVE list inside the panel: dense, its own scroll, never widening the sheet. */
+table.mini { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+table.mini th { text-align: left; color: var(--muted); font-weight: 500; }
+table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: nowrap; }
+.scroll-x { overflow-x: auto; }

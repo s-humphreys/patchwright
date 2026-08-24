@@ -1,6 +1,7 @@
 import { readURL } from './urlstate.js';
 import { initConfig } from './config.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
+import { initDetail, openDetail, shownImage } from './detail.js';
 import { initPending, loadPending } from './pending.js';
 import { applyOwnerFilters, loadFindings, populateOwnerFilters } from './queue.js';
 import { S } from './state.js';
@@ -44,6 +45,13 @@ export async function loadAll() {
       if (readURL()) applyOwnerFilters();
     }
     renderBreakdown(owners.owners);
+    // Re-render an open panel against the new data rather than leaving it showing
+    // figures from the previous run, or closing it under somebody mid-read.
+    const open = shownImage();
+    if (open) {
+      const fresh = S.queueRows.find((f) => f.image === open);
+      if (fresh) openDetail(fresh);
+    }
     // Once per load, not per poll: see loadPending.
     loadPending();
   } catch (e) {
@@ -56,6 +64,7 @@ export async function loadAll() {
 // module can be imported by a test without a page to attach to.
 export function init() {
   initTable();
+  initDetail();
   initConfig();
   initPending();
   $("#onlyActionable").addEventListener("change", loadFindings);
