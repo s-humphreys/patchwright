@@ -49,6 +49,15 @@ type TemplateData struct {
 	Source     string
 	SourcePath string
 
+	// Deployments are the tags this repository has in flight, ordered by how far
+	// through an environment sequence they look: development first, production last.
+	//
+	// A ticket for an application deployed to three environments on three different
+	// tags is one piece of work released forward, not three. Without this the ticket
+	// says "upgrade topnotch" and leaves the reader to work out that there are three
+	// tags and which one moves first.
+	Deployments []Deployment
+
 	// Priority is the highest policy priority across the grouped findings.
 	Priority string
 	// Accounts and Namespaces are the sorted, de-duplicated places this runs.
@@ -74,6 +83,21 @@ type TemplateData struct {
 	// and KnownExploited reports CISA KEV membership.
 	MaxEPSS        float64
 	KnownExploited bool
+}
+
+// Deployment is one tag of a repository and where it runs.
+type Deployment struct {
+	// Ref is the full image reference, Tag its tag alone.
+	Ref string
+	Tag string
+	// Accounts and Namespaces are where this particular tag runs.
+	Accounts   []string
+	Namespaces []string
+	// Environment is the sequence position guessed from the account and namespace
+	// names ("development", "test", "staging", "production", or "" when nothing in
+	// them matched). A guess, and labelled as one: it orders the list and must not
+	// be read as a fact about the estate.
+	Environment string
 }
 
 // Vuln is one CVE as a ticket template sees it.
@@ -130,6 +154,8 @@ type UpgradeData struct {
 func newTemplateData(tg ticketGroup) TemplateData {
 	group := tg.all()
 	d := TemplateData{}
+
+	d.Deployments = deployments(group)
 
 	accounts, namespaces, teams := &set{}, &set{}, &set{}
 	images, refs := &set{}, &set{}
@@ -337,5 +363,63 @@ func (s *set) sorted() []string {
 		out = append(out, v)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// environments are the sequence a release moves through, earliest first, with the
+// tokens that identify each. A heuristic on names rather than configuration: it only
+// decides the ORDER of a list in a ticket body, so a wrong guess costs a reader a
+// moment and never changes a verdict. Anything unmatched sorts last, since an
+// unrecognised environment is more likely to be a one-off than the first step.
+var environments = []struct {
+	name   string
+	tokens []string
+}{
+	{"development", []string{"dev", "sandbox", "local"}},
+	{"test", []string{"test", "qa", "integration"}},
+	{"staging", []string{"stag", "preprod", "pre-prod", "preproduction", "uat", "perf"}},
+	{"production", []string{"prod", "live"}},
+}
+
+// environmentOf guesses where in a release sequence a deployment sits.
+func environmentOf(accounts, namespaces []string) (string, int) {
+	haystack := strings.ToLower(strings.Join(append(append([]string{}, accounts...), namespaces...), " "))
+	// Earliest match wins, and the order matters for one specific reason:
+	// "preproduction" contains "prod", so staging has to be tested before production
+	// or a ticket tells somebody to release to pre-production after production.
+	for i, env := range environments {
+		for _, tok := range env.tokens {
+			if strings.Contains(haystack, tok) {
+				return env.name, i
+			}
+		}
+	}
+	return "", len(environments)
+}
+
+// deployments lists each grouped tag with where it runs, ordered by release
+// sequence so a ticket reads as a promotion rather than a set.
+func deployments(group []sink.FindingView) []Deployment {
+	out := make([]Deployment, 0, len(group))
+	rank := map[string]int{}
+	for _, f := range group {
+		accounts := append([]string{}, f.Dimensions["account"]...)
+		namespaces := append([]string{}, f.Dimensions["namespace"]...)
+		sort.Strings(accounts)
+		sort.Strings(namespaces)
+		env, r := environmentOf(accounts, namespaces)
+		d := Deployment{
+			Ref: f.Image, Tag: f.Tag, Accounts: accounts, Namespaces: namespaces,
+			Environment: env,
+		}
+		rank[f.Image] = r
+		out = append(out, d)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if rank[out[i].Ref] != rank[out[j].Ref] {
+			return rank[out[i].Ref] < rank[out[j].Ref]
+		}
+		return out[i].Ref < out[j].Ref
+	})
 	return out
 }

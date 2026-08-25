@@ -390,6 +390,14 @@ func groupKey(f sink.FindingView) string {
 	if f.Upgrade.Manager != "" {
 		return f.Upgrade.Manager
 	}
+	// A base-image upgrade is one repository rebuilt onto a newer base. Grouping by
+	// the base alone put every application sharing that base on one ticket — two
+	// teams, one ticket, and no single person able to finish it. Grouping by
+	// repository puts every tag of one application together instead, which is the
+	// promotion path through environments: one change, released forward.
+	if f.Upgrade.Kind == "base" {
+		return f.Repository + " on " + f.Upgrade.Name
+	}
 	if f.Upgrade.Source == "" {
 		return f.Repository
 	}
