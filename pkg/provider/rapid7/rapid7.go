@@ -170,7 +170,10 @@ func recordToOccurrence(get func(string) string) model.Occurrence {
 			Dimensions: dims,
 			Labels:     map[string]string{}, // labels are not present in the CSV; live reconciliation supplies them
 		},
-		Counts:    counts,
+		Counts: counts,
+		// Nil when the export has no such column: an old export must read as
+		// "reachability unknown", never as "nothing is reachable".
+		Exposed:   parseBool(get("public_accessible")),
 		RiskScore: atof(get("riskscore")),
 		LastSeen:  lastSeen,
 		Assessed:  assessed,
@@ -197,4 +200,18 @@ func atoi(s string) int {
 func atof(s string) float64 {
 	f, _ := strconv.ParseFloat(s, 64)
 	return f
+}
+
+// parseBool reads a CSV boolean, returning nil for anything it cannot read —
+// including an absent column, which is the common case on older exports.
+func parseBool(s string) *bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "t", "yes", "1":
+		v := true
+		return &v
+	case "false", "f", "no", "0":
+		v := false
+		return &v
+	}
+	return nil
 }

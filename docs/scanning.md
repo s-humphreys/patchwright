@@ -34,6 +34,31 @@ Surfaces as the `FIXCRIT` column, `fixable_critical` and the `vulns` array in JS
 when: "vulns.exists(v, v.severity == 'critical' && v.fix_available)"
 ```
 
+## Per-CVE detail without pulling images
+
+`--vuln-source rapid7` takes the CVE detail from the platform that already scanned the
+images, rather than scanning them again:
+
+```sh
+patchwright assess --provider rapid7 --mode api -o base-url=https://example.customer.divvycloud.com \
+  -c config/ --vuln-source rapid7 --vuln-option base-url=https://example.customer.divvycloud.com
+```
+
+This matters where Trivy cannot help. Trivy pulls each image itself, so it needs
+registry credentials wherever it runs — and on a private registry with no local
+credentials that means no per-CVE detail for exactly the images an organisation cares
+most about. The platform scanned those images from inside the account and hands over
+what it found: severity, CVSS, its own risk score, whether a public exploit exists,
+first-found dates, and the fixed version per CVE.
+
+It supplies neither EPSS nor CISA KEV, because the API carries neither. Run
+`--exploit-source public` alongside for those.
+
+The endpoint is keyed by resource rather than image, so the source maps each image to a
+resource running it, preferring one the platform actually assessed — an unassessed
+resource reports no CVEs, which would read as a clean image. An image no resource runs
+is an error rather than an empty result, for the same reason.
+
 ## Exploitability
 
 `--exploit-source public` annotates each CVE with its

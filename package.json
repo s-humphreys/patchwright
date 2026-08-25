@@ -1,0 +1,14 @@
+{
+  "name": "patchwright-ui",
+  "private": true,
+  "type": "module",
+  "description": "Dev tooling for the embedded status page. Nothing here ships: the page is plain ES modules served from the Go binary, and these are the type checker and the test harness for them.",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test internal/server/static/app/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^28.0.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -22,6 +22,28 @@ export JIRA_EMAIL=you@example.com
 export JIRA_API_TOKEN=...
 ```
 
+## Linking back to the evidence
+
+`dashboard.url` is where the status page is reachable from outside the cluster:
+
+```yaml
+dashboard:
+  url: https://patchwright.example.internal
+```
+
+Every ticket then carries a deep link to its own queue entry — the same work item, with
+its CVEs, coverage, fix path and whatever is already in progress. The link names the
+team and service rather than an image tag, because the tag will have moved on by the
+time somebody clicks a ticket while the service and its owner have not.
+
+Unset means no link is written. The server binds a port and cannot know what hostname
+anybody reaches it through, and a ticket pointing at `localhost:8080` is worse than a
+ticket with no link.
+
+A link naming something no longer in the queue opens nothing and says why. Showing
+somebody the nearest match instead would mean quietly presenting a different service
+than the one they clicked through for.
+
 ## Configuration
 
 `board`, `project`, `template` and one of `imageField` / `imageLabel` are required.

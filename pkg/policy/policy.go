@@ -52,6 +52,15 @@ func FindingEnv() (*cel.Env, error) {
 		// whose version is controlled by a chart/operator, since bumping them
 		// directly isn't the remediation.
 		cel.Variable("upgrade_available", cel.BoolType),
+		// exposure is "public", "internal" or "unknown" — reachability from the
+		// internet, where something reports it. A string rather than a bool because
+		// nothing reporting it is a third answer, and a bool would make an estate
+		// nobody has assessed look entirely internal.
+		cel.Variable("exposure", cel.StringType),
+		// signals are the notable facts about a finding: exposed, kev, in-flight,
+		// stale-fix, unassessed, suppressed. Each is a positive statement, so absence
+		// asserts nothing.
+		cel.Variable("signals", cel.ListType(cel.StringType)),
 	)
 }
 
@@ -207,5 +216,7 @@ func findingActivation(f model.Finding) map[string]any {
 		"reconciled":        f.Reconciled,
 		"live":              live,
 		"upgrade_available": f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable,
+		"exposure":          f.Exposure(),
+		"signals":           f.Signals(),
 	}
 }

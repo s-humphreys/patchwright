@@ -83,6 +83,13 @@ type summaryView struct {
 	// these render identically to "nobody has started this".
 	InFlightUnmatchable int `json:"in_flight_unmatchable"`
 
+	// Exposed counts findings on a workload reachable from the internet, and
+	// ExposureUnknown those where nothing reported reachability at all. The second is
+	// published because a fleet with no exposure data would otherwise look entirely
+	// internal, which is the most reassuring possible way to be wrong.
+	Exposed         int `json:"exposed"`
+	ExposureUnknown int `json:"exposure_unknown"`
+
 	// ExpiredSuppressions are suppress rules that have lapsed, so the work they were
 	// hiding is back in the queue. Reported because an unexplained jump in the queue
 	// reads as the estate getting worse rather than as a policy decision expiring.
@@ -204,10 +211,19 @@ func buildSummary(findings []model.Finding) summaryView {
 		if f.InFlightChecked {
 			s.InFlightChecked++
 		}
+		switch f.Exposure() {
+		case model.ExposurePublic:
+			s.Exposed++
+		case model.ExposureUnknown:
+			s.ExposureUnknown++
+		}
 		if f.InFlightReason != "" {
 			s.InFlightUnmatchable++
 		}
 		if f.InFlight != nil {
+			if f.InFlight.Stale {
+				s.InFlightStale++
+			}
 			if f.InFlight.Exact {
 				s.InFlight++
 			} else {

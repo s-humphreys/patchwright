@@ -73,7 +73,23 @@ report ordering; any other label sorts after all of them. Add a tier to
 `dimensions` `map<string,list<string>>` (union across workloads), `labels`
 `map<string,list<string>>`, `vulns` list of
 `{id, severity, cvss, fix_available, fixed_version, epss, kev, risk_score, exploit_known}`, plus `reconciled`,
-`live`, `upgrade_available`, `remediation_checked`.
+`live`, `upgrade_available`, `remediation_checked`, `exposure`, `signals`.
+
+`exposure` is `public`, `internal` or `unknown` — reachability from the internet where
+something reports it. It is a string rather than a boolean because "nobody reported it"
+is a third answer, and a boolean would make a fleet with no exposure data look entirely
+internal:
+
+```yaml
+- name: exposed-fixable-critical
+  when: "exposure == 'public' && vulns.exists(v, v.severity == 'critical' && v.fix_available)"
+  priority: urgent
+```
+
+`signals` is the same set the queue badges: `exposed`, `kev`, `in-flight`, `stale-fix`,
+`unassessed`, `suppressed`. Each is a positive statement, so `!('exposed' in signals)`
+covers both an internal workload and one nobody reported — use `exposure` when the
+difference matters.
 
 ## What "actionable" means
 

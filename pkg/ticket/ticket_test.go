@@ -3,6 +3,7 @@ package ticket
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -729,5 +730,79 @@ func TestDraftCarriesHighestPriorityInGroup(t *testing.T) {
 	}
 	if plan.Drafts[0].Priority != "urgent" {
 		t.Errorf("priority = %q, want urgent (the worst in the group)", plan.Drafts[0].Priority)
+	}
+}
+
+func TestBaseUpgradesGroupByRepositoryNotByBase(t *testing.T) {
+	// Two applications sharing a base are two rebuilds by two teams. Grouping by the
+	// base put them on one ticket that nobody could finish.
+	python := &sink.UpgradeView{
+		Kind: "base", Name: "docker.io/python", Source: "docker.io/python:3.12.3",
+		Current: "3.12.3", Latest: "3.14.7", Available: true, Resolved: true, Actionable: true,
+	}
+	findings := []sink.FindingView{
+		{Image: "acr.io/topnotch:V3_20.905922", Repository: "topnotch", Tag: "V3_20.905922",
+			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Development US"}}},
+		{Image: "acr.io/topnotch:V3_20.913952", Repository: "topnotch", Tag: "V3_20.913952",
+			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Production US"}}},
+		{Image: "acr.io/data-mcp-tools:789771", Repository: "data-mcp-tools", Tag: "789771",
+			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Development UK"}}},
+	}
+	groups := group(findings)
+	if len(groups) != 2 {
+		t.Fatalf("want one group per repository, got %d", len(groups))
+	}
+	for _, g := range groups {
+		repos := map[string]bool{}
+		for _, f := range g.all() {
+			repos[f.Repository] = true
+		}
+		if len(repos) != 1 {
+			t.Errorf("a group spans repositories %v; each is its own rebuild", repos)
+		}
+	}
+}
+
+func TestDeploymentsReadAsAPromotion(t *testing.T) {
+	// The three tags of one application are one change released forward, so the
+	// ticket lists them in the order somebody would move them.
+	group := []sink.FindingView{
+		{Image: "acr.io/app:3", Tag: "3", Dimensions: map[string][]string{"account": {"Production US"}}},
+		{Image: "acr.io/app:1", Tag: "1", Dimensions: map[string][]string{"account": {"Development US"}}},
+		{Image: "acr.io/app:2", Tag: "2", Dimensions: map[string][]string{"account": {"PreProduction US"}}},
+	}
+	got := deployments(group)
+	var envs, tags []string
+	for _, d := range got {
+		envs = append(envs, d.Environment)
+		tags = append(tags, d.Tag)
+	}
+	if want := []string{"development", "staging", "production"}; !slices.Equal(envs, want) {
+		t.Errorf("environments = %v, want %v", envs, want)
+	}
+	if want := []string{"1", "2", "3"}; !slices.Equal(tags, want) {
+		t.Errorf("tags = %v, want %v", tags, want)
+	}
+}
+
+func TestPreProductionIsNotProduction(t *testing.T) {
+	// "preproduction" contains "prod", so a naive scan puts it last and tells
+	// somebody to release to pre-production after production.
+	env, _ := environmentOf([]string{"PreProduction UK"}, nil)
+	if env != "staging" {
+		t.Errorf("environmentOf(PreProduction) = %q, want staging", env)
+	}
+}
+
+func TestUnrecognisedEnvironmentsSortLastAndSayNothing(t *testing.T) {
+	// A guess must not present itself as knowledge: an account nothing matched gets
+	// no environment name at all.
+	env, rank := environmentOf([]string{"Shared Infrastructure"}, nil)
+	if env != "" {
+		t.Errorf("environment = %q, want empty for an unrecognised name", env)
+	}
+	last, _ := environmentOf([]string{"Production UK"}, nil)
+	if _, prodRank := environmentOf([]string{last}, nil); rank <= prodRank {
+		t.Errorf("unrecognised rank %d should sort after production %d", rank, prodRank)
 	}
 }

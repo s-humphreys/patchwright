@@ -18,21 +18,29 @@ type JSON struct {
 }
 
 type FindingView struct {
-	Image           string         `json:"image"`
-	Registry        string         `json:"registry"`
-	Repository      string         `json:"repository"`
-	Tag             string         `json:"tag,omitempty"`
-	Digest          string         `json:"digest,omitempty"`
-	Owner           OwnerView      `json:"owner"`
-	Counts          map[string]int `json:"counts"`
-	Risk            float64        `json:"risk"`
-	Actionable      bool           `json:"actionable"`
-	Suppressed      bool           `json:"suppressed"`
-	Priority        string         `json:"priority,omitempty"`
-	Reasons         []string       `json:"reasons"`
-	WorkloadCount   int            `json:"workload_count"`
-	FixableCritical int            `json:"fixable_critical,omitempty"`
-	KnownExploited  bool           `json:"known_exploited,omitempty"`
+	Image      string         `json:"image"`
+	Registry   string         `json:"registry"`
+	Repository string         `json:"repository"`
+	Tag        string         `json:"tag,omitempty"`
+	Digest     string         `json:"digest,omitempty"`
+	Owner      OwnerView      `json:"owner"`
+	Counts     map[string]int `json:"counts"`
+	Risk       float64        `json:"risk"`
+	Actionable bool           `json:"actionable"`
+	Suppressed bool           `json:"suppressed"`
+	Priority   string         `json:"priority,omitempty"`
+	Reasons    []string       `json:"reasons"`
+	// Exposure is "public", "internal" or "unknown": reachability from the internet
+	// where something reports it. Unknown is a real answer and must not be read as
+	// internal.
+	Exposure string `json:"exposure"`
+	// Signals are the notable facts about this finding (exposed, kev, in-flight,
+	// stale-fix, unassessed, suppressed). Each is a positive statement; absence
+	// asserts nothing.
+	Signals         []string `json:"signals,omitempty"`
+	WorkloadCount   int      `json:"workload_count"`
+	FixableCritical int      `json:"fixable_critical,omitempty"`
+	KnownExploited  bool     `json:"known_exploited,omitempty"`
 	// ProviderAssessed is false when the scan provider never assessed the image,
 	// making Counts zero through ignorance rather than health. Consumers MUST
 	// check this before treating zero counts as a clean result.
@@ -124,6 +132,9 @@ type InFlightView struct {
 	Author     string    `json:"author,omitempty"`
 	Opened     time.Time `json:"opened"`
 	OpenDays   int       `json:"open_days"`
+	// Stale is true when the pull request has been open past the configured
+	// threshold: a fix nobody merged in months, rather than progress.
+	Stale bool `json:"stale"`
 	// Exact is false when the pull request bumps the same dependency to a
 	// different version than the one recommended. Consumers MUST NOT treat a
 	// non-exact match as this upgrade being applied.
@@ -243,6 +254,7 @@ func ToFindingView(f model.Finding) FindingView {
 			URL: f.InFlight.URL, Author: f.InFlight.Author,
 			Opened:   f.InFlight.Opened,
 			OpenDays: int(f.InFlight.Age().Hours() / 24),
+			Stale:    f.InFlight.Stale,
 			Exact:    f.InFlight.Exact,
 		}
 	}
@@ -259,6 +271,8 @@ func ToFindingView(f model.Finding) FindingView {
 		Suppressed:         f.Suppressed,
 		Priority:           f.Priority,
 		Reasons:            f.Reasons,
+		Exposure:           f.Exposure(),
+		Signals:            f.Signals(),
 		WorkloadCount:      len(f.Occurrences),
 		FixableCritical:    fixableCriticals(f),
 		KnownExploited:     knownExploited,

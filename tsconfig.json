@@ -1,0 +1,18 @@
+{
+  "//": "Type-checking without a build step. The page ships as the .js files themselves; this only reads them. checkJs catches what cost us real bugs: a duplicate object key that silently overrode a column's hover text, and a CSS class used before it existed.",
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2022", "dom"],
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "noUnusedLocals": true,
+    "types": []
+  },
+  "include": ["internal/server/static/app/**/*.js"],
+  "exclude": ["internal/server/static/app/**/*.test.js"]
+}
