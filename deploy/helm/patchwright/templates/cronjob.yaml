@@ -29,6 +29,10 @@ spec:
           serviceAccountName: {{ include "patchwright.serviceAccountName" . }}
           securityContext:
             runAsNonRoot: true
+            # Numeric, for the same reason as the Deployment: a cluster enforcing
+            # runAsNonRoot cannot verify the image's "nonroot" username and refuses to
+            # start the container.
+            runAsUser: {{ .Values.podSecurityContext.runAsUser }}
             seccompProfile:
               type: RuntimeDefault
           containers:

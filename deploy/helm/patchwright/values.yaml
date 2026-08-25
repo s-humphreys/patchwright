@@ -119,6 +119,12 @@ logFormat: json            # text or json (json recommended in-cluster)
 # Extra args appended to `patchwright serve`.
 extraArgs: []
 
+# The user the container runs as. The image is distroless nonroot (uid 65532), and the
+# UID has to be numeric here: a cluster enforcing runAsNonRoot cannot verify a username
+# and refuses to start the container at all.
+podSecurityContext:
+  runAsUser: 65532
+
 serviceAccount:
   create: true
   name: ""          # defaults to the release fullname
