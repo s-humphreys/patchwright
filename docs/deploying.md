@@ -148,8 +148,15 @@ declining, and the ACR helper spends thirty seconds on instance metadata before 
 up. Consulting it for `mcr.microsoft.com`, the base registry for every .NET image, cost
 half a minute per read.
 
-Adding AWS ECR is one file wrapping `amazon-ecr-credential-helper` the way
-`pkg/registryauth/azure.go` wraps the ACR one.
+The Azure exchange is implemented here rather than taken from the obvious credential
+helper, which carries GO-2026-6225 — credential leakage to untrusted hosts — with no
+fixed version. It is the documented ACR flow on Microsoft's own SDK: get an AAD token
+for whatever identity the process has, exchange it at the registry's `/oauth2/exchange`,
+and present the result as the password with the null GUID as the username. It talks to
+the registry it was asked about and nowhere else.
+
+Adding AWS ECR is one file: register the hosts it serves and a keychain, as
+`pkg/registryauth/google.go` does in seven lines.
 
 ## CronJob mode
 
