@@ -18,6 +18,7 @@
 package group
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -135,11 +136,7 @@ func item(k string, members []sink.FindingView) Item {
 	if len(lead.Reasons) > 0 {
 		it.Rule = ruleName(lead.Reasons[0])
 	}
-	if len(lead.Dimensions["account"]) > 0 {
-		it.PriorityWhere = lead.Dimensions["account"][0]
-	} else if len(lead.Dimensions["namespace"]) > 0 {
-		it.PriorityWhere = lead.Dimensions["namespace"][0]
-	}
+	it.PriorityWhere = discriminatingWhere(members, lead)
 
 	accounts, namespaces, signals := &set{}, &set{}, &set{}
 	exposedAny, internalKnown := false, false
@@ -221,4 +218,33 @@ func (s *set) sorted() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// discriminatingWhere names the environment behind the worst verdict, but only when
+// the environment is what makes it the worst.
+//
+// It means something when the deployments disagree: three tags where production is
+// urgent and development is medium. Where they agree, or where one deployment runs in
+// six accounts at once, the verdict is not about location — and naming the
+// alphabetically first account invents a distinction the policy never drew.
+func discriminatingWhere(members []sink.FindingView, lead sink.FindingView) string {
+	if len(members) < 2 {
+		return ""
+	}
+	verdicts := map[string]struct{}{}
+	for _, f := range members {
+		verdicts[f.Priority] = struct{}{}
+	}
+	if len(verdicts) < 2 {
+		return ""
+	}
+	if accounts := lead.Dimensions["account"]; len(accounts) == 1 {
+		return accounts[0]
+	} else if len(accounts) > 1 {
+		return fmt.Sprintf("%d accounts", len(accounts))
+	}
+	if ns := lead.Dimensions["namespace"]; len(ns) == 1 {
+		return ns[0]
+	}
+	return ""
 }
