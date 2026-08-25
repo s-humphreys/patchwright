@@ -1,0 +1,149 @@
+{
+  "//": "One fixture, two implementations. The page groups in the browser for instant filtering and the API groups in Go for consumers; both must agree, so both read this file and both are checked against testdata/grouping.expected. Each finding here exists for a reason named in the tests: three tags of one service across environments with different verdicts, a second service on the same base, a repository shared by two teams, a member the provider never assessed, and a member in-flight detection never checked.",
+  "findings": [
+    {
+      "image": "acr.io/topnotch:V3_20.905922",
+      "repository": "topnotch",
+      "registry": "acr.io",
+      "tag": "V3_20.905922",
+      "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
+      "counts": { "critical": 296, "high": 3000 },
+      "provider_assessed": true,
+      "scanned": true,
+      "exploit_checked": true,
+      "remediation_checked": true,
+      "in_flight_checked": true,
+      "exposure": "internal",
+      "signals": [],
+      "priority": "medium",
+      "reasons": ["matched actionable rule \"preproduction-critical\""],
+      "workload_count": 1,
+      "dimensions": { "account": ["Development US"], "namespace": ["topnotch"] },
+      "upgrade": {
+        "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
+        "current": "3.12.3", "latest": "3.14.7",
+        "available": true, "resolved": true, "actionable": true
+      }
+    },
+    {
+      "image": "acr.io/topnotch:V3_20.913952",
+      "repository": "topnotch",
+      "registry": "acr.io",
+      "tag": "V3_20.913952",
+      "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
+      "counts": { "critical": 296, "high": 3000 },
+      "provider_assessed": true,
+      "scanned": true,
+      "exploit_checked": true,
+      "remediation_checked": true,
+      "in_flight_checked": true,
+      "exposure": "public",
+      "signals": ["exposed", "kev"],
+      "priority": "urgent",
+      "reasons": ["matched actionable rule \"exploited-fixable-critical\""],
+      "workload_count": 2,
+      "dimensions": { "account": ["Production US"], "namespace": ["topnotch"] },
+      "upgrade": {
+        "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
+        "current": "3.12.3", "latest": "3.14.7",
+        "available": true, "resolved": true, "actionable": true
+      }
+    },
+    {
+      "image": "acr.io/topnotch:V3_20.907474",
+      "repository": "topnotch",
+      "registry": "acr.io",
+      "tag": "V3_20.907474",
+      "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
+      "counts": {},
+      "provider_assessed": false,
+      "scanned": false,
+      "exploit_checked": false,
+      "remediation_checked": true,
+      "in_flight_checked": false,
+      "exposure": "unknown",
+      "signals": ["unassessed"],
+      "priority": "low",
+      "reasons": ["matched actionable rule \"any-critical\""],
+      "workload_count": 1,
+      "dimensions": { "account": ["PreProduction US"], "namespace": ["topnotch"] },
+      "upgrade": {
+        "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
+        "current": "3.12.3", "latest": "3.14.7",
+        "available": true, "resolved": true, "actionable": true
+      }
+    },
+    {
+      "image": "acr.io/data-mcp-tools:789771",
+      "repository": "data-mcp-tools",
+      "registry": "acr.io",
+      "tag": "789771",
+      "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
+      "counts": { "critical": 297, "high": 3019 },
+      "provider_assessed": true,
+      "scanned": true,
+      "exploit_checked": true,
+      "remediation_checked": true,
+      "in_flight_checked": true,
+      "exposure": "internal",
+      "signals": ["kev"],
+      "priority": "urgent",
+      "reasons": ["matched actionable rule \"exploited-fixable-critical\""],
+      "workload_count": 1,
+      "dimensions": { "account": ["Development UK"], "namespace": ["data-mcp-tools"] },
+      "upgrade": {
+        "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
+        "current": "3.12.3", "latest": "3.14.7",
+        "available": true, "resolved": true, "actionable": true
+      }
+    },
+    {
+      "image": "acr.io/airstrike:2.1.0",
+      "repository": "airstrike",
+      "registry": "acr.io",
+      "tag": "2.1.0",
+      "owner": { "class": "cpo", "team": "cpe", "rule": "cpo-by-label" },
+      "counts": { "critical": 4, "high": 12 },
+      "provider_assessed": true,
+      "scanned": true,
+      "exploit_checked": true,
+      "remediation_checked": true,
+      "in_flight_checked": true,
+      "exposure": "internal",
+      "signals": [],
+      "priority": "high",
+      "reasons": ["matched actionable rule \"production-critical\""],
+      "workload_count": 1,
+      "dimensions": { "account": ["Production UK"], "namespace": ["airstrike"] },
+      "upgrade": {
+        "kind": "base", "name": "acr.io/dotnet/aspnet", "source": "acr.io/dotnet/aspnet:10.0.3",
+        "current": "10.0.3", "latest": "10.0.11",
+        "available": true, "resolved": true, "actionable": true
+      }
+    },
+    {
+      "image": "acr.io/airstrike:2.1.0-fdx",
+      "repository": "airstrike",
+      "registry": "acr.io",
+      "tag": "2.1.0-fdx",
+      "owner": { "class": "engineering", "team": "fdx", "rule": "by-label" },
+      "counts": { "critical": 4, "high": 12 },
+      "provider_assessed": true,
+      "scanned": true,
+      "exploit_checked": true,
+      "remediation_checked": true,
+      "in_flight_checked": true,
+      "exposure": "internal",
+      "signals": [],
+      "priority": "high",
+      "reasons": ["matched actionable rule \"production-critical\""],
+      "workload_count": 1,
+      "dimensions": { "account": ["Production UK"], "namespace": ["airstrike-fdx"] },
+      "upgrade": {
+        "kind": "base", "name": "acr.io/dotnet/aspnet", "source": "acr.io/dotnet/aspnet:10.0.3",
+        "current": "10.0.11", "latest": "10.0.11",
+        "available": true, "resolved": true, "actionable": true
+      }
+    }
+  ]
+}

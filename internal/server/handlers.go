@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"github.com/s-humphreys/patchwright/pkg/group"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
@@ -48,6 +50,10 @@ func (s *Server) routes() map[string]http.Handler {
 		"GET /metrics":             metrics.Handler(),
 		"GET /api/v1/findings":     http.HandlerFunc(s.handleFindings),
 		"GET /api/v1/finding":      http.HandlerFunc(s.handleFinding),
+		"GET /api/v1/items":        http.HandlerFunc(s.handleItems),
+		"GET /api/v1/service":      http.HandlerFunc(s.handleService),
+		"GET /api/v1/cves":         http.HandlerFunc(s.handleCVEs),
+		"GET /api/v1/cve":          http.HandlerFunc(s.handleCVE),
 		"GET /api/v1/owners":       http.HandlerFunc(s.handleOwners),
 		"GET /api/v1/summary":      http.HandlerFunc(s.handleSummary),
 		"GET /api/v1/config":       http.HandlerFunc(s.handleConfig),
@@ -204,6 +210,7 @@ func filterViews(views []sink.FindingView, r *http.Request) []sink.FindingView {
 	q := r.URL.Query()
 	ownerClass := q.Get("owner_class")
 	team := q.Get("team")
+	repository := q.Get("repository")
 	priority := q.Get("priority")
 	actionable, hasActionable := boolParam(q.Get("actionable"))
 	live, hasLive := boolParam(q.Get("live"))
@@ -223,6 +230,11 @@ func filterViews(views []sink.FindingView, r *http.Request) []sink.FindingView {
 			continue
 		}
 		if ownerClass != "" && v.Owner.Class != ownerClass {
+			continue
+		}
+		// Repository rather than the full reference: a service is the unit somebody
+		// asks about, and its tags change under them.
+		if repository != "" && v.Repository != repository {
 			continue
 		}
 		if team != "" && v.Owner.Team != team {
@@ -289,4 +301,178 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// handleItems serves the queue as work items: one per service and upgrade target,
+// which is the same unit a ticket covers.
+//
+// It exists so a consumer does not have to aggregate for itself. A service catalogue
+// page asking "what does this service owe" was otherwise pulling every finding in the
+// estate and grouping them, which is both slow and a second implementation of the
+// grouping rules that can drift from this one.
+func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
+	snap := s.snapshot()
+	items := []group.Item{}
+	if snap != nil {
+		items = group.Items(filterViews(snap.views, r))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Assessment assessmentMeta `json:"assessment"`
+		Count      int            `json:"count"`
+		Items      []group.Item   `json:"items"`
+	}{s.meta(), len(items), items})
+}
+
+// handleService answers for one service: its work items and whether anything is in
+// progress. One request per component page, keyed by the repository a catalogue
+// already knows.
+func (s *Server) handleService(w http.ResponseWriter, r *http.Request) {
+	repository := r.URL.Query().Get("repository")
+	if repository == "" {
+		writeError(w, http.StatusBadRequest, "repository is required")
+		return
+	}
+	snap := s.snapshot()
+	if snap == nil {
+		writeError(w, http.StatusServiceUnavailable, "no assessment yet")
+		return
+	}
+	items := group.Items(filterViews(snap.views, r))
+	mine := []group.Item{}
+	for _, it := range items {
+		if it.Repository == repository {
+			mine = append(mine, it)
+		}
+	}
+	// An empty list is a real answer — nothing outstanding — but only if this
+	// assessment covers the service at all, which the caller cannot tell from an
+	// empty array. Say whether it was seen.
+	seen := false
+	for _, v := range snap.views {
+		if v.Repository == repository {
+			seen = true
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Assessment assessmentMeta `json:"assessment"`
+		Repository string         `json:"repository"`
+		// Known is false when this assessment contains no finding for the service at
+		// all: nothing deployed it, or the provider never reported it. An empty items
+		// list with known:false is ignorance, not health.
+		Known bool         `json:"known"`
+		Count int          `json:"count"`
+		Items []group.Item `json:"items"`
+	}{s.meta(), repository, seen, len(mine), mine})
+}
+
+// handleCVEs serves the estate by CVE: how bad, how far it reaches, how much of that
+// reach has a fix. The question a security team asks, which the per-service queue can
+// only answer by reading every row.
+func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
+	snap := s.snapshot()
+	cves := []group.CVE{}
+	scanned, total := 0, 0
+	if snap != nil {
+		views := filterViews(snap.views, r)
+		total = len(views)
+		cves = group.CVEs(views, false)
+		if len(cves) > 0 {
+			scanned = cves[0].ScannedImages
+		} else {
+			for _, v := range views {
+				if v.Scanned {
+					scanned++
+				}
+			}
+		}
+		cves = filterCVEs(cves, r)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Assessment assessmentMeta `json:"assessment"`
+		Count      int            `json:"count"`
+		// ScannedFindings and TotalFindings state what this was aggregated over. A CVE
+		// list built from a third of the estate is not the estate, and zero CVEs with
+		// zero scanned findings means nothing was looked at rather than nothing found.
+		ScannedFindings int         `json:"scanned_findings"`
+		TotalFindings   int         `json:"total_findings"`
+		CVEs            []group.CVE `json:"cves"`
+	}{s.meta(), len(cves), scanned, total, cves})
+}
+
+// handleCVE answers for one CVE, with every affected image.
+func (s *Server) handleCVE(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	snap := s.snapshot()
+	if snap == nil {
+		writeError(w, http.StatusServiceUnavailable, "no assessment yet")
+		return
+	}
+	views := filterViews(snap.views, r)
+	found := group.FindCVE(views, id)
+	if found == nil {
+		// 404 with the coverage attached: "not found" over an unscanned estate means
+		// nothing looked, which is a different answer from "nothing carries it".
+		scanned := 0
+		for _, v := range views {
+			if v.Scanned {
+				scanned++
+			}
+		}
+		writeJSON(w, http.StatusNotFound, struct {
+			Error           string `json:"error"`
+			ScannedFindings int    `json:"scanned_findings"`
+			TotalFindings   int    `json:"total_findings"`
+		}{"no scanned image carries this CVE", scanned, len(views)})
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Assessment assessmentMeta `json:"assessment"`
+		CVE        group.CVE      `json:"cve"`
+	}{s.meta(), *found})
+}
+
+// filterCVEs applies the list filters a security consumer wants: what is exploited,
+// what is severe, and what is widespread enough to be worth a campaign.
+func filterCVEs(cves []group.CVE, r *http.Request) []group.CVE {
+	q := r.URL.Query()
+	severity := q.Get("severity")
+	kev, hasKEV := boolParam(q.Get("kev"))
+	fixable, hasFixable := boolParam(q.Get("fixable"))
+	minImages := intParam(q.Get("min_images"))
+	minServices := intParam(q.Get("min_services"))
+
+	out := make([]group.CVE, 0, len(cves))
+	for _, c := range cves {
+		if severity != "" && c.Severity != severity {
+			continue
+		}
+		if hasKEV && c.KEV != kev {
+			continue
+		}
+		// fixable=true means at least one affected image can be fixed; false means
+		// none can, which is the "waiting on upstream" list.
+		if hasFixable && (c.Fixable > 0) != fixable {
+			continue
+		}
+		if c.Images < minImages || c.Services < minServices {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// intParam reads a non-negative integer parameter, treating anything unparseable as
+// absent rather than as zero-with-intent.
+func intParam(v string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }

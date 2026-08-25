@@ -51,6 +51,7 @@ paths:
       parameters:
         - { name: owner_class, in: query, schema: { type: string }, description: "Owner class, e.g. platform" }
         - { name: team, in: query, schema: { type: string } }
+        - { name: repository, in: query, schema: { type: string }, description: "Bare repository, e.g. topnotch" }
         - { name: priority, in: query, schema: { type: string, enum: [urgent, high, medium, low] } }
         - { name: actionable, in: query, schema: { type: boolean } }
         - { name: live, in: query, schema: { type: boolean } }
@@ -106,6 +107,153 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { description: No finding for that image }
+
+  /api/v1/items:
+    get:
+      tags: [findings]
+      summary: The queue as work items
+      description: |
+        Findings grouped into the units people act on: one item per owning team, service
+        and upgrade target — the same key a ticket uses, so an item, a queue row and a
+        ticket are one thing.
+
+        Every aggregate states its own limits. `priority` is the worst across the item's
+        deployments and `priority_where` names where that came from; `assessed_images`
+        short of `deployments` means the counts are the worst KNOWN rather than the
+        worst; `in_flight_checked` is true only when every deployment was checked.
+
+        Accepts the same filters as /api/v1/findings.
+      parameters:
+        - { name: team, in: query, schema: { type: string } }
+        - { name: owner_class, in: query, schema: { type: string } }
+        - { name: repository, in: query, schema: { type: string } }
+        - { name: priority, in: query, schema: { type: string, enum: [urgent, high, medium, low] } }
+        - { name: upgradable, in: query, schema: { type: boolean } }
+        - { name: known_exploited, in: query, schema: { type: boolean } }
+        - { name: suppressed, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Work items, worst first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, count, items]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  count: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/service:
+    get:
+      tags: [findings]
+      summary: One service's outstanding work
+      description: |
+        The work items for a single repository — one request for a service catalogue
+        component page, keyed by the repository the catalogue already knows.
+
+        `known` is false when this assessment contains no finding for the service at
+        all. An empty `items` list with `known: false` is ignorance rather than health,
+        and a consumer cannot tell the two apart from the array alone.
+      parameters:
+        - { name: repository, in: query, required: true, schema: { type: string } }
+        - { name: team, in: query, schema: { type: string } }
+        - { name: suppressed, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: The service's items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, repository, known, count, items]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  repository: { type: string }
+                  known: { type: boolean }
+                  count: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+        "400": { description: repository is required }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/NoAssessment" }
+
+  /api/v1/cves:
+    get:
+      tags: [findings]
+      summary: The estate by CVE
+      description: |
+        Vulnerabilities across the estate, worst first: known-exploited, then severity,
+        then exploitation pressure, then reach. This is the scope-of-work question,
+        which the per-service queue can only answer by reading every row.
+
+        `images` and `services` are both reported because they answer different
+        questions: how many deployments carry it, and how many pieces of work fixing it
+        takes. One base-image CVE on 535 images is a handful of rebuilds.
+
+        Per-CVE detail exists only where a vulnerability source ran, so
+        `scanned_findings` and `total_findings` travel with the answer. Zero CVEs over
+        zero scanned findings means nothing was looked at, not that nothing was found.
+      parameters:
+        - { name: severity, in: query, schema: { type: string, enum: [critical, high, medium, low] } }
+        - { name: kev, in: query, schema: { type: boolean }, description: CISA known-exploited only }
+        - name: fixable
+          in: query
+          schema: { type: boolean }
+          description: |
+            true keeps CVEs with a fix on at least one affected image; false keeps those
+            with none anywhere, which is the waiting-on-upstream list.
+        - { name: min_images, in: query, schema: { type: integer } }
+        - { name: min_services, in: query, schema: { type: integer } }
+        - { name: team, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: CVEs, worst first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, count, scanned_findings, total_findings, cves]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  count: { type: integer }
+                  scanned_findings: { type: integer }
+                  total_findings: { type: integer }
+                  cves:
+                    type: array
+                    items: { $ref: "#/components/schemas/CVE" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/cve:
+    get:
+      tags: [findings]
+      summary: One CVE and every image carrying it
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: string } }
+        - { name: team, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The CVE, with its affected images
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, cve]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  cve: { $ref: "#/components/schemas/CVE" }
+        "400": { description: id is required }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: |
+            No scanned image carries it. The response carries scanned_findings and
+            total_findings, because "not found" over an unscanned estate means nothing
+            looked rather than nothing carries it.
+        "503": { $ref: "#/components/responses/NoAssessment" }
 
   /api/v1/owners:
     get:
@@ -491,6 +639,98 @@ components:
             False when the pull request bumps this dependency to a different version
             than the one recommended. A non-exact match must not be read as this
             upgrade being applied.
+
+    Item:
+      type: object
+      description: "One piece of work: a service, its owner, and the upgrade it needs."
+      required: [key, repository, priority, deployments, assessed_images, exposure, in_flight_checked, tags, images]
+      properties:
+        key: { type: string, description: "Stable identity: owner, service and target." }
+        repository: { type: string }
+        team: { type: string }
+        class: { type: string }
+        priority: { type: string }
+        priority_where:
+          type: string
+          description: |
+            Where the worst verdict came from. The same image is often urgent in
+            production and medium in development; without this the distinction the
+            policy drew is lost.
+        rule: { type: string, description: The policy rule behind the verdict. }
+        upgrade: { $ref: "#/components/schemas/Upgrade" }
+        critical: { type: integer }
+        high: { type: integer }
+        deployments: { type: integer }
+        assessed_images:
+          type: integer
+          description: |
+            How many of the item's images the provider assessed. Short of `deployments`
+            means `critical` and `high` are the worst KNOWN rather than the worst.
+        scanned_images: { type: integer }
+        exposure: { type: string, enum: [public, internal, unknown] }
+        signals:
+          type: array
+          items: { type: string }
+        in_flight: { $ref: "#/components/schemas/InFlight" }
+        in_flight_checked:
+          type: boolean
+          description: True only when every deployment in the item was checked.
+        tags:
+          type: array
+          items: { type: string }
+        accounts:
+          type: array
+          items: { type: string }
+        namespaces:
+          type: array
+          items: { type: string }
+        images:
+          type: array
+          items: { type: string }
+          description: Full references, so a consumer can fetch any deployment's finding.
+        workloads: { type: integer }
+
+    CVE:
+      type: object
+      description: One vulnerability across the estate.
+      required: [id, severity, kev, images, services, fixable, scanned_images, total_images]
+      properties:
+        id: { type: string }
+        severity:
+          type: string
+          description: The worst severity reported anywhere; distros rate the same CVE differently.
+        cvss: { type: number }
+        epss:
+          type: number
+          description: Absent means no exploit source ran, not a low score.
+        risk_score: { type: number, description: The scan provider's own scale, not comparable with epss. }
+        kev: { type: boolean }
+        images: { type: integer, description: Deployments carrying it. }
+        services: { type: integer, description: Pieces of work fixing it takes. }
+        fixable: { type: integer, description: Affected images with a published fix. }
+        teams:
+          type: array
+          items: { type: string }
+        fixed_versions:
+          type: array
+          items: { type: string }
+        affected:
+          type: array
+          description: Present on the single-CVE endpoint only.
+          items:
+            type: object
+            properties:
+              image: { type: string }
+              repository: { type: string }
+              team: { type: string }
+              fixed_version: { type: string, description: Empty means no fix published for this image. }
+              fix_path: { type: string, enum: [direct, managed, none, unknown, unchecked] }
+              priority: { type: string }
+              accounts:
+                type: array
+                items: { type: string }
+        scanned_images: { type: integer }
+        total_images: { type: integer }
 
     Owner:
       type: object
