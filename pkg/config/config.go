@@ -95,10 +95,117 @@ type RemediationConfig struct {
 	// Base tunes how a first-party image's base is found.
 	Base BaseImageConfig `yaml:"base"`
 
+	// Upgrade decides HOW FAR an upgrade should move, which is a different question
+	// from whether one exists.
+	Upgrade UpgradeConfig `yaml:"upgrade"`
+
 	// InFlight configures detection of remediation that is already under way, so
 	// an upgrade with an open pull request can be told apart from one nobody has
 	// started. Disabled when Provider is empty.
 	InFlight InFlightConfig `yaml:"inFlight"`
+}
+
+// UpgradeConfig decides how far a recommendation should move.
+//
+// "Newest available" is the wrong answer often enough to matter. A Python base on
+// 3.12.3 has 3.12.14 and 3.14.7 available; recommending 3.14.7 asks a team to migrate
+// a runtime, and their dependency tree may not be ready. The finding then sits in the
+// queue forever looking like neglect, while the patch bump that would have fixed the
+// same CVEs went unmade.
+//
+// So a strategy, and where a real constraint exists, a ceiling.
+type UpgradeConfig struct {
+	// Strategy is the default distance: "patch" (same major and minor), "minor"
+	// (same major), or "latest" (newest in track). Defaults to "latest", which is
+	// the behaviour before this existed.
+	Strategy string `yaml:"strategy"`
+	// Rules override the default per image, first match winning. Match is an image
+	// name, optionally ending in "*" to match a prefix — an image name is not a CEL
+	// context and a glob reads better than an expression here.
+	Rules []UpgradeRule `yaml:"rules"`
+}
+
+// UpgradeRule constrains upgrades for images whose name matches.
+type UpgradeRule struct {
+	// Name matches the upgrade's image name, e.g. "docker.io/python" or
+	// "capitalontap.azurecr.io/dotnet/*".
+	Name string `yaml:"name"`
+	// Strategy for matching images. Empty inherits the default.
+	Strategy string `yaml:"strategy"`
+	// Ceiling is a version prefix never to recommend beyond, e.g. "3.12". It exists
+	// for a constraint somebody actually knows: a runtime minor a dependency tree is
+	// not ready for. A ceiling keeps patch upgrades flowing, which suppressing the
+	// finding would not — the CVEs stay fixable while the migration waits.
+	Ceiling string `yaml:"ceiling"`
+	// Until is when the ceiling lapses (YYYY-MM-DD). A constraint with no end date
+	// becomes permanent by accident, and the queue silently stops asking. Empty
+	// means no expiry, which is allowed but reported.
+	Until string `yaml:"until"`
+	// Reason is why the ceiling exists, carried into the report so the person who
+	// reads it does not have to ask.
+	Reason string `yaml:"reason"`
+}
+
+// strategies are the accepted distances.
+var strategies = map[string]bool{"patch": true, "minor": true, "latest": true}
+
+// EffectiveStrategy returns the configured default, or "latest".
+func (u UpgradeConfig) EffectiveStrategy() string {
+	if strategies[u.Strategy] {
+		return u.Strategy
+	}
+	return "latest"
+}
+
+// For returns the strategy and ceiling to apply to an image name. An expired ceiling
+// is not applied and is reported as expired, so a lapsed constraint surfaces as a
+// decision to revisit rather than quietly holding an estate back for ever.
+func (u UpgradeConfig) For(name string) (strategy, ceiling, reason string, expired bool) {
+	for _, r := range u.Rules {
+		if !matchesName(r.Name, name) {
+			continue
+		}
+		strategy = r.Strategy
+		if !strategies[strategy] {
+			strategy = u.EffectiveStrategy()
+		}
+		if r.Ceiling != "" && r.Expired() {
+			return strategy, "", r.Reason, true
+		}
+		return strategy, r.Ceiling, r.Reason, false
+	}
+	return u.EffectiveStrategy(), "", "", false
+}
+
+// Expiry parses Until, reporting whether one was set.
+func (r UpgradeRule) Expiry() (time.Time, bool) {
+	if strings.TrimSpace(r.Until) == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02", strings.TrimSpace(r.Until))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// Expired reports whether the ceiling has lapsed.
+func (r UpgradeRule) Expired() bool {
+	t, ok := r.Expiry()
+	return ok && time.Now().After(t)
+}
+
+// matchesName compares an image name against a rule pattern, supporting a single
+// trailing "*". Case-insensitive: registries are.
+func matchesName(pattern, name string) bool {
+	pattern, name = strings.ToLower(strings.TrimSpace(pattern)), strings.ToLower(strings.TrimSpace(name))
+	if pattern == "" || name == "" {
+		return false
+	}
+	if strings.HasSuffix(pattern, "*") {
+		return strings.HasPrefix(name, strings.TrimSuffix(pattern, "*"))
+	}
+	return pattern == name
 }
 
 // InFlightConfig describes where to look for open pull requests that would apply
@@ -269,6 +376,16 @@ type JiraConfig struct {
 	// component under a different process). It stays in the report and the queue
 	// and is listed as skipped, so excluding something never hides it.
 	Exclude []ExcludeRule `yaml:"exclude"`
+
+	// GroupBy decides what one ticket covers: "service" (default) is one ticket per
+	// repository and upgrade target, "campaign" is one per owning team and target,
+	// listing every service that needs it.
+	//
+	// Which is better is a team's call, not this tool's. A platform team with a few
+	// repositories wants a ticket per service; a team with thirty repositories on one
+	// shared base wants one ticket that says "rebuild these six", because thirty
+	// tickets is how a queue gets ignored.
+	GroupBy string `yaml:"groupBy"`
 
 	// Routes send findings to different projects, boards or issue types based on
 	// who owns them, so one deployment can serve teams that do not share a
@@ -463,6 +580,11 @@ func (j JiraConfig) TicketsPriority(priority string) bool {
 // exclusions decide whether work is tracked at all, which is a policy question
 // for the whole deployment rather than something a route should quietly change.
 type TicketRoute struct {
+	// GroupBy overrides what one ticket covers for this route: "service" or
+	// "campaign". A team with thirty repositories on one base and a team with three
+	// want different answers, and the route is where a team's preferences live.
+	GroupBy string `yaml:"groupBy"`
+
 	// Name identifies the route in logs and dry runs. Required.
 	Name string `yaml:"name"`
 	// When is a CEL expression over the same variables as policy rules, e.g.
@@ -506,6 +628,9 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if r.AutoClose != nil {
 		out.AutoClose = *r.AutoClose
+	}
+	if r.GroupBy != "" {
+		c.GroupBy = r.GroupBy
 	}
 	if r.CloseTransition != "" {
 		out.CloseTransition = r.CloseTransition
@@ -761,6 +886,12 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Dashboard.URL != "" {
 			cfg.Dashboard.URL = part.Dashboard.URL
+		}
+		if part.Remediation.Upgrade.Strategy != "" {
+			cfg.Remediation.Upgrade.Strategy = part.Remediation.Upgrade.Strategy
+		}
+		if part.Remediation.Upgrade.Rules != nil {
+			cfg.Remediation.Upgrade.Rules = append(cfg.Remediation.Upgrade.Rules, part.Remediation.Upgrade.Rules...)
 		}
 		if part.Remediation.InFlight.Provider != "" {
 			cfg.Remediation.InFlight = part.Remediation.InFlight

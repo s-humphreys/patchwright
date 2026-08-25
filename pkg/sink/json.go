@@ -107,6 +107,21 @@ type UpgradeView struct {
 	Latest    string `json:"latest,omitempty"`
 	Available bool   `json:"available"`
 	Resolved  bool   `json:"resolved"`
+	// Newest is the furthest version available when the recommendation is nearer,
+	// so a consumer can offer both: the patch to take now, and the migration to plan.
+	// Absent when they are the same.
+	Newest string `json:"newest,omitempty"`
+	// Strategy is how far the recommendation was allowed to move: patch, minor, latest.
+	Strategy string `json:"strategy,omitempty"`
+	// Ceiling is the version prefix policy will not go beyond, and CeilingReason why.
+	// CeilingExpired marks a ceiling whose end date has passed — it was not applied.
+	Ceiling        string `json:"ceiling,omitempty"`
+	CeilingReason  string `json:"ceiling_reason,omitempty"`
+	CeilingExpired bool   `json:"ceiling_expired,omitempty"`
+	// HeldBack is true when newer versions exist and policy recommends none of them.
+	// Without it, "no upgrade available" and "held back deliberately" look identical.
+	HeldBack bool `json:"held_back,omitempty"`
+
 	// Comparison is "version" or "digest": how the verdict was reached. A digest
 	// comparison means the reference is a floating tag, so current and latest are
 	// short digests rather than versions.
@@ -240,10 +255,16 @@ func ToFindingView(f model.Finding) FindingView {
 			Kind: f.Upgrade.Kind, Name: f.Upgrade.Name,
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
 			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
-			Reason:     f.Upgrade.Reason,
-			Comparison: f.Upgrade.Comparison,
-			Actionable: f.Upgrade.Actionable,
-			Managed:    f.Upgrade.Managed, Manager: f.Upgrade.Manager,
+			Reason:         f.Upgrade.Reason,
+			Newest:         f.Upgrade.Newest,
+			Strategy:       f.Upgrade.Strategy,
+			Ceiling:        f.Upgrade.Ceiling,
+			CeilingReason:  f.Upgrade.CeilingReason,
+			CeilingExpired: f.Upgrade.CeilingExpired,
+			HeldBack:       f.Upgrade.HeldBack,
+			Comparison:     f.Upgrade.Comparison,
+			Actionable:     f.Upgrade.Actionable,
+			Managed:        f.Upgrade.Managed, Manager: f.Upgrade.Manager,
 			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,
 		}
 	}

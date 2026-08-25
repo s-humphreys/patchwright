@@ -1,5 +1,5 @@
 import { SIGNAL_BADGES, badge, count, epss } from './badges.js';
-import { fixPath, maxRisk, priorityText, ticketsFor, upgradeCell } from './cells.js';
+import { fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
 
@@ -102,6 +102,12 @@ function sections(f) {
     row("Fix path", `<span class="${esc(fixPath(f))}">${esc(fixPath(f))}</span>`),
     row("Upgrade", u ? upgradeCell(f) : unknown("none reported", "No upgrade information for this image.")),
     row("How it was compared", u?.comparison ? esc(u.comparison) : ""),
+    row("Newest available", u?.newest
+      ? `${esc(u.newest)} <span class="sub">${esc(upgradeStrategyWhy(u))}</span>` : ""),
+    row("Upgrade policy", u?.ceiling
+      ? `held at ${esc(u.ceiling)}${u.ceiling_reason ? ` — ${esc(u.ceiling_reason)}` : ""}` +
+        (u.ceiling_expired ? " " + unknown("(expired, not applied)", "The ceiling's end date has passed, so it was not applied. The constraint is due a revisit.") : "")
+      : u?.strategy && u.strategy !== "latest" ? `${esc(u.strategy)} upgrades only` : ""),
     row("Why not resolved", u && !u.resolved
       ? `<code>${esc(u.reason || "no reason recorded")}</code>` : ""),
     row("Change lands in", u?.source

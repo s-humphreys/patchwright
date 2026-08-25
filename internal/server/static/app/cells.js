@@ -31,6 +31,13 @@ export function upgradeCell(f) {
       : `${u.name} ${u.current} → ${u.latest}`;
   }
   parts.push(esc(detail));
+  // Both moves, when policy recommends the nearer one. A team told to jump a runtime
+  // minor it cannot take does nothing at all, and the patch that would have closed
+  // the same CVEs goes unmade — so the ticket offers the patch now and names the
+  // migration as a separate decision.
+  if (u.newest && u.newest !== u.latest) {
+    parts.push(`<span class="muted" title="${esc(upgradeStrategyWhy(u))}">newest ${esc(u.newest)}</span>`);
+  }
   // Name the thing that owns it where we know it: "helm" says the tag is the wrong
   // place to look, "flux-operator-0.33.0" says where to look instead.
   if (!u.actionable && (u.manager || u.source)) {
@@ -290,6 +297,10 @@ export function sourceCell(f) {
 // fixCell: the fix path and the move itself. "none", "unknown" and "?" stay distinct —
 // already latest, could not resolve, and never looked are three different answers.
 export function fixCell(f) {
+  const u = f.upgrade;
+  // Held back is not "none": there IS a newer version and policy asked for none of
+  // it, which somebody may want to revisit.
+  if (u && u.held_back) return heldBackCell(u);
   const path = fixPath(f);
   if (path === "?" || path === "unknown" || path === "none") {
     return `<span class="${FIX_CLASS[path] || "act-unknown"}" title="${esc(FIX_HELP[path] || "")}">${esc(path)}</span>`;
@@ -340,4 +351,28 @@ export function actionSort(f) {
   if (ticketsFor(f).length) return 2;
   if (!S.ticketsByRepo || !f.in_flight_checked) return UNKNOWN;
   return 1;
+}
+
+// upgradeStrategyWhy explains why the recommendation stops short of the newest
+// version. A number nobody can explain is a number nobody trusts.
+export function upgradeStrategyWhy(u) {
+  const parts = [];
+  if (u.ceiling) {
+    parts.push(`Held at ${u.ceiling} by policy` + (u.ceiling_reason ? `: ${u.ceiling_reason}` : "."));
+  } else if (u.strategy === "patch") {
+    parts.push("Patch upgrades only for this image: the minor version is the compatibility boundary for a language runtime.");
+  } else if (u.strategy === "minor") {
+    parts.push("Minor upgrades only for this image.");
+  }
+  if (u.ceiling_expired) {
+    parts.push("That ceiling's end date has passed, so it was NOT applied — the constraint is due a revisit.");
+  }
+  parts.push(`The newest available is ${u.newest}, which is a separate decision.`);
+  return parts.join(" ");
+}
+
+// heldBackCell reports an image with newer versions available and none recommended.
+// "none" would say it is up to date, which is a different thing entirely.
+export function heldBackCell(u) {
+  return `<span class="act-managed" title="${esc(upgradeStrategyWhy(u))}">held at ${esc(u.ceiling || u.strategy || "policy")}</span>`;
 }

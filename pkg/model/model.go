@@ -320,6 +320,23 @@ type Upgrade struct {
 	// be read as "already on the latest version" — an unreachable registry
 	// otherwise reports every image it holds as up to date.
 	Resolved bool
+	// Newest is the furthest version available in track, when policy recommends
+	// something nearer. Empty when they are the same. Reported so a ticket can say
+	// "3.12.14 now, 3.14.7 when you are ready" rather than picking for the reader.
+	Newest string
+	// Strategy is how far this recommendation was allowed to move: patch, minor or
+	// latest.
+	Strategy string
+	// Ceiling is the version prefix policy will not recommend beyond, with the reason
+	// somebody gave for it. CeilingExpired reports a ceiling whose end date has
+	// passed: it was NOT applied, and the constraint is due a revisit.
+	Ceiling        string
+	CeilingReason  string
+	CeilingExpired bool
+	// HeldBack is true when a newer version exists but policy recommends none of it.
+	// Distinct from having no upgrade at all, which is what silence would imply.
+	HeldBack bool
+
 	// Comparison says how the verdict was reached: "version" when tags were
 	// compared, "digest" when the reference is a floating tag with no version and
 	// the digest it resolves to was compared instead.

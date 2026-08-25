@@ -240,7 +240,10 @@ func newTemplateData(tg ticketGroup) TemplateData {
 		}
 	}
 	d.ServiceName = serviceName(group[0], d.Upgrade, d.ImageCount)
-	d.GroupNoun = groupNoun(groupKey(group[0]))
+	// The noun describes what is grouped, and only the per-service key names a thing:
+	// a campaign key names a change, and "images" is the honest word for what it
+	// covers.
+	d.GroupNoun = groupNoun(groupKey(group[0], false))
 	return d
 }
 
@@ -256,7 +259,7 @@ func serviceName(f sink.FindingView, u *UpgradeData, imageCount int) string {
 		if u != nil && u.Kind == "chart" && u.Name != "" {
 			return u.Name
 		}
-		if name := lastSegment(groupKey(f)); name != "" {
+		if name := lastSegment(groupKey(f, false)); name != "" {
 			return name
 		}
 	}

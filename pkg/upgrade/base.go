@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -262,9 +263,29 @@ func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtD
 	}
 	up.Resolved = true
 	up.Comparison = "version"
-	if latest := newestInTrack(current, tags); latest != nil {
-		up.Latest = latest.Original()
+
+	// Two answers: how far policy says to move, and how far it is possible to move.
+	// Reporting only the first hides a decision; reporting only the second asks for
+	// work the team has already said it cannot take.
+	strategy, ceiling, reason, expired := r.Cfg.Upgrade.For(up.Name)
+	up.Strategy, up.Ceiling, up.CeilingReason, up.CeilingExpired = strategy, ceiling, reason, expired
+	recommended := newestWithin(current, tags, strategy, ceiling)
+	newest := newestWithin(current, tags, "latest", "")
+	if recommended != nil {
+		up.Latest = recommended.Original()
 		up.Available = true
+	}
+	if newest != nil {
+		up.Newest = newest.Original()
+		// Only worth saying when it differs: "3.12.14, newest 3.12.14" is noise.
+		if recommended == nil || newest.Original() == recommended.Original() {
+			up.Newest = ""
+		}
+	}
+	// Held back with nothing to offer is its own state: there IS a newer version, and
+	// policy says not this one. Silence here would read as "already up to date".
+	if recommended == nil && newest != nil {
+		up.HeldBack = true
 	}
 	return up, nil
 }
@@ -306,13 +327,36 @@ func (r *BaseResolver) floatingBase(ctx context.Context, base model.Image, built
 // system underneath the application and calls it a patch. Only tags carrying the same
 // suffix are candidates, so azurelinux stays on azurelinux.
 func newestInTrack(current *semver.Version, tags []string) *semver.Version {
+	return newestWithin(current, tags, "latest", "")
+}
+
+// newestWithin picks the furthest version a strategy and ceiling allow.
+//
+// Strategy is about compatibility, and where the boundary sits depends on what is
+// being upgraded. For an OS package "newest" is nearly always right. For a language
+// runtime the MINOR is the boundary: 3.12 to 3.14 is a migration whose blast radius
+// is somebody's whole dependency tree, while 3.12.3 to 3.12.14 is a rebuild that
+// picks up the same patched packages and breaks nothing.
+//
+// Recommending the migration when the patch would do is not a harmless overshoot. The
+// team cannot take it, so the finding sits in the queue looking like neglect, and the
+// patch that would have closed the CVEs never gets made.
+func newestWithin(current *semver.Version, tags []string, strategy, ceiling string) *semver.Version {
 	var best *semver.Version
 	for _, t := range tags {
 		v, err := semver.StrictNewVersion(strings.TrimPrefix(t, "v"))
 		if err != nil {
 			continue
 		}
+		// A distro suffix lives in the prerelease slot, so the same suffix means the
+		// same variant: staying on it is not optional, it is the operating system.
 		if v.Major() != current.Major() || v.Prerelease() != current.Prerelease() {
+			continue
+		}
+		if strategy == "patch" && v.Minor() != current.Minor() {
+			continue
+		}
+		if !withinCeiling(v, ceiling) {
 			continue
 		}
 		if !v.GreaterThan(current) {
@@ -323,6 +367,42 @@ func newestInTrack(current *semver.Version, tags []string) *semver.Version {
 		}
 	}
 	return best
+}
+
+// withinCeiling reports whether a version is at or below a version prefix ("3.12").
+// An unparseable ceiling constrains nothing rather than everything: a typo must not
+// silently stop an estate from being told about upgrades.
+func withinCeiling(v *semver.Version, ceiling string) bool {
+	ceiling = strings.TrimSpace(strings.TrimPrefix(ceiling, "v"))
+	if ceiling == "" {
+		return true
+	}
+	parts := strings.Split(ceiling, ".")
+	major, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return true
+	}
+	if v.Major() != major {
+		return v.Major() < major
+	}
+	if len(parts) < 2 {
+		return true
+	}
+	minor, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil {
+		return true
+	}
+	if v.Minor() != minor {
+		return v.Minor() < minor
+	}
+	if len(parts) < 3 {
+		return true
+	}
+	patch, err := strconv.ParseUint(parts[2], 10, 64)
+	if err != nil {
+		return true
+	}
+	return v.Patch() <= patch
 }
 
 // unresolvedUpgrade records that the question could not be answered, with the reason.
