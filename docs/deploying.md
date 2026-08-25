@@ -78,6 +78,49 @@ helm install pw deploy/helm/patchwright \
 Trivy needs egress to its vuln DB (`ghcr.io/aquasecurity/trivy-db`) and, for
 `exploitSource: public`, to the CISA and FIRST feeds.
 
+## Deploying with a platform-managed identity
+
+Where something else creates the ServiceAccount — a platform's identity CRD, Terraform,
+a cloud operator — let it, and point the chart at it:
+
+```yaml
+serviceAccount:
+  create: false
+  name: patchwright        # the ServiceAccount that already exists
+registryAuth:
+  azure:
+    workloadIdentity:
+      enabled: true        # adds the pod label; the annotation is on the existing SA
+```
+
+`enabled: true` with `create: false` adds `azure.workload.identity/use` to the pod and
+nothing else. The `client-id` annotation belongs to whoever owns the ServiceAccount, so
+`clientId` is only required when the chart creates it.
+
+## Provider-backed CVE detail and in-flight detection
+
+The sources that talk to the scan platform need its base URL, and in-flight detection
+needs a token:
+
+```yaml
+scan:
+  enabled: true
+  vulnSource: rapid7
+  vulnOptions: ["base-url=https://example.customer.divvycloud.com"]
+  exploitSource: public,rapid7
+  exploitOptions: ["base-url=https://example.customer.divvycloud.com"]
+age:
+  source: rapid7
+  options: ["base-url=https://example.customer.divvycloud.com"]
+reconcile:
+  inFlight:
+    credentialsSecretName: patchwright-ado   # key: pat
+```
+
+`vulnSource: rapid7` takes per-CVE detail from the platform rather than pulling images,
+which is the only way to get it for a private registry the scanner has no credentials
+for. It supplies no EPSS or KEV, so keep `public` in the exploit source list.
+
 ## CronJob mode
 
 `server.enabled: false` runs one assessment per schedule instead of a long-lived

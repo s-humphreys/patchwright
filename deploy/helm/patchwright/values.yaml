@@ -212,6 +212,15 @@ reconcile:
   # for Flux HelmReleases, a newer image tag for manifest/Kustomize workloads).
   # Adds read access to workloads + Flux CRDs.
   remediation: false
+  # Detect remediation already under way, so an upgrade with an open pull request is
+  # not reported as work nobody has started. Configured under remediation.inFlight in
+  # the rules; the token comes from a Secret, never a values file.
+  #
+  #   kubectl create secret generic patchwright-ado --from-literal=pat="$AZURE_DEVOPS_PAT"
+  #
+  inFlight:
+    credentialsSecretName: ""
+    credentialsSecretKey: pat
   # Additionally grant `get` on ALL custom resources, so operator-deployed
   # images whose tag is set in the owning CR's spec are treated as directly
   # actionable (change the CR). Broad read access — leave off unless you want
@@ -226,10 +235,15 @@ scan:
   # that finding is reported "unscanned", the run does not fail.
   enabled: false
   vulnSource: trivy
+  # Options for the vuln source, as key=value. The rapid7 source needs the platform
+  # base URL, and takes per-CVE detail from the platform rather than pulling images —
+  # which is the only way to get it for a private registry the scanner cannot pull.
+  vulnOptions: []                # e.g. ["base-url=https://example.customer.divvycloud.com"]
   # Also annotate CVEs with EPSS + CISA KEV (needs egress to first.org + cisa.gov).
   # Comma-separated: "public" gives EPSS + KEV, "rapid7" adds the platform's own
   # risk score. They are not interchangeable — see docs/scanning.md.
   exploitSource: ""          # e.g. "public" or "public,rapid7"
+  exploitOptions: []         # e.g. ["base-url=https://example.customer.divvycloud.com"]
 
   # Trivy's vulnerability DB is several hundred MB and is downloaded on every pod
   # start. On an ephemeral volume that means every CronJob run pays for it.
@@ -252,6 +266,12 @@ scan:
       # ReadWriteOnce is right for a single writer. There is only ever one — the
       # Deployment runs one replica, and the CronJob sets concurrencyPolicy: Forbid.
       accessMode: ReadWriteOnce
+
+# Date CVEs from the scan provider's own first-seen times, so the queue has a time
+# dimension. Requires scan.enabled: it stamps CVEs that already exist.
+age:
+  source: ""                 # e.g. "rapid7"
+  options: []                # e.g. ["base-url=https://example.customer.divvycloud.com"]
 
 registryAuth:
   # Credentials for Trivy to pull PRIVATE images. Use your cloud's workload
