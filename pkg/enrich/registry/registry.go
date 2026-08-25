@@ -11,8 +11,9 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
+
+	"github.com/s-humphreys/patchwright/pkg/registryauth"
 
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -35,7 +36,7 @@ type TagLister interface {
 type craneLister struct{}
 
 func (craneLister) Tags(ctx context.Context, repo string) ([]string, error) {
-	return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(authn.DefaultKeychain))
+	return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(registryauth.Keychain()))
 }
 
 // Resolver reports a newer semver image tag per image.

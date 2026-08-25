@@ -121,6 +121,36 @@ reconcile:
 which is the only way to get it for a private registry the scanner has no credentials
 for. It supplies no EPSS or KEV, so keep `public` in the exploit source list.
 
+## Reading private registries
+
+Patchwright reads registries to list tags and to read the image config that names an
+image's base. It never pulls a layer, pushes or deletes, so read access is all it needs.
+
+Credentials come from, in order:
+
+1. **The docker config** — what `docker login` or `az acr login` leaves behind. First,
+   deliberately: an explicit login must win over an ambient cloud identity, because
+   surprising somebody with a different account than the one they logged into is worse
+   than failing.
+2. **A cloud provider**, for the registries it serves. Azure (`*.azurecr.io`) exchanges
+   whatever Azure identity the process has — a workload identity's projected federated
+   token, a managed identity, a service principal — for an ACR token. Google
+   (`gcr.io`, `*.pkg.dev`) uses application default credentials.
+
+In a cluster there is no docker config, only a projected token, which is why the second
+exists. On AKS with `registryAuth.azure.workloadIdentity.enabled`, the pod gets
+`AZURE_FEDERATED_TOKEN_FILE` and the Azure provider uses it: grant that identity
+`AcrPull` and nothing else.
+
+Each provider declares the hosts it serves and is asked about nothing else. That is not
+tidiness — a credential helper asked about a foreign host goes looking rather than
+declining, and the ACR helper spends thirty seconds on instance metadata before giving
+up. Consulting it for `mcr.microsoft.com`, the base registry for every .NET image, cost
+half a minute per read.
+
+Adding AWS ECR is one file wrapping `amazon-ecr-credential-helper` the way
+`pkg/registryauth/azure.go` wraps the ACR one.
+
 ## CronJob mode
 
 `server.enabled: false` runs one assessment per schedule instead of a long-lived

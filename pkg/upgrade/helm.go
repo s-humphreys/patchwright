@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
+
+	"github.com/s-humphreys/patchwright/pkg/registryauth"
 	"gopkg.in/yaml.v3"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -40,7 +41,7 @@ func NewHelmChecker() *HelmChecker {
 	return &HelmChecker{
 		HTTP: &http.Client{Timeout: 20 * time.Second},
 		ociTags: func(ctx context.Context, repo string) ([]string, error) {
-			return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(authn.DefaultKeychain))
+			return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(registryauth.Keychain()))
 		},
 	}
 }

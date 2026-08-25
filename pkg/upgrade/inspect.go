@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
+
+	"github.com/s-humphreys/patchwright/pkg/registryauth"
 )
 
 // craneInspector reads an image's own description of itself from the registry,
@@ -23,7 +24,7 @@ type craneInspector struct{}
 func NewRegistryInspector() ImageInspector { return craneInspector{} }
 
 func (craneInspector) Labels(ctx context.Context, ref string) (map[string]string, error) {
-	cfg, err := crane.Config(ref, crane.WithContext(ctx), crane.WithAuthFromKeychain(authn.DefaultKeychain))
+	cfg, err := crane.Config(ref, crane.WithContext(ctx), crane.WithAuthFromKeychain(registryauth.Keychain()))
 	if err != nil {
 		return nil, fmt.Errorf("read image config for %s: %w", ref, err)
 	}
@@ -40,7 +41,7 @@ func (craneInspector) Labels(ctx context.Context, ref string) (map[string]string
 }
 
 func (craneInspector) Digest(ctx context.Context, ref string) (string, error) {
-	d, err := crane.Digest(ref, crane.WithContext(ctx), crane.WithAuthFromKeychain(authn.DefaultKeychain))
+	d, err := crane.Digest(ref, crane.WithContext(ctx), crane.WithAuthFromKeychain(registryauth.Keychain()))
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", ref, err)
 	}
@@ -54,7 +55,7 @@ type craneTagLister struct{}
 func NewTagLister() TagLister { return craneTagLister{} }
 
 func (craneTagLister) Tags(ctx context.Context, repo string) ([]string, error) {
-	return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(authn.DefaultKeychain))
+	return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(registryauth.Keychain()))
 }
 
 // CachingInspector memoises label reads for the length of a run.
