@@ -433,8 +433,7 @@ export function openGroupDetail(g) {
  * the one they clicked through for is worse than showing them the queue.
  * @returns {string} a message when the link could not be honoured, else ""
  */
-export function openFromURL(groups, cveLookup) {
-  const params = new URLSearchParams(location.search);
+export function openFromURL(groups, cveLookup, params = new URLSearchParams(location.search)) {
 
   const cve = params.get("cve");
   if (cve) {
