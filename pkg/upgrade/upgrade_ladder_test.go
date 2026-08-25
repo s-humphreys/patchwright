@@ -114,3 +114,40 @@ func TestAnExpiredCeilingIsNotAppliedButIsReported(t *testing.T) {
 		t.Errorf("the reason and strategy still travel: %q / %q", reason, strategy)
 	}
 }
+
+func TestDotnetPatchesStayOnTheirServicingBand(t *testing.T) {
+	// .NET is not the Python case: its minor is always 0 within a major, so
+	// "same major" already means "patch", and 10.0.3 -> 10.0.11 was never wrong.
+	tags := []string{"10.0.1-azurelinux3.0", "10.0.3-azurelinux3.0", "10.0.11-azurelinux3.0",
+		"11.0.0-azurelinux3.0"}
+	if got := pick(t, "10.0.3-azurelinux3.0", "latest", "", tags); got != "10.0.11-azurelinux3.0" {
+		t.Errorf("picked %q, want 10.0.11 on the same variant", got)
+	}
+}
+
+func TestSDKFeatureBandsCanBeHeldWithACeiling(t *testing.T) {
+	// The one .NET shape where the default surprises: an SDK feature band lives in
+	// the PATCH field, so 10.0.100 -> 10.0.400 is a tooling jump that looks like a
+	// patch. A ceiling expresses "stay in this band" because it is an upper bound
+	// rather than a prefix match.
+	tags := []string{"10.0.100-noble", "10.0.108-noble", "10.0.200-noble", "10.0.400-noble"}
+	if got := pick(t, "10.0.100-noble", "patch", "", tags); got != "10.0.400-noble" {
+		t.Errorf("unconstrained picked %q; feature bands are invisible to semver", got)
+	}
+	if got := pick(t, "10.0.100-noble", "patch", "10.0.199", tags); got != "10.0.108-noble" {
+		t.Errorf("ceiling 10.0.199 picked %q, want to stay in the 1xx band", got)
+	}
+}
+
+func TestInternalMirrorTagsAreTheMirrorsOwnVersioning(t *testing.T) {
+	// The internal base carries the .NET major in the PATH (dotnet/aspnet/10) and
+	// versions itself 1.x.y. A strategy applies to the mirror's numbering, not to
+	// .NET's, so "minor" here allows 1.0 -> 1.1 of our own base image.
+	tags := []string{"1.0.2", "1.0.5", "1.1.0", "1.1.1"}
+	if got := pick(t, "1.0.2", "minor", "", tags); got != "1.1.1" {
+		t.Errorf("picked %q, want the newest of our own base", got)
+	}
+	if got := pick(t, "1.0.2", "patch", "", tags); got != "1.0.5" {
+		t.Errorf("patch-only picked %q; on this mirror that pins an older base", got)
+	}
+}

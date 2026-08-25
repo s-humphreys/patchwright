@@ -146,6 +146,16 @@ consumer offers the reader both rather than choosing:
 base docker.io/python 3.12.3 → 3.12.14   newest 3.14.7
 ```
 
+Not every ecosystem needs a rule. Whether the default is already right depends on
+where the ecosystem puts its compatibility boundary relative to semver:
+
+| Base | Shape | Default behaviour |
+| --- | --- | --- |
+| Python | `3.12.3`, minor inside the major | **Needs a rule.** Same-major allows 3.12 → 3.14, a runtime migration. |
+| .NET | `10.0.3`, minor always 0 | Already right: same-major means patch, 10.0.3 → 10.0.11. |
+| .NET SDK | `10.0.100`, feature band in the patch field | Watch it: 10.0.100 → 10.0.400 is a tooling jump that looks like a patch. Hold a band with `ceiling: "10.0.199"`, which is an upper bound rather than a prefix. |
+| An internal mirror | `dotnet/aspnet/10:1.1.1` | The strategy applies to the mirror's own numbering, not the runtime's — the runtime major is pinned by the path. |
+
 Where policy recommends nothing at all but newer versions exist, the finding is
 `held_back` rather than `none`. "None" would say the image is up to date, which is a
 different thing.
