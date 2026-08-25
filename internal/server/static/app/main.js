@@ -79,6 +79,7 @@ export function init() {
   initTabs((view) => { if (view === "cves") renderCVEs(S.queueRows); });
   initConfig();
   initPending();
+  $("#groupRows").addEventListener("change", applyOwnerFilters);
   $("#onlyActionable").addEventListener("change", loadFindings);
   $("#showSuppressed").addEventListener("change", loadFindings);
   $("#classFilter").addEventListener("change", () => {

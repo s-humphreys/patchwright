@@ -108,7 +108,16 @@ why `exposure` is a separate three-valued field (`public`, `internal`, `unknown`
 
 The status page shows the same assessment two ways, as tabs, with the view in the URL:
 
-- **Queue** — by image, five columns: urgency, severity, the image with its owner and
+- **Queue** — grouped by service (team, repository and upgrade target) so one row is
+  one piece of work: rebuilding a service and promoting it through its environments.
+  On a real estate 621 findings collapsed to 370 items, so most of the queue was the
+  same work listed again. A grouped row reports the WORST of its deployments and names
+  where that came from ("urgent in Production US"), marks partial provider coverage
+  rather than averaging it away, and only claims a check ran when it ran for every
+  deployment. Selecting the row lists them, and selecting one of those drills into it.
+  Untick "group by service" for the flat per-deployment list, which is what you want
+  when asking where something runs rather than what to do about it.
+- **Queue (ungrouped)** — by image, five columns: urgency, severity, the image with its owner and
   namespace, the fix, and whether anything is already in progress. Selecting a row opens
   a panel with everything else, including every CVE on that image.
 - **CVEs** — by CVE, ranked KEV first, then severity, then exploitation pressure, then

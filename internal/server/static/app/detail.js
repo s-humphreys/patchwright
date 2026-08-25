@@ -194,24 +194,43 @@ function findingFor(el) {
   return S.queueRows.find((x) => x.image === /** @type {any} */ (tr).dataset.image) || null;
 }
 
+/** groupFor resolves a queue row back to the work item it renders, when grouped. */
+function groupFor(el) {
+  const tr = el.closest("tbody tr");
+  if (!tr) return null;
+  const image = /** @type {any} */ (tr).dataset.image;
+  return (S.groupRows || []).find((g) => g.image === image) || null;
+}
+
 // initDetail wires opening from the queue and closing with Escape. Delegated, so it
 // survives the re-render every refresh performs.
 export function initDetail() {
+  // A queue row is a work item when grouped and a deployment when not, so open
+  // whichever the row actually represents.
+  const openRow = (target) => {
+    const g = groupFor(target);
+    if (g) {
+      openGroupDetail(g);
+      return true;
+    }
+    const f = findingFor(target);
+    if (f) {
+      openDetail(f);
+      return true;
+    }
+    return false;
+  };
   $("#findings").addEventListener("click", (e) => {
     const t = /** @type {any} */ (e.target);
     // Links inside a row are their own actions: a ticket or pull request link opens
     // its target rather than the panel.
     if (t.closest("a")) return;
-    const f = findingFor(t);
-    if (f) openDetail(f);
+    openRow(t);
   });
   $("#findings").addEventListener("keydown", (e) => {
     const ke = /** @type {any} */ (e);
     if (ke.key !== "Enter" && ke.key !== " ") return;
-    const f = findingFor(ke.target);
-    if (!f) return;
-    ke.preventDefault(); // Space would otherwise scroll the page.
-    openDetail(f);
+    if (openRow(ke.target)) ke.preventDefault(); // Space would otherwise scroll.
   });
   document.addEventListener("keydown", (e) => {
     if (/** @type {any} */ (e).key === "Escape" && !$("#detail").hidden) closeDetail();
@@ -301,4 +320,81 @@ export function initCVEDetail(lookup) {
     if (ke.key !== "Enter" && ke.key !== " ") return;
     if (open(ke.target)) ke.preventDefault();
   });
+}
+
+/** openGroupDetail shows one work item: the shared change, and every tag it covers. */
+export function openGroupDetail(g) {
+  shown = { image: g.image, group: g.key };
+  const el = $("#detail");
+  const rows = g.findings.slice()
+    .sort((a, b) => (b.counts?.critical ?? 0) - (a.counts?.critical ?? 0))
+    .map((f) => `<tr class="openable" tabindex="0" data-image="${esc(f.image)}"
+        aria-label="Show details for ${esc(f.image)}">
+      <td class="wrap"><code>${esc(f.tag || f.image)}</code></td>
+      <td>${(f.dimensions?.account || []).map((a) => esc(a)).join(", ") || '<span class="muted">-</span>'}</td>
+      <td class="${esc(f.priority || "")}">${esc(f.priority || "none")}</td>
+      <td class="num">${f.provider_assessed
+        ? `${f.counts?.critical ?? 0}C/${f.counts?.high ?? 0}H`
+        : unknown("?", "Never assessed by the scan provider.")}</td>
+      <td>${f.liveness ? (f.liveness.live ? "yes" : "no") : unknown("?", "No live reconciliation ran.")}</td>
+    </tr>`).join("");
+
+  const [assessed, total] = g.assessedOf;
+  el.innerHTML = `
+    <div class="detail-head">
+      <div>
+        <code class="detail-title">${esc(g.repository)}</code>
+        <div class="sub">${esc(g.owner?.team || "unattributed")} · ${g.findings.length} deployment${g.findings.length === 1 ? "" : "s"}</div>
+      </div>
+      <button id="detailClose" class="linkish" aria-label="Close details">close</button>
+    </div>
+    <div class="detail-body">
+      <section><h4>The change</h4><dl>
+        ${row("Upgrade", g.upgrade ? upgradeCell(g.lead) : unknown("none reported", "No upgrade information for these images."))}
+        ${row("Applies to", `${g.findings.length} deployed tag${g.findings.length === 1 ? "" : "s"}, one rebuild promoted forward`)}
+        ${row("Coverage", assessed === total
+          ? `all ${total} assessed by the provider`
+          : unknown(`${assessed} of ${total} assessed`, "The rest were never assessed, so their counts are absent rather than zero."))}
+        ${row("Worst verdict", `${esc(g.priority || "none")}${g.worstWhere ? ` in ${esc(g.worstWhere)}` : ""}`)}
+      </dl></section>
+      <section><h4>In progress</h4><dl>
+        ${row("Pull request", g.in_flight
+          ? `<a href="${esc(g.in_flight.url || "#")}" target="_blank" rel="noreferrer">${esc(g.in_flight.title)}</a>
+             <div class="sub">${esc(g.in_flight.repository)} · open ${g.in_flight.open_days}d${g.in_flight.stale ? " · stale" : ""}</div>`
+          : g.in_flight_checked ? '<span class="muted">none open</span>'
+            : unknown("?", "In-flight detection did not run for every image here."))}
+        ${row("Tickets", S.ticketsByRepo
+          ? (ticketsFor(g.lead).length
+            ? ticketsFor(g.lead).map((t) => `<a href="${esc(t.url || "#")}" target="_blank" rel="noreferrer">${esc(t.key)}</a>
+                <span class="ticket-status">${esc(t.status || "")}</span>`).join("<br>")
+            : '<span class="muted">none open</span>')
+          : unknown("?", "Jira is not configured, so ticket state is unknown."))}
+      </dl></section>
+      <section><h4>Deployments</h4>
+        <p class="muted">Select one for its CVEs and everything else known about it.</p>
+        <div class="scroll-x"><table class="mini">
+          <thead><tr><th>Tag</th><th>Accounts</th><th>Verdict</th><th class="num">C/H</th><th>Live</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+      </section>
+    </div>`;
+  el.hidden = false;
+  document.body.classList.add("detail-open");
+  restoreFocus = document.activeElement;
+  $("#detailClose").addEventListener("click", closeDetail);
+  // Drill from the work item to one deployment. The panel replaces itself rather than
+  // stacking: two sheets deep is a place people get lost.
+  el.querySelectorAll("tbody tr.openable").forEach((tr) => {
+    const open = () => {
+      const f = S.queueRows.find((x) => x.image === /** @type {any} */ (tr).dataset.image);
+      if (f) openDetail(f);
+    };
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (e) => {
+      const ke = /** @type {any} */ (e);
+      if (ke.key !== "Enter" && ke.key !== " ") return;
+      ke.preventDefault();
+      open();
+    });
+  });
+  /** @type {any} */ ($("#detailClose")).focus();
 }

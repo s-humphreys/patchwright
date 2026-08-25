@@ -25,6 +25,7 @@ const CONTROLS = [
   { id: '#onlyFixable', param: 'fixable', kind: 'check', dflt: false },
   { id: '#onlyActionable', param: 'actionable', kind: 'check', dflt: true },
   { id: '#showSuppressed', param: 'suppressed', kind: 'check', dflt: false },
+  { id: '#groupRows', param: 'grouped', kind: 'check', dflt: true },
 ];
 
 /** writeURL reflects the current controls into the address bar. */

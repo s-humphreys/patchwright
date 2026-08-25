@@ -6,6 +6,9 @@
 // and which panels the reader has expanded (which must survive the re-render an
 // hourly poll triggers, or the detail folds away while somebody is reading it).
 export const S = {
+  // The findings the queue is showing, and the work items they collapse into. Both,
+  // because a click has to find its way back from a rendered row to either one.
+  groupRows: [],
   queueRows: [],
   // Open tickets by image repository, from the API. Undefined means Jira is not
   // configured, which is NOT the same as "no ticket exists" and must not render as

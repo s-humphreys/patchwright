@@ -44,6 +44,7 @@
   <label title="Only findings with a version to move to: a direct image bump, or one applied via a chart or operator. Hides those already on their latest release and those whose versions could not be resolved."><input type="checkbox" id="onlyFixable"> has a fix</label>
   <label title="Actionable is the policy verdict: this warrants action. It is not the same as having a version to move to, which is the Fix column - an image already on its latest release can still be actionable, and needs a decision rather than a bump."><input type="checkbox" id="onlyActionable" checked> actionable only</label>
   <label><input type="checkbox" id="showSuppressed"> include suppressed</label>
+  <label title="One row per piece of work: a service and the base it rebuilds onto, covering every deployed tag. Uncheck to list every deployment separately, which is what you want when asking where something runs rather than what to do about it."><input type="checkbox" id="groupRows" checked> group by service</label>
   <span id="queueCount"></span>
 </div>
 <div class="tabs" role="tablist">

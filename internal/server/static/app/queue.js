@@ -1,3 +1,4 @@
+import { GROUP_COLUMNS, groupFindings } from './groups.js';
 import { writeURL } from './urlstate.js';
 import { SIGNAL_ORDER } from './badges.js';
 import { fixPath, ticketsFor, upgradeText } from './cells.js';
@@ -7,10 +8,28 @@ import { FINDING_COLUMNS, renderTable } from './table.js';
 import { $, esc, get } from './util.js';
 
 export function renderFindings(rows) {
+  // Grouped by default: one row per piece of work rather than per deployment. Both
+  // counts are shown, because neither alone is the whole truth — 370 items is what
+  // there is to do, 621 findings is what it covers.
+  if (grouped()) {
+    const groups = groupFindings(rows);
+    S.groupRows = groups;
+    $("#queueCount").textContent = rows.length === S.queueRows.length
+      ? `${groups.length} items covering ${rows.length} findings`
+      : `${groups.length} items covering ${rows.length} of ${S.queueRows.length} findings`;
+    renderTable("findings", GROUP_COLUMNS, groups);
+    return;
+  }
   $("#queueCount").textContent = rows.length === S.queueRows.length
-    ? `${rows.length} shown`
-    : `${rows.length} of ${S.queueRows.length} shown`;
+    ? `${rows.length} findings`
+    : `${rows.length} of ${S.queueRows.length} findings`;
   renderTable("findings", FINDING_COLUMNS, rows);
+}
+
+/** grouped reports whether the queue is collapsed to work items. */
+export function grouped() {
+  const el = /** @type {any} */ ($("#groupRows"));
+  return !el || el.checked;
 }
 
 // UNATTRIBUTED stands for findings no ownership rule could attribute to a team.
