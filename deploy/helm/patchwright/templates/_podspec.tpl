@@ -41,8 +41,20 @@ so they stay in sync. Callers pass a dict:
     {{- end }}
     {{- if .root.Values.scan.enabled }}
     - "--vuln-source={{ .root.Values.scan.vulnSource }}"
+    {{- range .root.Values.scan.vulnOptions }}
+    - "--vuln-option={{ . }}"
+    {{- end }}
     {{- if .root.Values.scan.exploitSource }}
     - "--exploit-source={{ .root.Values.scan.exploitSource }}"
+    {{- range .root.Values.scan.exploitOptions }}
+    - "--exploit-option={{ . }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- if .root.Values.age.source }}
+    - "--age-source={{ .root.Values.age.source }}"
+    {{- range .root.Values.age.options }}
+    - "--age-option={{ . }}"
     {{- end }}
     {{- end }}
     {{- if and (eq .command "serve") .root.Values.metrics.requireAuth }}
@@ -57,7 +69,7 @@ so they stay in sync. Callers pass a dict:
     {{- range .root.Values.extraArgs }}
     - {{ . | quote }}
     {{- end }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName .root.Values.ticketing.credentialsSecretName (eq .root.Values.provider.mode "api") }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName .root.Values.ticketing.credentialsSecretName .root.Values.reconcile.inFlight.credentialsSecretName (eq .root.Values.provider.mode "api") }}
   env:
     {{- if eq .root.Values.provider.mode "api" }}
     - name: RAPID7_API_KEY
@@ -65,6 +77,15 @@ so they stay in sync. Callers pass a dict:
         secretKeyRef:
           name: {{ required "provider.api.credentialsSecretName is required for api mode" .root.Values.provider.api.credentialsSecretName }}
           key: {{ .root.Values.provider.api.credentialsSecretKey }}
+    {{- end }}
+    {{- if .root.Values.reconcile.inFlight.credentialsSecretName }}
+    # Reads pull requests to tell an upgrade nobody has started from one already in
+    # review. Code read scope is enough; this only reads.
+    - name: AZURE_DEVOPS_PAT
+      valueFrom:
+        secretKeyRef:
+          name: {{ .root.Values.reconcile.inFlight.credentialsSecretName }}
+          key: {{ .root.Values.reconcile.inFlight.credentialsSecretKey }}
     {{- end }}
     {{- if .root.Values.ticketing.credentialsSecretName }}
     - name: JIRA_BASE_URL
