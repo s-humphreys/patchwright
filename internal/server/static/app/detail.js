@@ -166,13 +166,25 @@ export function openDetail(f) {
     <div class="detail-body">${sections(f)}</div>`;
   el.hidden = false;
   document.body.classList.add("detail-open");
+  writeDeepLink({ finding: f.image });
   restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   /** @type {any} */ ($("#detailClose")).focus();
 }
 
+/** writeDeepLink reflects the open panel into the address bar, so the view is a link
+ *  somebody can send — and so a ticket can link back to its own evidence. */
+function writeDeepLink(params) {
+  const q = new URLSearchParams(location.search);
+  for (const key of ["service", "team", "finding", "cve"]) q.delete(key);
+  for (const [k, v] of Object.entries(params)) if (v) q.set(k, String(v));
+  const query = q.toString();
+  history.replaceState(null, "", query ? `?${query}` : location.pathname);
+}
+
 export function closeDetail() {
   shown = null;
+  writeDeepLink({});
   const el = $("#detail");
   el.hidden = true;
   el.innerHTML = "";
@@ -290,6 +302,7 @@ export function openCVEDetail(g) {
     </div>`;
   el.hidden = false;
   document.body.classList.add("detail-open");
+  writeDeepLink({ cve: g.id });
   restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   /** @type {any} */ ($("#detailClose")).focus();
@@ -379,6 +392,9 @@ export function openGroupDetail(g) {
     </div>`;
   el.hidden = false;
   document.body.classList.add("detail-open");
+  // Team and service rather than a group key: those are what a ticket knows about
+  // itself, and they stay valid when tags move on.
+  writeDeepLink({ service: g.repository, team: g.owner?.team || "" });
   restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   // Drill from the work item to one deployment. The panel replaces itself rather than
@@ -397,4 +413,52 @@ export function openGroupDetail(g) {
     });
   });
   /** @type {any} */ ($("#detailClose")).focus();
+}
+
+/**
+ * openFromURL opens whatever the address bar names, once the data has loaded.
+ *
+ * This is what makes a ticket's link work. The link names a team and service rather
+ * than an image tag, because a tag will have moved on by the time somebody clicks a
+ * ticket — the service and its owner have not.
+ *
+ * A link naming something no longer in the queue opens nothing and returns why. It
+ * must never open the nearest match: quietly showing somebody a different service than
+ * the one they clicked through for is worse than showing them the queue.
+ * @returns {string} a message when the link could not be honoured, else ""
+ */
+export function openFromURL(groups, cveLookup) {
+  const params = new URLSearchParams(location.search);
+
+  const cve = params.get("cve");
+  if (cve) {
+    const g = cveLookup ? cveLookup(cve) : null;
+    if (g) {
+      openCVEDetail(g);
+      return "";
+    }
+    return `${cve} is not in this assessment. It may be fixed, or no scanned image carries it.`;
+  }
+
+  const finding = params.get("finding");
+  if (finding) {
+    const f = S.queueRows.find((x) => x.image === finding);
+    if (f) {
+      openDetail(f);
+      return "";
+    }
+    return `No finding for ${finding} in this assessment. It may have been redeployed, or a filter is hiding it.`;
+  }
+
+  const service = params.get("service");
+  if (!service) return "";
+  const team = params.get("team");
+  const match = (groups || []).find((g) =>
+    g.repository === service && (!team || g.owner?.team === team));
+  if (match) {
+    openGroupDetail(match);
+    return "";
+  }
+  return `No queue item for ${service}${team ? ` owned by ${team}` : ""} in this assessment. ` +
+    `It may already be fixed, or a filter is hiding it.`;
 }

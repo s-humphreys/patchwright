@@ -162,3 +162,33 @@ test('the group panel lists every deployment and can drill into one', () => {
   assert.equal(rows[0].getAttribute('tabindex'), '0');
   closeDetail();
 });
+
+test('a ticket link opens the work item it names', async () => {
+  // The link a ticket writes carries team and service, so it must resolve to the work
+  // item even though tags have moved on since the ticket was raised.
+  const { openFromURL } = await import('./detail.js');
+  const findings = [
+    deployment('topnotch', 'new-tag-since-the-ticket', 'Production US'),
+  ];
+  S.queueRows = findings;
+  const groups = groupFindings(findings);
+  dom.reconfigure({ url: 'http://x/?service=topnotch&team=data-platform' });
+  globalThis.location = dom.window.location;
+  const missed = openFromURL(groups, null);
+  assert.equal(missed, '', 'the link should have opened something');
+  assert.equal(document.querySelector('#detail').hidden, false);
+  closeDetail();
+});
+
+test('a link naming something gone says so instead of opening the nearest thing', async () => {
+  // Quietly showing a different service than the one somebody clicked through for is
+  // worse than showing them nothing.
+  const { openFromURL } = await import('./detail.js');
+  S.queueRows = [];
+  dom.reconfigure({ url: 'http://x/?service=deleted-service&team=data-platform' });
+  globalThis.location = dom.window.location;
+  const missed = openFromURL(groupFindings([]), null);
+  assert.match(missed, /deleted-service/);
+  assert.match(missed, /already be fixed|filter/);
+  assert.equal(document.querySelector('#detail').hidden, true);
+});

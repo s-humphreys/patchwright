@@ -1,7 +1,7 @@
 import { readURL } from './urlstate.js';
 import { initConfig } from './config.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
-import { initCVEDetail, initDetail, openCVEDetail, openDetail, shownCVE, shownImage } from './detail.js';
+import { initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, shownCVE, shownImage } from './detail.js';
 import { cveGroup, renderCVEs } from './cves.js';
 import { current as currentView, initTabs } from './tabs.js';
 import { initPending, loadPending } from './pending.js';
@@ -45,6 +45,13 @@ export async function loadAll() {
     if (!restored) {
       restored = true;
       if (readURL()) applyOwnerFilters();
+      // A link from a ticket names a team and service; open what it asked for, or say
+      // why it could not be honoured rather than silently showing the whole queue.
+      const missed = openFromURL(S.groupRows, cveGroup);
+      if (missed) {
+        $("#queueCount").insertAdjacentHTML("afterend",
+          `<span class="unknown" id="linkMiss"> · ${missed}</span>`);
+      }
     }
     renderBreakdown(owners.owners);
     if (currentView() === "cves") renderCVEs(S.queueRows);

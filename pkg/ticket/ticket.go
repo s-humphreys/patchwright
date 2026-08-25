@@ -66,6 +66,9 @@ type Plan struct {
 // Planner renders drafts from findings according to the Jira config.
 type Planner struct {
 	cfg config.JiraConfig
+	// dash is where the status page can be reached, so a ticket can link back to
+	// the evidence behind it. Empty when unconfigured, and then no link is written.
+	dash config.DashboardConfig
 	// tmpls holds one parsed template per route name, so a team can word its own
 	// tickets. Every route has an entry, falling back to the base template.
 	tmpls    map[string]*template.Template
@@ -76,6 +79,11 @@ type Planner struct {
 
 // NewPlanner loads and parses the configured ticket template.
 func NewPlanner(cfg config.JiraConfig) (*Planner, error) {
+	return NewPlannerWithDashboard(cfg, config.DashboardConfig{})
+}
+
+// NewPlannerWithDashboard is NewPlanner with a status page to link back to.
+func NewPlannerWithDashboard(cfg config.JiraConfig, dash config.DashboardConfig) (*Planner, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -115,7 +123,7 @@ func NewPlanner(cfg config.JiraConfig) (*Planner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Planner{cfg: cfg, tmpl: tmpl, tmpls: tmpls, routes: routed, excluded: excluded}, nil
+	return &Planner{cfg: cfg, dash: dash, tmpl: tmpl, tmpls: tmpls, routes: routed, excluded: excluded}, nil
 }
 
 // Plan decides which findings become tickets, groups them, and renders each.
@@ -438,6 +446,13 @@ func collapseObjectRef(source string) string {
 // render executes the template for one ticket group.
 func (p *Planner) render(group ticketGroup, route string) (Draft, error) {
 	data := newTemplateData(group)
+	// A deep link back to the evidence: the same work item the queue shows, filtered
+	// to this team and service. A ticket that says "14 criticals" is a claim; a link
+	// to the queue entry behind it is the claim plus its working.
+	data.DashboardURL = p.dash.Link(
+		[2]string{"team", data.Team()},
+		[2]string{"service", data.Repository()},
+	)
 	tmpl := p.tmpls[route]
 	if tmpl == nil {
 		tmpl = p.tmpl

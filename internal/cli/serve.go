@@ -131,7 +131,7 @@ func newServeCmd() *cobra.Command {
 					}
 				default:
 					srv = srv.WithTickets(jira, jira.BaseURL)
-					planner, perr := ticket.NewPlanner(cfg.Jira)
+					planner, perr := ticket.NewPlannerWithDashboard(cfg.Jira, cfg.Dashboard)
 					if perr != nil {
 						return perr
 					}

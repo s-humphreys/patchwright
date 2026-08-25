@@ -58,6 +58,11 @@ type TemplateData struct {
 	// tags and which one moves first.
 	Deployments []Deployment
 
+	// DashboardURL deep-links to this work item on the status page, or is empty when
+	// no dashboard URL is configured. A template must guard on it: a link to a
+	// hostname nobody can reach is worse than no link.
+	DashboardURL string
+
 	// Priority is the highest policy priority across the grouped findings.
 	Priority string
 	// Accounts and Namespaces are the sorted, de-duplicated places this runs.
@@ -422,4 +427,23 @@ func deployments(group []sink.FindingView) []Deployment {
 		return out[i].Ref < out[j].Ref
 	})
 	return out
+}
+
+// Team is the single owning team when there is exactly one, else "". Used to build a
+// deep link: a ticket covering two teams cannot link to one team's view.
+func (d TemplateData) Team() string {
+	if len(d.Teams) == 1 {
+		return d.Teams[0]
+	}
+	return ""
+}
+
+// Repository is the single bare repository this ticket covers, else "". Grouping is by
+// repository for base upgrades, so this is set for exactly the tickets whose queue
+// entry is one work item.
+func (d TemplateData) Repository() string {
+	if len(d.Images) == 1 {
+		return d.Images[0]
+	}
+	return ""
 }

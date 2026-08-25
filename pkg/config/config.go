@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -38,9 +39,44 @@ type Config struct {
 	// validated when that command runs.
 	Jira JiraConfig `yaml:"jira"`
 
+	// Dashboard describes where this deployment's status page is reachable, so
+	// anything it writes elsewhere can link back to the evidence.
+	Dashboard DashboardConfig `yaml:"dashboard"`
+
 	// Sources is the raw text of each file this config was loaded from, in order.
 	// Not settable from YAML: it describes the load, not the configuration.
 	Sources []Source `yaml:"-"`
+}
+
+// DashboardConfig is where the status page can be reached from outside the cluster.
+//
+// The server cannot know this: it binds to a port and has no idea what hostname,
+// ingress or port-forward somebody reaches it through. So it is configuration, and
+// when it is unset nothing that would need it is emitted — a ticket with a dead link
+// to localhost:8080 is worse than a ticket with no link.
+type DashboardConfig struct {
+	// URL is the external base URL, e.g. "https://patchwright.example.internal".
+	// A trailing slash is tolerated.
+	URL string `yaml:"url"`
+}
+
+// Link builds a deep link into the status page, or "" when no dashboard URL is set.
+// Params are appended as a query string in the order given.
+func (d DashboardConfig) Link(params ...[2]string) string {
+	if strings.TrimSpace(d.URL) == "" {
+		return ""
+	}
+	q := url.Values{}
+	for _, p := range params {
+		if p[1] != "" {
+			q.Set(p[0], p[1])
+		}
+	}
+	base := strings.TrimRight(strings.TrimSpace(d.URL), "/")
+	if len(q) == 0 {
+		return base + "/"
+	}
+	return base + "/?" + q.Encode()
 }
 
 // RemediationConfig tunes upgrade detection.
@@ -722,6 +758,9 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Remediation.Base.RepoLabels != nil {
 			cfg.Remediation.Base.RepoLabels = part.Remediation.Base.RepoLabels
+		}
+		if part.Dashboard.URL != "" {
+			cfg.Dashboard.URL = part.Dashboard.URL
 		}
 		if part.Remediation.InFlight.Provider != "" {
 			cfg.Remediation.InFlight = part.Remediation.InFlight
