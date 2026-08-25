@@ -748,7 +748,7 @@ func TestBaseUpgradesGroupByRepositoryNotByBase(t *testing.T) {
 		{Image: "acr.io/data-mcp-tools:789771", Repository: "data-mcp-tools", Tag: "789771",
 			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Development UK"}}},
 	}
-	groups := group(findings)
+	groups := group(findings, false)
 	if len(groups) != 2 {
 		t.Fatalf("want one group per repository, got %d", len(groups))
 	}

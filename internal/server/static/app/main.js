@@ -1,4 +1,4 @@
-import { readURL } from './urlstate.js';
+import { initialQuery, readURL } from './urlstate.js';
 import { initConfig } from './config.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
 import { initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, shownCVE, shownImage } from './detail.js';
@@ -47,7 +47,9 @@ export async function loadAll() {
       if (readURL()) applyOwnerFilters();
       // A link from a ticket names a team and service; open what it asked for, or say
       // why it could not be honoured rather than silently showing the whole queue.
-      const missed = openFromURL(S.groupRows, cveGroup);
+      // From the link the page arrived with, not the address bar: the first render
+      // has already rewritten that.
+      const missed = openFromURL(S.groupRows, cveGroup, initialQuery());
       if (missed) {
         $("#queueCount").insertAdjacentHTML("afterend",
           `<span class="unknown" id="linkMiss"> · ${missed}</span>`);

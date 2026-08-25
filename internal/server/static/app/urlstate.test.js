@@ -1,0 +1,70 @@
+// A shared link must survive the page rendering itself.
+//
+// It did not: the controls reflect themselves into the address bar on the first
+// render, and writeURL rebuilt the query from the controls alone — so a link carrying
+// ?service=…&team=… had those parameters deleted before anything read them. The panel
+// never opened and the URL reset itself, which is exactly what somebody clicking a
+// ticket link saw.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+
+const url = 'http://x/?q=topno&fixable=true&service=topnotch&team=data-platform';
+const dom = new JSDOM(`<!doctype html><html><body>
+  <select id="classFilter"><option value="">all</option></select>
+  <select id="teamFilter"><option value="">all</option><option value="data-platform">data-platform</option></select>
+  <select id="fixFilter"><option value="">all</option></select>
+  <select id="signalFilter"><option value="">all</option></select>
+  <input id="search">
+  <input type="checkbox" id="onlyFixable">
+  <input type="checkbox" id="onlyActionable" checked>
+  <input type="checkbox" id="showSuppressed">
+  <input type="checkbox" id="groupRows" checked>
+</body></html>`, { url });
+globalThis.document = dom.window.document;
+globalThis.window = dom.window;
+globalThis.location = dom.window.location;
+globalThis.history = dom.window.history;
+
+const { initialQuery, readURL, writeURL } = await import('./urlstate.js');
+
+test('the arriving link is remembered even after the page rewrites the URL', () => {
+  // The first render writes the controls into the address bar, and the panel
+  // parameters survive it — that is the fix.
+  writeURL();
+  assert.match(location.search, /service=topnotch/,
+    'writeURL must not delete a parameter it does not own');
+  // And the link the page was opened with is readable regardless of what has been
+  // written since.
+  const arrived = initialQuery();
+  assert.equal(arrived.get('service'), 'topnotch');
+  assert.equal(arrived.get('team'), 'data-platform');
+  assert.equal(arrived.get('q'), 'topno');
+});
+
+test('filters from the link are applied, not discarded', () => {
+  const changed = readURL();
+  assert.equal(changed, true);
+  assert.equal(document.querySelector('#search').value, 'topno');
+  assert.equal(document.querySelector('#onlyFixable').checked, true);
+  assert.equal(document.querySelector('#teamFilter').value, 'data-platform');
+});
+
+test('writeURL preserves parameters that belong to something else', () => {
+  history.replaceState(null, '', '?service=topnotch&view=cves');
+  document.querySelector('#search').value = 'nats';
+  writeURL();
+  const now = new URLSearchParams(location.search);
+  assert.equal(now.get('q'), 'nats', 'the control it owns is written');
+  assert.equal(now.get('service'), 'topnotch', 'the panel parameter survives');
+  assert.equal(now.get('view'), 'cves', 'so does the view');
+});
+
+test('clearing a control removes its parameter rather than leaving a stale one', () => {
+  history.replaceState(null, '', '?q=nats&service=topnotch');
+  document.querySelector('#search').value = '';
+  writeURL();
+  const now = new URLSearchParams(location.search);
+  assert.equal(now.has('q'), false);
+  assert.equal(now.get('service'), 'topnotch');
+});

@@ -106,6 +106,60 @@ upgrade": the fix there is a build-system change, and naming it is the point.
 
 Design notes: [design/base-image-remediation.md](design/base-image-remediation.md).
 
+## How far to upgrade
+
+"Newest available" is the wrong recommendation often enough to matter. A Python base on
+`3.12.3` has both `3.12.14` and `3.14.7` published. Recommending `3.14.7` asks a team to
+migrate a runtime, and their dependency tree may not be ready — so the finding sits in
+the queue looking like neglect, while the patch bump that would have closed the same
+CVEs goes unmade.
+
+```yaml
+remediation:
+  upgrade:
+    strategy: latest          # patch | minor | latest
+    rules:
+      - name: docker.io/python
+        strategy: patch       # the minor is the compatibility boundary for a runtime
+        ceiling: "3.12"       # never recommend beyond this
+        until: 2026-12-31     # when the ceiling lapses
+        reason: dependencies are not 3.14 ready
+      - name: mcr.microsoft.com/dotnet/*
+        strategy: minor
+```
+
+`strategy` sets the distance: `patch` stays on the current minor, `minor` on the current
+major, `latest` takes the newest in track. Rules match an image name, optionally with a
+trailing `*`, and the first match wins.
+
+A **ceiling** is for a constraint somebody actually knows — a runtime minor a dependency
+tree cannot take yet. It is better than suppressing the finding, because patch upgrades
+keep flowing: the CVEs stay fixable while the migration waits. `until` matters for the
+same reason a suppression needs one: a constraint with no end date becomes permanent by
+accident. An **expired ceiling is not applied**, and is reported as expired so somebody
+revisits the decision rather than the estate being held back silently.
+
+Both moves are reported. `latest` is what to do now, `newest` is what exists, and a
+consumer offers the reader both rather than choosing:
+
+```
+base docker.io/python 3.12.3 → 3.12.14   newest 3.14.7
+```
+
+Not every ecosystem needs a rule. Whether the default is already right depends on
+where the ecosystem puts its compatibility boundary relative to semver:
+
+| Base | Shape | Default behaviour |
+| --- | --- | --- |
+| Python | `3.12.3`, minor inside the major | **Needs a rule.** Same-major allows 3.12 → 3.14, a runtime migration. |
+| .NET | `10.0.3`, minor always 0 | Already right: same-major means patch, 10.0.3 → 10.0.11. |
+| .NET SDK | `10.0.100`, feature band in the patch field | Watch it: 10.0.100 → 10.0.400 is a tooling jump that looks like a patch. Hold a band with `ceiling: "10.0.199"`, which is an upper bound rather than a prefix. |
+| An internal mirror | `dotnet/aspnet/10:1.1.1` | The strategy applies to the mirror's own numbering, not the runtime's — the runtime major is pinned by the path. |
+
+Where policy recommends nothing at all but newer versions exist, the finding is
+`held_back` rather than `none`. "None" would say the image is up to date, which is a
+different thing.
+
 ## Remediation already in flight
 
 An upgrade somebody has already opened a pull request for is not work waiting on a

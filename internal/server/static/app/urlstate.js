@@ -28,16 +28,35 @@ const CONTROLS = [
   { id: '#groupRows', param: 'grouped', kind: 'check', dflt: true },
 ];
 
-/** writeURL reflects the current controls into the address bar. */
+// What the address bar said when the page loaded, captured before anything writes to
+// it. The controls reflect themselves into the URL as soon as the first render
+// happens, so by the time a deep link is read the live URL has already been rewritten
+// — which is how a shared link opened the queue and cleared itself.
+const arrived = new URLSearchParams(location.search);
+
+/** initialQuery is the link the page was opened with, not the one it has since written. */
+export function initialQuery() {
+  return new URLSearchParams(arrived.toString());
+}
+
+/** writeURL reflects the current controls into the address bar.
+ *
+ *  It edits the existing query rather than rebuilding it: parameters belonging to
+ *  something else — which panel is open, which view — are not this function's to
+ *  delete, and rebuilding silently dropped them.
+ */
 export function writeURL() {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams(location.search);
   for (const c of CONTROLS) {
     const el = /** @type {HTMLInputElement} */ ($(c.id));
     if (!el) continue;
     if (c.kind === 'check') {
       if (el.checked !== c.dflt) params.set(c.param, String(el.checked));
+      else params.delete(c.param);
     } else if (el.value) {
       params.set(c.param, el.value);
+    } else {
+      params.delete(c.param);
     }
   }
   const query = params.toString();
@@ -53,8 +72,7 @@ export function writeURL() {
  * looks identical to an empty queue, and that is the wrong thing for a stale link to
  * do to somebody.
  */
-export function readURL() {
-  const params = new URLSearchParams(location.search);
+export function readURL(params = initialQuery()) {
   let changed = false;
   for (const c of CONTROLS) {
     if (!params.has(c.param)) continue;

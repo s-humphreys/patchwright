@@ -1,5 +1,5 @@
 import { SIGNAL_BADGES, badge, count, epss } from './badges.js';
-import { fixPath, maxRisk, priorityText, ticketsFor, upgradeCell } from './cells.js';
+import { fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
 
@@ -102,6 +102,12 @@ function sections(f) {
     row("Fix path", `<span class="${esc(fixPath(f))}">${esc(fixPath(f))}</span>`),
     row("Upgrade", u ? upgradeCell(f) : unknown("none reported", "No upgrade information for this image.")),
     row("How it was compared", u?.comparison ? esc(u.comparison) : ""),
+    row("Newest available", u?.newest
+      ? `${esc(u.newest)} <span class="sub">${esc(upgradeStrategyWhy(u))}</span>` : ""),
+    row("Upgrade policy", u?.ceiling
+      ? `held at ${esc(u.ceiling)}${u.ceiling_reason ? ` — ${esc(u.ceiling_reason)}` : ""}` +
+        (u.ceiling_expired ? " " + unknown("(expired, not applied)", "The ceiling's end date has passed, so it was not applied. The constraint is due a revisit.") : "")
+      : u?.strategy && u.strategy !== "latest" ? `${esc(u.strategy)} upgrades only` : ""),
     row("Why not resolved", u && !u.resolved
       ? `<code>${esc(u.reason || "no reason recorded")}</code>` : ""),
     row("Change lands in", u?.source
@@ -131,9 +137,9 @@ function sections(f) {
       ? `<code>${esc(f.digest)}</code>`
       : unknown("not pinned", "This deployment does not pin a digest, so what runs can change without the tag changing.")),
     row("Workloads", String(f.workload_count ?? 0)),
-    row("Namespaces", (f.dimensions?.namespace || []).map((n) => esc(n)).join(", ")
+    row("Namespaces", (f.dimensions?.namespace || []).map((n) => esc(n)).join("<br>")
       || '<span class="muted">none reported</span>'),
-    row("Accounts", (f.dimensions?.account || []).map((n) => esc(n)).join(", ")),
+    row("Accounts", (f.dimensions?.account || []).map((n) => esc(n)).join("<br>")),
     row("Owner rule", f.owner?.rule
       ? `<code>${esc(f.owner.rule)}</code>`
       : unknown("none matched", "No ownership rule attributed this workload, usually a missing namespace label.")),
@@ -253,6 +259,11 @@ export function initDetail() {
   document.addEventListener("click", (e) => {
     if (/** @type {any} */ ($("#detail")).hidden) return;
     const t = /** @type {any} */ (e.target);
+    // A node already removed from the document belongs to a handler that has run and
+    // re-rendered something. It cannot be tested for containment — a detached node is
+    // inside nothing — so treating it as an outside click closes a panel the click
+    // was meant to change.
+    if (!t.isConnected) return;
     if (t.closest("#detail") || t.closest("#findings") || t.closest("#cves")) return;
     closeDetail();
   });
@@ -344,7 +355,8 @@ export function openGroupDetail(g) {
     .map((f) => `<tr class="openable" tabindex="0" data-image="${esc(f.image)}"
         aria-label="Show details for ${esc(f.image)}">
       <td class="wrap"><code>${esc(f.tag || f.image)}</code></td>
-      <td>${(f.dimensions?.account || []).map((a) => esc(a)).join(", ") || '<span class="muted">-</span>'}</td>
+      <td class="wrap">${(f.dimensions?.account || []).map((a) => esc(a)).join("<br>")
+        || '<span class="muted">-</span>'}</td>
       <td class="${esc(f.priority || "")}">${esc(f.priority || "none")}</td>
       <td class="num">${f.provider_assessed
         ? `${f.counts?.critical ?? 0}C/${f.counts?.high ?? 0}H`
@@ -368,7 +380,14 @@ export function openGroupDetail(g) {
         ${row("Coverage", assessed === total
           ? `all ${total} assessed by the provider`
           : unknown(`${assessed} of ${total} assessed`, "The rest were never assessed, so their counts are absent rather than zero."))}
-        ${row("Worst verdict", `${esc(g.priority || "none")}${g.worstWhere ? ` in ${esc(g.worstWhere)}` : ""}`)}
+        ${row("Worst verdict", `${esc(g.priority || "none")}${g.worstWhere
+          ? ` in ${esc(g.worstWhere)}`
+          : g.findings.length > 1
+            ? " — the same in every deployment"
+            : ""}`,
+          g.worstWhere
+            ? "The deployments here disagree, and this is where the worst verdict came from."
+            : "The verdict does not depend on where this runs: either every deployment agrees, or one deployment runs in several places at once.")}
       </dl></section>
       <section><h4>In progress</h4><dl>
         ${row("Pull request", g.in_flight
@@ -400,7 +419,11 @@ export function openGroupDetail(g) {
   // Drill from the work item to one deployment. The panel replaces itself rather than
   // stacking: two sheets deep is a place people get lost.
   el.querySelectorAll("tbody tr.openable").forEach((tr) => {
-    const open = () => {
+    const open = (e) => {
+      // Stop here. Opening the deployment replaces this panel's contents, which
+      // detaches this row — and a detached node is inside nothing, so the
+      // click-away handler saw the click as landing outside the panel and closed it.
+      if (e) e.stopPropagation();
       const f = S.queueRows.find((x) => x.image === /** @type {any} */ (tr).dataset.image);
       if (f) openDetail(f);
     };
@@ -409,7 +432,7 @@ export function openGroupDetail(g) {
       const ke = /** @type {any} */ (e);
       if (ke.key !== "Enter" && ke.key !== " ") return;
       ke.preventDefault();
-      open();
+      open(ke);
     });
   });
   /** @type {any} */ ($("#detailClose")).focus();
@@ -427,8 +450,7 @@ export function openGroupDetail(g) {
  * the one they clicked through for is worse than showing them the queue.
  * @returns {string} a message when the link could not be honoured, else ""
  */
-export function openFromURL(groups, cveLookup) {
-  const params = new URLSearchParams(location.search);
+export function openFromURL(groups, cveLookup, params = new URLSearchParams(location.search)) {
 
   const cve = params.get("cve");
   if (cve) {

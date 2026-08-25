@@ -138,9 +138,10 @@ test('a stale link does not silently filter the queue to nothing', async () => {
   document.body.innerHTML = `
     <select id="teamFilter"><option value="">all</option><option value="sre">sre</option></select>
     <input id="search"><input type="checkbox" id="onlyActionable" checked>`;
-  dom.reconfigure({ url: 'http://x/?team=gone&q=nats' });
-  globalThis.location = dom.window.location;
-  readURL();
+  // Passed explicitly: readURL defaults to the link the page ARRIVED with, captured
+  // at load, because by the time it runs the first render has rewritten the address
+  // bar. A test reconfiguring the URL afterwards is not that link.
+  readURL(new URLSearchParams('team=gone&q=nats'));
   assert.equal(document.querySelector('#teamFilter').value, '', 'unknown team was applied');
   assert.equal(document.querySelector('#search').value, 'nats', 'free text should apply');
 });

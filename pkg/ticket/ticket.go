@@ -181,7 +181,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 	// issue cannot exist in two projects, and merging them would silently move
 	// one team's work onto another team's board.
 	for _, name := range p.routeOrder(eligible) {
-		for _, g := range mergeChains(group(byRoute(eligible, p.routes, name))) {
+		for _, g := range mergeChains(group(byRoute(eligible, p.routes, name), p.campaign(name))) {
 			d, err := p.render(g, name)
 			if err != nil {
 				return nil, err
@@ -368,10 +368,10 @@ func managedBy(findings []sink.FindingView) string {
 // deployment source (a chart, a GitOps path) are fixed by one edit, so they
 // belong on one ticket; anything else stands alone. Keys are sorted so output is
 // stable across runs.
-func group(findings []sink.FindingView) []ticketGroup {
+func group(findings []sink.FindingView, campaign bool) []ticketGroup {
 	byKey := map[string][]sink.FindingView{}
 	for _, f := range findings {
-		byKey[groupKey(f)] = append(byKey[groupKey(f)], f)
+		byKey[groupKey(f, campaign)] = append(byKey[groupKey(f, campaign)], f)
 	}
 	keys := make([]string, 0, len(byKey))
 	for k := range byKey {
@@ -388,7 +388,7 @@ func group(findings []sink.FindingView) []ticketGroup {
 	return out
 }
 
-func groupKey(f sink.FindingView) string {
+func groupKey(f sink.FindingView, campaign bool) string {
 	if f.Upgrade == nil {
 		return f.Repository
 	}
@@ -404,6 +404,12 @@ func groupKey(f sink.FindingView) string {
 	// repository puts every tag of one application together instead, which is the
 	// promotion path through environments: one change, released forward.
 	if f.Upgrade.Kind == "base" {
+		if campaign {
+			// One ticket per team per base move, listing the services that need it.
+			// A team with thirty repositories on one base does not want thirty
+			// tickets, and each of those tickets would ask for the same change.
+			return f.Owner.Team + " rebuild on " + f.Upgrade.Name + " " + f.Upgrade.Latest
+		}
 		return f.Repository + " on " + f.Upgrade.Name
 	}
 	if f.Upgrade.Source == "" {
@@ -472,7 +478,7 @@ func (p *Planner) render(group ticketGroup, route string) (Draft, error) {
 		Upgrades:    data.Upgrades,
 		Images:      data.Images,
 		Findings:    group.all(),
-		Key:         groupKey(group.primary[0]),
+		Key:         groupKey(group.primary[0], p.campaign(route)),
 		Route:       route,
 	}, nil
 }
@@ -495,4 +501,11 @@ func splitSummary(rendered string) (summary, description string, err error) {
 		return "", "", fmt.Errorf("template produced an empty summary")
 	}
 	return summary, strings.TrimSpace(rest), nil
+}
+
+// campaign reports whether a route groups by team campaign rather than per service.
+// Resolved per route, since one team's thirty repositories and another team's three
+// want different answers.
+func (p *Planner) campaign(route string) bool {
+	return strings.EqualFold(p.routeConfig(route).GroupBy, "campaign")
 }

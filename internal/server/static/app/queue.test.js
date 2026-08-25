@@ -186,3 +186,43 @@ test('every stylesheet token it uses is defined', () => {
   const missing = [...used].filter((v) => !defined.has(v));
   assert.deepEqual(missing, [], `undefined custom properties: ${missing.join(', ')}`);
 });
+
+test('the queue offers the patch now and names the migration separately', async () => {
+  // The topnotch case: a service on python 3.12.3 told to move to 3.14.7 does nothing,
+  // because its dependency tree is not ready. Offering 3.12.14 with the newest named
+  // turns "we cannot do that" into "we can do that today".
+  const { fixCell } = await import('./cells.js');
+  const html = fixCell(finding({
+    upgrade: {
+      kind: 'base', name: 'docker.io/python', current: '3.12.3', latest: '3.12.14',
+      newest: '3.14.7', strategy: 'patch', available: true, resolved: true, actionable: true,
+    },
+  }));
+  assert.match(html, /3\.12\.3 → 3\.12\.14/);
+  assert.match(html, /newest 3\.14\.7/);
+  assert.match(html, /compatibility boundary/, 'and says why it stops short');
+});
+
+test('held back reads as a decision, not as up to date', async () => {
+  const { fixCell } = await import('./cells.js');
+  const html = fixCell(finding({
+    upgrade: {
+      kind: 'base', name: 'docker.io/python', current: '3.12.14', newest: '3.14.7',
+      ceiling: '3.12', ceiling_reason: 'cdt dependencies are not 3.14 ready',
+      held_back: true, available: false, resolved: true,
+    },
+  }));
+  assert.match(html, /held at 3\.12/);
+  assert.doesNotMatch(html, /none/, '"none" would claim there is nothing newer');
+  assert.match(html, /not 3\.14 ready/, 'the reason somebody gave travels with it');
+});
+
+test('an expired ceiling says it lapsed rather than holding quietly', async () => {
+  const { upgradeStrategyWhy } = await import('./cells.js');
+  const why = upgradeStrategyWhy({
+    ceiling: '3.12', ceiling_expired: true, newest: '3.14.7',
+    ceiling_reason: 'was blocked on dependencies',
+  });
+  assert.match(why, /end date has passed/);
+  assert.match(why, /NOT applied/);
+});

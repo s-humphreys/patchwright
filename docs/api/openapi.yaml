@@ -759,6 +759,31 @@ components:
             Why an upgrade could not be determined, in terms a reader can act on — an
             unreadable registry and an image that records no base need different people
             to do different things.
+        newest:
+          type: string
+          description: |
+            The furthest version available when the recommendation is nearer. Absent
+            when they are the same. Reported so a consumer can offer both — the patch
+            to take now, and the migration to plan — rather than choosing for the
+            reader.
+        strategy:
+          type: string
+          enum: [patch, minor, latest]
+          description: How far the recommendation was allowed to move.
+        ceiling:
+          type: string
+          description: A version prefix policy will not recommend beyond, e.g. "3.12".
+        ceiling_reason: { type: string }
+        ceiling_expired:
+          type: boolean
+          description: |
+            The ceiling's end date has passed, so it was NOT applied. A constraint with
+            no end date becomes permanent by accident; this surfaces one due a revisit.
+        held_back:
+          type: boolean
+          description: |
+            Newer versions exist and policy recommends none of them. Distinct from
+            having no upgrade at all, which is what an absent upgrade would imply.
         comparison:
           type: string
           enum: [version, digest]

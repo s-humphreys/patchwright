@@ -22,6 +22,25 @@ export JIRA_EMAIL=you@example.com
 export JIRA_API_TOKEN=...
 ```
 
+## What one ticket covers
+
+```yaml
+jira:
+  groupBy: service     # or campaign
+  routes:
+    - name: data-engineering
+      groupBy: campaign
+```
+
+`service` (the default) raises one ticket per repository and upgrade target: one
+rebuild, promoted through its environments. `campaign` raises one per owning team and
+target, listing every service that needs it.
+
+Which is better is the team's call, not this tool's, and the route is where that
+preference lives. A platform team with a handful of repositories wants a ticket per
+service. A team with thirty repositories on one shared base wants one ticket saying
+"rebuild these six", because thirty tickets is how a queue gets ignored.
+
 ## Linking back to the evidence
 
 `dashboard.url` is where the status page is reachable from outside the cluster:

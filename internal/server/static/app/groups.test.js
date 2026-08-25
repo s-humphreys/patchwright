@@ -192,3 +192,66 @@ test('a link naming something gone says so instead of opening the nearest thing'
   assert.match(missed, /already be fixed|filter/);
   assert.equal(document.querySelector('#detail').hidden, true);
 });
+
+test('one deployment running everywhere claims no environment', async () => {
+  // The nats-server-config-reloader case: a single deployment in six accounts. It is
+  // urgent in all of them, and naming the alphabetically first ("Development UK")
+  // invented a distinction the policy never drew.
+  const [g] = groupFindings([
+    deployment('nats-server-config-reloader', '0.14.0', 'Development UK', {
+      priority: 'urgent',
+      dimensions: {
+        account: ['Development UK', 'Development US', 'PreProduction UK',
+                  'PreProduction US', 'Production UK', 'Production US'],
+        namespace: ['argo-events'],
+      },
+    }),
+  ]);
+  assert.equal(g.worstWhere, '', 'no environment distinguishes a single deployment');
+  const html = GROUP_COLUMNS[0].get(g);
+  assert.doesNotMatch(html, /Development UK/);
+  assert.match(html, /any-critical|exploited/, 'the rule is shown instead');
+});
+
+test('deployments that agree claim no environment either', async () => {
+  const [g] = groupFindings([
+    deployment('app', 'a', 'Production UK', { priority: 'high' }),
+    deployment('app', 'b', 'Development UK', { priority: 'high' }),
+  ]);
+  assert.equal(g.worstWhere, '', 'nothing to distinguish when the verdicts match');
+});
+
+test('a deployment spanning accounts is counted, not picked from', async () => {
+  // Where the deployments DO disagree but the worst one runs in several places,
+  // saying "3 accounts" is true where naming one would not be.
+  const [g] = groupFindings([
+    deployment('app', 'a', 'Development UK', { priority: 'low' }),
+    deployment('app', 'b', 'Production UK', {
+      priority: 'urgent',
+      dimensions: { account: ['Production UK', 'Production US', 'PreProduction UK'], namespace: ['app'] },
+    }),
+  ]);
+  assert.equal(g.worstWhere, '3 accounts');
+});
+
+test('drilling into a deployment does not close the panel', async () => {
+  // The click re-renders the panel, which detaches the row that was clicked — and a
+  // detached node is inside nothing, so the click-away handler saw it as an outside
+  // click and closed everything.
+  const { initDetail, openGroupDetail } = await import('./detail.js');
+  document.body.insertAdjacentHTML('beforeend',
+    '<table id="cves"><tbody></tbody></table>');
+  initDetail();
+  const findings = [
+    deployment('topnotch', '1', 'Development US'),
+    deployment('topnotch', '2', 'Production US', { priority: 'urgent' }),
+  ];
+  S.queueRows = findings;
+  openGroupDetail(groupFindings(findings)[0]);
+  const row = document.querySelector('#detail tbody tr.openable');
+  row.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  const el = document.querySelector('#detail');
+  assert.equal(el.hidden, false, 'the panel must stay open');
+  assert.match(el.textContent, /Verdict/, 'and show the deployment it drilled into');
+  closeDetail();
+});

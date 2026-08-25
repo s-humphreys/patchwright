@@ -301,6 +301,8 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		// but this asserts field mapping, not semantics, and a field left out here is
 		// a field that can silently stop being copied.
 		Reason: "could not list tags", Comparison: "version",
+		Newest: "3.14.7", Strategy: "patch", Ceiling: "3.12",
+		CeilingReason: "dependencies are not 3.14 ready", CeilingExpired: true, HeldBack: true,
 	}
 	v := ToFindingView(model.Finding{Upgrade: &u}).Upgrade
 	if v == nil {
