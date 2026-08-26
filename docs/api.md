@@ -161,6 +161,11 @@ The status page shows the same assessment two ways, as tabs, with the view in th
 - **Queue (ungrouped)** — by image, five columns: urgency, severity, the image with its owner and
   namespace, the fix, and whether anything is already in progress. Selecting a row opens
   a panel with everything else, including every CVE on that image.
+Both views drill and come back. A CVE lists the images carrying it and a work item lists
+its deployments; selecting one of those opens that finding, with a named button back to
+where you came from. An image in a CVE's scope that a queue filter is hiding says so on
+click rather than doing nothing.
+
 - **CVEs** — by CVE, ranked KEV first, then severity, then exploitation pressure, then
   how many images carry it. Selecting a CVE lists every affected image, the teams
   involved, and where a fix exists. This is the scope-of-work question, which the queue

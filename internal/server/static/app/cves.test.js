@@ -19,6 +19,7 @@ globalThis.history = dom.window.history;
 
 const { CVE_COLUMNS, groupByCVE, renderCVEs } = await import('./cves.js');
 const { openCVEDetail, closeDetail, shownCVE } = await import('./detail.js');
+const { S } = await import('./state.js');
 
 function finding(image, team, vulns, over = {}) {
   return {
@@ -119,4 +120,51 @@ test('rows carry the CVE id so the panel can be reopened after a refresh', () =>
   const tr = document.querySelector('#cves tbody tr');
   assert.equal(tr.dataset.cve, 'CVE-1');
   assert.equal(tr.getAttribute('tabindex'), '0');
+});
+
+test('an affected image opens its finding, with the way back to the CVE', async () => {
+  // Reading a CVE's scope raises the obvious next question — what is that image, and is
+  // it urgent — and answering it must not cost you your place in the list.
+  const { openCVEDetail, closeDetail } = await import('./detail.js');
+  const vulns = [{ id: 'CVE-2024-13176', severity: 'medium', fix_available: true, fixed_version: '3.0.16' }];
+  const findings = [
+    finding('acr.io/alfred:1.0.188', 'qa', vulns, { priority: 'urgent' }),
+    finding('acr.io/achievements:1.0.82-rc', '', vulns),
+  ];
+  S.queueRows = findings;
+
+  const { groups: [cve] } = groupByCVE(findings);
+  openCVEDetail(cve);
+  const el = document.querySelector('#detail');
+  assert.match(el.textContent, /CVE-2024-13176/);
+
+  const row = el.querySelector('tbody tr.openable');
+  assert.ok(row, 'affected images must be openable');
+  row.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(el.hidden, false, 'the panel stays open');
+  assert.match(el.textContent, /Verdict/, 'and shows the finding');
+
+  const back = el.querySelector('#detailBack');
+  assert.ok(back, 'a drill-in must offer a way back');
+  assert.match(back.textContent, /CVE-2024-13176/, 'named, so it is obvious where back goes');
+  back.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.match(el.textContent, /Images affected/, 'back returns to the CVE');
+  assert.equal(el.querySelector('#detailBack'), null, 'and the trail is empty again');
+  closeDetail();
+});
+
+test('an image filtered out of the queue says so rather than doing nothing', async () => {
+  // A CVE's scope is every image carrying it; the queue may be filtered to a subset.
+  // Clicking one that is hidden has nothing to open, and silence reads as a broken
+  // click.
+  const { openCVEDetail, closeDetail } = await import('./detail.js');
+  const carrying = finding('acr.io/hidden:1.0.0', 'cpe', [{ id: 'CVE-1', severity: 'high' }]);
+  const { groups: [cve] } = groupByCVE([carrying]);
+  S.queueRows = [];   // the finding is not loaded: a filter is hiding it
+  openCVEDetail(cve);
+  const el = document.querySelector('#detail');
+  el.querySelector('tbody tr.openable').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.match(el.textContent, /filtered out of the queue/);
+  assert.match(el.textContent, /Images affected/, 'and stays on the CVE');
+  closeDetail();
 });

@@ -34,9 +34,13 @@ export async function loadPending() {
   try {
     plan = await get("/api/v1/tickets");
   } catch (e) {
-    // Ticketing being unconfigured is a normal state, not a fault, and must not
-    // look like one.
-    el.innerHTML = `<div class="meta">Ticket reconciliation is unavailable: ${esc(e.message)}</div>`;
+    // Ticketing being unconfigured is a normal state, not a fault, and must not look
+    // like one. "unavailable: 503" reads as something broken; the API says which it is,
+    // so use its words.
+    const why = /not configured/i.test(e.message)
+      ? "Jira is not configured, so there is no ticket plan. The queue and the page are unaffected."
+      : `Ticket reconciliation is unavailable: ${esc(e.message)}`;
+    el.innerHTML = `<div class="meta">${why}</div>`;
     return;
   }
 

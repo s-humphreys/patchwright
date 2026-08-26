@@ -17,7 +17,22 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
 
 export async function get(path) {
   const r = await fetch(path);
-  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  if (!r.ok) {
+    // The API explains its refusals ("ticketing is not configured"), and a bare status
+    // code throws that away — leaving the page to report a deliberate configuration
+    // choice as though it were a fault.
+    let detail = "";
+    try {
+      const body = await r.json();
+      detail = body?.error || "";
+    } catch {
+      // Not JSON: the status is all there is.
+    }
+    const err = new Error(detail || `${path}: ${r.status}`);
+    /** @type {any} */ (err).status = r.status;
+    /** @type {any} */ (err).detail = detail;
+    throw err;
+  }
   return r.json();
 }
 
