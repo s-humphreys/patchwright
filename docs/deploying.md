@@ -99,27 +99,55 @@ nothing else. The `client-id` annotation belongs to whoever owns the ServiceAcco
 
 ## Provider-backed CVE detail and in-flight detection
 
-The sources that talk to the scan platform need its base URL, and in-flight detection
-needs a token:
+A source named after the provider inherits the provider's options, so the base URL is
+given once:
 
 ```yaml
+provider:
+  mode: api
+  api:
+    baseURL: https://example.customer.divvycloud.com
+credentialsSecretName: patchwright     # RAPID7_API_KEY, AZURE_DEVOPS_PAT, ...
 scan:
   enabled: true
   vulnSource: rapid7
-  vulnOptions: ["base-url=https://example.customer.divvycloud.com"]
   exploitSource: public,rapid7
-  exploitOptions: ["base-url=https://example.customer.divvycloud.com"]
 age:
   source: rapid7
-  options: ["base-url=https://example.customer.divvycloud.com"]
-reconcile:
-  inFlight:
-    credentialsSecretName: patchwright-ado   # key: pat
 ```
 
 `vulnSource: rapid7` takes per-CVE detail from the platform rather than pulling images,
 which is the only way to get it for a private registry the scanner has no credentials
-for. It supplies no EPSS or KEV, so keep `public` in the exploit source list.
+for. It supplies no EPSS or KEV, so keep `public` in the exploit source list — `public`
+is not the provider, so it inherits nothing.
+
+Set `vulnOptions`, `exploitOptions` or `age.options` only to point a source somewhere
+else. On the command line the same rule applies: `--vuln-source rapid7` with
+`--provider rapid7 -o base-url=…` needs no `--vuln-option`.
+
+## One Secret for every credential
+
+Its keys are the environment variables the binary reads, so there is nothing to keep in
+step between chart values and key names:
+
+```sh
+kubectl create secret generic patchwright \
+  --from-literal=RAPID7_API_KEY="$RAPID7_API_KEY" \
+  --from-literal=AZURE_DEVOPS_PAT="$AZURE_DEVOPS_PAT" \
+  --from-literal=PATCHWRIGHT_API_TOKEN="$(openssl rand -base64 32)"
+```
+
+| Key | Enables |
+| --- | --- |
+| `RAPID7_API_KEY` | the scan provider in api mode |
+| `AZURE_DEVOPS_PAT` | in-flight detection (pull requests) |
+| `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | ticketing |
+| `PATCHWRIGHT_API_TOKEN` | requires a token on the API and page; open without it |
+
+Include only what you use. An absent key is not a failure: patchwright reports what it
+could not do rather than pretending it did, so a Secret holding only `RAPID7_API_KEY`
+gives an assessment with ticket state shown as unknown and in-flight detection reported
+as not run.
 
 ## Reading private registries
 

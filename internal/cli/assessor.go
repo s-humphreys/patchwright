@@ -124,7 +124,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 			"vuln_source", in.vulnSource)
 	}
 	if in.vulnSource != "" && !cfg.Scan.Disabled {
-		scanner, err := buildScanner(in.vulnSource, in.vulnOptions,
+		scanner, err := buildScanner(in.vulnSource, in.provider.inherited(in.vulnSource, in.vulnOptions),
 			cfg.Scan.EffectiveSkipOwnerClasses(), cfg.Scan.SkipRegistries)
 		if err != nil {
 			return nil, err
@@ -135,7 +135,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		if in.vulnSource == "" {
 			return nil, fmt.Errorf("--age-source requires --vuln-source: there are no vulnerabilities to date otherwise")
 		}
-		enricher, err := buildAgeEnricher(in.ageSource, in.ageOptions)
+		enricher, err := buildAgeEnricher(in.ageSource, in.provider.inherited(in.ageSource, in.ageOptions))
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +145,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		if in.vulnSource == "" {
 			return nil, fmt.Errorf("--exploit-source requires --vuln-source: there are no vulnerabilities to annotate with EPSS/KEV otherwise")
 		}
-		enricher, err := buildExploitEnricher(in.exploitSource, in.exploitOptions)
+		enricher, err := buildExploitEnricher(in.exploitSource, in.provider.inherited(in.exploitSource, in.exploitOptions))
 		if err != nil {
 			return nil, err
 		}

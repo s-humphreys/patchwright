@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -51,6 +52,27 @@ func (pf *providerFlags) build() (provider.Provider, error) {
 		opts[k] = v
 	}
 	return provider.New(pf.name, opts)
+}
+
+// inherited returns the options a source should run with.
+//
+// A source named after the provider is the same system reached the same way: the Rapid7
+// vuln, exploit and age sources all need the platform's base URL, which the provider was
+// already given. Making the operator repeat it four times is not configuration, it is a
+// chance to get one of them wrong — and a base URL that differs by a typo fails in a way
+// that reads like a permissions problem.
+//
+// Explicit options always win, so a source can still be pointed somewhere else.
+func (pf *providerFlags) inherited(sourceName string, own []string) []string {
+	if len(own) > 0 {
+		return own
+	}
+	for _, part := range strings.Split(sourceName, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), pf.name) {
+			return pf.options
+		}
+	}
+	return own
 }
 
 func joinProviders() string {
