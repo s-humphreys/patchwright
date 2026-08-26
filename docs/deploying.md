@@ -121,6 +121,43 @@ reconcile:
 which is the only way to get it for a private registry the scanner has no credentials
 for. It supplies no EPSS or KEV, so keep `public` in the exploit source list.
 
+## Reading private registries
+
+Patchwright reads registries to list tags and to read the image config that names an
+image's base. It never pulls a layer, pushes or deletes, so read access is all it needs.
+
+Credentials come from, in order:
+
+1. **The docker config** — what `docker login` or `az acr login` leaves behind. First,
+   deliberately: an explicit login must win over an ambient cloud identity, because
+   surprising somebody with a different account than the one they logged into is worse
+   than failing.
+2. **A cloud provider**, for the registries it serves. Azure (`*.azurecr.io`) exchanges
+   whatever Azure identity the process has — a workload identity's projected federated
+   token, a managed identity, a service principal — for an ACR token. Google
+   (`gcr.io`, `*.pkg.dev`) uses application default credentials.
+
+In a cluster there is no docker config, only a projected token, which is why the second
+exists. On AKS with `registryAuth.azure.workloadIdentity.enabled`, the pod gets
+`AZURE_FEDERATED_TOKEN_FILE` and the Azure provider uses it: grant that identity
+`AcrPull` and nothing else.
+
+Each provider declares the hosts it serves and is asked about nothing else. That is not
+tidiness — a credential helper asked about a foreign host goes looking rather than
+declining, and the ACR helper spends thirty seconds on instance metadata before giving
+up. Consulting it for `mcr.microsoft.com`, the base registry for every .NET image, cost
+half a minute per read.
+
+The Azure exchange is implemented here rather than taken from the obvious credential
+helper, which carries GO-2026-6225 — credential leakage to untrusted hosts — with no
+fixed version. It is the documented ACR flow on Microsoft's own SDK: get an AAD token
+for whatever identity the process has, exchange it at the registry's `/oauth2/exchange`,
+and present the result as the password with the null GUID as the username. It talks to
+the registry it was asked about and nowhere else.
+
+Adding AWS ECR is one file: register the hosts it serves and a keychain, as
+`pkg/registryauth/google.go` does in seven lines.
+
 ## CronJob mode
 
 `server.enabled: false` runs one assessment per schedule instead of a long-lived
