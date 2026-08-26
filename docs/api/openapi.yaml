@@ -925,6 +925,20 @@ components:
             properties:
               reason: { type: string }
               findings: { type: integer }
+        source_failures:
+          type: array
+          description: |
+            Enrichments that could not run — exploit intelligence, CVE ages. The
+            assessment is still served: losing an enrichment must not lose the queue. But
+            the gap is reported rather than left to be inferred from cells reading "not
+            checked" for no visible reason, because a missing signal looks exactly like a
+            signal that found nothing.
+          items:
+            type: object
+            required: [stage, error]
+            properties:
+              stage: { type: string, enum: [exploit, age] }
+              error: { type: string }
         expired_suppressions:
           description: |
             Suppress rules that have lapsed, so the work they were hiding is back in

@@ -97,8 +97,16 @@ score would match every CVE in an estate. Rapid7 exposes no EPSS and no KEV fiel
 all, so `public` is not optional if you want either — and KEV is worth taking from
 CISA directly regardless, since any scanner's KEV flag is a copy of that catalogue.
 
-A source that fails fails the run rather than being dropped, because an absent EPSS
-reads as "not exploitable" to every rule that thresholds it.
+Within a merged exploit source, one feed failing fails that lookup: an absent EPSS reads
+as "not exploitable" to every rule that thresholds it, so it must not be silently treated
+as zero.
+
+But it does not fail the assessment. Transient HTTP failures — a 429, a 5xx, a dropped
+connection — are retried with jittered backoff first, and if exploit intelligence still
+cannot be gathered the run completes without it: `exploit_checked` stays false, every
+EPSS and KEV cell reads "not checked" rather than "none found", and the failure is
+reported in `source_failures` and on the page. One 502 from a public feed, one request in
+a hundred, used to discard a completed scan of 791 images.
 
 `EPSS` is the highest score across the image's CVEs: one CVE at 0.93 makes the
 image urgent however many quiet ones sit beside it.

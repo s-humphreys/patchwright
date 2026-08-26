@@ -207,6 +207,11 @@ func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 	return findings, nil
 }
 
+// Failures reports the enrichments that could not run in the last assessment, so the
+// server can state the gap rather than serving a queue whose missing signals look like
+// absent findings.
+func (a *assessor) Failures() []model.SourceFailure { return a.pipeline.Failures() }
+
 // warnStaleProviderData reports how old the provider's own assessment data is.
 //
 // Distinct from when this run happened: a scheduled run over a stale export

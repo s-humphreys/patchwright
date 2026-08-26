@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/enrich"
+	"github.com/s-humphreys/patchwright/pkg/httpretry"
 )
 
 const (
@@ -104,7 +105,9 @@ func (p *public) get(ctx context.Context, u string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.http.Do(req)
+	// Retried: one 502 from a public feed used to fail the whole assessment, discarding
+	// a completed scan of every image over one request in a hundred.
+	resp, err := httpretry.Do(ctx, p.http, req, httpretry.Attempts)
 	if err != nil {
 		return nil, err
 	}

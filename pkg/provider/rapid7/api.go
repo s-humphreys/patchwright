@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/s-humphreys/patchwright/pkg/httpretry"
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
@@ -185,7 +186,9 @@ func (p *apiProvider) post(ctx context.Context, path string, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := p.client.Do(req)
+	// Retried: this API answers 502 under load, and on one run five images lost their
+	// CVE detail to a shrug from a load balancer rather than to anything about them.
+	resp, err := httpretry.Do(ctx, p.client, req, httpretry.Attempts)
 	if err != nil {
 		return err
 	}
