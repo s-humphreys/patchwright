@@ -4,7 +4,6 @@ import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './p
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup, renderCVEs } from './cves.js';
 import { current as currentView, initTabs, show } from './tabs.js';
-import { initPending, loadPending } from './pending.js';
 import { applyOwnerFilters, loadFindings, populateOwnerFilters } from './queue.js';
 import { S } from './state.js';
 import { initTable, renderBreakdown } from './table.js';
@@ -78,8 +77,6 @@ export async function loadAll() {
       const fresh = cveGroup(openCVE);
       if (fresh) openCVEDetail(fresh);
     }
-    // Once per load, not per poll: see loadPending.
-    loadPending();
   } catch (e) {
     $("#freshness").textContent = `error: ${e.message}`;
     $("#freshness").className = "meta err";
@@ -102,7 +99,6 @@ export function init() {
   // wasted work for a reader who never opens the view.
   initTabs((view) => { if (view === "cves") renderCVEs(S.queueRows); });
   initConfig();
-  initPending();
   $("#groupRows").addEventListener("change", applyOwnerFilters);
   $("#onlyActionable").addEventListener("change", loadFindings);
   $("#showSuppressed").addEventListener("change", loadFindings);

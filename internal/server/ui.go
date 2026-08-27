@@ -10,7 +10,7 @@ import (
 // self-contained binary: the page ships with the API it reads, so the two cannot
 // drift apart in a deployment.
 //
-//go:embed static/index.html static/favicon.png static/app
+//go:embed static/index.html static/tickets.html static/favicon.png static/app
 var staticFS embed.FS
 
 // handleFavicon serves the logo as the tab icon. Downscaled and cropped from
@@ -36,7 +36,22 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	page, err := staticFS.ReadFile("static/index.html")
+	s.servePage(w, "static/index.html")
+}
+
+// handleTicketsPage serves the ticket plan as a page of its own.
+//
+// Separate from the dashboard because it has a different subject. The dashboard is about
+// the estate; this is about what reconciliation would write to a tracker, and it used to
+// sit above the queue where it was unmissable and usually beside the point. Its own page
+// also means the dashboard no longer queries the tracker on every load.
+func (s *Server) handleTicketsPage(w http.ResponseWriter, _ *http.Request) {
+	s.servePage(w, "static/tickets.html")
+}
+
+// servePage writes an embedded HTML page.
+func (s *Server) servePage(w http.ResponseWriter, name string) {
+	page, err := staticFS.ReadFile(name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "ui unavailable")
 		return

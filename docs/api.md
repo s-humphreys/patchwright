@@ -50,6 +50,14 @@ applied.
 
 ## Pending ticket actions on the page
 
+Its own page, at `/tickets`, linked from the dashboard header.
+
+It sat above the queue originally, where it was impossible to miss and, on a page whose
+subject is the estate, usually beside the point. A separate page rather than a third tab
+because the other two tabs are two ways of reading the same findings, and this is a
+different subject that happens to be produced by the same service. The dashboard no longer
+queries the tracker on load at all.
+
 The page lists changes reconciliation would make, in plain terms — "Raise a new ticket",
 "Rewrite the summary and description", "Close it", "Comment: the work may already be
 done" — with the ticket each concerns and why. The internal action name is in the hover,

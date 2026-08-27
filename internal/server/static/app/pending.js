@@ -82,7 +82,10 @@ export async function loadPending() {
 // would put a Jira round trip behind an idle browser tab.
 // initPending wires the manual refresh. See initTable on why this is not module-level.
 export function initPending() {
-  $("#ticketsRefresh").addEventListener("click", loadPending);
+  // Guarded because this module is also imported by the dashboard's bundle graph; only
+  // the ticket plan page has the button.
+  const btn = $("#ticketsRefresh");
+  if (btn) btn.addEventListener("click", loadPending);
 }
 
 // The rules, on demand. Fetched on first open rather than with every refresh: they

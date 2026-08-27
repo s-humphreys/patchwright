@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>patchwright · ticket plan</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/static/app/app.css">
+
+<!--
+  A page of its own, not a tab on the dashboard.
+
+  The dashboard's subject is the estate: what is vulnerable, who owns it, what to do about
+  it. A plan about a tracker is a different subject that happens to be produced by the same
+  service, and it sat above the queue where it was impossible to miss and usually beside
+  the point. Three lines of "Jira is not configured" above the thing people came to read is
+  noise on every single load.
+
+  Separate page rather than a third tab because a tab implies another way of reading the
+  same findings, which the other two are and this is not. It also means the dashboard no
+  longer queries the tracker on load at all.
+-->
+<header>
+  <span class="brand"><img class="logo" src="/favicon.png" alt="" width="24" height="24"><h1>patchwright</h1></span>
+  <span class="meta">ticket plan</span>
+  <span style="flex:1"></span>
+  <nav class="pages"><a href="/">Queue</a></nav>
+  <button id="ticketsRefresh" title="Recompute the plan against the tracker">Refresh plan</button>
+</header>
+
+<h2>Pending ticket actions</h2>
+<p class="meta">
+  What ticket reconciliation would do right now. Read-only: nothing here is applied by
+  opening this page, and there is no apply button.
+</p>
+<div id="pending">loading…</div>
+
+<script type="module" src="/static/app/tickets.js"></script>

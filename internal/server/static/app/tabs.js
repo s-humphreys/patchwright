@@ -3,7 +3,10 @@ import { $ } from './util.js';
 
 // Two views of one dataset. Which one is showing is part of the shareable URL, so
 // "the CVEs, ranked" is a link somebody can send rather than a set of instructions.
-
+//
+// The ticket plan is NOT here. It is a separate page: these two tabs are two ways of
+// reading the same findings, and a plan about a tracker is a different subject that
+// happens to be produced by the same service.
 const TABS = [
   { tab: '#tabQueue', panel: '#panelQueue', name: 'queue' },
   { tab: '#tabCVEs', panel: '#panelCVEs', name: 'cves' },

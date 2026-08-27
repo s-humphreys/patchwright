@@ -44,6 +44,22 @@ paths:
               schema: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /tickets:
+    get:
+      tags: [operations]
+      summary: Ticket plan page
+      description: |
+        HTML, and a page of its own rather than a tab on the dashboard: the dashboard's
+        subject is the estate, while this is what reconciliation would write to a
+        tracker. Reads GET /api/v1/tickets. Read-only - opening it applies nothing.
+      responses:
+        "200":
+          description: The ticket plan page
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/findings:
     get:
       tags: [findings]
