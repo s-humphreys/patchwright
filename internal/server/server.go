@@ -87,6 +87,9 @@ type Server struct {
 	// authentication, which is the historical behaviour and must stay possible for
 	// local runs.
 	tokenDigest []byte
+	// auth is the OIDC sign-in, when configured. Nil means sign-in is off and the
+	// shared token (if any) is the only credential.
+	auth *authenticator
 	// ticketer and autoTicket drive ticket reconciliation. Both optional: without a
 	// ticketer the endpoints report that ticketing is not configured, and without
 	// autoTicket nothing is raised except on request.

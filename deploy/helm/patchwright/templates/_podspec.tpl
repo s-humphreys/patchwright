@@ -60,6 +60,28 @@ so they stay in sync. Callers pass a dict:
     - "--age-option={{ . }}"
     {{- end }}
     {{- end }}
+    {{- with .root.Values.auth.oidc }}
+    {{- if .issuer }}
+    - "--oidc-issuer={{ .issuer }}"
+    - "--oidc-client-id={{ required "auth.oidc.clientID is required when an issuer is set" .clientID }}"
+    - "--oidc-redirect-url={{ required "auth.oidc.redirectURL is required when an issuer is set" .redirectURL }}"
+    {{- range .allowedGroups }}
+    - "--oidc-allowed-group={{ . }}"
+    {{- end }}
+    {{- range .allowedEmails }}
+    - "--oidc-allowed-email={{ . }}"
+    {{- end }}
+    {{- range .allowedDomains }}
+    - "--oidc-allowed-domain={{ . }}"
+    {{- end }}
+    {{- range .scopes }}
+    - "--oidc-scope={{ . }}"
+    {{- end }}
+    {{- with .sessionTTL }}
+    - "--oidc-session-ttl={{ . }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
     {{- if .root.Values.support.source }}
     - "--support-source={{ .root.Values.support.source }}"
     {{- range .root.Values.support.options }}
@@ -78,8 +100,27 @@ so they stay in sync. Callers pass a dict:
     {{- range .root.Values.extraArgs }}
     - {{ . | quote }}
     {{- end }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret }}
+  {{- $oidc := .root.Values.auth.oidc }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret $oidc.clientSecretRef.name $oidc.sessionKeyRef.name }}
   env:
+    {{- if $oidc.clientSecretRef.name }}
+    # Referenced rather than injected through values: a client secret in a HelmRelease's
+    # values is readable by anyone who can read HelmReleases, and shows up in git if the
+    # values ever get committed. The Secret is akv2k8s output, so the key names are the
+    # vault's JSON, not ours - hence a name/key pair rather than envFrom.
+    - name: PATCHWRIGHT_OIDC_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: {{ $oidc.clientSecretRef.name }}
+          key: {{ $oidc.clientSecretRef.key | default "clientSecret" }}
+    {{- end }}
+    {{- if $oidc.sessionKeyRef.name }}
+    - name: PATCHWRIGHT_SESSION_KEY
+      valueFrom:
+        secretKeyRef:
+          name: {{ $oidc.sessionKeyRef.name }}
+          key: {{ $oidc.sessionKeyRef.key | default "sessionKey" }}
+    {{- end }}
     {{- if .root.Values.scan.enabled }}
     - name: TRIVY_CACHE_DIR
       value: /tmp/trivy-cache

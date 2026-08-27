@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -80,10 +81,19 @@ func (s *Server) openPath(path string) bool {
 	return openPaths[path]
 }
 
-// authorize wraps h, rejecting requests without a valid token.
+// authorize wraps h, rejecting requests that carry neither a session nor a token.
+//
+// Two kinds of client, two mechanisms, one gate. A person gets a sign-in flow; a script
+// gets a token, because a script cannot complete an interactive redirect and should not
+// be asked to. Either is sufficient, and which one was used is not something the rest of
+// the server needs to know.
 func (s *Server) authorize(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authenticated() || s.openPath(r.URL.Path) {
+		if s.openPath(r.URL.Path) || s.signInPath(r.URL.Path) {
+			h.ServeHTTP(w, r)
+			return
+		}
+		if !s.authenticated() && !s.signInEnabled() {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -91,11 +101,53 @@ func (s *Server) authorize(h http.Handler) http.Handler {
 			h.ServeHTTP(w, r)
 			return
 		}
+		if s.signInEnabled() {
+			if _, ok := s.auth.current(r); ok {
+				h.ServeHTTP(w, r)
+				return
+			}
+			// A browser is sent to sign in; anything else gets a status it can act
+			// on. Redirecting a curl or a Backstage fetch into an HTML login page
+			// turns a clear 401 into a confusing 200 full of markup.
+			if wantsHTML(r) {
+				next := r.URL.RequestURI()
+				http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(next), http.StatusFound)
+				return
+			}
+			slog.DebugContext(r.Context(), "rejected request with no session or token", "path", r.URL.Path)
+			writeError(w, http.StatusUnauthorized, "sign in at "+loginPath+", or present a token")
+			return
+		}
 		// Advertise Basic so a browser prompts rather than showing a bare 401.
 		w.Header().Set("WWW-Authenticate", `Basic realm="patchwright", charset="UTF-8"`)
 		slog.DebugContext(r.Context(), "rejected unauthenticated request", "path", r.URL.Path)
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	})
+}
+
+// signInPath reports the endpoints the flow itself needs, which cannot require a
+// session: a gate that demands a session to reach the sign-in page is a locked door with
+// its key inside.
+func (s *Server) signInPath(path string) bool {
+	if !s.signInEnabled() {
+		return false
+	}
+	return path == loginPath || path == callbackPath || path == logoutPath
+}
+
+// wantsHTML reports whether this looks like a browser navigation rather than an API
+// call, which decides between a redirect and a 401.
+func wantsHTML(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	// An explicit Accept for JSON is a client saying what it can handle, and it is
+	// checked first: browsers send */* among other things, scripts rarely ask for HTML.
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "application/json") {
+		return false
+	}
+	return strings.Contains(accept, "text/html")
 }
 
 // presentedToken extracts a token from either supported scheme. Returns "" when
