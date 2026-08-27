@@ -36,11 +36,19 @@ rules:
     resources: ["helmrepositories", "gitrepositories", "ocirepositories"]
     verbs: ["get", "list"]
   # Operator-deployed images: the version lives in the owning custom resource, so the
-  # report can only name the change target by reading it. Get only — never list, so this
-  # cannot be used to enumerate custom resources across the cluster.
-  - apiGroups: ["*"]
-    resources: ["*"]
-    verbs: ["get"]
+  # report can only name the change target by reading it.
+  #
+  # COMMENTED OUT, and only worth enabling alongside reconcile.remediationReadCRs in the
+  # chart. `get` on every resource includes Secrets in every namespace, and while `get`
+  # cannot enumerate them, it does read any whose name is known. That is a real grant to
+  # make in a production cluster for a reporting refinement, and it should not be wider
+  # here than the cluster patchwright actually runs in.
+  #
+  # Prefer naming your operators' API groups instead of the wildcard.
+  #
+  # - apiGroups: ["*"]
+  #   resources: ["*"]
+  #   verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
