@@ -60,6 +60,28 @@ so they stay in sync. Callers pass a dict:
     - "--age-option={{ . }}"
     {{- end }}
     {{- end }}
+    {{- with .root.Values.auth.oidc }}
+    {{- if .issuer }}
+    - "--oidc-issuer={{ .issuer }}"
+    - "--oidc-client-id={{ required "auth.oidc.clientID is required when an issuer is set" .clientID }}"
+    - "--oidc-redirect-url={{ required "auth.oidc.redirectURL is required when an issuer is set" .redirectURL }}"
+    {{- range .allowedGroups }}
+    - "--oidc-allowed-group={{ . }}"
+    {{- end }}
+    {{- range .allowedEmails }}
+    - "--oidc-allowed-email={{ . }}"
+    {{- end }}
+    {{- range .allowedDomains }}
+    - "--oidc-allowed-domain={{ . }}"
+    {{- end }}
+    {{- range .scopes }}
+    - "--oidc-scope={{ . }}"
+    {{- end }}
+    {{- with .sessionTTL }}
+    - "--oidc-session-ttl={{ . }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
     {{- if .root.Values.support.source }}
     - "--support-source={{ .root.Values.support.source }}"
     {{- range .root.Values.support.options }}

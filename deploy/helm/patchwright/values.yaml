@@ -255,6 +255,34 @@ reconcile:
 #
 # Off by default because it reads an external feed (endoflife.date). When off, findings
 # report support status as "not checked" rather than implying anything.
+# Who may read this.
+#
+# The page is a map of what is exploitable across the estate, so "reachable on the
+# corporate network" is not the same as "fine to leave open". Two mechanisms, and they
+# coexist: a person signs in, a script presents a token.
+#
+# OIDC gives per-user sign-in against any compliant provider (Entra, Okta, Keycloak,
+# Dex). Set the issuer to enable it. The client secret and the cookie signing key come
+# from credentialsSecretName, never from here:
+#
+#   PATCHWRIGHT_OIDC_CLIENT_SECRET   required when an issuer is set
+#   PATCHWRIGHT_SESSION_KEY          optional; without it every rollout signs everybody
+#                                    out, and sessions cannot span replicas
+#
+# Set allowedGroups unless the provider itself is the boundary. When it IS set and the
+# provider sends no groups claim, nobody is admitted: deliberate and loud, rather than
+# admitting everyone because a claim was missing.
+auth:
+  oidc:
+    issuer: ""                # e.g. https://login.microsoftonline.com/<tenant-id>/v2.0
+    clientID: ""
+    redirectURL: ""           # must match a redirect URI on the app registration
+    allowedGroups: []         # group object IDs or names, from the groups claim
+    allowedEmails: []
+    allowedDomains: []
+    scopes: []                # default: openid, profile, email
+    sessionTTL: ""            # default 12h
+
 support:
   source: ""                # "endoflife" or empty
   options: []               # e.g. ["base-url=https://endoflife.date/api"]

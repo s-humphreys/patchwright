@@ -32,8 +32,10 @@ Set `PATCHWRIGHT_API_TOKEN` and every request except the health probes and
 browsers are prompted for HTTP Basic with the token as the password. The status page
 is gated too — it is a data view.
 
-A shared token has no identity and no per-team scoping. Put OIDC in front for
-anything beyond a trusted network.
+A shared token has no identity and no per-team scoping: everybody holding it is the same
+person, and nothing anyone does can be attributed. For per-user sign-in, set an OIDC
+issuer and the page gains a real sign-in flow, with the token still available to scripts
+alongside it. See [authentication](authentication.md).
 
 ## Ticket state
 

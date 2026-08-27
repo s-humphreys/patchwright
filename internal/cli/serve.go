@@ -61,6 +61,16 @@ func closeSummary(cfg config.JiraConfig) string {
 // unset leaves both unauthenticated.
 const envAPIToken = "PATCHWRIGHT_API_TOKEN"
 
+// Sign-in secrets come from the environment for the same reason the token does: a client
+// secret in a flag lands in a process list, a shell history and a pod spec.
+const (
+	envOIDCClientSecret = "PATCHWRIGHT_OIDC_CLIENT_SECRET"
+	// envSessionKey signs session cookies. Optional: without it a key is generated at
+	// startup, which is safe but signs everybody out on every rollout and cannot work
+	// across replicas.
+	envSessionKey = "PATCHWRIGHT_SESSION_KEY"
+)
+
 func newServeCmd() *cobra.Command {
 	var (
 		in          assessInputs
@@ -68,6 +78,7 @@ func newServeCmd() *cobra.Command {
 		interval    time.Duration
 		autoTicket  bool
 		metricsAuth bool
+		oidc        oidcFlags
 	)
 
 	cmd := &cobra.Command{
@@ -92,13 +103,33 @@ func newServeCmd() *cobra.Command {
 			// flag so it does not land in a process list or a shell history.
 			token := os.Getenv(envAPIToken)
 			srv = srv.WithAuth(token).WithMetricsAuth(metricsAuth)
-			if token == "" {
+
+			// Sign-in, when an issuer is configured. Discovery happens here so a
+			// wrong issuer or a missing secret stops the process now, rather than
+			// producing a service that looks protected until somebody tries to use it.
+			srv, err = srv.WithOIDC(cmd.Context(), server.OIDCConfig{
+				IssuerURL:      oidc.issuer,
+				ClientID:       oidc.clientID,
+				ClientSecret:   os.Getenv(envOIDCClientSecret),
+				RedirectURL:    oidc.redirectURL,
+				Scopes:         oidc.scopes,
+				AllowedGroups:  oidc.groups,
+				AllowedEmails:  oidc.emails,
+				AllowedDomains: oidc.domains,
+				SessionTTL:     oidc.sessionTTL,
+				SessionKey:     []byte(os.Getenv(envSessionKey)),
+			})
+			if err != nil {
+				return err
+			}
+			if token == "" && oidc.issuer == "" {
 				// Deliberately a warning on every start: an unauthenticated API
 				// that serves an estate's unpatched criticals is fine on a laptop
 				// and is not fine anywhere else, and silence would let that pass
 				// unnoticed into a deployment.
 				slog.WarnContext(cmd.Context(),
-					"API and status page are UNAUTHENTICATED; set "+envAPIToken+" to require a token",
+					"API and status page are UNAUTHENTICATED; configure --oidc-issuer for sign-in, "+
+						"or set "+envAPIToken+" for a shared token",
 					"addr", addr)
 			}
 
@@ -196,6 +227,7 @@ func newServeCmd() *cobra.Command {
 		"date CVEs from the scan provider's own first-seen times ("+joinAgeSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&in.ageOptions, "age-option", nil, "age source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&in.remediation, "remediation", false, "detect available upgrades for how images are deployed")
+	registerOIDCFlags(cmd, &oidc)
 	cmd.Flags().StringVar(&in.supportSource, "support-source", "", "check whether base image lines are still maintained using a source (endoflife)")
 	cmd.Flags().StringArrayVar(&in.supportOptions, "support-option", nil, "support source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "address to serve the API on")
@@ -210,4 +242,33 @@ func newServeCmd() *cobra.Command {
 			"The API endpoints work either way.")
 	cmd.Flags().DurationVar(&interval, "interval", time.Hour, "how often to re-run the assessment (0 to run once)")
 	return cmd
+}
+
+// oidcFlags are the non-secret parts of the sign-in configuration. The client secret and
+// the session key are read from the environment instead: a secret in a flag ends up in a
+// process list and a pod spec, which is the one place a reviewer will notice it.
+type oidcFlags struct {
+	issuer      string
+	clientID    string
+	redirectURL string
+	scopes      []string
+	groups      []string
+	emails      []string
+	domains     []string
+	sessionTTL  time.Duration
+}
+
+func registerOIDCFlags(cmd *cobra.Command, f *oidcFlags) {
+	cmd.Flags().StringVar(&f.issuer, "oidc-issuer", "",
+		"OpenID Connect issuer URL; enables browser sign-in (e.g. https://login.microsoftonline.com/<tenant>/v2.0)")
+	cmd.Flags().StringVar(&f.clientID, "oidc-client-id", "", "OIDC application (client) ID")
+	cmd.Flags().StringVar(&f.redirectURL, "oidc-redirect-url", "",
+		"absolute callback URL registered on the application, e.g. https://patchwright.example.com/auth/callback")
+	cmd.Flags().StringSliceVar(&f.scopes, "oidc-scope", nil,
+		"scopes to request (default openid,profile,email)")
+	cmd.Flags().StringSliceVar(&f.groups, "oidc-allowed-group", nil,
+		"restrict sign-in to these groups, from the token's groups claim. When set and the provider sends no groups, nobody is admitted")
+	cmd.Flags().StringSliceVar(&f.emails, "oidc-allowed-email", nil, "restrict sign-in to these addresses")
+	cmd.Flags().StringSliceVar(&f.domains, "oidc-allowed-domain", nil, "restrict sign-in to these email domains")
+	cmd.Flags().DurationVar(&f.sessionTTL, "oidc-session-ttl", 0, "how long a sign-in lasts (default 12h)")
 }

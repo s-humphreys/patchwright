@@ -75,6 +75,7 @@ provider → dedupe (by image) → attribute (owner) → policy (actionable?) �
 | [Rules](docs/rules.md) | Writing ownership and policy rules |
 | [Ticketing](docs/ticketing.md) | Raising, routing, updating and closing Jira tickets |
 | [API](docs/api.md) · [reference](https://patchwright.shumphreys.com) | `serve`, endpoints, the status page |
+| [Authentication](docs/authentication.md) | Sign-in with OIDC, and tokens for scripts |
 | [Metrics](docs/metrics.md) | Prometheus metrics and what to alert on |
 | [Deploying](docs/deploying.md) | Helm chart, RBAC, registry credentials |
 | [Development](docs/development.md) | Build, test, run against your own data |

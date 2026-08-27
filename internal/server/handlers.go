@@ -63,6 +63,20 @@ func (s *Server) routes() map[string]http.Handler {
 	}
 }
 
+// signInRoutes are the endpoints the OIDC flow needs, registered only when it is
+// configured. Registering them unconditionally would advertise a sign-in that cannot
+// work and hand anybody who found them a 500.
+func (s *Server) signInRoutes() map[string]http.Handler {
+	if !s.signInEnabled() {
+		return nil
+	}
+	return map[string]http.Handler{
+		"GET " + loginPath:    http.HandlerFunc(s.handleLogin),
+		"GET " + callbackPath: http.HandlerFunc(s.handleCallback),
+		"GET " + logoutPath:   http.HandlerFunc(s.handleLogout),
+	}
+}
+
 // registeredRoutes lists the served patterns, for the spec test.
 func registeredRoutes() []string {
 	var out []string
@@ -76,6 +90,9 @@ func registeredRoutes() []string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	for pattern, h := range s.routes() {
+		mux.Handle(pattern, h)
+	}
+	for pattern, h := range s.signInRoutes() {
 		mux.Handle(pattern, h)
 	}
 	// Authentication wraps everything, including the page: the page is a data view,
