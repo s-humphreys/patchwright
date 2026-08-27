@@ -29,6 +29,10 @@ func init() {
 			kubeconfig: opts.String("kubeconfig"),
 			contexts:   splitCSV(opts.String("contexts")),
 			inCluster:  opts.StringOr("inCluster", "false") == "true",
+			// authMode=azure authenticates to AKS API servers with the identity this
+			// process already has, so the kubeconfig needs to carry only each cluster's
+			// URL and CA — nothing secret, and nothing to rotate.
+			authMode: opts.String("authMode"),
 		}, nil
 	})
 }
@@ -37,6 +41,10 @@ type Source struct {
 	kubeconfig string   // path to a kubeconfig; empty uses the default loading rules
 	contexts   []string // context names to read; empty uses the current context
 	inCluster  bool     // use the in-cluster service account instead of a kubeconfig
+	// authMode replaces the kubeconfig's credentials: "azure" mints AAD tokens for AKS
+	// from the ambient identity (workload identity, managed identity, az login). Empty
+	// uses whatever the kubeconfig carries.
+	authMode string
 
 	// resolvers detect available upgrades per deployment system. Nil uses the
 	// defaults (Flux HelmRelease); set for tests or to add resolvers.
@@ -130,6 +138,19 @@ func (s *Source) restConfigs() (map[string]*rest.Config, error) {
 		out["in-cluster"] = cfg
 	}
 
+	// One token source across every context: a single AAD token is valid for every
+	// AAD-integrated cluster in the tenant, so eleven clusters cost one token.
+	var tokens *azureTokenSource
+	if strings.EqualFold(s.authMode, "azure") {
+		t, err := newAzureTokenSource()
+		if err != nil {
+			return nil, err
+		}
+		tokens = t
+	} else if s.authMode != "" {
+		return nil, fmt.Errorf("unknown authMode %q (supported: azure)", s.authMode)
+	}
+
 	// Load kubeconfig contexts when explicitly requested, or as the default
 	// when in-cluster reading was not requested (local development).
 	if len(s.contexts) > 0 || s.kubeconfig != "" || !s.inCluster {
@@ -148,6 +169,9 @@ func (s *Source) restConfigs() (map[string]*rest.Config, error) {
 			).ClientConfig()
 			if err != nil {
 				return nil, fmt.Errorf("build config for context %q: %w", ctxName, err)
+			}
+			if tokens != nil {
+				tokens.apply(cfg)
 			}
 			label := ctxName
 			if label == "" {

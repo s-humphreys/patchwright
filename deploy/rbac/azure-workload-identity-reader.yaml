@@ -1,0 +1,58 @@
+# Apply this in each REMOTE AKS cluster patchwright should read, when it authenticates
+# with reconcile.remote.authMode=azure.
+#
+# With that mode the kubeconfig carries no credentials: patchwright presents an AAD token
+# for the identity it runs as, and the API server authenticates it as the AAD object ID
+# below. Authorisation is then ordinary Kubernetes RBAC, which is what this grants.
+#
+# Replace OBJECT_ID with the identity's principal — for an AKS workload identity that is
+# the managed identity's object (principal) ID, not its client ID:
+#
+#   kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.principalId}'
+#
+# The read set matches what an assessment uses: pods and namespaces for liveness and
+# ownership, workloads and Flux resources for remediation, and get on custom resources so
+# an operator-deployed image can be traced to the resource that sets its version.
+#
+# Nothing here can write, and nothing here can read a Secret or a ConfigMap.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: patchwright-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["helmreleases"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["helmrepositories", "gitrepositories", "ocirepositories"]
+    verbs: ["get", "list"]
+  # Operator-deployed images: the version lives in the owning custom resource, so the
+  # report can only name the change target by reading it. Get only — never list, so this
+  # cannot be used to enumerate custom resources across the cluster.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: patchwright-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: patchwright-reader
+subjects:
+  # An AAD object ID, which the API server presents as a User. Not the client ID: they
+  # are different GUIDs for the same identity, and the wrong one authenticates as nobody.
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: OBJECT_ID

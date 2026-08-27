@@ -186,6 +186,47 @@ the registry it was asked about and nowhere else.
 Adding AWS ECR is one file: register the hosts it serves and a keychain, as
 `pkg/registryauth/google.go` does in seven lines.
 
+## Reading more than one cluster
+
+Reconciliation attributes ownership from namespace labels and drops workloads that are not
+running, so a fleet reconciled in part is a fleet reported in part: images in the clusters
+you did not read look unowned and not-live, and the `not-running` suppression would
+quietly remove most of the estate.
+
+```yaml
+reconcile:
+  enabled: true
+  local: true                    # this cluster, via the pod's ServiceAccount
+  remote:
+    kubeconfigSecret: patchwright-clusters
+    authMode: azure
+    contexts: [aks-a, aks-b, aks-c]
+```
+
+With `authMode: azure` the kubeconfig holds NO credentials — only each cluster's API
+server URL and CA certificate. Patchwright presents an AAD token for the identity it
+already runs as, so there is nothing in that Secret worth stealing and nothing in it to
+rotate. The alternative, a ServiceAccount token per cluster, means minting a long-lived
+credential for every cluster and storing them together, which is the practice this tool
+exists to argue against.
+
+Each cluster then needs the reader role and a binding for the identity, from
+`deploy/rbac/azure-workload-identity-reader.yaml`. The subject is the identity's OBJECT
+id, not its client id: they are different GUIDs for the same identity, and the wrong one
+authenticates as nobody. Read it from the ManagedIdentity status:
+
+```sh
+kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.principalId}'
+```
+
+Substitute that for `OBJECT_ID` in the file, then apply it in each cluster.
+
+The kubeconfig itself is cluster and context stanzas only, with an empty users list.
+
+A cluster that cannot be read fails the run rather than being skipped: partial liveness is
+indistinguishable from workloads having stopped, and the queue would shrink for the wrong
+reason.
+
 ## Rollouts take as long as an assessment
 
 Readiness means "an assessment is cached". A new pod serves nothing until its first run

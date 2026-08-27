@@ -214,6 +214,15 @@ reconcile:
   remote:
     kubeconfigSecret: ""      # Secret containing a "kubeconfig" key
     contexts: []              # context names to read, e.g. [aks-prod-uk, gke-analytics]
+    # How to authenticate to those clusters. Empty uses whatever credentials the
+    # kubeconfig carries — a ServiceAccount token per cluster, which means minting and
+    # storing a long-lived credential for every one of them.
+    #
+    # "azure" instead authenticates as the identity this pod already has, so the
+    # kubeconfig needs to hold only each cluster's API server URL and CA certificate.
+    # Nothing in it is secret and nothing in it expires. Each cluster still needs a
+    # ClusterRoleBinding for that identity's object ID — see deploy/rbac.
+    authMode: ""              # "" or "azure"
   # Detect available upgrades for how images are deployed (a newer Helm chart
   # for Flux HelmReleases, a newer image tag for manifest/Kustomize workloads).
   # Adds read access to workloads + Flux CRDs.
