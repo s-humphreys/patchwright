@@ -90,6 +90,9 @@ export function renderCoverage(s) {
 // however bad it is; 4% of images unassessed does not deserve the same colour as that.
 export function dataGaps(s) {
   const gaps = [];
+  // A source that FAILED and a source that was never configured produce the same empty
+  // cells and need opposite responses. Telling somebody to add --exploit-source when
+  // they already have it, and it 502'd, sends them to fix the wrong thing.
   const total = (s.provider_assessed || 0) + (s.provider_unassessed || 0);
 
   if (s.provider_unassessed > 0 && total > 0) {
@@ -117,7 +120,7 @@ export function dataGaps(s) {
         is false — however bad a finding is. Counts from the scan provider still work. Add
         <code>--vuln-source trivy</code> (chart: <code>scan.enabled</code>) to populate it.`,
     });
-  } else if (s.exploit_checked === 0) {
+  } else if (s.exploit_checked === 0 && !failed(s, "exploit")) {
     gaps.push({
       severe: false,
       count: `${s.scanned}`,
@@ -125,6 +128,22 @@ export function dataGaps(s) {
       detail: `Rules requiring exploitation pressure cannot fire, and the EPSS column reads "-"
         rather than 0. Add <code>--exploit-source public</code> (chart:
         <code>scan.exploitSource</code>).`,
+    });
+  }
+
+  for (const f of s.source_failures || []) {
+    // An enrichment that could not run, stated rather than inferred. Exploit intel gates
+    // whole priority tiers, so its absence changes what the queue means — and the cells
+    // that go quiet ("?" for EPSS, KEV, risk) give no clue why.
+    gaps.push({
+      severe: f.stage === "exploit",
+      count: "no",
+      headline: f.stage === "exploit"
+        ? "exploit intelligence could be gathered, so nothing here can be ranked by exploitation pressure"
+        : `${esc(f.stage)} data could be gathered`,
+      detail: `The assessment completed without it — losing an enrichment does not lose
+        the queue — but every signal it would have set reads "not checked" rather than
+        "none found". The source reported: <code>${esc(shortReason(f.error))}</code>`,
     });
   }
 
@@ -221,3 +240,8 @@ export function renderTiles(s) {
 // "high" rather than sorting after it alphabetically, and a "?" count must not
 // sort as if it were a number. Unknowns sort to the bottom in both directions,
 // since "we do not know" is never the answer someone is looking for at the top.
+
+/** failed reports whether an enrichment stage reported a failure this run. */
+export function failed(summary, stage) {
+  return (summary.source_failures || []).some((f) => f.stage === stage);
+}

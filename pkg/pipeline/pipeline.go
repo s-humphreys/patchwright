@@ -28,6 +28,12 @@ type Pipeline struct {
 	age         *enrich.AgeEnricher         // optional: CVE first-seen enrichment after scan
 	remediation *enrich.RemediationEnricher // optional: deployment upgrade detection
 	inFlight    ImageEnricher               // optional: open pull requests applying those upgrades
+
+	// failures are the enrichments that could not run. An enrichment is not the
+	// assessment: losing one must not lose the other, but it must be reported — a
+	// missing signal that nobody can see looks exactly like a signal that found
+	// nothing.
+	failures []model.SourceFailure
 }
 
 // Option customizes a Pipeline.
@@ -89,7 +95,21 @@ func New(cfg *config.Config, opts ...Option) (*Pipeline, error) {
 
 // Run executes the full assessment over raw occurrences and returns findings.
 // The input slice is mutated in place by the attribution stage.
+// Failures reports the enrichments that could not run in the last Run.
+func (p *Pipeline) Failures() []model.SourceFailure { return p.failures }
+
+// recordFailure notes an enrichment that could not run, and says so in the log.
+func (p *Pipeline) recordFailure(ctx context.Context, stage string, err error) {
+	slog.WarnContext(ctx, "enrichment failed; the assessment continues without it",
+		"stage", stage, "error", err)
+	p.failures = append(p.failures, model.SourceFailure{Stage: stage, Error: err.Error()})
+}
+
 func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]model.Finding, error) {
+	// Per run: a failure from an hour ago is not a failure now, and reporting it as one
+	// would be the same lie in the other direction.
+	p.failures = nil
+
 	if _, err := p.attributor.AttributeAll(occurrences); err != nil {
 		return nil, err
 	}
@@ -106,13 +126,23 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	if p.age != nil {
 		if err := p.age.EnrichImages(ctx, images); err != nil {
 			// Ageing is decoration on top of the queue, not the queue: losing it must
-			// not lose the assessment, so it warns rather than failing the run.
-			slog.WarnContext(ctx, "cve ageing failed; ages will be unknown", "error", err)
+			// not lose the assessment. Recorded rather than only logged, so the page can
+			// say the ages are missing instead of showing them as unknown for a reason
+			// nobody can see.
+			p.recordFailure(ctx, "age", err)
 		}
 	}
 	if p.exploit != nil {
 		if err := p.exploit.EnrichImages(ctx, images); err != nil {
-			return nil, err
+			// Exploit intel gates whole priority tiers, so losing it matters more than
+			// losing ages — and failing the run over it matters more still. One 502
+			// from a public feed, one request in a hundred, used to discard a completed
+			// scan of every image in the estate.
+			//
+			// The assessment continues without it. ExploitChecked stays false, so every
+			// EPSS and KEV cell reads "not checked" rather than "none found", and the
+			// failure is reported rather than inferred from a queue that has gone quiet.
+			p.recordFailure(ctx, "exploit", err)
 		}
 	}
 	if p.remediation != nil {

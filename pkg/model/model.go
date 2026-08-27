@@ -538,3 +538,17 @@ func (f Finding) Signals() []string {
 	}
 	return out
 }
+
+// SourceFailure is an enrichment that could not run.
+//
+// An enrichment is not the assessment, so losing one does not lose the other — but the
+// absence has to be visible. A missing signal nobody can see looks exactly like a signal
+// that found nothing, and on this estate the two lead to opposite conclusions: "no
+// exploited CVEs" and "we could not ask about exploitation" are not the same sentence.
+type SourceFailure struct {
+	// Stage is what could not run: "exploit", "age".
+	Stage string
+	// Error is the reason, as reported, so somebody can act on it rather than only
+	// know that something went wrong.
+	Error string
+}

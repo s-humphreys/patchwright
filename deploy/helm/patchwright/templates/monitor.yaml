@@ -14,8 +14,8 @@ Operator CRDs.
 {{- if and .Values.metrics.serviceMonitor.enabled .Values.metrics.podMonitor.enabled }}
 {{- fail "enable metrics.serviceMonitor or metrics.podMonitor, not both: two monitors scraping one target double every counter" }}
 {{- end }}
-{{- if and .Values.metrics.requireAuth (not .Values.server.auth.secretName) }}
-{{- fail "metrics.requireAuth needs server.auth.secretName: there is no token to require, and a monitor would scrape an endpoint that is open anyway" }}
+{{- if and .Values.metrics.requireAuth (not .Values.credentialsSecretName) }}
+{{- fail "metrics.requireAuth needs credentialsSecretName holding PATCHWRIGHT_API_TOKEN: there is no token to require, and a monitor would scrape an endpoint that is open anyway" }}
 {{- end }}
 {{- if and (or .Values.metrics.serviceMonitor.enabled .Values.metrics.podMonitor.enabled) (not .Values.server.enabled) }}
 {{- fail "metrics scraping needs server.enabled: the CronJob exits between runs, so there is nothing to scrape (see the chart README)" }}
@@ -48,12 +48,12 @@ spec:
       path: /metrics
       interval: {{ .Values.metrics.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
-      {{- if and .Values.metrics.requireAuth .Values.server.auth.secretName }}
+      {{- if and .Values.metrics.requireAuth .Values.credentialsSecretName }}
       # Only when the endpoint is gated. Prometheus reads the same Secret the server
       # does, so there is one credential rather than a second one to rotate.
       bearerTokenSecret:
-        name: {{ .Values.server.auth.secretName }}
-        key: {{ .Values.server.auth.secretKey }}
+        name: {{ .Values.credentialsSecretName }}
+        key: PATCHWRIGHT_API_TOKEN
       {{- end }}
 {{- end }}
 
@@ -84,9 +84,9 @@ spec:
       path: /metrics
       interval: {{ .Values.metrics.podMonitor.interval }}
       scrapeTimeout: {{ .Values.metrics.podMonitor.scrapeTimeout }}
-      {{- if and .Values.metrics.requireAuth .Values.server.auth.secretName }}
+      {{- if and .Values.metrics.requireAuth .Values.credentialsSecretName }}
       bearerTokenSecret:
-        name: {{ .Values.server.auth.secretName }}
-        key: {{ .Values.server.auth.secretKey }}
+        name: {{ .Values.credentialsSecretName }}
+        key: PATCHWRIGHT_API_TOKEN
       {{- end }}
 {{- end }}

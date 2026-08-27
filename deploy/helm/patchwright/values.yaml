@@ -1,3 +1,24 @@
+# Credentials, in ONE Secret whose keys are the environment variables the binary reads:
+#
+#   RAPID7_API_KEY          the scan provider, in api mode
+#   AZURE_DEVOPS_PAT        reading pull requests, for in-flight detection
+#   JIRA_BASE_URL           ticketing
+#   JIRA_EMAIL              ticketing
+#   JIRA_API_TOKEN          ticketing
+#   PATCHWRIGHT_API_TOKEN   requires a token on the API and status page
+#
+# Include only what you use. Every one of them is optional in the sense that matters:
+# patchwright reports what it could not do rather than pretending it did, so a Secret
+# holding only RAPID7_API_KEY produces an assessment with ticket state shown as unknown
+# and in-flight detection reported as not run.
+#
+#   kubectl create secret generic patchwright \
+#     --from-literal=RAPID7_API_KEY="$RAPID7_API_KEY" \
+#     --from-literal=PATCHWRIGHT_API_TOKEN="$(openssl rand -base64 32)"
+#
+# Never in a values file: this names a Secret, it does not hold one.
+credentialsSecretName: ""
+
 image:
   repository: ghcr.io/s-humphreys/patchwright
   tag: ""            # defaults to the chart appVersion
@@ -16,36 +37,15 @@ server:
   port: 8080
   service:
     type: ClusterIP
-  # Require a shared token on the API and the status page. Strongly recommended:
-  # without it both are unauthenticated, and they serve the estate's unpatched
-  # criticals to anyone who can reach the Service. Health probes stay open either
-  # way. Create the secret yourself so the token is never in a values file.
+  # The API and status page require a token when the credentials Secret carries
+  # PATCHWRIGHT_API_TOKEN, and are open when it does not. There is nothing to configure
+  # here: the presence of the key is the decision, and a chart flag that disagreed with
+  # the Secret would be a third source of truth.
   #
-  #   kubectl create secret generic patchwright-api \
-  #     --from-literal=token="$(openssl rand -base64 32)"
-  #
-  # A single shared token has no identity and no per-team scoping; put OIDC in
-  # front (ingress authenticator or oauth2-proxy) for anything beyond a trusted
+  # Both serve the estate's unpatched criticals to anyone who can reach the Service, so
+  # leaving them open is a choice to make deliberately. A single shared token has no
+  # identity and no per-team scoping; put OIDC in front for anything beyond a trusted
   # network.
-  auth:
-    secretName: ""      # e.g. "patchwright-api"; empty leaves the API open
-    secretKey: token
-
-# Used when server.enabled is false.
-cronjob:
-  schedule: "0 7 * * *"
-  # Forbid rather than Allow: two assessments of the same estate at once duplicate
-  # every registry call for one answer, and a shared cache PVC has a single writer.
-  concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  # A run that hangs on an unreachable registry should be killed rather than block
-  # the next schedule. Generous by default: a first run over a large estate with
-  # scanning on can take a while.
-  activeDeadlineSeconds: 3600
-  backoffLimit: 1
-  # ndjson so each finding is one line for a log pipeline. "table" is for humans.
-  format: ndjson
 
 # Prometheus metrics, prefixed patchwright_, served at /metrics in server mode.
 #
@@ -97,17 +97,9 @@ ticketing:
   # credentialsSecretName; the chart refuses to render otherwise, matching the
   # binary, which refuses to start.
   autoTicket: false
-  # Secret holding the Jira credentials, with keys: baseUrl, email, apiToken.
-  # Credentials are never read from a values file or the rules ConfigMap.
-  #
-  #   kubectl create secret generic patchwright-jira \
-  #     --from-literal=baseUrl=https://your-site.atlassian.net \
-  #     --from-literal=email=you@example.com \
-  #     --from-literal=apiToken=...
-  #
-  # Leave empty to run without ticketing: the assessment, API and page are
-  # unaffected.
-  credentialsSecretName: ""
+  # Jira credentials come from credentialsSecretName (JIRA_BASE_URL, JIRA_EMAIL,
+  # JIRA_API_TOKEN). Without them ticketing is off: the queue and the page are
+  # unaffected, and ticket state is reported as unknown rather than as "no ticket".
   # The ticket template, mounted alongside the rules. Required for ticketing,
   # because `jira.template` is a path and the image ships no default: the wording
   # of a ticket belongs to whoever owns the process. See
@@ -199,8 +191,7 @@ provider:
   #     --from-literal=apiKey="$RAPID7_API_KEY"
   api:
     baseURL: ""                       # REQUIRED for api mode, e.g. https://example.customer.divvycloud.com
-    credentialsSecretName: ""         # REQUIRED for api mode, e.g. "patchwright-rapid7"
-    credentialsSecretKey: apiKey
+    # The key comes from credentialsSecretName above (RAPID7_API_KEY).
 
 reconcile:
   # Reconcile findings against live clusters (drops not-running workloads and
@@ -224,9 +215,9 @@ reconcile:
   #
   #   kubectl create secret generic patchwright-ado --from-literal=pat="$AZURE_DEVOPS_PAT"
   #
-  inFlight:
-    credentialsSecretName: ""
-    credentialsSecretKey: pat
+  # In-flight detection needs AZURE_DEVOPS_PAT in credentialsSecretName. Without it the
+  # queue reports "not checked" rather than "nothing in flight" — a missing token and an
+  # absence of pull requests are different answers.
   # Additionally grant `get` on ALL custom resources, so operator-deployed
   # images whose tag is set in the owning CR's spec are treated as directly
   # actionable (change the CR). Broad read access — leave off unless you want
@@ -241,15 +232,15 @@ scan:
   # that finding is reported "unscanned", the run does not fail.
   enabled: false
   vulnSource: trivy
-  # Options for the vuln source, as key=value. The rapid7 source needs the platform
-  # base URL, and takes per-CVE detail from the platform rather than pulling images —
-  # which is the only way to get it for a private registry the scanner cannot pull.
-  vulnOptions: []                # e.g. ["base-url=https://example.customer.divvycloud.com"]
+  # A source named after the provider inherits the provider's options, so the rapid7
+  # vuln source already knows the base URL from provider.api.baseURL. Set these only to
+  # point a source somewhere else.
+  vulnOptions: []
   # Also annotate CVEs with EPSS + CISA KEV (needs egress to first.org + cisa.gov).
   # Comma-separated: "public" gives EPSS + KEV, "rapid7" adds the platform's own
   # risk score. They are not interchangeable — see docs/scanning.md.
   exploitSource: ""          # e.g. "public" or "public,rapid7"
-  exploitOptions: []         # e.g. ["base-url=https://example.customer.divvycloud.com"]
+  exploitOptions: []         # inherited from the provider for a same-named source
 
   # Trivy's vulnerability DB is several hundred MB and is downloaded on every pod
   # start. On an ephemeral volume that means every CronJob run pays for it.
@@ -277,7 +268,7 @@ scan:
 # dimension. Requires scan.enabled: it stamps CVEs that already exist.
 age:
   source: ""                 # e.g. "rapid7"
-  options: []                # e.g. ["base-url=https://example.customer.divvycloud.com"]
+  options: []                # inherited from the provider for a same-named source
 
 registryAuth:
   # Credentials for Trivy to pull PRIVATE images. Use your cloud's workload

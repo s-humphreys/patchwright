@@ -69,42 +69,8 @@ so they stay in sync. Callers pass a dict:
     {{- range .root.Values.extraArgs }}
     - {{ . | quote }}
     {{- end }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret .root.Values.server.auth.secretName .root.Values.ticketing.credentialsSecretName .root.Values.reconcile.inFlight.credentialsSecretName (eq .root.Values.provider.mode "api") }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret }}
   env:
-    {{- if eq .root.Values.provider.mode "api" }}
-    - name: RAPID7_API_KEY
-      valueFrom:
-        secretKeyRef:
-          name: {{ required "provider.api.credentialsSecretName is required for api mode" .root.Values.provider.api.credentialsSecretName }}
-          key: {{ .root.Values.provider.api.credentialsSecretKey }}
-    {{- end }}
-    {{- if .root.Values.reconcile.inFlight.credentialsSecretName }}
-    # Reads pull requests to tell an upgrade nobody has started from one already in
-    # review. Code read scope is enough; this only reads.
-    - name: AZURE_DEVOPS_PAT
-      valueFrom:
-        secretKeyRef:
-          name: {{ .root.Values.reconcile.inFlight.credentialsSecretName }}
-          key: {{ .root.Values.reconcile.inFlight.credentialsSecretKey }}
-    {{- end }}
-    {{- if .root.Values.ticketing.credentialsSecretName }}
-    - name: JIRA_BASE_URL
-      valueFrom:
-        secretKeyRef: { name: {{ .root.Values.ticketing.credentialsSecretName }}, key: baseUrl }
-    - name: JIRA_EMAIL
-      valueFrom:
-        secretKeyRef: { name: {{ .root.Values.ticketing.credentialsSecretName }}, key: email }
-    - name: JIRA_API_TOKEN
-      valueFrom:
-        secretKeyRef: { name: {{ .root.Values.ticketing.credentialsSecretName }}, key: apiToken }
-    {{- end }}
-    {{- if .root.Values.server.auth.secretName }}
-    - name: PATCHWRIGHT_API_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: {{ .root.Values.server.auth.secretName }}
-          key: {{ .root.Values.server.auth.secretKey }}
-    {{- end }}
     {{- if .root.Values.scan.enabled }}
     - name: TRIVY_CACHE_DIR
       value: /tmp/trivy-cache
@@ -115,6 +81,19 @@ so they stay in sync. Callers pass a dict:
     - name: DOCKER_CONFIG
       value: /etc/patchwright-dockerconfig
     {{- end }}
+  {{- end }}
+  {{- if .root.Values.credentialsSecretName }}
+  # One Secret, whose keys are the environment variables the binary reads. It replaced
+  # five separate secretName/secretKey pairs — Rapid7, Azure DevOps, three Jira values
+  # and the API token — each of which had to agree with a key name the operator could
+  # not see from the chart.
+  #
+  # Absent keys are simply absent: patchwright reports what it could not do rather than
+  # failing, so a Secret with only RAPID7_API_KEY gives an assessment with no ticketing
+  # and no in-flight detection, and says so.
+  envFrom:
+    - secretRef:
+        name: {{ .root.Values.credentialsSecretName }}
   {{- end }}
   {{- if .ports }}
   ports:

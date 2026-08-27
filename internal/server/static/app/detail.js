@@ -18,6 +18,41 @@ import { $, esc } from './util.js';
 let shown = null;
 /** Where focus was before opening, to put it back on close. */
 let restoreFocus = null;
+/**
+ * Where "back" goes, innermost last.
+ *
+ * The panel drills: a CVE lists the images carrying it, a work item lists its
+ * deployments, and either can open one. Replacing the panel with no way back means
+ * finding your place again by hand, so each drill records how to rebuild what it left.
+ * Entries are closures rather than keys, because the thing to return to is the panel
+ * that was open, not an identifier that may no longer resolve after a refresh.
+ * @type {{label: string, open: () => void}[]}
+ */
+let trail = [];
+
+/** backButton renders the way out of a drill-in, or nothing at the top level. */
+function backButton() {
+  if (trail.length === 0) return "";
+  const to = trail[trail.length - 1];
+  return `<button id="detailBack" class="linkish" aria-label="Back to ${esc(to.label)}">← ${esc(to.label)}</button>`;
+}
+
+/** wireBack attaches the back button, if the head rendered one. */
+function wireBack() {
+  const btn = $("#detailBack");
+  if (!btn) return;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const to = trail.pop();
+    if (to) to.open();
+  });
+}
+
+/** drill opens a panel from another one, recording how to come back. */
+function drill(label, reopen, open) {
+  trail.push({ label, open: reopen });
+  open();
+}
 
 /** row renders one label/value pair, or nothing when there is nothing to say. */
 function row(label, value, help) {
@@ -167,7 +202,7 @@ export function openDetail(f) {
         <code class="detail-title">${esc(f.image)}</code>
         <div class="sub">${esc(f.owner?.team || "unattributed")} · ${esc(f.owner?.class || "no class")}</div>
       </div>
-      <button id="detailClose" class="linkish" aria-label="Close details">close</button>
+      <div class="detail-actions">${backButton()}<button id="detailClose" class="linkish" aria-label="Close details">close</button></div>
     </div>
     <div class="detail-body">${sections(f)}</div>`;
   el.hidden = false;
@@ -175,6 +210,7 @@ export function openDetail(f) {
   writeDeepLink({ finding: f.image });
   restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
+  wireBack();
   /** @type {any} */ ($("#detailClose")).focus();
 }
 
@@ -190,6 +226,7 @@ function writeDeepLink(params) {
 
 export function closeDetail() {
   shown = null;
+  trail = [];
   writeDeepLink({});
   const el = $("#detail");
   el.hidden = true;
@@ -275,7 +312,8 @@ export function openCVEDetail(g) {
   const el = $("#detail");
   const rows = g.images.slice()
     .sort((a, b) => a.image.localeCompare(b.image))
-    .map((i) => `<tr>
+    .map((i) => `<tr class="openable" tabindex="0" data-image="${esc(i.image)}"
+        aria-label="Show details for ${esc(i.image)}">
       <td class="wrap"><code>${esc(i.image)}</code></td>
       <td>${i.team ? esc(i.team) : unknown("unattributed", "No ownership rule matched this workload.")}</td>
       <td>${i.fixed ? `<span class="act-direct">${esc(i.fixed)}</span>` : '<span class="muted">no fix</span>'}</td>
@@ -288,7 +326,7 @@ export function openCVEDetail(g) {
         <code class="detail-title">${esc(g.id)}</code>
         <div class="sub">${esc(g.severity)}${g.kev ? " · known exploited" : ""} · ${g.images.length} image${g.images.length === 1 ? "" : "s"}</div>
       </div>
-      <button id="detailClose" class="linkish" aria-label="Close details">close</button>
+      <div class="detail-actions">${backButton()}<button id="detailClose" class="linkish" aria-label="Close details">close</button></div>
     </div>
     <div class="detail-body">
       <section><h4>Assessment</h4><dl>
@@ -313,9 +351,11 @@ export function openCVEDetail(g) {
     </div>`;
   el.hidden = false;
   document.body.classList.add("detail-open");
+  wireDrillRows(el, g.id, () => openCVEDetail(g));
   writeDeepLink({ cve: g.id });
   restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
+  wireBack();
   /** @type {any} */ ($("#detailClose")).focus();
 }
 
@@ -371,7 +411,7 @@ export function openGroupDetail(g) {
         <code class="detail-title">${esc(g.repository)}</code>
         <div class="sub">${esc(g.owner?.team || "unattributed")} · ${g.findings.length} deployment${g.findings.length === 1 ? "" : "s"}</div>
       </div>
-      <button id="detailClose" class="linkish" aria-label="Close details">close</button>
+      <div class="detail-actions">${backButton()}<button id="detailClose" class="linkish" aria-label="Close details">close</button></div>
     </div>
     <div class="detail-body">
       <section><h4>The change</h4><dl>
@@ -416,25 +456,10 @@ export function openGroupDetail(g) {
   writeDeepLink({ service: g.repository, team: g.owner?.team || "" });
   restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
+  wireBack();
   // Drill from the work item to one deployment. The panel replaces itself rather than
   // stacking: two sheets deep is a place people get lost.
-  el.querySelectorAll("tbody tr.openable").forEach((tr) => {
-    const open = (e) => {
-      // Stop here. Opening the deployment replaces this panel's contents, which
-      // detaches this row — and a detached node is inside nothing, so the
-      // click-away handler saw the click as landing outside the panel and closed it.
-      if (e) e.stopPropagation();
-      const f = S.queueRows.find((x) => x.image === /** @type {any} */ (tr).dataset.image);
-      if (f) openDetail(f);
-    };
-    tr.addEventListener("click", open);
-    tr.addEventListener("keydown", (e) => {
-      const ke = /** @type {any} */ (e);
-      if (ke.key !== "Enter" && ke.key !== " ") return;
-      ke.preventDefault();
-      open(ke);
-    });
-  });
+  wireDrillRows(el, "the work item", () => openGroupDetail(g));
   /** @type {any} */ ($("#detailClose")).focus();
 }
 
@@ -483,4 +508,43 @@ export function openFromURL(groups, cveLookup, params = new URLSearchParams(loca
   }
   return `No queue item for ${service}${team ? ` owned by ${team}` : ""} in this assessment. ` +
     `It may already be fixed, or a filter is hiding it.`;
+}
+
+/**
+ * wireDrillRows makes a panel's table rows open the finding they name, recording the
+ * way back to the panel they were opened from.
+ *
+ * Shared by the work item's deployments and a CVE's affected images: both list images,
+ * and both should behave the same when clicked.
+ */
+function wireDrillRows(el, label, reopen) {
+  el.querySelectorAll("tbody tr.openable").forEach((tr) => {
+    const open = (e) => {
+      // Stop here. Opening the finding replaces this panel's contents, which detaches
+      // this row — and a detached node is inside nothing, so the click-away handler
+      // would see the click as landing outside the panel and close it.
+      if (e) e.stopPropagation();
+      const image = /** @type {any} */ (tr).dataset.image;
+      const f = S.queueRows.find((x) => x.image === image);
+      if (!f) {
+        // The image is in this CVE's scope but filtered out of the queue, so there is
+        // no finding loaded to show. Say so rather than doing nothing on a click.
+        const cell = tr.querySelector("td");
+        if (cell && !cell.querySelector(".unknown")) {
+          cell.insertAdjacentHTML("beforeend",
+            ' ' + unknown("(filtered out of the queue)",
+              "This image carries the CVE but a queue filter is hiding it, so there is no finding to open."));
+        }
+        return;
+      }
+      drill(label, reopen, () => openDetail(f));
+    };
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (e) => {
+      const ke = /** @type {any} */ (e);
+      if (ke.key !== "Enter" && ke.key !== " ") return;
+      ke.preventDefault();
+      open(ke);
+    });
+  });
 }

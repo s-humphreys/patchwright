@@ -90,6 +90,12 @@ type summaryView struct {
 	Exposed         int `json:"exposed"`
 	ExposureUnknown int `json:"exposure_unknown"`
 
+	// SourceFailures are the enrichments that could not run: exploit intel, CVE ages.
+	// The assessment is still here — losing an enrichment must not lose the queue — but
+	// the gap is stated rather than left to be inferred from cells that read "not
+	// checked" for no visible reason.
+	SourceFailures []sourceFailure `json:"source_failures,omitempty"`
+
 	// ExpiredSuppressions are suppress rules that have lapsed, so the work they were
 	// hiding is back in the queue. Reported because an unexplained jump in the queue
 	// reads as the estate getting worse rather than as a policy decision expiring.
@@ -111,6 +117,12 @@ type summaryView struct {
 	// said so. Empty when the provider states no reasons (the CSV export does
 	// not), which is not the same as there being no problem.
 	UnassessedReasons []reasonCount `json:"unassessed_reasons,omitempty"`
+}
+
+// sourceFailure is one enrichment that could not run, and why.
+type sourceFailure struct {
+	Stage string `json:"stage"`
+	Error string `json:"error"`
 }
 
 // ownerStats is a per-team triage row.

@@ -25,6 +25,16 @@ type Assessor interface {
 	Run(ctx context.Context) ([]model.Finding, error)
 }
 
+// FailureReporter is an Assessor that can say which enrichments could not run.
+//
+// Optional, and separate from Run's error, because these are the failures that did NOT
+// fail the assessment: exploit intel or CVE ages that could not be gathered. The
+// findings are still worth serving, and the gap is still worth stating — a missing
+// signal nobody can see looks exactly like a signal that found nothing.
+type FailureReporter interface {
+	Failures() []model.SourceFailure
+}
+
 // TicketIndex reports the open tickets covering each image repository. It is
 // optional: without Jira configured the server simply has nothing to say about
 // tickets, rather than failing or pretending there are none.
@@ -171,6 +181,12 @@ func (s *Server) Refresh(ctx context.Context) {
 		snap.views = buildViews(findings, s.includeSuppressed)
 		snap.summary = buildSummary(findings)
 		snap.summary.ExpiredSuppressions = s.expiredSuppressions()
+		if fr, ok := s.assessor.(FailureReporter); ok {
+			for _, f := range fr.Failures() {
+				snap.summary.SourceFailures = append(snap.summary.SourceFailures,
+					sourceFailure{Stage: f.Stage, Error: f.Error})
+			}
+		}
 		snap.byImage = indexByImage(snap.views)
 		// Tickets first: the owner rollup counts how much of each team's work is
 		// already tracked.

@@ -145,3 +145,23 @@ test('a stale link does not silently filter the queue to nothing', async () => {
   assert.equal(document.querySelector('#teamFilter').value, '', 'unknown team was applied');
   assert.equal(document.querySelector('#search').value, 'nats', 'free text should apply');
 });
+
+test('an enrichment that could not run is reported as a gap', () => {
+  // The failure this exists for: one 502 from a public feed, one request in a hundred,
+  // used to discard a completed scan of every image. Now the assessment survives — and
+  // must say what it could not gather, because the cells it would have filled read "?"
+  // with no visible cause.
+  const gaps = dataGaps({
+    provider_assessed: 800, provider_unassessed: 0, scanned: 800, exploit_checked: 0,
+    source_failures: [{ stage: "exploit", error: "public: epss: GET https://api.first.org/...: status 502" }],
+  });
+  const exploit = gaps.find((g) => /could be gathered/.test(g.headline));
+  assert.ok(exploit, JSON.stringify(gaps.map((g) => g.headline)));
+  assert.equal(exploit.severe, true, 'it gates whole priority tiers');
+  assert.match(exploit.detail, /not checked/);
+  assert.match(exploit.detail, /502|first\.org/, 'and names what the source said');
+  // And the generic "you have no exploit source" gap must not also appear: it would
+  // send somebody to add a flag they already have.
+  assert.equal(gaps.filter((g) => /exploit/i.test(g.headline)).length, 1,
+    JSON.stringify(gaps.map((g) => g.headline)));
+});
