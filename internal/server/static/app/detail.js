@@ -276,6 +276,23 @@ export function shownImage() {
   return shown ? shown.image : null;
 }
 
+// shownGroup reports the work item the panel is on, when it is showing one.
+//
+// Needed because a group panel also records an image - the work item's representative
+// tag - so shownImage() alone cannot tell the two kinds apart. A refresh that asks only
+// "which image" gets an answer for a service panel too, and reopens it as that single
+// image: the panel silently becomes a different, narrower thing under the reader.
+export function shownGroup() {
+  return shown && shown.group ? shown.group : null;
+}
+
+// groupByKey finds a work item by its stable key, for re-rendering across a refresh.
+// Keyed rather than matched by image because the representative tag can change between
+// runs while the work item is the same one.
+export function groupByKey(key) {
+  return (S.groupRows || []).find((g) => g.key === key) || null;
+}
+
 /** findingFor resolves a row element back to the finding it was rendered from. */
 function findingFor(el) {
   const tr = el.closest("tbody tr");
