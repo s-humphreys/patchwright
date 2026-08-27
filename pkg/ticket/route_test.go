@@ -134,7 +134,7 @@ func TestResolveKeepsTheImageKeyUnambiguous(t *testing.T) {
 func TestProjectsListsEveryTracker(t *testing.T) {
 	cfg := config.JiraConfig{Project: "OPS", Routes: []config.TicketRoute{
 		{Name: "sre", When: "true", Project: "SRE"},
-		{Name: "also-ops", When: "true"},           // inherits OPS
+		{Name: "also-ops", When: "true"},            // inherits OPS
 		{Name: "dup", When: "true", Project: "SRE"}, // same project again
 	}}
 	got := cfg.Projects()
