@@ -95,6 +95,37 @@ function vulnTable(f) {
 }
 
 /** sections builds the panel body. */
+// supportRow renders the maintenance status of the base line.
+//
+// Three outcomes, kept apart on purpose: maintained, not maintained, and not checked.
+// Collapsing the third into either of the others is how a queue ends up asserting
+// something nobody verified.
+function supportRow(u) {
+  const st = u && u.support;
+  if (!st || !st.known) {
+    return unknown("not checked",
+      "No support source ran, or this base image is not one it recognises. That is an absence of information, not a clean bill of health.");
+  }
+  if (st.supported) {
+    const until = st.eol ? ` until ${esc(st.eol)}` : "";
+    return `<span class="ok">yes</span> — ${esc(st.product)} ${esc(st.cycle)}, maintained${until}` +
+      (st.source ? ` <span class="sub">per ${esc(st.source)}</span>` : "");
+  }
+  const bits = [`<span class="badge badge-eol">eol</span> ${esc(st.product)} ${esc(st.cycle)} is no longer maintained`];
+  if (st.eol) bits.push(`support ended ${esc(st.eol)}`);
+  const moves = [];
+  if (st.recommended) moves.push(`move to <code>${esc(st.recommended)}</code> (maintained, already long-term supported)`);
+  if (st.nearest) moves.push(`smallest supported move <code>${esc(st.nearest)}</code>`);
+  if (st.newest) moves.push(`<span class="muted">newest line ${esc(st.newest)}, not recommended yet</span>`);
+  if (moves.length) bits.push(moves.join("; "));
+  if (!st.recommended) {
+    bits.push(unknown("no maintained line found",
+      "The source lists no maintained line for this product, so there is no target to name. The finding stands: nothing will fix this image in place."));
+  }
+  if (st.source) bits.push(`<span class="sub">per ${esc(st.source)}</span>`);
+  return bits.join(" — ");
+}
+
 function sections(f) {
   const u = f.upgrade;
   const tickets = ticketsFor(f);
@@ -137,6 +168,9 @@ function sections(f) {
     row("Fix path", `<span class="${esc(fixPath(f))}">${esc(fixPath(f))}</span>`),
     row("Upgrade", u ? upgradeCell(f) : unknown("none reported", "No upgrade information for this image.")),
     row("How it was compared", u?.comparison ? esc(u.comparison) : ""),
+    // Support status sits in the fix panel because it IS the fix answer here: on a dead
+    // line there is no version to move along, only a line to move off.
+    row("Base line supported", supportRow(u), "Whether the runtime or distribution this image is built on is still maintained. Not checked is not the same as supported."),
     row("Newest available", u?.newest
       ? `${esc(u.newest)} <span class="sub">${esc(upgradeStrategyWhy(u))}</span>` : ""),
     row("Upgrade policy", u?.ceiling
@@ -193,7 +227,53 @@ function sections(f) {
 }
 
 /** openDetail shows one finding. */
+// A refresh re-renders the open panel every 60 seconds so its figures do not go stale.
+// That is a repaint, not an opening, and three things must not be treated the same way:
+//
+//   - Focus. Each panel focuses its close button when it OPENS, which is right; doing it
+//     again on a timer steals focus from whatever the reader was doing, mid-tab or
+//     mid-typing, once a minute.
+//   - Scroll. Replacing innerHTML resets the scroll container, so somebody reading down a
+//     long CVE table is yanked back to the top. The panel stays open, which the old
+//     comment claimed was enough - it is not, if it silently loses their place.
+//   - restoreFocus. Overwriting it with whatever is focused at refresh time loses where
+//     focus should return on close, and can leave it pointing at a node the repaint
+//     destroyed.
+//
+// reopeningSame reports whether this call is a repaint of what is already shown. It must
+// be consulted BEFORE `shown` is reassigned.
+function reopeningSame(kind, id) {
+  if (!shown) return false;
+  switch (kind) {
+    case "finding": return !shown.group && !shown.cve && shown.image === id;
+    case "group":   return shown.group === id;
+    case "cve":     return shown.cve === id;
+    default:        return false;
+  }
+}
+
+// scrollOf reads where the reader had got to, so a repaint can put them back.
+function scrollOf(el) {
+  const body = el.querySelector(".detail-body");
+  return body ? body.scrollTop : 0;
+}
+
+// settle finishes a paint: on an opening it takes focus and records where to return it,
+// on a repaint it restores the reader's position and touches neither.
+function settle(el, repaint, scrollTop) {
+  if (repaint) {
+    const body = el.querySelector(".detail-body");
+    if (body) body.scrollTop = scrollTop;
+    return;
+  }
+  restoreFocus = document.activeElement;
+  const close = /** @type {any} */ ($("#detailClose"));
+  if (close && typeof close.focus === "function") close.focus();
+}
+
 export function openDetail(f) {
+  const repaint = reopeningSame("finding", f.image);
+  const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = f;
   const el = $("#detail");
   el.innerHTML = `
@@ -208,10 +288,9 @@ export function openDetail(f) {
   el.hidden = false;
   document.body.classList.add("detail-open");
   writeDeepLink({ finding: f.image });
-  restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   wireBack();
-  /** @type {any} */ ($("#detailClose")).focus();
+  settle(el, repaint, keepScroll);
 }
 
 /** writeDeepLink reflects the open panel into the address bar, so the view is a link
@@ -242,6 +321,23 @@ export function shownImage() {
   return shown ? shown.image : null;
 }
 
+// shownGroup reports the work item the panel is on, when it is showing one.
+//
+// Needed because a group panel also records an image - the work item's representative
+// tag - so shownImage() alone cannot tell the two kinds apart. A refresh that asks only
+// "which image" gets an answer for a service panel too, and reopens it as that single
+// image: the panel silently becomes a different, narrower thing under the reader.
+export function shownGroup() {
+  return shown && shown.group ? shown.group : null;
+}
+
+// groupByKey finds a work item by its stable key, for re-rendering across a refresh.
+// Keyed rather than matched by image because the representative tag can change between
+// runs while the work item is the same one.
+export function groupByKey(key) {
+  return (S.groupRows || []).find((g) => g.key === key) || null;
+}
+
 /** findingFor resolves a row element back to the finding it was rendered from. */
 function findingFor(el) {
   const tr = el.closest("tbody tr");
@@ -249,12 +345,17 @@ function findingFor(el) {
   return S.queueRows.find((x) => x.image === /** @type {any} */ (tr).dataset.image) || null;
 }
 
-/** groupFor resolves a queue row back to the work item it renders, when grouped. */
+// groupFor resolves a queue row back to the work item it renders, and only when the row
+// says it renders one.
+//
+// Keyed off the row's own data-group rather than looking its image up in S.groupRows:
+// both tables render an image, and the grouped rows linger in state after somebody
+// unticks "group by service", so a lookup by image opened the grouped panel for a row
+// that was showing a single deployment.
 function groupFor(el) {
-  const tr = el.closest("tbody tr");
-  if (!tr) return null;
-  const image = /** @type {any} */ (tr).dataset.image;
-  return (S.groupRows || []).find((g) => g.image === image) || null;
+  const tr = /** @type {any} */ (el.closest("tbody tr"));
+  if (!tr || !tr.dataset.group) return null;
+  return groupByKey(tr.dataset.group);
 }
 
 // initDetail wires opening from the queue and closing with Escape. Delegated, so it
@@ -308,6 +409,8 @@ export function initDetail() {
 
 /** openCVEDetail shows one CVE and every image carrying it. */
 export function openCVEDetail(g) {
+  const repaint = reopeningSame("cve", g.id);
+  const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = { image: null, cve: g.id };
   const el = $("#detail");
   const rows = g.images.slice()
@@ -353,10 +456,9 @@ export function openCVEDetail(g) {
   document.body.classList.add("detail-open");
   wireDrillRows(el, g.id, () => openCVEDetail(g));
   writeDeepLink({ cve: g.id });
-  restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   wireBack();
-  /** @type {any} */ ($("#detailClose")).focus();
+  settle(el, repaint, keepScroll);
 }
 
 /** shownCVE reports which CVE the panel is on, so a refresh can re-render it. */
@@ -388,6 +490,8 @@ export function initCVEDetail(lookup) {
 
 /** openGroupDetail shows one work item: the shared change, and every tag it covers. */
 export function openGroupDetail(g) {
+  const repaint = reopeningSame("group", g.key);
+  const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = { image: g.image, group: g.key };
   const el = $("#detail");
   const rows = g.findings.slice()
@@ -454,13 +558,12 @@ export function openGroupDetail(g) {
   // Team and service rather than a group key: those are what a ticket knows about
   // itself, and they stay valid when tags move on.
   writeDeepLink({ service: g.repository, team: g.owner?.team || "" });
-  restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   wireBack();
   // Drill from the work item to one deployment. The panel replaces itself rather than
   // stacking: two sheets deep is a place people get lost.
   wireDrillRows(el, "the work item", () => openGroupDetail(g));
-  /** @type {any} */ ($("#detailClose")).focus();
+  settle(el, repaint, keepScroll);
 }
 
 /**

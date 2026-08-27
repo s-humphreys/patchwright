@@ -47,12 +47,18 @@ export const SIGNAL_BADGES = {
                   help: "The scan provider never assessed this image, so its zero counts are absent data rather than a clean result." },
   suppressed:   { glyph: "\u2298", label: "suppressed", cls: "badge-other",
                   help: "A suppress rule matched, so this is out of the actionable queue." },
+  "end-of-life": { glyph: "\u2620", label: "eol", cls: "badge-eol",
+                  help: "The line this image is built on is no longer maintained, so no future fix will reach this tag. Today's CVE count is the lowest it will ever be, and the only remedy is moving off the line." },
 };
 
 // Ordered by how much each should change what somebody does next, so the badges read
 // left to right in that order regardless of the order the API returns them.
-export const SIGNAL_ORDER = ["exposed", "kev", "stale-fix", "in-flight", "unassessed", "suppressed"];
-export const SIGNAL_WEIGHT = { exposed: 32, kev: 16, "stale-fix": 8, "in-flight": 4, unassessed: 2, suppressed: 1 };
+// end-of-life sits above kev deliberately. A KEV is one exploited vulnerability that a
+// rebuild can close today; an end-of-life base is every vulnerability from here on with
+// no rebuild that closes any of them. Sorting it lower would bury the finding whose cost
+// compounds under the ones that do not.
+export const SIGNAL_ORDER = ["exposed", "end-of-life", "kev", "stale-fix", "in-flight", "unassessed", "suppressed"];
+export const SIGNAL_WEIGHT = { exposed: 64, "end-of-life": 32, kev: 16, "stale-fix": 8, "in-flight": 4, unassessed: 2, suppressed: 1 };
 
 export function signalsCell(f) {
   const set = new Set(f.signals || []);

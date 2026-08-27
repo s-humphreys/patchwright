@@ -163,6 +163,22 @@ type ownerStats struct {
 	// Always 0 when Jira is not configured, which is why the API reports whether it
 	// is: see the tickets field on findings.
 	Ticketed int `json:"ticketed"`
+
+	// Urgent, KnownExploited, Exposed and EndOfLife are the counts somebody asks for
+	// by name when they want to know which teams are carrying the sharp end rather
+	// than the most work.
+	//
+	// A row can hold hundreds of findings and none of these, or three findings and all
+	// of them; the totals above cannot tell those apart, and it is the second row that
+	// wants a conversation this week. Each is a count of findings, not of CVEs: what
+	// gets assigned, tracked and fixed is a finding.
+	Urgent         int `json:"urgent"`
+	KnownExploited int `json:"known_exploited"`
+	Exposed        int `json:"exposed"`
+	// EndOfLife counts findings whose base line is no longer maintained. Distinct from
+	// the rest because it does not improve on its own: every other count here can fall
+	// when somebody rebuilds, this one falls only when somebody migrates.
+	EndOfLife int `json:"end_of_life"`
 }
 
 // expiredRule is a lapsed suppression: which rule, and the date it lapsed on.
@@ -339,6 +355,19 @@ func buildOwnerStats(findings []model.Finding, tickets map[string][]ticketRef) [
 		}
 		if hasActionableUpgrade(f) {
 			st.Upgradable++
+		}
+		if f.Priority == model.PriorityUrgent {
+			st.Urgent++
+		}
+		for _, sig := range f.Signals() {
+			switch sig {
+			case model.SignalKnownExploit:
+				st.KnownExploited++
+			case model.SignalExposed:
+				st.Exposed++
+			case model.SignalEndOfLife:
+				st.EndOfLife++
+			}
 		}
 		if !f.ProviderAssessed() {
 			st.Unassessed++

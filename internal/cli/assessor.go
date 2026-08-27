@@ -14,6 +14,7 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/pipeline"
 	"github.com/s-humphreys/patchwright/pkg/provider"
+	"github.com/s-humphreys/patchwright/pkg/support"
 	"github.com/s-humphreys/patchwright/pkg/upgrade"
 )
 
@@ -32,6 +33,11 @@ type assessInputs struct {
 	ageSource      string
 	ageOptions     []string
 	remediation    bool
+	// supportSource names where maintenance windows come from ("endoflife" or empty
+	// for none). Empty means support status is not checked at all, and every finding
+	// says so rather than implying its base is maintained.
+	supportSource  string
+	supportOptions []string
 }
 
 // assessor is a built, reusable assessment: a provider, the live enrichers, and
@@ -97,6 +103,15 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		inspector := upgrade.NewCachingInspector(upgrade.NewRegistryInspector())
 		if len(cfg.Remediation.FirstPartyRegistries) > 0 {
 			base := upgrade.NewBaseResolver(cfg.Remediation, inspector, upgrade.NewTagLister())
+			// Support windows, when a source is configured. Without one, an image on a
+			// dead runtime is indistinguishable from one that is simply up to date.
+			if in.supportSource != "" {
+				src, err := newSupportSource(in.supportSource, in.supportOptions)
+				if err != nil {
+					return nil, err
+				}
+				base.Support = src
+			}
 			upgradeSources = append(upgradeSources, base)
 		}
 		reg := registry.New()
@@ -304,5 +319,27 @@ func newPullRequestSource(cfg config.InFlightConfig) (upgrade.PullRequestSource,
 		return upgrade.NewAzureDevOps(cfg)
 	default:
 		return nil, fmt.Errorf("unknown in-flight provider %q: supported providers are azuredevops", cfg.Provider)
+	}
+}
+
+// newSupportSource constructs the named support-window source.
+//
+// An unknown name is an error rather than a silent no-op: somebody who asked for support
+// checking and got none would read every end-of-life base as maintained, which is the
+// exact misreading this feature exists to remove.
+func newSupportSource(name string, options []string) (support.Source, error) {
+	opts := map[string]string{}
+	for _, kv := range options {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid --support-option %q, want key=value", kv)
+		}
+		opts[k] = v
+	}
+	switch strings.ToLower(name) {
+	case "endoflife", "endoflife.date":
+		return support.NewEndOfLife(opts["base-url"], nil), nil
+	default:
+		return nil, fmt.Errorf("unknown --support-source %q (supported: endoflife)", name)
 	}
 }

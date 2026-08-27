@@ -196,6 +196,8 @@ func newServeCmd() *cobra.Command {
 		"date CVEs from the scan provider's own first-seen times ("+joinAgeSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&in.ageOptions, "age-option", nil, "age source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&in.remediation, "remediation", false, "detect available upgrades for how images are deployed")
+	cmd.Flags().StringVar(&in.supportSource, "support-source", "", "check whether base image lines are still maintained using a source (endoflife)")
+	cmd.Flags().StringArrayVar(&in.supportOptions, "support-option", nil, "support source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&addr, "addr", ":8080", "address to serve the API on")
 	cmd.Flags().BoolVar(&metricsAuth, "metrics-require-auth", false,
 		"require the API token on /metrics too. Off by default: a scrape config needing a "+

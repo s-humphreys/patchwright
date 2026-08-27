@@ -351,12 +351,62 @@ type Upgrade struct {
 	// different things, and both are fixable once named.
 	Reason string
 
+	// Support is the maintenance status of the line this image is built on, when it
+	// was checked. Nil means it was not: no support source ran, or the base image is
+	// not one the source recognises. Nil MUST NOT be read as supported.
+	Support *Support
+	// OutOfTrack reports that Latest leaves the current major or minor line, because
+	// that line is no longer maintained and staying on it has no upgrade path at all.
+	//
+	// Kept distinct from an ordinary upgrade because the work is different in kind: a
+	// rebuild on a newer patch is a version bump, while crossing a runtime major is a
+	// migration somebody has to plan. A queue that presents them identically gets one
+	// of them wrong, and it is usually this one.
+	OutOfTrack bool
+
 	// Actionable reports whether the upgrade can be applied directly at this
 	// level. A newer image tag for a workload managed by a Helm chart or an
 	// operator is Available but NOT Actionable: the version is controlled
 	// elsewhere (bump the chart/operator instead). Managed records why.
 	Actionable bool
 	Managed    string // controller that owns the version ("helm", "operator"), when not actionable
+}
+
+// Support is what is known about whether an image's underlying line is still
+// maintained, and where a team could go instead.
+//
+// This exists because "no upgrade available" has two opposite meanings. On a maintained
+// line it means "you are current", which is good news. On a dead one it means "nothing
+// newer will ever be published", which is the worst news in the queue: every future CVE
+// on that image is permanent. Both render as an empty Fix column unless the difference
+// is carried explicitly, so it is carried here.
+type Support struct {
+	// Product is the software identified ("nodejs"), and Cycle the line it is on
+	// ("20"). Reported so a reader can check the claim rather than trust it.
+	Product string
+	Cycle   string
+	// EOL is when that line stops being maintained, as stated by the source. Empty
+	// when no date was given.
+	EOL string
+	// Supported is the verdict, and Known says whether there was one to give. Known
+	// false means the source had nothing to say about this line: the page must render
+	// that as unchecked, never as supported.
+	Supported bool
+	Known     bool
+	// Recommended is the newest line a team could adopt today: maintained, and
+	// already long-term supported where the product designates LTS at all. Nearest
+	// is the smallest supported move instead, so a ticket can offer both rather than
+	// deciding how much migration somebody can afford.
+	Recommended string
+	Nearest     string
+	// Newest is the newest line that exists, which is deliberately not always the
+	// recommendation. A runtime's newest major is often one nobody should adopt yet,
+	// and recommending it is how a tool earns the right to be ignored.
+	Newest string
+	// Source names who said so, for the same reason the rest of this struct exists:
+	// an unattributed claim about somebody's runtime being dead invites an argument
+	// rather than a fix.
+	Source string
 }
 
 // Finding is the output unit: one image, one owner, and the verdict. An image
@@ -506,6 +556,11 @@ const (
 	SignalStaleFix     = "stale-fix"
 	SignalUnassessed   = "unassessed"
 	SignalSuppressed   = "suppressed"
+	// SignalEndOfLife marks a finding whose base image sits on a line nobody
+	// maintains any more. It is a statement about the FUTURE, which no severity count
+	// captures: the CVEs on it today are the fewest it will ever have, because no
+	// further fix is coming to that tag.
+	SignalEndOfLife = "end-of-life"
 )
 
 // Signals lists what is notable about this finding, in a stable order.
@@ -535,6 +590,15 @@ func (f Finding) Signals() []string {
 	}
 	if f.Suppressed {
 		out = append(out, SignalSuppressed)
+	}
+	if f.Upgrade != nil && f.Upgrade.Support != nil {
+		st := f.Upgrade.Support
+		// Known AND unsupported. An unchecked line asserts nothing, and a signal is a
+		// positive statement: emitting one on missing data would let rules act on an
+		// absence.
+		if st.Known && !st.Supported {
+			out = append(out, SignalEndOfLife)
+		}
 	}
 	return out
 }

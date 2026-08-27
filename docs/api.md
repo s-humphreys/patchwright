@@ -16,7 +16,7 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `GET /` | Status page: coverage, per-class and per-team breakdown, the queue, ticket state |
 | `GET /api/v1/findings` | Findings, filterable by `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved` |
 | `GET /api/v1/finding?image=<ref>` | One image's finding |
-| `GET /api/v1/owners` | Per-team triage, including where the fix goes and how much is ticketed |
+| `GET /api/v1/owners` | Per-team triage: where the fix goes, how much is ticketed, and how much of it is the sharp end (`urgent`, `known_exploited`, `exposed`, `end_of_life`) |
 | `GET /api/v1/summary` | Fleet headline, coverage counts, and `unassessed_reasons` |
 | `GET /api/v1/config` | The ownership and policy rules as parsed at startup |
 | `POST /api/v1/assessments` | Trigger a refresh |
@@ -103,6 +103,40 @@ the ordering instead of only being readable.
 Every signal is a positive statement. The absence of one asserts nothing: no `exposed`
 covers both an internal workload and one whose reachability nobody reported, which is
 why `exposure` is a separate three-valued field (`public`, `internal`, `unknown`).
+
+## Who is carrying the sharp end
+
+`GET /api/v1/owners` answers "who has the most work". That is not the question a security
+reviewer asks, which is closer to "how many exploited or urgent findings has each team got
+in its name" — and the two come apart. A team with 300 findings and no KEV needs a
+different conversation from a team with three, two of them exploited and one on a runtime
+nobody maintains. The totals cannot tell those apart.
+
+So each owner row also carries, as counts of findings rather than of CVEs:
+
+| Field | Means |
+| --- | --- |
+| `urgent` | Policy rated it urgent |
+| `known_exploited` | Carries a CVE in CISA's KEV catalogue: confirmed exploitation, not a prediction |
+| `exposed` | On a workload something reported reachable from the internet |
+| `end_of_life` | Built on a line nobody maintains, so no future fix reaches it |
+
+Counts of findings, because a finding is what gets assigned, tracked and fixed; a CVE
+count would make one badly-scanned image outrank a team's whole estate.
+
+`end_of_life` is the odd one out and deliberately reported separately: every other count
+here falls when somebody rebuilds. That one falls only when somebody migrates, so a team
+with three of them has a quarter's work, not an afternoon's.
+
+Suppressed findings are excluded, as they are from every other number in these rows. A
+suppression is a decision that something is out of the queue, and quietly counting it in
+the urgent column would relitigate that decision in a dashboard.
+
+On the page these appear as columns in the breakdown, and each count is a link that
+applies the filters behind it and switches to the queue — the question after "how many" is
+always "which ones", and retyping a team name into a filter by hand is how a good number
+becomes a dead end. A zero is rendered as a dash rather than a link: offering to show
+nothing is worse than saying there is nothing.
 
 ## Aggregated endpoints
 

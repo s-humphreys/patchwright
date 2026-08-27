@@ -115,11 +115,18 @@
   .badge-inflight { color: var(--ok); }
   .badge-stale { color: var(--high); font-weight: 600; }
   .badge-unassessed { color: var(--muted); font-style: italic; }
+  /* End of life reads as urgent because the cost compounds: not one exploited CVE, but
+     every future CVE on an image nothing will rebuild. */
+  .badge-eol { color: var(--urgent); font-weight: 600; }
   /* Class rows are totals for the teams indented beneath them. */
   tr.rollup td { font-weight: 600; }
   td.indent { padding-left: 1.6rem; }
   tr.expandable { cursor: pointer; }
   tr.expandable:hover td, tr.expandable:focus-visible td { background: var(--hover); }
+  /* Team rows highlight on hover too. They are not expandable, but they are dense rows
+     of numbers read across, and without a hover the eye loses the line - which is the
+     one thing a per-team breakdown is for. */
+  #breakdown tbody tr:hover td { background: var(--hover); }
   tr.expandable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .caret { display: inline-block; width: 1rem; color: var(--muted); }
   .linkish {
@@ -156,8 +163,31 @@
   td.sev-high { color: var(--high); }
   .pct { color: var(--muted); font-size: 0.9em; }
   .ticket-active { color: var(--ok); font-size: 0.9em; }
-  .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+  /* Stacked rows rather than one wrapping line: the selects narrow the set, the
+     toggles change what counts as being in it, and a single flex line broke between
+     those groups at whatever width the window happened to be. */
+  .controls { display: flex; flex-direction: column; gap: 0.5rem;
               margin: 0.4rem 0 0.9rem; font-size: 0.85rem; color: var(--muted); }
+  .controls-row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+  .controls-row > input[type="search"] { flex: 1 1 18rem; }
+  .sel { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+  /* Toggles as pills, so a group of four reads as a set of switches rather than four
+     stray checkboxes, and so each has a hit area bigger than the box itself. */
+  .toggles { gap: 0.4rem; }
+  .toggle { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;
+            padding: 0.2rem 0.6rem; border: 1px solid var(--line); border-radius: 999px;
+            background: var(--card); user-select: none; white-space: nowrap; }
+  .toggle:hover { border-color: var(--muted); }
+  /* The checked state has to be visible without reading the box: at this size the tick
+     alone is the difference between a filtered queue and the whole estate. */
+  .toggle:has(input:checked) { color: var(--fg); border-color: var(--muted); }
+  .toggle input { accent-color: var(--fg); margin: 0; }
+  /* Pushed to the end of the toggle row so the count sits away from the controls and
+     reads as a result rather than another option. */
+  #queueCount { margin-left: auto; }
+  /* A breakdown count that is a way into the queue, not just a number to read. */
+  a.drill { text-decoration-color: var(--muted); cursor: pointer; }
+  a.drill:hover { text-decoration-color: var(--fg); color: var(--fg); }
   button { font: inherit; padding: 0.35rem 0.7rem; border-radius: 5px;
            border: 1px solid var(--line); background: var(--card); color: var(--fg);
            cursor: pointer; }

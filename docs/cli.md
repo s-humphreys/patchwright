@@ -34,6 +34,7 @@ patchwright assess -i export.csv -c config/ --all --show-suppressed
 | `--vuln-source`, `--vuln-option` | [Vulnerability scanning](scanning.md) |
 | `--exploit-source`, `--exploit-option` | EPSS + KEV enrichment |
 | `--age-source`, `--age-option` | Date CVEs from the provider's first-seen times |
+| `--support-source`, `--support-option` | Check whether each base image's line is still maintained. Without it, an end-of-life base is indistinguishable from an up-to-date one |
 | `--remediation` | [Upgrade detection](remediation.md) |
 | `--log-level`, `--log-format` | `debug`\|`info`\|`warn`\|`error`, `text`\|`json` |
 

@@ -1,9 +1,9 @@
 import { initialQuery, readURL } from './urlstate.js';
 import { initConfig } from './config.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
-import { initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, shownCVE, shownImage } from './detail.js';
+import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup, renderCVEs } from './cves.js';
-import { current as currentView, initTabs } from './tabs.js';
+import { current as currentView, initTabs, show } from './tabs.js';
 import { initPending, loadPending } from './pending.js';
 import { applyOwnerFilters, loadFindings, populateOwnerFilters } from './queue.js';
 import { S } from './state.js';
@@ -59,8 +59,17 @@ export async function loadAll() {
     if (currentView() === "cves") renderCVEs(S.queueRows);
     // Re-render an open panel against the new data rather than leaving it showing
     // figures from the previous run, or closing it under somebody mid-read.
+    //
+    // The KIND has to survive the refresh, not just the subject. A work item panel
+    // records a representative image as well as its key, so asking "which image is
+    // open" gets an answer for a service panel too and reopens it as that one image -
+    // the panel narrows itself under the reader a minute after they opened it.
+    const openGroup = shownGroup();
     const openImage = shownImage();
-    if (openImage) {
+    if (openGroup) {
+      const fresh = groupByKey(openGroup);
+      if (fresh) openGroupDetail(fresh);
+    } else if (openImage) {
       const fresh = S.queueRows.find((f) => f.image === openImage);
       if (fresh) openDetail(fresh);
     }
@@ -80,7 +89,13 @@ export async function loadAll() {
 // init wires every listener and starts the poll. Nothing runs at import time, so a
 // module can be imported by a test without a page to attach to.
 export function init() {
-  initTable();
+  // Drilling into a breakdown count lands on the queue with the filters applied: the
+  // question after "how many" is always "which ones", and the tab has to follow or the
+  // reader applies a filter to a table they cannot see.
+  initTable(() => {
+    show("queue");
+    applyOwnerFilters();
+  });
   initDetail();
   initCVEDetail(cveGroup);
   // Rendered on switch as well as on load: aggregating every CVE across the estate is

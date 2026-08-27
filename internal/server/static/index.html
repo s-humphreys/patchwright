@@ -35,17 +35,25 @@
 
 <h2>Queue</h2>
 <div class="controls">
-  <input type="search" id="search" placeholder="search image, team, namespace, ticket"
-         title="Case-insensitive substring match across the image reference, team, namespaces, the upgrade text and any ticket key.">
-  <label>class <select id="classFilter"><option value="">all</option></select></label>
-  <label>team <select id="teamFilter"><option value="">all</option></select></label>
-  <label>fix <select id="fixFilter"><option value="">all</option></select></label>
-  <label>signal <select id="signalFilter"><option value="">all</option></select></label>
-  <label title="Only findings with a version to move to: a direct image bump, or one applied via a chart or operator. Hides those already on their latest release and those whose versions could not be resolved."><input type="checkbox" id="onlyFixable"> has a fix</label>
-  <label title="Actionable is the policy verdict: this warrants action. It is not the same as having a version to move to, which is the Fix column - an image already on its latest release can still be actionable, and needs a decision rather than a bump."><input type="checkbox" id="onlyActionable" checked> actionable only</label>
-  <label><input type="checkbox" id="showSuppressed"> include suppressed</label>
-  <label title="One row per piece of work: a service and the base it rebuilds onto, covering every deployed tag. Uncheck to list every deployment separately, which is what you want when asking where something runs rather than what to do about it."><input type="checkbox" id="groupRows" checked> group by service</label>
-  <span id="queueCount"></span>
+  <!-- Two rows on purpose. Selects narrow the set; toggles change what counts as being
+       in it. Mixed together they wrapped mid-group, which read as one long unsorted
+       list of controls rather than two short decisions. -->
+  <div class="controls-row">
+    <input type="search" id="search" placeholder="search image, team, namespace, ticket"
+           title="Case-insensitive substring match across the image reference, team, namespaces, the upgrade text and any ticket key.">
+    <label class="sel">class <select id="classFilter"><option value="">all</option></select></label>
+    <label class="sel">team <select id="teamFilter"><option value="">all</option></select></label>
+    <label class="sel" title="Policy's verdict on how pressing each finding is. Ordered worst first, because the list is a scale and sorting it as text puts high above urgent.">urgency <select id="urgencyFilter"><option value="">all</option></select></label>
+    <label class="sel">signal <select id="signalFilter"><option value="">all</option></select></label>
+    <label class="sel">fix <select id="fixFilter"><option value="">all</option></select></label>
+  </div>
+  <div class="controls-row toggles">
+    <label class="toggle" title="Actionable is the policy verdict: this warrants action. It is not the same as having a version to move to, which is the Fix column - an image already on its latest release can still be actionable, and needs a decision rather than a bump."><input type="checkbox" id="onlyActionable" checked> actionable only</label>
+    <label class="toggle" title="Only findings with a version to move to: a direct image bump, or one applied via a chart or operator. Hides those already on their latest release and those whose versions could not be resolved."><input type="checkbox" id="onlyFixable"> has a fix</label>
+    <label class="toggle"><input type="checkbox" id="showSuppressed"> include suppressed</label>
+    <label class="toggle" title="One row per piece of work: a service and the base it rebuilds onto, covering every deployed tag. Uncheck to list every deployment separately, which is what you want when asking where something runs rather than what to do about it."><input type="checkbox" id="groupRows" checked> group by service</label>
+    <span id="queueCount"></span>
+  </div>
 </div>
 <div class="tabs" role="tablist">
   <button class="tab" id="tabQueue" role="tab" aria-selected="true" aria-controls="panelQueue">Queue</button>

@@ -160,6 +160,115 @@ Where policy recommends nothing at all but newer versions exist, the finding is
 `held_back` rather than `none`. "None" would say the image is up to date, which is a
 different thing.
 
+## When the line itself is dead
+
+Everything above assumes there is somewhere to go on the current line. Sometimes there is
+not, and that case is worth separating because it is the one a vulnerability queue reports
+most misleadingly.
+
+An image pinned to a runtime's end-of-life major sits on the last build of that tag
+forever. Nothing newer will be published to it, so a version comparison finds nothing and
+a digest comparison sees a digest that never moves. Both report "no upgrade available",
+which renders as an empty Fix column, which reads as nothing-to-do — on the one image in
+the queue whose CVE count only ever goes up, because no fix is coming to it at all.
+
+A real example. An image built on `docker.io/node:20-alpine`, four months after Node 20
+went end of life: 369 CVEs, 23 of them critical, 147 with a published vendor fix that will
+never reach the image, and a Fix column showing nothing.
+
+Turn support checking on and it says so instead:
+
+```sh
+patchwright assess -c config/ --remediation --support-source endoflife
+```
+
+```
+FIX  PRIORITY  IMAGE                      UPGRADE
+eol  urgent    …/nightwatch-orchestrator  end of life: move to nodejs 24
+```
+
+### Why not simply recommend the newest
+
+Because the newest major of a runtime is frequently one nobody should adopt yet, and a
+recommendation a team is right to ignore is worse than none: it spends the credibility the
+next one needs.
+
+When Node 20 died the registry held `22-alpine`, `24-alpine` and `26-alpine`. Node 26 was
+maintained, and its LTS promotion was still two months away — so the takeable answer was
+24, the newest line that is **both** maintained **and** already long-term supported.
+That is the recommendation, and it changes on its own as dates pass rather than when
+somebody remembers to edit a table.
+
+Three lines are reported, because they answer different questions:
+
+| | |
+|---|---|
+| **recommended** | newest maintained and already LTS. The default answer. |
+| **nearest** | smallest supported move. When the recommended jump is too far to plan this quarter, this is the one that stops the bleeding. |
+| **newest** | what exists, named but not recommended, so nobody has to go and check. |
+
+Products with no LTS designation at all — Alpine, Python, Go — are not held to the LTS
+test, or nothing would ever be adoptable.
+
+### What it will not do
+
+The recommended tag is **verified against the registry** before it is offered. If
+`24-alpine` upstream exists but this repository has no such tag, no upgrade is named: a
+fix that 404s is worse than an honest blank, and the end-of-life verdict still stands on
+its own.
+
+The suffix is preserved across the move, so `20-alpine` becomes `24-alpine` and never a
+bare `24`. Dropping it would swap the operating system underneath the application and call
+it an upgrade.
+
+An in-track upgrade still wins where one exists. On a line with newer patches, the safe
+rebuild is the better first move and a migration can follow; the out-of-track
+recommendation appears only when there is nothing left in track.
+
+### Not checked is not supported
+
+Support status has three states, and the third is the reason this is not a boolean:
+
+- **maintained**, with the date it ends
+- **not maintained**, with the date it ended
+- **not checked** — no support source ran, or the base image is not one the source
+  recognises
+
+"Not checked" renders as not checked. It is never rendered as supported, and never as
+end-of-life: an estate nobody has data for must not be escalated, and the images that most
+need the flag must not be quietly cleared.
+
+### Naming your own base images
+
+The built-in table covers the common upstream bases. A first-party base image is
+unrecognisable from its path, so declare what it is built from:
+
+```yaml
+remediation:
+  supportProducts:
+    example.azurecr.io/dotnet/aspnet/10: dotnet
+    example.azurecr.io/internal/base: ""      # suppress the check entirely
+```
+
+Names are [endoflife.date](https://endoflife.date) products. Matching is on trailing path
+segments, so a mirror prefix does not defeat it, and an override outranks the built-in
+table.
+
+### Using it in policy
+
+The verdict reaches rules as the `end-of-life` signal and the `end_of_life` variable, so
+what to do about it stays a policy decision:
+
+```yaml
+actionable:
+  - name: end-of-life-base
+    when: "end_of_life && counts.critical > 0"
+    priority: urgent
+```
+
+`end_of_life` is false for an unchecked base as well as a maintained one. A rule that
+needs to tell those apart should read `signals`, where absence asserts nothing.
+
 ## Remediation already in flight
 
 An upgrade somebody has already opened a pull request for is not work waiting on a

@@ -58,9 +58,14 @@ func FindingEnv() (*cel.Env, error) {
 		// nobody has assessed look entirely internal.
 		cel.Variable("exposure", cel.StringType),
 		// signals are the notable facts about a finding: exposed, kev, in-flight,
-		// stale-fix, unassessed, suppressed. Each is a positive statement, so absence
-		// asserts nothing.
+		// stale-fix, unassessed, suppressed, end-of-life. Each is a positive
+		// statement, so absence asserts nothing.
 		cel.Variable("signals", cel.ListType(cel.StringType)),
+		// end_of_life is true when the base image's line is no longer maintained, so
+		// no future fix will reach this tag at all. False also covers "not checked",
+		// which is why the signal list carries the distinction and rules that care
+		// about coverage should read `signals`.
+		cel.Variable("end_of_life", cel.BoolType),
 	)
 }
 
@@ -218,5 +223,19 @@ func findingActivation(f model.Finding) map[string]any {
 		"upgrade_available": f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable,
 		"exposure":          f.Exposure(),
 		"signals":           f.Signals(),
+		"end_of_life":       endOfLife(f),
 	}
+}
+
+// endOfLife reports a finding on an unmaintained base line.
+//
+// Requires a KNOWN verdict, so an unchecked base is false rather than true. Both of the
+// wrong answers here are bad in different ways: treating unchecked as end-of-life would
+// escalate an estate nobody has data for, and treating it as supported would silently
+// clear the images that most need the flag.
+func endOfLife(f model.Finding) bool {
+	if f.Upgrade == nil || f.Upgrade.Support == nil {
+		return false
+	}
+	return f.Upgrade.Support.Known && !f.Upgrade.Support.Supported
 }

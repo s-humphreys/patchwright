@@ -95,6 +95,23 @@ type RemediationConfig struct {
 	// Base tunes how a first-party image's base is found.
 	Base BaseImageConfig `yaml:"base"`
 
+	// SupportProducts maps a base image repository to the software whose support
+	// window governs it, overriding and extending the built-in table.
+	//
+	// Needed because a first-party base image is unrecognisable from its path: an
+	// organisation's own "example.azurecr.io/dotnet/aspnet/10" is a .NET support cycle,
+	// and nothing outside the organisation knows that. Matching is on trailing path
+	// segments, so a mirror prefix does not defeat it.
+	//
+	// Names are endoflife.date products (nodejs, python, dotnet, alpine). An entry
+	// mapping to the empty string suppresses the check for that repository, for a base
+	// whose support is genuinely nobody else's business.
+	//
+	//   supportProducts:
+	//     example.azurecr.io/dotnet/aspnet/10: dotnet
+	//     example.azurecr.io/internal/base: ""
+	SupportProducts map[string]string `yaml:"supportProducts"`
+
 	// Upgrade decides HOW FAR an upgrade should move, which is a different question
 	// from whether one exists.
 	Upgrade UpgradeConfig `yaml:"upgrade"`
