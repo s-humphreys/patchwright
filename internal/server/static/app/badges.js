@@ -1,4 +1,4 @@
-import { maxEPSS } from './cells.js';
+import { epssPercent, maxEPSS } from './cells.js';
 import { esc } from './util.js';
 
 export const KIND_BADGES = {
@@ -102,7 +102,7 @@ export function signalsSort(f) {
 
 // Provider counts are only meaningful if the provider actually assessed the image.
 export const count = (f, sev) => (f.provider_assessed ? (f.counts?.[sev] ?? 0) : "?");
-export const epss = (f) => (f.exploit_checked ? maxEPSS(f).toFixed(2) : "-");
+export const epss = (f) => (f.exploit_checked ? epssPercent(maxEPSS(f)) : "-");
 
 // The scan provider's own composite ranking, highest across the image's CVEs.
 // Deliberately its own column rather than folded into EPSS: Rapid7's scale runs to

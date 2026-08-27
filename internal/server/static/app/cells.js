@@ -230,6 +230,25 @@ export function ticketSort(f) {
 export const isScanned = (f) => f.scanned || (f.vulns || []).length > 0;
 export const fixcrit = (f) => (isScanned(f) ? f.fixable_critical ?? 0 : "-");
 export const maxEPSS = (f) => (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0);
+
+// epssPercent renders an exploit-prediction score as what it actually is: a probability.
+//
+// EPSS is published as 0-1, and shown that way it reads as a rating out of one - "0.61"
+// invites being compared to a CVSS of 6.1, which is a different scale measuring a
+// different thing. As a percentage it says the sentence it means: a 61% chance of
+// exploitation activity in the next thirty days.
+//
+// The small end matters more than the large one here, because most scores live there. A
+// naive round sends everything below half a percent to "0%", which reads as "no chance"
+// on a CVE that has some, so anything non-zero keeps a floor of "<0.1%".
+export function epssPercent(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+  if (v <= 0) return "0%";
+  const pct = v * 100;
+  if (pct < 0.1) return "<0.1%";
+  if (pct < 10) return `${pct.toFixed(1)}%`;
+  return `${Math.round(pct)}%`;
+}
 export const priorityText = (f) => (f.suppressed ? "supp" : f.priority || "-");
 export const priorityClass = (f) => {
   const p = priorityText(f);

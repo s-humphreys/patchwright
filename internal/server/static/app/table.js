@@ -106,14 +106,18 @@ export function renderTable(id, columns, rows) {
 /** @type {any[]} */
 export const BREAKDOWN_COLUMNS = [
   { label: "Class / team", get: (r) => breakdownLabel(r), cls: (r) => (r.team ? "indent" : ""),
-    help: "Owner class, with its teams beneath. Classes with more than one team expand. Percentages are of that row's own findings unless stated." },
-  { label: "Findings", num: true, get: (r) => `${r.total} ${pct(r.total, r.estate)}`,
-    help: "Findings owned, and the share of the whole estate they represent." },
+    help: "Owner class, with its teams beneath. Classes with more than one team expand. Percentages are of that row's own findings, except Findings and KEV, which are shares of the whole estate and say so." },
+  { label: "Findings", num: true,
+    // The actionable count rides along rather than having a column of its own. It is
+    // near-identical to the findings count on most rows, which is why it read as
+    // filler - but it is the denominator of four columns to the right, and a share
+    // whose denominator is not on screen is the thing that produced "104%".
+    get: (r) => `${r.total} ${pct(r.total, r.estate)}` +
+      `<div class="sub">${r.actionable} actionable</div>`,
+    help: "Findings owned, and the share of the whole estate they represent. The second line is how many policy marked for action, which is the denominator for Direct, Managed, Fixable and Ticketed." },
   { label: "Assessed", num: true, get: (r) => countPct(r.total - r.unassessed, r.total),
     help: "Findings the scan provider actually assessed. A low share means the rest of this row's numbers describe a small sample." },
   { severitySlot: true },
-  { label: "Actionable", num: true, get: (r) => countPct(r.actionable, r.total),
-    help: "Findings policy marked for action, as a share of this row's findings." },
   // Asked for by name: "how many kevs or urgent bits have different teams got". The
   // totals above answer "who has the most work"; these answer "who is carrying the
   // sharp end", and a row can be quiet on one and loud on the other.
@@ -123,8 +127,17 @@ export const BREAKDOWN_COLUMNS = [
   // how a good number becomes a dead end.
   { label: "Urgent", num: true, get: (r) => drilldown(r, r.urgent, { urgency: "urgent" }),
     help: "Findings policy rated urgent. Click for the list." },
-  { label: "KEV", num: true, get: (r) => drilldown(r, r.kev, { signal: "kev" }),
-    help: "Findings carrying a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation, not a prediction. Click for the list." },
+  { label: "KEV", num: true,
+    // Share of every KEV finding in the estate, NOT of this row. Deliberately a
+    // different denominator from its neighbours, because the question is "who is
+    // carrying the exploited work" and a row's own percentage cannot answer it: three
+    // findings, all exploited, is 100% of a tiny row and might be 10% of the estate's
+    // problem. The suffix says which it is, since an unlabelled percentage next to a
+    // row-relative one would be read as the same kind of number.
+    get: (r) => drilldown(r, r.kev, { signal: "kev" }) +
+      (r.kev ? ` <span class="pct" title="Share of every KEV finding in the estate">${
+        r.estateKEV ? Math.round((r.kev / r.estateKEV) * 100) : 0}% of all</span>` : ""),
+    help: "Findings carrying a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation, not a prediction. The percentage is of every KEV finding in the estate, not of this row, so it answers who carries the exploited work. Click for the list." },
   { label: "Exposed", num: true, get: (r) => drilldown(r, r.exposed, { signal: "exposed" }),
     help: "Findings on workloads reported reachable from the internet. Click for the list." },
   { label: "EOL", num: true, get: (r) => drilldown(r, r.eol, { signal: "end-of-life" }),
@@ -184,6 +197,10 @@ export function breakdownColumns() {
 export function renderBreakdown(owners) {
   const rows = [];
   const estate = (owners || []).reduce((n, o) => n + o.total, 0);
+  // The KEV column's denominator. Summed here rather than taken from the summary so the
+  // column is a share of the rows actually on screen: a percentage of a total the table
+  // does not contain would not add up when somebody checks it, and somebody will.
+  const estateKEV = (owners || []).reduce((n, o) => n + (o.known_exploited || 0), 0);
 
   // Group by class, then roll the class up from its teams so the totals cannot
   // disagree with the rows beneath them.
@@ -201,7 +218,7 @@ export function renderBreakdown(owners) {
 
   for (const [cls, teams] of [...byClass].sort((a, b) => sum(b[1], "actionable") - sum(a[1], "actionable"))) {
     rows.push({
-      label: esc(cls), key: cls, estate, team: false,
+      label: esc(cls), key: cls, estate, estateKEV, team: false,
       cves: sumCounts(teams), cvesFrom: sum(teams, "cves_from"),
       // Rows are only worth expanding when they say something the rollup does
       // not, so a class with a single team stays a leaf: the team row would be
@@ -220,7 +237,7 @@ export function renderBreakdown(owners) {
     if (teams.length < 2 || !expandedClasses.has(cls)) continue;
     for (const o of [...teams].sort((a, b) => b.actionable - a.actionable)) {
       rows.push({
-        label: esc(o.team || "(unattributed)"), key: cls, estate, team: true,
+        label: esc(o.team || "(unattributed)"), key: cls, estate, estateKEV, team: true,
         cves: o.cves, cvesFrom: o.cves_from,
         total: o.total, unassessed: o.unassessed, actionable: o.actionable,
         direct: o.direct, managed: o.managed, fixable: o.fixable, ticketed: o.ticketed,

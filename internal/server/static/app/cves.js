@@ -1,5 +1,5 @@
 import { SIGNAL_BADGES, badge } from './badges.js';
-import { fixPath } from './cells.js';
+import { epssPercent, fixPath } from './cells.js';
 import { S } from './state.js';
 import { renderTable } from './table.js';
 import { $, UNKNOWN, esc } from './util.js';
@@ -80,7 +80,7 @@ export const CVE_COLUMNS = [
     help: "The worst severity reported for this CVE across the images carrying it. The same CVE can be rated differently by distro." },
   { label: "CVSS", num: true, get: (g) => (g.cvss ? g.cvss.toFixed(1) : "-"),
     sort: (g) => g.cvss || UNKNOWN, help: "Highest CVSS reported for this CVE." },
-  { label: "EPSS", num: true, get: (g) => (g.epss ? g.epss.toFixed(2) : "-"),
+  { label: "EPSS", num: true, get: (g) => (g.epss ? epssPercent(g.epss) : "-"),
     sort: (g) => g.epss || UNKNOWN,
     help: "Probability of exploitation in the next 30 days. \"-\" means no exploit source ran, not a low score." },
   { label: "Images", num: true, get: (g) => String(g.images.length),
