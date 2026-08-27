@@ -303,6 +303,11 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		Reason: "could not list tags", Comparison: "version",
 		Newest: "3.14.7", Strategy: "patch", Ceiling: "3.12",
 		CeilingReason: "dependencies are not 3.14 ready", CeilingExpired: true, HeldBack: true,
+		Rule: "docker.io/python", OutOfTrack: true,
+		Support: &model.Support{
+			Product: "nodejs", Cycle: "20", EOL: "2026-04-30", Known: true, Supported: true,
+			Recommended: "24", Nearest: "22", Newest: "26", Source: "endoflife.date",
+		},
 	}
 	v := ToFindingView(model.Finding{Upgrade: &u}).Upgrade
 	if v == nil {

@@ -161,6 +161,28 @@ type UpgradeRule struct {
 	// Reason is why the ceiling exists, carried into the report so the person who
 	// reads it does not have to ask.
 	Reason string `yaml:"reason"`
+
+	// When narrows the rule to the workloads it is actually about, as a CEL
+	// expression over the FIRST-PARTY image and where it runs. Empty means the rule
+	// applies wherever its Name matches, which is the old behaviour.
+	//
+	// Needed because a constraint is almost never a property of a base image. "Our
+	// dependency tree is not ready for Python 3.14" is true of one service, and a
+	// rule keyed only on docker.io/python holds back every other service on that
+	// base - and then reports them as considered recommendations, so nobody notices
+	// they were never asked.
+	//
+	//   rules:
+	//     - name: docker.io/python
+	//       when: "owner['team'] == 'data-science'"
+	//       strategy: patch
+	//       ceiling: "3.12"
+	//
+	// Available: image (registry, repository, tag, ref, name), base (name, current),
+	// owner (class, team, rule), dimensions and labels (each a list of the distinct
+	// values seen across this image's deployments, so a rule can name a namespace or
+	// an account without caring which deployment it came from).
+	When string `yaml:"when"`
 }
 
 // strategies are the accepted distances.
@@ -177,6 +199,17 @@ func (u UpgradeConfig) EffectiveStrategy() string {
 // For returns the strategy and ceiling to apply to an image name. An expired ceiling
 // is not applied and is reported as expired, so a lapsed constraint surfaces as a
 // decision to revisit rather than quietly holding an estate back for ever.
+// HasScopes reports whether any rule narrows itself with `when`, so the common
+// unscoped case pays nothing for the machinery.
+func (u UpgradeConfig) HasScopes() bool {
+	for _, r := range u.Rules {
+		if r.When != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (u UpgradeConfig) For(name string) (strategy, ceiling, reason string, expired bool) {
 	for _, r := range u.Rules {
 		if !matchesName(r.Name, name) {
@@ -214,6 +247,15 @@ func (r UpgradeRule) Expired() bool {
 
 // matchesName compares an image name against a rule pattern, supporting a single
 // trailing "*". Case-insensitive: registries are.
+// MatchesImageName reports whether an image name matches a rule pattern, ignoring the
+// several spellings one image can have. Exported for the upgrade rules, which do their
+// own matching so a rule's scope can be evaluated alongside its name.
+func MatchesImageName(pattern, name string) bool { return matchesName(pattern, name) }
+
+// ValidStrategy reports whether a strategy name is one this tool implements. Exported so
+// a caller can fall back to the default rather than silently applying an unknown one.
+func ValidStrategy(s string) bool { return strategies[s] }
+
 func matchesName(pattern, name string) bool {
 	pattern, name = canonicalImageName(pattern), canonicalImageName(name)
 	if pattern == "" || name == "" {

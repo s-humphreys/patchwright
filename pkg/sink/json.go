@@ -118,6 +118,18 @@ type UpgradeView struct {
 	Ceiling        string `json:"ceiling,omitempty"`
 	CeilingReason  string `json:"ceiling_reason,omitempty"`
 	CeilingExpired bool   `json:"ceiling_expired,omitempty"`
+	// Rule names the upgrade rule that decided this, when one did. A rule can now be
+	// scoped to particular services, so "which rule applied to me" stops being
+	// derivable from the config alone and has to be reported.
+	Rule string `json:"rule,omitempty"`
+	// OutOfTrack marks a move that leaves the current major or minor line because that
+	// line is no longer maintained. A migration rather than a bump, and the difference
+	// is the work somebody has to plan.
+	OutOfTrack bool `json:"out_of_track,omitempty"`
+	// Support is what is known about whether the base image's line is still
+	// maintained. Absent means it was not checked, which is NOT the same as supported:
+	// consumers must render the absence as unchecked.
+	Support *SupportView `json:"support,omitempty"`
 	// HeldBack is true when newer versions exist and policy recommends none of them.
 	// Without it, "no upgrade available" and "held back deliberately" look identical.
 	HeldBack bool `json:"held_back,omitempty"`
@@ -261,6 +273,9 @@ func ToFindingView(f model.Finding) FindingView {
 			Ceiling:        f.Upgrade.Ceiling,
 			CeilingReason:  f.Upgrade.CeilingReason,
 			CeilingExpired: f.Upgrade.CeilingExpired,
+			Rule:           f.Upgrade.Rule,
+			OutOfTrack:     f.Upgrade.OutOfTrack,
+			Support:        toSupportView(f.Upgrade.Support),
 			HeldBack:       f.Upgrade.HeldBack,
 			Comparison:     f.Upgrade.Comparison,
 			Actionable:     f.Upgrade.Actionable,
@@ -324,4 +339,41 @@ func firstSeen(v model.Vulnerability) *time.Time {
 	}
 	t := v.FirstSeen
 	return &t
+}
+
+// SupportView is the maintenance status of the line an image is built on.
+//
+// A pointer on UpgradeView rather than flags inline, so "not checked" is the absence of
+// the object rather than a set of zero values that read as a clean bill of health.
+type SupportView struct {
+	Product string `json:"product"`
+	Cycle   string `json:"cycle"`
+	// EOL is when maintenance ends or ended, when a date was given.
+	EOL string `json:"eol,omitempty"`
+	// Supported is the verdict; Known says whether there was one to give. Known false
+	// means the source had nothing to say about this line, and a consumer must render
+	// that as unchecked rather than as supported.
+	Supported bool `json:"supported"`
+	Known     bool `json:"known"`
+	// Recommended is the newest line adoptable today: maintained, and already
+	// long-term supported where the product designates LTS. Nearest is the smallest
+	// supported move, Newest what exists but is not recommended yet.
+	Recommended string `json:"recommended,omitempty"`
+	Nearest     string `json:"nearest,omitempty"`
+	Newest      string `json:"newest,omitempty"`
+	// Source attributes the claim, because an unattributed statement that somebody's
+	// runtime is dead invites an argument rather than a rebuild.
+	Source string `json:"source,omitempty"`
+}
+
+func toSupportView(s *model.Support) *SupportView {
+	if s == nil {
+		return nil
+	}
+	return &SupportView{
+		Product: s.Product, Cycle: s.Cycle, EOL: s.EOL,
+		Supported: s.Supported, Known: s.Known,
+		Recommended: s.Recommended, Nearest: s.Nearest, Newest: s.Newest,
+		Source: s.Source,
+	}
 }

@@ -739,6 +739,43 @@ components:
         team: { type: string }
         rule: { type: string, description: The ownership rule that matched. }
 
+    Support:
+      type: object
+      required: [product, cycle, supported, known]
+      description: |
+        Whether the line an image is built on is still maintained. ABSENT means it was not
+        checked - no support source ran, or the base image is not one the source
+        recognises - which is not the same as supported and must not be rendered as such.
+      properties:
+        product: { type: string, description: "endoflife.date product, e.g. nodejs" }
+        cycle: { type: string, description: "The line this image is on, e.g. 20" }
+        eol:
+          type: string
+          description: When maintenance ends or ended, when a date was given.
+        supported:
+          type: boolean
+          description: The verdict, meaningful only when `known` is true.
+        known:
+          type: boolean
+          description: |
+            Whether the source had a verdict to give. False means it did not: render that
+            as unchecked, never as supported.
+        recommended:
+          type: string
+          description: |
+            The newest line adoptable today: maintained, and already long-term supported
+            where the product designates LTS at all. Deliberately not the newest line
+            that exists, which is frequently one nobody should adopt yet.
+        nearest:
+          type: string
+          description: The smallest supported move, for when the recommendation is too far to plan.
+        newest:
+          type: string
+          description: The newest line that exists, named but not recommended.
+        source:
+          type: string
+          description: Who said so. An unattributed claim invites an argument rather than a rebuild.
+
     Upgrade:
       type: object
       required: [kind, current, available, resolved, actionable]
@@ -784,6 +821,21 @@ components:
           description: |
             Newer versions exist and policy recommends none of them. Distinct from
             having no upgrade at all, which is what an absent upgrade would imply.
+        rule:
+          type: string
+          description: |
+            The upgrade rule that decided this, when one did. Rules can be scoped to
+            particular services, so "why am I held here" is no longer answerable from
+            the config alone - and a restrained recommendation would otherwise be
+            indistinguishable from an exhausted one.
+        out_of_track:
+          type: boolean
+          description: |
+            The recommendation leaves the current major or minor line, because that line
+            is no longer maintained and staying on it has no upgrade path at all. A
+            migration rather than a bump, which is a different kind of work.
+        support:
+          $ref: "#/components/schemas/Support"
         comparison:
           type: string
           enum: [version, digest]

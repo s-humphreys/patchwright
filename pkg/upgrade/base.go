@@ -61,6 +61,28 @@ type BaseResolver struct {
 	// Now is the day support windows are judged against, injectable so a test can
 	// assert on a fixed date rather than on whatever today happens to be.
 	Now func() time.Time
+
+	// rules are the upgrade rules with their scopes compiled, built once per run.
+	rules     *ruleSet
+	rulesOnce sync.Once
+	rulesErr  error
+}
+
+// Validate compiles the rules now, so a broken scope is a startup failure rather than a
+// failed assessment twenty minutes in. Ownership and policy rules behave the same way:
+// a config error should surface when the config is read.
+func (r *BaseResolver) Validate() error { return r.prepare() }
+
+// prepare compiles the upgrade rules' scopes.
+//
+// A scope that does not compile FAILS THE RUN rather than becoming a rule that never
+// matches. An inert rule would report the unconstrained answer as though somebody had
+// chosen it, which is the failure this whole mechanism exists to prevent.
+func (r *BaseResolver) prepare() error {
+	r.rulesOnce.Do(func() {
+		r.rules, r.rulesErr = newRuleSet(r.Cfg.Upgrade)
+	})
+	return r.rulesErr
 }
 
 // now returns the day to judge support windows against.
@@ -84,6 +106,9 @@ func NewBaseResolver(cfg config.RemediationConfig, inspector ImageInspector, lis
 // Upgrades reports, per first-party image, whether its base image has a newer
 // version. Third-party images are left to the image-tag source.
 func (r *BaseResolver) Upgrades(ctx context.Context, images []model.AssessedImage) (map[string]model.Upgrade, error) {
+	if err := r.prepare(); err != nil {
+		return nil, err
+	}
 	out := map[string]model.Upgrade{}
 	if len(r.Cfg.FirstPartyRegistries) == 0 {
 		// Nothing is first-party, so there is no base question to ask. Not an error:
@@ -104,6 +129,15 @@ func (r *BaseResolver) Upgrades(ctx context.Context, images []model.AssessedImag
 		return out, nil
 	}
 
+	// One activation per first-party image, so a rule can be scoped to the service it
+	// is actually about rather than to every image sharing a base.
+	acts := make(map[string]map[string]any, len(todo))
+	for i := range images {
+		if r.Cfg.IsFirstParty(images[i].Image.Registry) {
+			acts[images[i].Image.NameTag()] = imageActivation(images[i])
+		}
+	}
+
 	c := &baseCache{answers: map[string]*baseAnswer{}}
 	var mu sync.Mutex
 	sem := make(chan struct{}, r.concurrency())
@@ -119,7 +153,7 @@ func (r *BaseResolver) Upgrades(ctx context.Context, images []model.AssessedImag
 		go func(ref string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			up, err := r.answer(ctx, ref, c)
+			up, err := r.answer(ctx, ref, c, acts)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -157,8 +191,8 @@ func (r *BaseResolver) concurrency() int {
 }
 
 // answer resolves one image, sharing work with concurrent callers.
-func (r *BaseResolver) answer(ctx context.Context, ref string, c *baseCache) (model.Upgrade, error) {
-	ans, err := r.resolve(ctx, ref, c, 0)
+func (r *BaseResolver) answer(ctx context.Context, ref string, c *baseCache, acts map[string]map[string]any) (model.Upgrade, error) {
+	ans, err := r.resolve(ctx, ref, c, 0, acts)
 	if err != nil {
 		return model.Upgrade{}, err
 	}
@@ -196,7 +230,7 @@ type baseAnswer struct {
 // The first outdated link is the actionable one: if an application sits on a base
 // that is itself behind, the application's move is to the newest base it can use, and
 // the base's own staleness belongs to whoever builds it.
-func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache, depth int) (*baseAnswer, error) {
+func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache, depth int, acts map[string]map[string]any) (*baseAnswer, error) {
 	if ans, ok := cache.get(ref); ok {
 		return ans, nil
 	}
@@ -222,7 +256,15 @@ func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache
 	}
 
 	base := model.ParseImageRef(baseRef)
-	up, err := r.baseUpgrade(ctx, base, firstLabel(labels, r.Cfg.Base.EffectiveDigestLabels()))
+	act, known := acts[ref]
+	if !known {
+		// A base image resolved as a link in somebody else's chain: no scoped rule
+		// should attach a constraint written about a service to it.
+		act = emptyActivation(base)
+	} else {
+		act = withBase(act, base)
+	}
+	up, err := r.baseUpgrade(ctx, base, firstLabel(labels, r.Cfg.Base.EffectiveDigestLabels()), act)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +279,7 @@ func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache
 	// The base is current. If it is itself first-party, the chain continues: being on
 	// the newest available base is not the same as that base being up to date.
 	if r.Cfg.IsFirstParty(base.Registry) {
-		deeper, derr := r.resolve(ctx, base.NameTag(), cache, depth+1)
+		deeper, derr := r.resolve(ctx, base.NameTag(), cache, depth+1, acts)
 		if derr == nil && deeper.upgrade.Available {
 			// Reported against this image, but naming the link that is actually
 			// behind, so the ticket lands on whoever can move it.
@@ -253,7 +295,7 @@ func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache
 }
 
 // baseUpgrade decides whether a base reference has a newer version.
-func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtDigest string) (model.Upgrade, error) {
+func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtDigest string, act map[string]any) (model.Upgrade, error) {
 	up := model.Upgrade{
 		Kind: "base",
 		// Registry included: a bare "dotnet/aspnet" is ambiguous between an internal
@@ -284,9 +326,10 @@ func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtD
 	// Two answers: how far policy says to move, and how far it is possible to move.
 	// Reporting only the first hides a decision; reporting only the second asks for
 	// work the team has already said it cannot take.
-	strategy, ceiling, reason, expired := r.Cfg.Upgrade.For(up.Name)
-	up.Strategy, up.Ceiling, up.CeilingReason, up.CeilingExpired = strategy, ceiling, reason, expired
-	recommended := newestWithin(current, tags, strategy, ceiling)
+	d := r.rules.forImage(up.Name, act)
+	up.Strategy, up.Ceiling, up.CeilingReason, up.CeilingExpired = d.Strategy, d.Ceiling, d.Reason, d.Expired
+	up.Rule = d.Rule
+	recommended := newestWithin(current, tags, d.Strategy, d.Ceiling)
 	newest := newestWithin(current, tags, "latest", "")
 	if recommended != nil {
 		up.Latest = recommended.Original()

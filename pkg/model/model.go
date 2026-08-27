@@ -336,6 +336,10 @@ type Upgrade struct {
 	// HeldBack is true when a newer version exists but policy recommends none of it.
 	// Distinct from having no upgrade at all, which is what silence would imply.
 	HeldBack bool
+	// Rule names the upgrade rule that decided this, when one did. Reported because a
+	// restrained recommendation and an exhausted one look identical otherwise: without
+	// it, a reader cannot tell "policy says stop here" from "this is all there is".
+	Rule string
 
 	// Comparison says how the verdict was reached: "version" when tags were
 	// compared, "digest" when the reference is a floating tag with no version and

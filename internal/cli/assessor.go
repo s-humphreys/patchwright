@@ -103,6 +103,12 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		inspector := upgrade.NewCachingInspector(upgrade.NewRegistryInspector())
 		if len(cfg.Remediation.FirstPartyRegistries) > 0 {
 			base := upgrade.NewBaseResolver(cfg.Remediation, inspector, upgrade.NewTagLister())
+			// Compile the upgrade rules' scopes now: a rule that cannot compile should
+			// stop the process here, not produce an assessment that quietly recommends
+			// the version somebody's ceiling exists to prevent.
+			if err := base.Validate(); err != nil {
+				return nil, err
+			}
 			// Support windows, when a source is configured. Without one, an image on a
 			// dead runtime is indistinguishable from one that is simply up to date.
 			if in.supportSource != "" {

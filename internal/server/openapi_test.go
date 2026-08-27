@@ -141,3 +141,35 @@ func difference(a, b []string) []string {
 // findingViewForSpec is the type served on /api/v1/findings, named here so the spec
 // test does not depend on the sink package's import path spelling.
 func findingViewForSpec() any { return sink.FindingView{} }
+
+// The nested schemas, which the finding-level test does not reach.
+//
+// Added because it should have existed already: three upgrade fields were served
+// undocumented, and one of them - support - was read by the page while never being
+// emitted by the API at all. A guard that checks only top-level fields lets a whole
+// nested object drift.
+func TestSpecCoversEveryUpgradeField(t *testing.T) {
+	spec := loadSpec(t)
+	schema, ok := spec.Components.Schemas["Upgrade"]
+	if !ok {
+		t.Fatal("the spec has no Upgrade schema")
+	}
+	for _, field := range jsonFieldNames(reflect.TypeOf(sink.UpgradeView{})) {
+		if _, ok := schema.Properties[field]; !ok {
+			t.Errorf("upgrade field %q is served but undocumented in %s", field, specPath)
+		}
+	}
+}
+
+func TestSpecCoversEverySupportField(t *testing.T) {
+	spec := loadSpec(t)
+	schema, ok := spec.Components.Schemas["Support"]
+	if !ok {
+		t.Fatal("the spec has no Support schema")
+	}
+	for _, field := range jsonFieldNames(reflect.TypeOf(sink.SupportView{})) {
+		if _, ok := schema.Properties[field]; !ok {
+			t.Errorf("support field %q is served but undocumented in %s", field, specPath)
+		}
+	}
+}

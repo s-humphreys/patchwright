@@ -404,7 +404,10 @@ export function actionSort(f) {
 export function upgradeStrategyWhy(u) {
   const parts = [];
   if (u.ceiling) {
-    parts.push(`Held at ${u.ceiling} by policy` + (u.ceiling_reason ? `: ${u.ceiling_reason}` : "."));
+    // The rule is named because a scoped rule may apply to this service and not to the
+    // one below it, so "held at 3.12" is no longer answerable from the config alone.
+    const by = u.rule ? `by rule ${u.rule}` : "by policy";
+    parts.push(`Held at ${u.ceiling} ${by}` + (u.ceiling_reason ? `: ${u.ceiling_reason}` : "."));
   } else if (u.strategy === "patch") {
     parts.push("Patch upgrades only for this image: the minor version is the compatibility boundary for a language runtime.");
   } else if (u.strategy === "minor") {
