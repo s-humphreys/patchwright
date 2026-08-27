@@ -20,8 +20,13 @@ type summaryView struct {
 	Actionable     int `json:"actionable"`
 	Suppressed     int `json:"suppressed"`
 	KnownExploited int `json:"known_exploited"`
-	Upgradable     int `json:"upgradable"` // actionable upgrade available
-	UniqueImages   int `json:"unique_images"`
+	// EndOfLife counts findings built on a line nobody maintains. Reported beside
+	// KnownExploited because they are the two facts a security reviewer reads first,
+	// and they decay differently: an exploited CVE is closed by a rebuild, an
+	// end-of-life base only by a migration.
+	EndOfLife    int `json:"end_of_life"`
+	Upgradable   int `json:"upgradable"` // actionable upgrade available
+	UniqueImages int `json:"unique_images"`
 
 	// Coverage. Without these, a client reading "N actionable" cannot tell a
 	// healthy estate from one the scan provider never looked at, and every
@@ -131,8 +136,15 @@ type ownerStats struct {
 	Team       string `json:"team"`
 	Total      int    `json:"total"`
 	Actionable int    `json:"actionable"`
-	Fixable    int    `json:"fixable"`    // has a fix-available critical
-	Upgradable int    `json:"upgradable"` // has an actionable upgrade
+	// Fixable counts ACTIONABLE findings with a fix-available critical. Scoped to
+	// actionable deliberately: it is reported as a share of Actionable, and any
+	// counter meant to be divided by another has to be drawn from the same set.
+	Fixable int `json:"fixable"`
+	// Upgradable counts findings with an actionable upgrade, over ALL findings in the
+	// row rather than only the actionable ones - "actionable" here describes the
+	// upgrade, not the finding. Not a share of anything, and must not be divided by
+	// Actionable.
+	Upgradable int `json:"upgradable"`
 	// Unassessed counts findings the scan provider never assessed. Coverage is
 	// uneven by team in practice, and a team with few actionable findings because
 	// nothing scanned its images looks identical to a team in good shape unless
@@ -211,6 +223,11 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 		if hasKnownExploited(f) {
 			s.KnownExploited++
+		}
+		for _, sig := range f.Signals() {
+			if sig == model.SignalEndOfLife {
+				s.EndOfLife++
+			}
 		}
 		if hasActionableUpgrade(f) {
 			s.Upgradable++
@@ -350,7 +367,13 @@ func buildOwnerStats(findings []model.Finding, tickets map[string][]ticketRef) [
 		if f.Actionable {
 			st.Actionable++
 		}
-		if fixableCriticals(f) > 0 {
+		// Actionable only, because the breakdown divides this by Actionable and
+		// reports it as "of the work in this row, how much has a fix". Counting it
+		// over every finding made the numerator and denominator different
+		// populations, and a row with enough non-actionable-but-fixable findings
+		// reported 104%. A percentage over 100 is never a rounding artefact: it means
+		// two numbers were drawn from different sets.
+		if f.Actionable && fixableCriticals(f) > 0 {
 			st.Fixable++
 		}
 		if hasActionableUpgrade(f) {

@@ -125,3 +125,54 @@ test('the urgency filter narrows the queue and orders worst first', async () => 
   const labels = [...document.querySelector('#urgencyFilter').options].map((o) => o.textContent);
   assert.match(labels[2], /high \(2\)/, 'each option carries its count');
 });
+
+test('KEV is a share of the estate, not of the row', async () => {
+  // The question is "who carries the exploited work", and a row-relative percentage
+  // cannot answer it: three findings all exploited is 100% of a tiny row and might be a
+  // tenth of the estate's problem.
+  renderBreakdown([
+    owner({ team: 'ics', total: 100, actionable: 90, known_exploited: 7 }),
+    owner({ team: 'data-platform', total: 13, actionable: 12, known_exploited: 12 }),
+  ]);
+  const cols = breakdownColumns().map((c) => c.label);
+  const kev = cols.indexOf('KEV');
+  assert.ok(kev > 0, 'no KEV column');
+
+  const rows = [...document.querySelectorAll('#breakdown tbody tr')];
+  const text = (tr) => tr.querySelectorAll('td')[kev].textContent.replace(/\s+/g, ' ').trim();
+  // 7 and 12 of 19 across the table.
+  const cells = rows.map(text).join(' | ');
+  assert.match(cells, /37% of all/, `expected ics at 37%, got: ${cells}`);
+  assert.match(cells, /63% of all/, `expected data-platform at 63%, got: ${cells}`);
+  // Labelled, because an unlabelled percentage beside row-relative ones would be read
+  // as the same kind of number.
+  assert.match(cells, /of all/);
+});
+
+test('the actionable count stays visible after losing its column', async () => {
+  // It is the denominator of four columns to the right. A share whose denominator is
+  // nowhere on screen is what produced "104%" in the first place.
+  renderBreakdown([owner({ team: 'ics', total: 100, actionable: 90 })]);
+  const cols = breakdownColumns().map((c) => c.label);
+  assert.equal(cols.includes('Actionable'), false, 'the standalone column should be gone');
+  for (const dependent of ['Direct', 'Managed', 'Fixable', 'Ticketed']) {
+    assert.ok(cols.includes(dependent), `${dependent} column missing`);
+  }
+  const findings = document.querySelectorAll('#breakdown tbody tr td')[cols.indexOf('Findings')];
+  assert.match(findings.textContent.replace(/\s+/g, ' '), /90 actionable/,
+    'the denominator for the columns to the right must still be readable');
+});
+
+test('EPSS reads as a probability, and a small one is not rounded to nothing', async () => {
+  // Published 0-1, it reads as a rating out of one and invites comparison with CVSS.
+  // As a percentage it says what it means. The small end matters most, because most
+  // scores live there: rounding 0.0006 to "0%" claims no chance on a CVE that has some.
+  const { epssPercent } = await import('./cells.js');
+  assert.equal(epssPercent(0.61), '61%');
+  assert.equal(epssPercent(0.006), '0.6%');
+  assert.equal(epssPercent(0.0006), '<0.1%');
+  assert.equal(epssPercent(0), '0%');
+  assert.equal(epssPercent(1), '100%');
+  assert.equal(epssPercent(undefined), '-');
+  assert.equal(epssPercent(null), '-');
+});

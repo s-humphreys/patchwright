@@ -1,5 +1,5 @@
 import { SIGNAL_BADGES, badge, count, epss } from './badges.js';
-import { fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
+import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
 
@@ -79,7 +79,7 @@ function vulnTable(f) {
     <td><code>${esc(v.id)}</code></td>
     <td class="${esc(v.severity || "")}">${esc(v.severity || "-")}</td>
     <td class="num">${v.cvss ? v.cvss.toFixed(1) : "-"}</td>
-    <td class="num">${v.epss ? v.epss.toFixed(2) : (f.exploit_checked ? "-" : "?")}</td>
+    <td class="num">${v.epss ? epssPercent(v.epss) : (f.exploit_checked ? "-" : "?")}</td>
     <td class="num">${v.risk_score ? Math.round(v.risk_score) : "-"}</td>
     <td>${v.kev ? badge(SIGNAL_BADGES.kev, "kev") : ""}</td>
     <td>${v.fix_available

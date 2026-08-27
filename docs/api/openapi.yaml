@@ -892,8 +892,18 @@ components:
         team: { type: string }
         total: { type: integer }
         actionable: { type: integer }
-        fixable: { type: integer }
-        upgradable: { type: integer }
+        fixable:
+          type: integer
+          description: >-
+            ACTIONABLE findings with a fix-available critical. Scoped to actionable
+            because it is reported as a share of `actionable`, and a counter meant to be
+            divided by another has to be drawn from the same set.
+        upgradable:
+          type: integer
+          description: >-
+            Findings with an actionable upgrade, across ALL findings in the row -
+            "actionable" here describes the upgrade, not the finding. Not a share of
+            anything, and must not be divided by `actionable`.
         unassessed: { type: integer }
         direct: { type: integer, description: Actionable findings fixable on the image. }
         managed: { type: integer, description: Actionable findings a chart or operator owns. }
@@ -935,7 +945,19 @@ components:
         actionable: { type: integer }
         suppressed: { type: integer }
         known_exploited: { type: integer }
-        upgradable: { type: integer }
+        end_of_life:
+          type: integer
+          description: >-
+            Findings built on a line nobody maintains, so no future fix reaches them.
+            Reported beside known_exploited because those are the two facts a security
+            reviewer reads first, and they decay differently: an exploited CVE is closed
+            by a rebuild, an end-of-life base only by a migration.
+        upgradable:
+          type: integer
+          description: >-
+            Findings with an actionable upgrade, across ALL findings in the row -
+            "actionable" here describes the upgrade, not the finding. Not a share of
+            anything, and must not be divided by `actionable`.
         unique_images: { type: integer }
         provider_assessed: { type: integer }
         provider_unassessed: { type: integer }
