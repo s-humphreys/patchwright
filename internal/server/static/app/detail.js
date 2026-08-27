@@ -227,7 +227,53 @@ function sections(f) {
 }
 
 /** openDetail shows one finding. */
+// A refresh re-renders the open panel every 60 seconds so its figures do not go stale.
+// That is a repaint, not an opening, and three things must not be treated the same way:
+//
+//   - Focus. Each panel focuses its close button when it OPENS, which is right; doing it
+//     again on a timer steals focus from whatever the reader was doing, mid-tab or
+//     mid-typing, once a minute.
+//   - Scroll. Replacing innerHTML resets the scroll container, so somebody reading down a
+//     long CVE table is yanked back to the top. The panel stays open, which the old
+//     comment claimed was enough - it is not, if it silently loses their place.
+//   - restoreFocus. Overwriting it with whatever is focused at refresh time loses where
+//     focus should return on close, and can leave it pointing at a node the repaint
+//     destroyed.
+//
+// reopeningSame reports whether this call is a repaint of what is already shown. It must
+// be consulted BEFORE `shown` is reassigned.
+function reopeningSame(kind, id) {
+  if (!shown) return false;
+  switch (kind) {
+    case "finding": return !shown.group && !shown.cve && shown.image === id;
+    case "group":   return shown.group === id;
+    case "cve":     return shown.cve === id;
+    default:        return false;
+  }
+}
+
+// scrollOf reads where the reader had got to, so a repaint can put them back.
+function scrollOf(el) {
+  const body = el.querySelector(".detail-body");
+  return body ? body.scrollTop : 0;
+}
+
+// settle finishes a paint: on an opening it takes focus and records where to return it,
+// on a repaint it restores the reader's position and touches neither.
+function settle(el, repaint, scrollTop) {
+  if (repaint) {
+    const body = el.querySelector(".detail-body");
+    if (body) body.scrollTop = scrollTop;
+    return;
+  }
+  restoreFocus = document.activeElement;
+  const close = /** @type {any} */ ($("#detailClose"));
+  if (close && typeof close.focus === "function") close.focus();
+}
+
 export function openDetail(f) {
+  const repaint = reopeningSame("finding", f.image);
+  const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = f;
   const el = $("#detail");
   el.innerHTML = `
@@ -242,10 +288,9 @@ export function openDetail(f) {
   el.hidden = false;
   document.body.classList.add("detail-open");
   writeDeepLink({ finding: f.image });
-  restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   wireBack();
-  /** @type {any} */ ($("#detailClose")).focus();
+  settle(el, repaint, keepScroll);
 }
 
 /** writeDeepLink reflects the open panel into the address bar, so the view is a link
@@ -359,6 +404,8 @@ export function initDetail() {
 
 /** openCVEDetail shows one CVE and every image carrying it. */
 export function openCVEDetail(g) {
+  const repaint = reopeningSame("cve", g.id);
+  const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = { image: null, cve: g.id };
   const el = $("#detail");
   const rows = g.images.slice()
@@ -404,10 +451,9 @@ export function openCVEDetail(g) {
   document.body.classList.add("detail-open");
   wireDrillRows(el, g.id, () => openCVEDetail(g));
   writeDeepLink({ cve: g.id });
-  restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   wireBack();
-  /** @type {any} */ ($("#detailClose")).focus();
+  settle(el, repaint, keepScroll);
 }
 
 /** shownCVE reports which CVE the panel is on, so a refresh can re-render it. */
@@ -439,6 +485,8 @@ export function initCVEDetail(lookup) {
 
 /** openGroupDetail shows one work item: the shared change, and every tag it covers. */
 export function openGroupDetail(g) {
+  const repaint = reopeningSame("group", g.key);
+  const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = { image: g.image, group: g.key };
   const el = $("#detail");
   const rows = g.findings.slice()
@@ -505,13 +553,12 @@ export function openGroupDetail(g) {
   // Team and service rather than a group key: those are what a ticket knows about
   // itself, and they stay valid when tags move on.
   writeDeepLink({ service: g.repository, team: g.owner?.team || "" });
-  restoreFocus = document.activeElement;
   $("#detailClose").addEventListener("click", closeDetail);
   wireBack();
   // Drill from the work item to one deployment. The panel replaces itself rather than
   // stacking: two sheets deep is a place people get lost.
   wireDrillRows(el, "the work item", () => openGroupDetail(g));
-  /** @type {any} */ ($("#detailClose")).focus();
+  settle(el, repaint, keepScroll);
 }
 
 /**

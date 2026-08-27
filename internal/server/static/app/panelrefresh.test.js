@@ -95,3 +95,66 @@ test('a work item is found by key, not by its representative image', () => {
   assert.ok(groupByKey(key), 'the work item must survive its representative tag changing');
   closeDetail();
 });
+
+test('a refresh does not steal focus', () => {
+  // The panel focuses its close button when it OPENS, which is right. Doing it again on
+  // a 60 second timer takes focus off whatever the reader was doing, once a minute.
+  const { group: g, rows } = workItem();
+  S.groupRows = [g];
+  S.queueRows = rows;
+  openGroupDetail(g);
+
+  // The reader tabs onto something inside the panel and stays there.
+  const target = document.querySelector('#detail .openable') ||
+    document.querySelector('#detail button');
+  assert.ok(target, 'no focusable element in the panel to test with');
+  target.focus();
+  assert.equal(document.activeElement, target);
+
+  openGroupDetail(groupByKey(shownGroup())); // the refresh repaint
+  assert.notEqual(document.activeElement?.id, 'detailClose',
+    'the repaint pulled focus to the close button');
+  closeDetail();
+});
+
+test('a refresh keeps the reader where they had scrolled to', () => {
+  // Replacing innerHTML resets the scroll container. On a finding with hundreds of CVEs
+  // that means being yanked to the top of the list every minute: the panel stays open,
+  // which is not the same as staying usable.
+  //
+  // jsdom does no layout, so scrollTop is a stub that always reads 0 and ignores writes.
+  // Backing it per-element on the prototype is what makes this test real: a repainted
+  // panel gets FRESH elements, so the value can only be 420 afterwards if our code
+  // carried it across. A closure-backed stub would have passed either way, which is
+  // exactly how the first version of this test fooled me.
+  const store = new WeakMap();
+  const proto = dom.window.Element.prototype;
+  const original = Object.getOwnPropertyDescriptor(proto, 'scrollTop');
+  Object.defineProperty(proto, 'scrollTop', {
+    configurable: true,
+    get() { return store.get(this) || 0; },
+    set(v) { store.set(this, v); },
+  });
+
+  try {
+    const { group: g, rows } = workItem();
+    S.groupRows = [g];
+    S.queueRows = rows;
+    const body = () => document.querySelector('#detail .detail-body');
+
+    openDetail(rows[0]);
+    body().scrollTop = 420;
+
+    openDetail(rows[0]); // the refresh repaint of the same finding
+    assert.equal(body().scrollTop, 420, "the repaint lost the reader's position");
+
+    // A DIFFERENT subject is not a repaint, and must start at the top rather than
+    // inheriting somebody else's scroll offset.
+    openDetail(rows[1]);
+    assert.equal(body().scrollTop, 0, 'a different subject must not inherit a scroll position');
+    closeDetail();
+  } finally {
+    if (original) Object.defineProperty(proto, 'scrollTop', original);
+    else delete proto.scrollTop;
+  }
+});
