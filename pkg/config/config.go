@@ -161,6 +161,28 @@ type UpgradeRule struct {
 	// Reason is why the ceiling exists, carried into the report so the person who
 	// reads it does not have to ask.
 	Reason string `yaml:"reason"`
+
+	// When narrows the rule to the workloads it is actually about, as a CEL
+	// expression over the FIRST-PARTY image and where it runs. Empty means the rule
+	// applies wherever its Name matches, which is the old behaviour.
+	//
+	// Needed because a constraint is almost never a property of a base image. "Our
+	// dependency tree is not ready for Python 3.14" is true of one service, and a
+	// rule keyed only on docker.io/python holds back every other service on that
+	// base - and then reports them as considered recommendations, so nobody notices
+	// they were never asked.
+	//
+	//   rules:
+	//     - name: docker.io/python
+	//       when: "owner['team'] == 'data-science'"
+	//       strategy: patch
+	//       ceiling: "3.12"
+	//
+	// Available: image (registry, repository, tag, ref, name), base (name, current),
+	// owner (class, team, rule), dimensions and labels (each a list of the distinct
+	// values seen across this image's deployments, so a rule can name a namespace or
+	// an account without caring which deployment it came from).
+	When string `yaml:"when"`
 }
 
 // strategies are the accepted distances.
@@ -177,6 +199,17 @@ func (u UpgradeConfig) EffectiveStrategy() string {
 // For returns the strategy and ceiling to apply to an image name. An expired ceiling
 // is not applied and is reported as expired, so a lapsed constraint surfaces as a
 // decision to revisit rather than quietly holding an estate back for ever.
+// HasScopes reports whether any rule narrows itself with `when`, so the common
+// unscoped case pays nothing for the machinery.
+func (u UpgradeConfig) HasScopes() bool {
+	for _, r := range u.Rules {
+		if r.When != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (u UpgradeConfig) For(name string) (strategy, ceiling, reason string, expired bool) {
 	for _, r := range u.Rules {
 		if !matchesName(r.Name, name) {
@@ -214,8 +247,17 @@ func (r UpgradeRule) Expired() bool {
 
 // matchesName compares an image name against a rule pattern, supporting a single
 // trailing "*". Case-insensitive: registries are.
+// MatchesImageName reports whether an image name matches a rule pattern, ignoring the
+// several spellings one image can have. Exported for the upgrade rules, which do their
+// own matching so a rule's scope can be evaluated alongside its name.
+func MatchesImageName(pattern, name string) bool { return matchesName(pattern, name) }
+
+// ValidStrategy reports whether a strategy name is one this tool implements. Exported so
+// a caller can fall back to the default rather than silently applying an unknown one.
+func ValidStrategy(s string) bool { return strategies[s] }
+
 func matchesName(pattern, name string) bool {
-	pattern, name = strings.ToLower(strings.TrimSpace(pattern)), strings.ToLower(strings.TrimSpace(name))
+	pattern, name = canonicalImageName(pattern), canonicalImageName(name)
 	if pattern == "" || name == "" {
 		return false
 	}
@@ -223,6 +265,50 @@ func matchesName(pattern, name string) bool {
 		return strings.HasPrefix(name, strings.TrimSuffix(pattern, "*"))
 	}
 	return pattern == name
+}
+
+// canonicalImageName reduces the several spellings of one image to a single form.
+//
+// Docker Hub has an implicit namespace, so "python", "docker.io/python",
+// "docker.io/library/python" and "index.docker.io/library/python" are the same image.
+// Which spelling appears in a rule depends on who wrote the rule; which appears in a
+// finding depends on who wrote the Dockerfile, since it comes from the image's own base
+// label. Comparing them literally therefore made a policy apply or not apply based on a
+// detail neither party is choosing deliberately.
+//
+// That failed in the worst direction. A ceiling written to hold Python at 3.12 was
+// silently skipped for an image whose label said docker.io/library/python, so the report
+// recommended the 3.14 migration the ceiling exists to prevent - and did it with the
+// same confident formatting as a considered recommendation. A rule that does not fire is
+// more dangerous than no rule at all, because nobody is looking for it.
+func canonicalImageName(ref string) string {
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if ref == "" {
+		return ""
+	}
+	// A trailing wildcard is part of the pattern, not the name: hold it aside so the
+	// prefixes below cannot be confused by it, and put it back afterwards.
+	star := strings.HasSuffix(ref, "*")
+	ref = strings.TrimSuffix(ref, "*")
+
+	ref = strings.TrimPrefix(ref, "index.docker.io/")
+	ref = strings.TrimPrefix(ref, "docker.io/")
+	ref = strings.TrimPrefix(ref, "library/")
+	// A single segment, or a first segment that cannot be a host, is a Docker Hub
+	// image: "python" and "bitnami/redis" both live there, while "ghcr.io/x/y" and
+	// "localhost:5000/x" do not.
+	first := ref
+	if i := strings.Index(ref, "/"); i >= 0 {
+		first = ref[:i]
+	}
+	isHost := strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost"
+	if !isHost {
+		ref = "docker.io/" + ref
+	}
+	if star {
+		ref += "*"
+	}
+	return ref
 }
 
 // InFlightConfig describes where to look for open pull requests that would apply

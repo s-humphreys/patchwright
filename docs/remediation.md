@@ -160,6 +160,77 @@ Where policy recommends nothing at all but newer versions exist, the finding is
 `held_back` rather than `none`. "None" would say the image is up to date, which is a
 different thing.
 
+### Scoping a rule to the services it is about
+
+A constraint is almost never a property of a base image. "Our dependency tree is not ready
+for Python 3.14" is true of one service; keyed only on `docker.io/python` it holds back
+every other service on that base — and reports them as considered recommendations,
+carrying somebody else's stated reason, so nobody notices they were never asked.
+
+`when` narrows a rule to the workloads it applies to:
+
+```yaml
+remediation:
+  upgrade:
+    strategy: latest
+    rules:
+      # Held for one team, whose packages are genuinely not ready.
+      - name: docker.io/python
+        when: "owner['team'] == 'data-science'"
+        strategy: patch
+        ceiling: "3.12"
+        until: 2026-12-31
+        reason: cdt's underlying packages are not 3.14 ready
+      # Everyone else on the same base is unconstrained, and moves when they choose to.
+```
+
+Available in a scope:
+
+| | |
+|---|---|
+| `image` | the first-party image being upgraded: `registry`, `repository`, `tag`, `ref`, `name` |
+| `base` | the base being moved: `name`, `current` |
+| `owner` | `class`, `team`, `rule` — the attribution that put this in somebody's queue |
+| `dimensions` | `namespace`, `account`, `cluster` and whatever else the provider reports |
+| `labels` | resource and namespace labels |
+
+`dimensions` and `labels` are **lists**, because one image usually runs in several places:
+`"'cdt' in dimensions['namespace']"` matches if any deployment of that image is in `cdt`.
+Values are collected across every deployment and sorted, so the decision does not depend
+on which deployment the resolver happened to reach first.
+
+Deliberately absent: severity counts, exploit signals, anything about the vulnerabilities.
+A ceiling that lifted itself because a critical turned up would be a constraint that
+evaporates exactly when somebody leans on it — that decision belongs in policy, where it
+is visible as a policy decision.
+
+First match wins, as before, so a specific rule goes above a general one:
+
+```yaml
+      - name: docker.io/python
+        when: "owner['team'] == 'data-science'"
+        ceiling: "3.12"
+      - name: docker.io/python          # everyone else
+        ceiling: "3.13"
+```
+
+Three behaviours worth knowing, all of them the same principle — a rule that does not fire
+must never look like a rule that fired:
+
+- **A scope that does not compile fails at startup**, naming the rule, rather than
+  becoming a rule that silently never matches.
+- **A scope that cannot be evaluated does not match.** An expression that errors has not
+  said this image is covered, and applying somebody else's ceiling on a maybe is worse
+  than applying none.
+- **The rule that decided is reported**, on the finding and in the API as
+  `upgrade.rule`. Once rules can be scoped, "why am I held at 3.12" is no longer
+  answerable from the config alone, and a restrained recommendation would otherwise be
+  indistinguishable from an exhausted one.
+
+A rule with no `when` applies wherever its name matches, which is what every rule written
+before this meant.
+
+
 ## When the line itself is dead
 
 Everything above assumes there is somewhere to go on the current line. Sometimes there is

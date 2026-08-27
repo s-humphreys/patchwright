@@ -404,7 +404,10 @@ export function actionSort(f) {
 export function upgradeStrategyWhy(u) {
   const parts = [];
   if (u.ceiling) {
-    parts.push(`Held at ${u.ceiling} by policy` + (u.ceiling_reason ? `: ${u.ceiling_reason}` : "."));
+    // The rule is named because a scoped rule may apply to this service and not to the
+    // one below it, so "held at 3.12" is no longer answerable from the config alone.
+    const by = u.rule ? `by rule ${u.rule}` : "by policy";
+    parts.push(`Held at ${u.ceiling} ${by}` + (u.ceiling_reason ? `: ${u.ceiling_reason}` : "."));
   } else if (u.strategy === "patch") {
     parts.push("Patch upgrades only for this image: the minor version is the compatibility boundary for a language runtime.");
   } else if (u.strategy === "minor") {
@@ -412,6 +415,16 @@ export function upgradeStrategyWhy(u) {
   }
   if (u.ceiling_expired) {
     parts.push("That ceiling's end date has passed, so it was NOT applied — the constraint is due a revisit.");
+  }
+  // A ceiling inside a line nobody maintains is not merely conservative, it is holding
+  // this image somewhere no fix will ever arrive. Said plainly, because the two facts
+  // are individually unremarkable and together they are the finding: the resolver will
+  // not step past the constraint, so a person has to decide to lift it.
+  if (u.ceiling && endOfLifeStatus(u)) {
+    const st = u.support;
+    parts.push(`That line is no longer maintained${st.eol ? ` (${st.product} ${st.cycle} ended ${st.eol})` : ""},` +
+      ` so no fix will reach this image while the ceiling stands.` +
+      (st.recommended ? ` Moving to ${st.recommended} needs the ceiling lifted first.` : ""));
   }
   parts.push(`The newest available is ${u.newest}, which is a separate decision.`);
   return parts.join(" ");
