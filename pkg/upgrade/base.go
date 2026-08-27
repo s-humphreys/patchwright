@@ -9,12 +9,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
+	"github.com/s-humphreys/patchwright/pkg/support"
 )
 
 // Base-image upgrades, for images you build yourself.
@@ -52,6 +54,21 @@ type BaseResolver struct {
 	Lister TagLister
 	// Concurrency bounds registry calls in flight. Zero means the default.
 	Concurrency int
+	// Support resolves maintenance windows for the lines base images sit on. Optional:
+	// nil means support status is not checked, and every finding then reports it as
+	// unchecked rather than as supported.
+	Support support.Source
+	// Now is the day support windows are judged against, injectable so a test can
+	// assert on a fixed date rather than on whatever today happens to be.
+	Now func() time.Time
+}
+
+// now returns the day to judge support windows against.
+func (r *BaseResolver) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }
 
 // TagLister lists the tags of a repository.
@@ -287,6 +304,15 @@ func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtD
 	if recommended == nil && newest != nil {
 		up.HeldBack = true
 	}
+
+	up.Support = r.supportStatus(ctx, base, r.now())
+	// An exhausted track on a dead line has no in-track answer by definition, so the
+	// only upgrade that helps crosses the line. Applied only when nothing in-track was
+	// found: while the line still has newer patches, the safe rebuild is the better
+	// first move and a migration can follow.
+	if !up.Available {
+		up = r.offTrackUpgrade(ctx, base, up)
+	}
 	return up, nil
 }
 
@@ -303,6 +329,14 @@ func (r *BaseResolver) floatingBase(ctx context.Context, base model.Image, built
 	}
 	up.Resolved = true
 	up.Comparison = "digest"
+	// The case this exists for. A dead line's tag never moves again, so the digest
+	// comparison below can only ever say "no change" - which is indistinguishable
+	// from being current unless the support status is carried too.
+	up.Support = r.supportStatus(ctx, base, r.now())
+	up = r.offTrackUpgrade(ctx, base, up)
+	if up.OutOfTrack {
+		return up, nil
+	}
 	if now != builtDigest {
 		// The tag moved under it. There is no version to name, so the digest is the
 		// evidence: a rebuild would pick this up.

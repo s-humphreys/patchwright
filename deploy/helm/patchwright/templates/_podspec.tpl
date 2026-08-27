@@ -60,6 +60,12 @@ so they stay in sync. Callers pass a dict:
     - "--age-option={{ . }}"
     {{- end }}
     {{- end }}
+    {{- if .root.Values.support.source }}
+    - "--support-source={{ .root.Values.support.source }}"
+    {{- range .root.Values.support.options }}
+    - "--support-option={{ . }}"
+    {{- end }}
+    {{- end }}
     {{- if and (eq .command "serve") .root.Values.metrics.requireAuth }}
     - "--metrics-require-auth"
     {{- end }}

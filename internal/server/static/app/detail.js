@@ -95,6 +95,37 @@ function vulnTable(f) {
 }
 
 /** sections builds the panel body. */
+// supportRow renders the maintenance status of the base line.
+//
+// Three outcomes, kept apart on purpose: maintained, not maintained, and not checked.
+// Collapsing the third into either of the others is how a queue ends up asserting
+// something nobody verified.
+function supportRow(u) {
+  const st = u && u.support;
+  if (!st || !st.known) {
+    return unknown("not checked",
+      "No support source ran, or this base image is not one it recognises. That is an absence of information, not a clean bill of health.");
+  }
+  if (st.supported) {
+    const until = st.eol ? ` until ${esc(st.eol)}` : "";
+    return `<span class="ok">yes</span> — ${esc(st.product)} ${esc(st.cycle)}, maintained${until}` +
+      (st.source ? ` <span class="sub">per ${esc(st.source)}</span>` : "");
+  }
+  const bits = [`<span class="badge badge-eol">eol</span> ${esc(st.product)} ${esc(st.cycle)} is no longer maintained`];
+  if (st.eol) bits.push(`support ended ${esc(st.eol)}`);
+  const moves = [];
+  if (st.recommended) moves.push(`move to <code>${esc(st.recommended)}</code> (maintained, already long-term supported)`);
+  if (st.nearest) moves.push(`smallest supported move <code>${esc(st.nearest)}</code>`);
+  if (st.newest) moves.push(`<span class="muted">newest line ${esc(st.newest)}, not recommended yet</span>`);
+  if (moves.length) bits.push(moves.join("; "));
+  if (!st.recommended) {
+    bits.push(unknown("no maintained line found",
+      "The source lists no maintained line for this product, so there is no target to name. The finding stands: nothing will fix this image in place."));
+  }
+  if (st.source) bits.push(`<span class="sub">per ${esc(st.source)}</span>`);
+  return bits.join(" — ");
+}
+
 function sections(f) {
   const u = f.upgrade;
   const tickets = ticketsFor(f);
@@ -137,6 +168,9 @@ function sections(f) {
     row("Fix path", `<span class="${esc(fixPath(f))}">${esc(fixPath(f))}</span>`),
     row("Upgrade", u ? upgradeCell(f) : unknown("none reported", "No upgrade information for this image.")),
     row("How it was compared", u?.comparison ? esc(u.comparison) : ""),
+    // Support status sits in the fix panel because it IS the fix answer here: on a dead
+    // line there is no version to move along, only a line to move off.
+    row("Base line supported", supportRow(u), "Whether the runtime or distribution this image is built on is still maintained. Not checked is not the same as supported."),
     row("Newest available", u?.newest
       ? `${esc(u.newest)} <span class="sub">${esc(upgradeStrategyWhy(u))}</span>` : ""),
     row("Upgrade policy", u?.ceiling

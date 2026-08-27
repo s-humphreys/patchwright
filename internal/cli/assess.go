@@ -32,6 +32,8 @@ func newAssessCmd() *cobra.Command {
 		showSuppressed bool
 		liveSource     string
 		liveOptions    []string
+		supportSource  string
+		supportOptions []string
 		vulnSource     string
 		vulnOptions    []string
 		exploitSource  string
@@ -70,6 +72,8 @@ func newAssessCmd() *cobra.Command {
 				ageSource:      ageSource,
 				ageOptions:     ageOptions,
 				remediation:    remediation,
+				supportSource:  supportSource,
+				supportOptions: supportOptions,
 			})
 			if err != nil {
 				return err
@@ -117,6 +121,8 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&ageOptions, "age-option", nil, "age source option as key=value (repeatable)")
 	cmd.Flags().StringArrayVar(&exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
 	cmd.Flags().BoolVar(&remediation, "remediation", false, "detect available upgrades for how images are deployed: a newer Helm chart (Flux, with --live-source kube) or a newer image tag (registry)")
+	cmd.Flags().StringVar(&supportSource, "support-source", "", "check whether base image lines are still maintained using a source (endoflife); without it an end-of-life base is indistinguishable from an up-to-date one")
+	cmd.Flags().StringArrayVar(&supportOptions, "support-option", nil, "support source option as key=value (repeatable), e.g. base-url=https://endoflife.date/api")
 	return cmd
 }
 

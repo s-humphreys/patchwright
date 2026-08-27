@@ -242,6 +242,23 @@ reconcile:
   # this refinement, or replace with a scoped role for your operators' groups.
   remediationReadCRs: false
 
+# Whether the line each base image is built on is still maintained.
+#
+# Worth turning on wherever remediation is: an image pinned to a runtime's dead major
+# reports "no upgrade available" forever, because nothing newer will ever be published to
+# that tag. Without this, that is indistinguishable from being up to date - the same
+# empty Fix column on the image that will accumulate criticals for the rest of its life.
+#
+# With it, the queue names the move that does exist, choosing the newest line that is both
+# maintained and already long-term supported rather than the newest that exists: a
+# runtime's newest major is routinely one nobody should adopt yet.
+#
+# Off by default because it reads an external feed (endoflife.date). When off, findings
+# report support status as "not checked" rather than implying anything.
+support:
+  source: ""                # "endoflife" or empty
+  options: []               # e.g. ["base-url=https://endoflife.date/api"]
+
 scan:
   # Scan each unique image for per-CVE fix availability (Trivy is bundled in the
   # image). Trivy pulls the images itself and downloads its vuln DB, so the job

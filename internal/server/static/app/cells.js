@@ -15,7 +15,14 @@ export function fixPath(f) {
 
 export function upgradeCell(f) {
   const u = f.upgrade;
-  if (!u || !u.resolved || !u.available) return esc(upgradeText(f));
+  if (!u || !u.resolved) return esc(upgradeText(f));
+  if (!u.available) {
+    // Not available AND end of life is a statement, not a blank: badge it so the row
+    // reads as urgent-with-no-bump rather than as nothing to do.
+    return endOfLifeStatus(u)
+      ? `<span class="badge badge-eol" title="${esc(supportWhy(u))}">eol</span> ${esc(upgradeText(f))}`
+      : esc(upgradeText(f));
+  }
   // When something else owns the version, that badge leads: "who applies this" is
   // the more useful answer than "what did we compare", and an image badge in front
   // of a chart-owned upgrade reads as though the tag were the place to change it.
@@ -24,6 +31,12 @@ export function upgradeCell(f) {
     parts.push(badge(MANAGED_BADGES[(u.managed || "").toLowerCase()], u.managed || "managed"));
   }
   parts.push(badge(KIND_BADGES[u.kind], u.kind));
+  // An out-of-track move crosses a maintained-line boundary, which is a migration
+  // somebody plans rather than a bump somebody merges. Labelling it as an ordinary
+  // upgrade would understate the work and lose the reason it is the only option.
+  if (u.out_of_track) {
+    parts.push(`<span class="badge badge-eol" title="The current line is no longer maintained, so this move leaves it. A migration, not a version bump.">major</span>`);
+  }
   let detail = `${u.current} → ${u.latest}`;
   if (u.kind === "base") {
     detail = u.comparison === "digest" && u.source
@@ -46,9 +59,42 @@ export function upgradeCell(f) {
   return parts.join(" ");
 }
 
+// endOfLifeStatus returns the support block only when it carries a KNOWN unsupported
+// verdict. An unchecked base returns nothing: silence about a line is not a claim that
+// it is dead, any more than it is a claim that it is alive.
+export function endOfLifeStatus(u) {
+  const st = u && u.support;
+  if (!st || !st.known || st.supported) return null;
+  return st;
+}
+
+// supportWhy is the hover: who said so, when the line ends, and what the alternatives
+// are. An unattributed claim that somebody's runtime is dead invites an argument; a
+// dated one from a named source invites a rebuild.
+export function supportWhy(u) {
+  const st = endOfLifeStatus(u);
+  if (!st) return "";
+  const bits = [`${st.product} ${st.cycle} is no longer maintained`];
+  if (st.eol) bits.push(`support ended ${st.eol}`);
+  if (st.recommended) bits.push(`recommended: ${st.recommended} (maintained, and already long-term supported)`);
+  if (st.nearest) bits.push(`smallest supported move: ${st.nearest}`);
+  if (st.newest) bits.push(`newest line: ${st.newest}, not recommended yet`);
+  if (st.source) bits.push(`source: ${st.source}`);
+  return bits.join(". ") + ".";
+}
+
 export function upgradeText(f) {
   const u = f.upgrade;
   if (!u || !u.resolved) return "?";
+  // A dead line with nowhere to go is the worst cell in the table to render as "-".
+  // "-" means "you are current"; here it means "nothing will ever fix this", and the
+  // two must not look the same. This is the whole reason support status is carried.
+  if (!u.available && endOfLifeStatus(u)) {
+    const st = u.support;
+    return st.recommended
+      ? `end of life: move to ${st.product} ${st.recommended}`
+      : `end of life: no maintained line found`;
+  }
   if (!u.available) return "-";
   let s = `${u.current} → ${u.latest}`;
   if (u.kind === "chart") s = "chart " + s;

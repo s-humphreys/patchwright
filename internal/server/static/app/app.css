@@ -115,6 +115,9 @@
   .badge-inflight { color: var(--ok); }
   .badge-stale { color: var(--high); font-weight: 600; }
   .badge-unassessed { color: var(--muted); font-style: italic; }
+  /* End of life reads as urgent because the cost compounds: not one exploited CVE, but
+     every future CVE on an image nothing will rebuild. */
+  .badge-eol { color: var(--urgent); font-weight: 600; }
   /* Class rows are totals for the teams indented beneath them. */
   tr.rollup td { font-weight: 600; }
   td.indent { padding-left: 1.6rem; }
