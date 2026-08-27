@@ -32,6 +32,15 @@ server:
   # Metrics need the server, since a CronJob has exited by the time anything scrapes
   # it.
   enabled: true
+  # How long a first assessment may take before the rollout is called failed.
+  #
+  # Readiness means "an assessment is cached", so a new pod serves nothing until its
+  # first run finishes — which is the point: a Service endpoint that answers with an
+  # empty page is worse than one that does not answer. But it makes the rollout as long
+  # as the assessment, and both Kubernetes (600s) and Helm (5m) default well below that.
+  #
+  # Set the Helm/Flux wait to match: spec.timeout on a HelmRelease, --timeout on helm.
+  startupBudgetSeconds: 1800
   # How often the server re-runs the assessment.
   interval: 1h
   port: 8080

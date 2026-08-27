@@ -186,6 +186,29 @@ the registry it was asked about and nowhere else.
 Adding AWS ECR is one file: register the hosts it serves and a keychain, as
 `pkg/registryauth/google.go` does in seven lines.
 
+## Rollouts take as long as an assessment
+
+Readiness means "an assessment is cached". A new pod serves nothing until its first run
+finishes, which is deliberate — a Service endpoint answering with an empty page is worse
+than one that does not answer — but on a large estate that is fifteen to twenty minutes,
+and every tool involved defaults to less:
+
+| | Default | Needs to be |
+| --- | --- | --- |
+| Deployment `progressDeadlineSeconds` | 600s | `server.startupBudgetSeconds` (1800) |
+| `helm install/upgrade --wait` | 5m | `--timeout 30m` |
+| Flux HelmRelease | 5m | `spec.timeout: 30m` |
+
+Leave any of them short and the install times out while the first assessment is still
+running. With Flux that then fails twice over: the upgrade is marked failed, and the
+rollback it attempts has no previously-successful release to return to, so the
+HelmRelease stalls with `MissingRollbackTarget` while the pod it deployed sits there
+perfectly healthy.
+
+If fast rollouts matter more, make readiness mean "serving" instead — the page already
+states plainly that no assessment has completed yet, so the cost is a route that briefly
+answers with an empty queue rather than a misleading one.
+
 ## CronJob mode
 
 `server.enabled: false` runs one assessment per schedule instead of a long-lived
