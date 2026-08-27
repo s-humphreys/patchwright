@@ -13,6 +13,11 @@ metadata:
     {{- include "patchwright.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  # The pod is not ready until its FIRST ASSESSMENT completes, which on a large estate
+  # is fifteen to twenty minutes: it reads the provider, scans every image, resolves
+  # base images and checks open pull requests. Kubernetes defaults this to 600s and
+  # would mark the rollout failed halfway through the first run.
+  progressDeadlineSeconds: {{ .Values.server.startupBudgetSeconds }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "patchwright.name" . }}
