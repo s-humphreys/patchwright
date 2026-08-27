@@ -945,6 +945,13 @@ components:
         actionable: { type: integer }
         suppressed: { type: integer }
         known_exploited: { type: integer }
+        end_of_life:
+          type: integer
+          description: >-
+            Findings built on a line nobody maintains, so no future fix reaches them.
+            Reported beside known_exploited because those are the two facts a security
+            reviewer reads first, and they decay differently: an exploited CVE is closed
+            by a rebuild, an end-of-life base only by a migration.
         upgradable:
           type: integer
           description: >-

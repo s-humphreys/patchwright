@@ -219,18 +219,90 @@ export function reasonList(reasons) {
     </div>`;
 }
 
+// The headline is a story, not a scoreboard.
+//
+// It was eight equal-weight numbers in a row, which a security reviewer cannot read: 671
+// findings beside 887 unique images beside 220 suppressed states no relationship between
+// any of them, and the most important number on the page - how many are actually being
+// exploited - sat between "upgradable" and "unique images" at the same size.
+//
+// Two groups instead. The funnel says what happened to the scanner's output: raised,
+// suppressed by policy, left in the queue, needing action. Then the sharp end, which is
+// what somebody escalates on. Each group carries an expandable explanation, because a
+// number whose definition is a guess gets argued about rather than acted on.
 export function renderTiles(s) {
-  const tiles = [
-    ["Findings", s.findings], ["Actionable", s.actionable],
-    ["Assessed", s.provider_assessed], ["Suppressed", s.suppressed],
-    ["Upgradable", s.upgradable], ["Known exploited", s.known_exploited],
-    ["Unique images", s.unique_images],
+  const raised = (s.findings ?? 0) + (s.suppressed ?? 0);
+  const pct = (n, of) => (of > 0 ? Math.round((n / of) * 100) : null);
+
+  // Deliberately arithmetic that closes: raised - suppressed = findings, and actionable
+  // is a subset of those. Nothing here is a ratio of two different populations.
+  const funnel = [
+    { label: "raised", n: raised,
+      help: "Every finding the scan provider reported, before any of this tool's rules ran." },
+    { label: "suppressed", n: s.suppressed ?? 0, tone: "drop",
+      of: raised,
+      help: "Removed by a suppress rule: not running anywhere, owned by the cloud provider, or otherwise decided to be out of the queue. Each one is a decision somebody wrote down, not a finding that vanished." },
+    { label: "in the queue", n: s.findings ?? 0, of: raised,
+      help: "What is left to look at after suppression." },
+    { label: "needs action", n: s.actionable ?? 0, of: s.findings ?? 0, tone: "focus",
+      help: "Policy's verdict that this warrants action. Not the same as having a version to move to." },
   ];
-  // Only shown when detection ran. A "0 in flight" tile on a run without a
-  // provider configured would claim nobody is working on any of this.
-  if (s.in_flight_checked > 0) tiles.push(["In flight", s.in_flight]);
-  $("#tiles").innerHTML = tiles.map(([l, n]) =>
-    `<div class="tile"><div class="n">${n ?? "-"}</div><div class="l">${esc(l)}</div></div>`).join("");
+
+  const sharp = [
+    { label: "known exploited", n: s.known_exploited ?? 0, tone: "urgent",
+      help: "Carries a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation in the wild, not a prediction. The first thing to escalate on." },
+    { label: "end of life", n: s.end_of_life, tone: "urgent",
+      help: "Built on a runtime or distribution nobody maintains, so no future fix will ever reach it. Every other number here falls when somebody rebuilds; this one falls only when somebody migrates.",
+      unchecked: "Support windows were not checked this run." },
+    { label: "internet-facing", n: s.exposed ?? 0,
+      // Zero exposed AND zero unknown is a claim that nothing in the estate is
+      // reachable. Where the provider reports that uniformly it is a statement about
+      // the provider, not the estate, and saying so is more useful than a bare 0.
+      note: (s.exposed ?? 0) === 0 && (s.exposure_unknown ?? 0) === 0
+        ? "none reported" : null,
+      help: "Reported reachable from the internet. When every workload comes back as internal, that is usually a field the scan provider does not populate rather than an estate with nothing exposed." },
+    { label: "fix in flight", n: s.in_flight,
+      only: (s.in_flight_checked ?? 0) > 0,
+      help: "An open pull request already applies the upgrade, so this is work somebody has started." },
+  ];
+
+  const tile = (t) => {
+    if (t.only === false) return "";
+    if (t.n === undefined || t.n === null) {
+      // The hover goes on the whole tile, not just the "?": a reader aiming at a
+      // question mark to find out why it is a question mark is a poor trade.
+      const why = `${t.unchecked ? t.unchecked + " " : ""}${t.help}`;
+      return `<div class="tile" title="${esc(why)}">` +
+        `<div class="n unknown">?</div><div class="l">${esc(t.label)}</div>` +
+        `<div class="tile-sub">not checked</div></div>`;
+    }
+    const share = t.of ? pct(t.n, t.of) : null;
+    const sub = t.note
+      ? `<div class="tile-sub">${esc(t.note)}</div>`
+      : share !== null ? `<div class="tile-sub">${t.tone === "drop" ? "\u2212" : ""}${share}%</div>` : "";
+    return `<div class="tile${t.tone ? ` tile-${t.tone}` : ""}" title="${esc(t.help)}">` +
+      `<div class="n">${t.n}</div><div class="l">${esc(t.label)}</div>${sub}</div>`;
+  };
+
+  const explain = (items) => items.map((i) =>
+    i.only === false ? "" : `<div class="dr"><dt>${esc(i.label)}</dt><dd>${esc(i.help)}</dd></div>`).join("");
+
+  $("#tiles").innerHTML = `
+    <div class="tilegroup">
+      <div class="tilegroup-head">
+        <span class="tilegroup-label">What the scan found, and what is left</span>
+        <span class="tilegroup-meta">${s.unique_images ?? "-"} unique images</span>
+      </div>
+      <div class="tilerow funnel">${funnel.map(tile).join('<span class="chev" aria-hidden="true">\u203a</span>')}</div>
+      <details class="tile-explain"><summary>what these mean</summary><dl>${explain(funnel)}</dl></details>
+    </div>
+    <div class="tilegroup">
+      <div class="tilegroup-head">
+        <span class="tilegroup-label">The sharp end</span>
+      </div>
+      <div class="tilerow">${sharp.map(tile).join("")}</div>
+      <details class="tile-explain"><summary>what these mean</summary><dl>${explain(sharp)}</dl></details>
+    </div>`;
 }
 
 // Column definitions drive both rendering and sorting, so the two cannot disagree

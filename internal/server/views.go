@@ -20,8 +20,13 @@ type summaryView struct {
 	Actionable     int `json:"actionable"`
 	Suppressed     int `json:"suppressed"`
 	KnownExploited int `json:"known_exploited"`
-	Upgradable     int `json:"upgradable"` // actionable upgrade available
-	UniqueImages   int `json:"unique_images"`
+	// EndOfLife counts findings built on a line nobody maintains. Reported beside
+	// KnownExploited because they are the two facts a security reviewer reads first,
+	// and they decay differently: an exploited CVE is closed by a rebuild, an
+	// end-of-life base only by a migration.
+	EndOfLife    int `json:"end_of_life"`
+	Upgradable   int `json:"upgradable"` // actionable upgrade available
+	UniqueImages int `json:"unique_images"`
 
 	// Coverage. Without these, a client reading "N actionable" cannot tell a
 	// healthy estate from one the scan provider never looked at, and every
@@ -218,6 +223,11 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 		if hasKnownExploited(f) {
 			s.KnownExploited++
+		}
+		for _, sig := range f.Signals() {
+			if sig == model.SignalEndOfLife {
+				s.EndOfLife++
+			}
 		}
 		if hasActionableUpgrade(f) {
 			s.Upgradable++
