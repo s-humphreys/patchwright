@@ -104,6 +104,11 @@ function fixableCell(g) {
 }
 
 /** renderCVEs draws the CVE table, or says why it is empty. */
+/**
+ * renderCVEs draws the CVE view and returns what it drew, so the caller can say how much
+ * of the estate this is. It renders whatever findings it is given: the filtering decision
+ * belongs to the page, not to this view.
+ */
 export function renderCVEs(findings) {
   const { groups, scanned, total } = groupByCVE(findings);
   const note = $("#cveNote");
@@ -114,16 +119,23 @@ export function renderCVEs(findings) {
       provider, which reports totals rather than individual CVEs. Add
       <code>--vuln-source trivy</code> (chart: <code>scan.enabled</code>) to populate it.</div>`;
     renderTable("cves", CVE_COLUMNS, []);
-    return;
+    return { groups: [], scanned, total };
   }
   note.textContent = scanned === total
     ? `${groups.length} distinct CVEs across ${scanned} findings.`
     : `${groups.length} distinct CVEs across the ${scanned} of ${total} findings that were scanned. ` +
       `The rest were not scanned, so their CVEs are unknown rather than absent.`;
   renderTable("cves", CVE_COLUMNS, groups);
+  return { groups, scanned, total };
 }
 
-/** cveGroup finds one group again by id, for the detail panel. */
+// cveGroup finds one group again by id, for the detail panel.
+//
+// Looked up in the FILTERED set, so a panel opened from this view describes the same
+// population the table does. Falls back to the whole estate for a deep link that names a
+// CVE the current filters exclude - otherwise a shared link would open an empty panel
+// and look broken.
 export function cveGroup(id) {
-  return groupByCVE(S.queueRows).groups.find((g) => g.id === id) || null;
+  const inView = groupByCVE(S.filtered || []).groups.find((g) => g.id === id);
+  return inView || groupByCVE(S.queueRows).groups.find((g) => g.id === id) || null;
 }

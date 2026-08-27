@@ -9,6 +9,9 @@ export const S = {
   // The findings the queue is showing, and the work items they collapse into. Both,
   // because a click has to find its way back from a rendered row to either one.
   groupRows: [],
+  // The findings surviving the filter bar. Every view renders from this, so no two views
+  // can disagree about what the reader asked for.
+  filtered: [],
   queueRows: [],
   // Open tickets by image repository, from the API. Undefined means Jira is not
   // configured, which is NOT the same as "no ticket exists" and must not render as

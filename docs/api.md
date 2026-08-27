@@ -71,6 +71,31 @@ Read-only: there is no apply button. A POST that writes to a tracker should not 
 click away from a dashboard behind a shared token. It refreshes on demand rather than
 with the page's polling, because computing the plan queries Jira.
 
+## Filtering on the page
+
+One filter bar, governing every view. It sits above the tabs, so it has to mean the same
+thing in both: the queue, the grouped-by-service view and the CVE view all render the same
+surviving set of findings. The CVE view aggregates what survived rather than the estate,
+which is what "the CVEs affecting payments" means.
+
+The options are **faceted**: each dropdown is built from the rows that pass every *other*
+filter. So the count beside an option is what choosing it would give you, an option that
+could only return nothing is not offered, and narrowing one filter visibly narrows the
+rest.
+
+Two deliberate edges:
+
+- A selection that stops matching — because an hourly refresh brought different findings —
+  is kept and shown as `(0)` rather than silently cleared. Dropping somebody's filter
+  changes what they are looking at without telling them, and leaves the URL describing a
+  state the page is not in.
+- A link naming a combination with nothing behind it renders empty, with the count saying
+  `0 of N findings`. The dangerous alternative is the whole estate under controls that
+  appear to narrow it.
+
+Every control is in the query string, including which view is showing, so any filtered
+view is a link somebody can send.
+
 ## Data gaps on the page
 
 What the assessment cannot tell you is stated once, in a single panel above the tiles:

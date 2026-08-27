@@ -2,9 +2,9 @@ import { initialQuery, readURL } from './urlstate.js';
 import { initConfig } from './config.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
-import { cveGroup, renderCVEs } from './cves.js';
-import { current as currentView, initTabs, show } from './tabs.js';
-import { applyOwnerFilters, loadFindings, populateOwnerFilters } from './queue.js';
+import { cveGroup } from './cves.js';
+import { initTabs, show } from './tabs.js';
+import { applyOwnerFilters, loadFindings, populateOwnerFilters, renderCurrentView } from './queue.js';
 import { S } from './state.js';
 import { initTable, renderBreakdown } from './table.js';
 import { $, get, hasAssessment } from './util.js';
@@ -55,7 +55,6 @@ export async function loadAll() {
       }
     }
     renderBreakdown(owners.owners);
-    if (currentView() === "cves") renderCVEs(S.queueRows);
     // Re-render an open panel against the new data rather than leaving it showing
     // figures from the previous run, or closing it under somebody mid-read.
     //
@@ -97,7 +96,10 @@ export function init() {
   initCVEDetail(cveGroup);
   // Rendered on switch as well as on load: aggregating every CVE across the estate is
   // wasted work for a reader who never opens the view.
-  initTabs((view) => { if (view === "cves") renderCVEs(S.queueRows); });
+  // Switching view re-renders from the filtered set rather than re-fetching or
+  // re-filtering: the filter bar governs the page, so a tab change is a change of
+  // presentation only.
+  initTabs(() => renderCurrentView());
   initConfig();
   $("#groupRows").addEventListener("change", applyOwnerFilters);
   $("#onlyActionable").addEventListener("change", loadFindings);
