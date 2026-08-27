@@ -2,8 +2,8 @@
   "//": "One fixture, two implementations. The page groups in the browser for instant filtering and the API groups in Go for consumers; both must agree, so both read this file and both are checked against testdata/grouping.expected. Each finding here exists for a reason named in the tests: three tags of one service across environments with different verdicts, a second service on the same base, a repository shared by two teams, a member the provider never assessed, and a member in-flight detection never checked.",
   "findings": [
     {
-      "image": "acr.io/topnotch:V3_20.905922",
-      "repository": "topnotch",
+      "image": "acr.io/storefront:V3_20.905922",
+      "repository": "storefront",
       "registry": "acr.io",
       "tag": "V3_20.905922",
       "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
@@ -18,7 +18,7 @@
       "priority": "medium",
       "reasons": ["matched actionable rule \"preproduction-critical\""],
       "workload_count": 1,
-      "dimensions": { "account": ["Development US"], "namespace": ["topnotch"] },
+      "dimensions": { "account": ["Development NA"], "namespace": ["storefront"] },
       "upgrade": {
         "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
         "current": "3.12.3", "latest": "3.14.7",
@@ -26,8 +26,8 @@
       }
     },
     {
-      "image": "acr.io/topnotch:V3_20.913952",
-      "repository": "topnotch",
+      "image": "acr.io/storefront:V3_20.913952",
+      "repository": "storefront",
       "registry": "acr.io",
       "tag": "V3_20.913952",
       "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
@@ -42,7 +42,7 @@
       "priority": "urgent",
       "reasons": ["matched actionable rule \"exploited-fixable-critical\""],
       "workload_count": 2,
-      "dimensions": { "account": ["Production US"], "namespace": ["topnotch"] },
+      "dimensions": { "account": ["Production NA"], "namespace": ["storefront"] },
       "upgrade": {
         "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
         "current": "3.12.3", "latest": "3.14.7",
@@ -50,8 +50,8 @@
       }
     },
     {
-      "image": "acr.io/topnotch:V3_20.907474",
-      "repository": "topnotch",
+      "image": "acr.io/storefront:V3_20.907474",
+      "repository": "storefront",
       "registry": "acr.io",
       "tag": "V3_20.907474",
       "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
@@ -66,7 +66,7 @@
       "priority": "low",
       "reasons": ["matched actionable rule \"any-critical\""],
       "workload_count": 1,
-      "dimensions": { "account": ["PreProduction US"], "namespace": ["topnotch"] },
+      "dimensions": { "account": ["PreProduction NA"], "namespace": ["storefront"] },
       "upgrade": {
         "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
         "current": "3.12.3", "latest": "3.14.7",
@@ -74,8 +74,8 @@
       }
     },
     {
-      "image": "acr.io/data-mcp-tools:789771",
-      "repository": "data-mcp-tools",
+      "image": "acr.io/etl-tools:789771",
+      "repository": "etl-tools",
       "registry": "acr.io",
       "tag": "789771",
       "owner": { "class": "engineering", "team": "data-platform", "rule": "by-label" },
@@ -90,7 +90,7 @@
       "priority": "urgent",
       "reasons": ["matched actionable rule \"exploited-fixable-critical\""],
       "workload_count": 1,
-      "dimensions": { "account": ["Development UK"], "namespace": ["data-mcp-tools"] },
+      "dimensions": { "account": ["Development EU"], "namespace": ["etl-tools"] },
       "upgrade": {
         "kind": "base", "name": "docker.io/python", "source": "docker.io/python:3.12.3",
         "current": "3.12.3", "latest": "3.14.7",
@@ -98,11 +98,11 @@
       }
     },
     {
-      "image": "acr.io/airstrike:2.1.0",
-      "repository": "airstrike",
+      "image": "acr.io/ledger:2.1.0",
+      "repository": "ledger",
       "registry": "acr.io",
       "tag": "2.1.0",
-      "owner": { "class": "cpo", "team": "cpe", "rule": "cpo-by-label" },
+      "owner": { "class": "cpo", "team": "platform", "rule": "cpo-by-label" },
       "counts": { "critical": 4, "high": 12 },
       "provider_assessed": true,
       "scanned": true,
@@ -114,7 +114,7 @@
       "priority": "high",
       "reasons": ["matched actionable rule \"production-critical\""],
       "workload_count": 1,
-      "dimensions": { "account": ["Production UK"], "namespace": ["airstrike"] },
+      "dimensions": { "account": ["Production EU"], "namespace": ["ledger"] },
       "upgrade": {
         "kind": "base", "name": "acr.io/dotnet/aspnet", "source": "acr.io/dotnet/aspnet:10.0.3",
         "current": "10.0.3", "latest": "10.0.11",
@@ -122,11 +122,11 @@
       }
     },
     {
-      "image": "acr.io/airstrike:2.1.0-fdx",
-      "repository": "airstrike",
+      "image": "acr.io/ledger:2.1.0-payments",
+      "repository": "ledger",
       "registry": "acr.io",
-      "tag": "2.1.0-fdx",
-      "owner": { "class": "engineering", "team": "fdx", "rule": "by-label" },
+      "tag": "2.1.0-payments",
+      "owner": { "class": "engineering", "team": "payments", "rule": "by-label" },
       "counts": { "critical": 4, "high": 12 },
       "provider_assessed": true,
       "scanned": true,
@@ -138,7 +138,7 @@
       "priority": "high",
       "reasons": ["matched actionable rule \"production-critical\""],
       "workload_count": 1,
-      "dimensions": { "account": ["Production UK"], "namespace": ["airstrike-fdx"] },
+      "dimensions": { "account": ["Production EU"], "namespace": ["ledger-payments"] },
       "upgrade": {
         "kind": "base", "name": "acr.io/dotnet/aspnet", "source": "acr.io/dotnet/aspnet:10.0.3",
         "current": "10.0.11", "latest": "10.0.11",

@@ -7,7 +7,7 @@ func TestDashboardLinkOmittedWhenUnconfigured(t *testing.T) {
 	// link, and the server cannot know its own external URL: it binds a port and has
 	// no idea what ingress or port-forward somebody reaches it through.
 	var d DashboardConfig
-	if got := d.Link([2]string{"team", "cpe"}); got != "" {
+	if got := d.Link([2]string{"team", "platform"}); got != "" {
 		t.Fatalf("Link() = %q, want empty when no dashboard URL is set", got)
 	}
 }

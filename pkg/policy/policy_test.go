@@ -35,7 +35,7 @@ func finding(class string, crit int, accounts ...string) model.Finding {
 
 func TestSuppressionWinsOverActionable(t *testing.T) {
 	e := newTestEvaluator(t)
-	f := finding("cloud-provider", 5, "Production UK")
+	f := finding("cloud-provider", 5, "Production EU")
 	if err := e.Evaluate(&f); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestSuppressionWinsOverActionable(t *testing.T) {
 
 func TestProductionCriticalIsHigh(t *testing.T) {
 	e := newTestEvaluator(t)
-	f := finding("engineering", 3, "Development US", "Production UK")
+	f := finding("engineering", 3, "Development NA", "Production EU")
 	if err := e.Evaluate(&f); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestProductionCriticalIsHigh(t *testing.T) {
 
 func TestNonProductionCriticalFallsThroughToLow(t *testing.T) {
 	e := newTestEvaluator(t)
-	f := finding("engineering", 3, "Development US")
+	f := finding("engineering", 3, "Development NA")
 	if err := e.Evaluate(&f); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestNonProductionCriticalFallsThroughToLow(t *testing.T) {
 
 func TestNoCriticalIsNotActionable(t *testing.T) {
 	e := newTestEvaluator(t)
-	f := finding("engineering", 0, "Production UK")
+	f := finding("engineering", 0, "Production EU")
 	if err := e.Evaluate(&f); err != nil {
 		t.Fatal(err)
 	}

@@ -365,7 +365,7 @@ func TestJiraOperationLabelIsBounded(t *testing.T) {
 	}
 }
 
-// Your DVOP workflow, as observed: from NEEDS REFINEMENT the only closing transition
+// One real workflow, as observed: from NEEDS REFINEMENT the only closing transition
 // is "WON'T BE DONE". For a ticket nobody picked up that is an accurate record — the
 // upgrade landed by another route — so it is allowed.
 func TestUnworkedTicketClosesViaTheUnworkedTransition(t *testing.T) {

@@ -365,7 +365,7 @@ type Upgrade struct {
 //
 // Dimensions and Labels aggregate the per-occurrence values into the union of
 // distinct values seen across this finding's occurrences, which is what policy
-// rules evaluate against (e.g. "Production UK" in dimensions["account"]).
+// rules evaluate against (e.g. "Production EU" in dimensions["account"]).
 type Finding struct {
 	Image       Image
 	Counts      Counts

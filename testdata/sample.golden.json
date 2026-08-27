@@ -31,12 +31,12 @@
     "in_flight_checked": false,
     "dimensions": {
       "account": [
-        "Development US",
-        "Production UK"
+        "Development NA",
+        "Production EU"
       ],
       "account_id": [
-        "acc-dev-us",
-        "acc-prod-uk"
+        "acc-dev-na",
+        "acc-prod-eu"
       ],
       "cloud": [
         "AZURE_ARM"
@@ -87,10 +87,10 @@
     "in_flight_checked": false,
     "dimensions": {
       "account": [
-        "Production UK"
+        "Production EU"
       ],
       "account_id": [
-        "acc-prod-uk"
+        "acc-prod-eu"
       ],
       "cloud": [
         "AZURE_ARM"
@@ -139,10 +139,10 @@
     "in_flight_checked": false,
     "dimensions": {
       "account": [
-        "Development UK"
+        "Development EU"
       ],
       "account_id": [
-        "acc-dev-uk"
+        "acc-dev-eu"
       ],
       "cloud": [
         "AZURE_ARM"
@@ -194,10 +194,10 @@
     "in_flight_checked": false,
     "dimensions": {
       "account": [
-        "Production UK"
+        "Production EU"
       ],
       "account_id": [
-        "acc-prod-uk"
+        "acc-prod-eu"
       ],
       "cloud": [
         "AZURE_ARM"
@@ -246,10 +246,10 @@
     "in_flight_checked": false,
     "dimensions": {
       "account": [
-        "Production UK"
+        "Production EU"
       ],
       "account_id": [
-        "acc-prod-uk"
+        "acc-prod-eu"
       ],
       "cloud": [
         "AZURE_ARM"

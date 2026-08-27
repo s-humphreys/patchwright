@@ -594,7 +594,7 @@ func TestApplyPerformsCloses(t *testing.T) {
 func TestAutoCloseIsResolvedPerProject(t *testing.T) {
 	yes, no := true, false
 	cfg := config.JiraConfig{
-		Project: "DVOP", AutoClose: false,
+		Project: "OPS", AutoClose: false,
 		Routes: []config.TicketRoute{
 			{Name: "sre", When: "true", Project: "SRE", AutoClose: &yes},
 			{Name: "locked", When: "true", Project: "LOCKED", AutoClose: &no},
@@ -605,7 +605,7 @@ func TestAutoCloseIsResolvedPerProject(t *testing.T) {
 		wantClose bool
 	}{
 		{"SRE-1", true},     // its route opts in
-		{"DVOP-1", false},   // base has it off
+		{"OPS-1", false},    // base has it off
 		{"LOCKED-1", false}, // its route opts out explicitly
 		{"OTHER-1", false},  // unknown project falls back to the base
 	} {

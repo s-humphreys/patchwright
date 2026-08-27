@@ -42,9 +42,9 @@ function deployment(repo, tag, account, over = {}) {
 
 test('deployments of one service collapse into one work item', () => {
   const groups = groupFindings([
-    deployment('topnotch', 'V3_20.905922', 'Development US'),
-    deployment('topnotch', 'V3_20.907474', 'PreProduction US'),
-    deployment('topnotch', 'V3_20.913952', 'Production US'),
+    deployment('storefront', 'V3_20.905922', 'Development NA'),
+    deployment('storefront', 'V3_20.907474', 'PreProduction NA'),
+    deployment('storefront', 'V3_20.913952', 'Production NA'),
   ]);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].findings.length, 3);
@@ -53,8 +53,8 @@ test('deployments of one service collapse into one work item', () => {
 
 test('services sharing a base stay separate: they are separate rebuilds', () => {
   const groups = groupFindings([
-    deployment('topnotch', '1', 'Development US'),
-    deployment('data-mcp-tools', '1', 'Development UK'),
+    deployment('storefront', '1', 'Development NA'),
+    deployment('etl-tools', '1', 'Development EU'),
   ]);
   assert.equal(groups.length, 2, 'one base, two services, two pieces of work');
 });
@@ -63,32 +63,32 @@ test('one repository owned by two teams never merges', () => {
   // Two repositories on this estate are shared across teams. Merging them would make
   // a row that belongs to nobody and break the team filter.
   const groups = groupFindings([
-    deployment('airstrike', '1', 'Production UK'),
-    deployment('airstrike', '2', 'Production UK', { owner: { class: 'engineering', team: 'fdx' } }),
+    deployment('ledger', '1', 'Production EU'),
+    deployment('ledger', '2', 'Production EU', { owner: { class: 'engineering', team: 'payments' } }),
   ]);
   assert.equal(groups.length, 2);
-  assert.deepEqual(groups.map((g) => g.owner.team).sort(), ['data-platform', 'fdx']);
+  assert.deepEqual(groups.map((g) => g.owner.team).sort(), ['data-platform', 'payments']);
 });
 
 test('the row reports the worst verdict AND where it came from', () => {
   // The point of an environment-tiered policy is that production differs. A collapsed
   // row saying only "urgent" throws away the answer to "urgent where?".
   const [g] = groupFindings([
-    deployment('creditdecision-us', 'dev', 'Development US', { priority: 'medium' }),
-    deployment('creditdecision-us', 'prod', 'Production US', {
+    deployment('scoring-us', 'dev', 'Development NA', { priority: 'medium' }),
+    deployment('scoring-us', 'prod', 'Production NA', {
       priority: 'urgent', reasons: ['matched actionable rule "exploited-fixable-critical"'],
     }),
   ]);
   assert.equal(g.priority, 'urgent');
   const html = GROUP_COLUMNS[0].get(g);
   assert.match(html, /urgent/);
-  assert.match(html, /Production US/);
+  assert.match(html, /Production NA/);
 });
 
 test('partial assessment is marked, not averaged away', () => {
   const [g] = groupFindings([
-    deployment('app', 'a', 'Production UK'),
-    deployment('app', 'b', 'Development UK', { provider_assessed: false, counts: {} }),
+    deployment('app', 'a', 'Production EU'),
+    deployment('app', 'b', 'Development EU', { provider_assessed: false, counts: {} }),
   ]);
   assert.deepEqual(g.assessedOf, [1, 2]);
   const html = GROUP_COLUMNS[1].get(g);
@@ -99,15 +99,15 @@ test('partial assessment is marked, not averaged away', () => {
 
 test('a group nothing assessed says "?" rather than zero', () => {
   const [g] = groupFindings([
-    deployment('app', 'a', 'Production UK', { provider_assessed: false, counts: {} }),
+    deployment('app', 'a', 'Production EU', { provider_assessed: false, counts: {} }),
   ]);
   assert.match(GROUP_COLUMNS[1].get(g), /\?/);
 });
 
 test('exposure and signals take the worst case across the group', () => {
   const [g] = groupFindings([
-    deployment('app', 'a', 'Development UK'),
-    deployment('app', 'b', 'Production UK', { exposure: 'public', signals: ['exposed', 'kev'] }),
+    deployment('app', 'a', 'Development EU'),
+    deployment('app', 'b', 'Production EU', { exposure: 'public', signals: ['exposed', 'kev'] }),
   ]);
   assert.equal(g.exposure, 'public', 'exposed anywhere is exposed');
   assert.deepEqual(g.signals.sort(), ['exposed', 'kev']);
@@ -115,16 +115,16 @@ test('exposure and signals take the worst case across the group', () => {
 
 test('exposure stays unknown when nothing reported it', () => {
   const [g] = groupFindings([
-    deployment('app', 'a', 'Development UK', { exposure: 'unknown' }),
-    deployment('app', 'b', 'Production UK', { exposure: 'unknown' }),
+    deployment('app', 'a', 'Development EU', { exposure: 'unknown' }),
+    deployment('app', 'b', 'Production EU', { exposure: 'unknown' }),
   ]);
   assert.equal(g.exposure, 'unknown', 'no reports must not become "internal"');
 });
 
 test('in-flight is only "checked" when every deployment was checked', () => {
   const [g] = groupFindings([
-    deployment('app', 'a', 'Development UK'),
-    deployment('app', 'b', 'Production UK', { in_flight_checked: false }),
+    deployment('app', 'a', 'Development EU'),
+    deployment('app', 'b', 'Production EU', { in_flight_checked: false }),
   ]);
   assert.equal(g.in_flight_checked, false,
     'a partially checked group must not claim to have looked');
@@ -132,19 +132,19 @@ test('in-flight is only "checked" when every deployment was checked', () => {
 
 test('the service cell names the tag count and the team', () => {
   const [g] = groupFindings([
-    deployment('topnotch', '1', 'Development US'),
-    deployment('topnotch', '2', 'Production US'),
+    deployment('storefront', '1', 'Development NA'),
+    deployment('storefront', '2', 'Production NA'),
   ]);
   const html = GROUP_COLUMNS[2].get(g);
-  assert.match(html, /topnotch/);
+  assert.match(html, /storefront/);
   assert.match(html, /2 tags/);
   assert.match(html, /data-platform/);
 });
 
 test('the group panel lists every deployment and can drill into one', () => {
   const findings = [
-    deployment('topnotch', '1', 'Development US'),
-    deployment('topnotch', '2', 'Production US', { priority: 'urgent' }),
+    deployment('storefront', '1', 'Development NA'),
+    deployment('storefront', '2', 'Production NA', { priority: 'urgent' }),
   ];
   S.queueRows = findings;
   const [g] = groupFindings(findings);
@@ -153,8 +153,8 @@ test('the group panel lists every deployment and can drill into one', () => {
   assert.equal(el.hidden, false);
   const text = el.textContent;
   assert.match(text, /Deployments/);
-  assert.match(text, /Development US/);
-  assert.match(text, /Production US/);
+  assert.match(text, /Development NA/);
+  assert.match(text, /Production NA/);
   assert.match(text, /promoted forward/);
   // Every deployment row is reachable by keyboard, since that is the drill path.
   const rows = el.querySelectorAll('tbody tr.openable');
@@ -168,11 +168,11 @@ test('a ticket link opens the work item it names', async () => {
   // item even though tags have moved on since the ticket was raised.
   const { openFromURL } = await import('./detail.js');
   const findings = [
-    deployment('topnotch', 'new-tag-since-the-ticket', 'Production US'),
+    deployment('storefront', 'new-tag-since-the-ticket', 'Production NA'),
   ];
   S.queueRows = findings;
   const groups = groupFindings(findings);
-  dom.reconfigure({ url: 'http://x/?service=topnotch&team=data-platform' });
+  dom.reconfigure({ url: 'http://x/?service=storefront&team=data-platform' });
   globalThis.location = dom.window.location;
   const missed = openFromURL(groups, null);
   assert.equal(missed, '', 'the link should have opened something');
@@ -195,28 +195,28 @@ test('a link naming something gone says so instead of opening the nearest thing'
 
 test('one deployment running everywhere claims no environment', async () => {
   // The nats-server-config-reloader case: a single deployment in six accounts. It is
-  // urgent in all of them, and naming the alphabetically first ("Development UK")
+  // urgent in all of them, and naming the alphabetically first ("Development EU")
   // invented a distinction the policy never drew.
   const [g] = groupFindings([
-    deployment('nats-server-config-reloader', '0.14.0', 'Development UK', {
+    deployment('nats-server-config-reloader', '0.14.0', 'Development EU', {
       priority: 'urgent',
       dimensions: {
-        account: ['Development UK', 'Development US', 'PreProduction UK',
-                  'PreProduction US', 'Production UK', 'Production US'],
+        account: ['Development EU', 'Development NA', 'PreProduction EU',
+                  'PreProduction NA', 'Production EU', 'Production NA'],
         namespace: ['argo-events'],
       },
     }),
   ]);
   assert.equal(g.worstWhere, '', 'no environment distinguishes a single deployment');
   const html = GROUP_COLUMNS[0].get(g);
-  assert.doesNotMatch(html, /Development UK/);
+  assert.doesNotMatch(html, /Development EU/);
   assert.match(html, /any-critical|exploited/, 'the rule is shown instead');
 });
 
 test('deployments that agree claim no environment either', async () => {
   const [g] = groupFindings([
-    deployment('app', 'a', 'Production UK', { priority: 'high' }),
-    deployment('app', 'b', 'Development UK', { priority: 'high' }),
+    deployment('app', 'a', 'Production EU', { priority: 'high' }),
+    deployment('app', 'b', 'Development EU', { priority: 'high' }),
   ]);
   assert.equal(g.worstWhere, '', 'nothing to distinguish when the verdicts match');
 });
@@ -225,10 +225,10 @@ test('a deployment spanning accounts is counted, not picked from', async () => {
   // Where the deployments DO disagree but the worst one runs in several places,
   // saying "3 accounts" is true where naming one would not be.
   const [g] = groupFindings([
-    deployment('app', 'a', 'Development UK', { priority: 'low' }),
-    deployment('app', 'b', 'Production UK', {
+    deployment('app', 'a', 'Development EU', { priority: 'low' }),
+    deployment('app', 'b', 'Production EU', {
       priority: 'urgent',
-      dimensions: { account: ['Production UK', 'Production US', 'PreProduction UK'], namespace: ['app'] },
+      dimensions: { account: ['Production EU', 'Production NA', 'PreProduction EU'], namespace: ['app'] },
     }),
   ]);
   assert.equal(g.worstWhere, '3 accounts');
@@ -243,8 +243,8 @@ test('drilling into a deployment does not close the panel', async () => {
     '<table id="cves"><tbody></tbody></table>');
   initDetail();
   const findings = [
-    deployment('topnotch', '1', 'Development US'),
-    deployment('topnotch', '2', 'Production US', { priority: 'urgent' }),
+    deployment('storefront', '1', 'Development NA'),
+    deployment('storefront', '2', 'Production NA', { priority: 'urgent' }),
   ];
   S.queueRows = findings;
   openGroupDetail(groupFindings(findings)[0]);

@@ -31,6 +31,9 @@ so they stay in sync. Callers pass a dict:
     {{- end }}
     {{- if .root.Values.reconcile.remote.kubeconfigSecret }}
     - "--live-option=kubeconfig=/etc/patchwright-kubeconfig/kubeconfig"
+    {{- if .root.Values.reconcile.remote.authMode }}
+    - "--live-option=authMode={{ .root.Values.reconcile.remote.authMode }}"
+    {{- end }}
     {{- if .root.Values.reconcile.remote.contexts }}
     - "--live-option=contexts={{ join "," .root.Values.reconcile.remote.contexts }}"
     {{- end }}

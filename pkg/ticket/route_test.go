@@ -27,7 +27,7 @@ func routedView(class, team, repo string) sink.FindingView {
 func sreRoutes() []config.TicketRoute {
 	return []config.TicketRoute{
 		{Name: "sre", When: "owner['team'] == 'sre'", Project: "SRE", IssueType: "Bug"},
-		{Name: "platform", When: "owner['class'] == 'platform'", Project: "DVOP"},
+		{Name: "platform", When: "owner['class'] == 'platform'", Project: "OPS"},
 	}
 }
 
@@ -84,7 +84,7 @@ func TestRoutesRejectBadConfiguration(t *testing.T) {
 // Resolution is a merge: a route states only what differs.
 func TestResolveInheritsEverythingNotOverridden(t *testing.T) {
 	base := config.JiraConfig{
-		Board: 1, Project: "DVOP", Template: "t.tmpl", ImageField: "customfield_1",
+		Board: 1, Project: "OPS", Template: "t.tmpl", ImageField: "customfield_1",
 		IssueType: "Container Vulnerability", Priority: "Medium",
 		PriorityMap: map[string]string{"urgent": "Highest"},
 		Labels:      []string{"patchwright"},
@@ -132,14 +132,14 @@ func TestResolveKeepsTheImageKeyUnambiguous(t *testing.T) {
 // Reconciliation has to search every tracker, or a ticket in another project is
 // invisible and the next run raises a duplicate.
 func TestProjectsListsEveryTracker(t *testing.T) {
-	cfg := config.JiraConfig{Project: "DVOP", Routes: []config.TicketRoute{
+	cfg := config.JiraConfig{Project: "OPS", Routes: []config.TicketRoute{
 		{Name: "sre", When: "true", Project: "SRE"},
-		{Name: "also-dvop", When: "true"},           // inherits DVOP
+		{Name: "also-ops", When: "true"},            // inherits OPS
 		{Name: "dup", When: "true", Project: "SRE"}, // same project again
 	}}
 	got := cfg.Projects()
-	if len(got) != 2 || got[0] != "DVOP" || got[1] != "SRE" {
-		t.Errorf("Projects() = %v, want [DVOP SRE] with the base first", got)
+	if len(got) != 2 || got[0] != "OPS" || got[1] != "SRE" {
+		t.Errorf("Projects() = %v, want [OPS SRE] with the base first", got)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestPlannerNeverGroupsAcrossRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.JiraConfig{
-		Board: 1, Project: "DVOP", Template: tmpl, ImageField: "customfield_1",
+		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
 		Routes: []config.TicketRoute{
 			{Name: "sre", When: "owner['team'] == 'sre'", Project: "SRE", IssueType: "Bug"},
 		},
@@ -206,7 +206,7 @@ func TestEveryDraftIsRouted(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "DVOP", Template: tmpl, ImageField: "customfield_1",
+		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
 	})
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
@@ -231,10 +231,10 @@ func TestRequireRouteSkipsUnroutedWorkWithAReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.JiraConfig{
-		Board: 1, Project: "DVOP", Template: tmpl, ImageField: "customfield_1",
+		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
 		RequireRoute: true,
 		Routes: []config.TicketRoute{
-			{Name: "platform", When: "owner['class'] == 'platform'", Project: "DVOP"},
+			{Name: "platform", When: "owner['class'] == 'platform'", Project: "OPS"},
 		},
 	}
 	p, err := NewPlanner(cfg)
@@ -277,9 +277,9 @@ func TestWithoutRequireRouteUnroutedWorkUsesTheDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "DVOP", Template: tmpl, ImageField: "customfield_1",
+		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
 		Routes: []config.TicketRoute{
-			{Name: "platform", When: "owner['class'] == 'platform'", Project: "DVOP"},
+			{Name: "platform", When: "owner['class'] == 'platform'", Project: "OPS"},
 		},
 	})
 	if err != nil {

@@ -34,13 +34,13 @@ function finding(image, team, vulns, over = {}) {
 
 test('one CVE across many images aggregates to one row with the full scope', () => {
   const { groups } = groupByCVE([
-    finding('reg/a:1', 'cpe', [{ id: 'CVE-1', severity: 'high', cvss: 7.5, fix_available: true, fixed_version: '1.1' }]),
+    finding('reg/a:1', 'platform', [{ id: 'CVE-1', severity: 'high', cvss: 7.5, fix_available: true, fixed_version: '1.1' }]),
     finding('reg/b:1', 'sre', [{ id: 'CVE-1', severity: 'critical', cvss: 9.8, epss: 0.4 }]),
-    finding('reg/c:1', 'cpe', [{ id: 'CVE-2', severity: 'low' }]),
+    finding('reg/c:1', 'platform', [{ id: 'CVE-2', severity: 'low' }]),
   ]);
   const one = groups.find((g) => g.id === 'CVE-1');
   assert.equal(one.images.length, 2);
-  assert.deepEqual([...one.teams].sort(), ['cpe', 'sre']);
+  assert.deepEqual([...one.teams].sort(), ['platform', 'sre']);
   // The worst of anything reported: the same CVE is rated differently by distro, and
   // the urgent rating is the one that matters.
   assert.equal(one.severity, 'critical');
@@ -51,13 +51,13 @@ test('one CVE across many images aggregates to one row with the full scope', () 
 
 test('KEV outranks severity, and severity outranks reach', () => {
   const { groups } = groupByCVE([
-    finding('reg/a:1', 'cpe', [
+    finding('reg/a:1', 'platform', [
       { id: 'CVE-kev', severity: 'high', kev: true },
       { id: 'CVE-crit', severity: 'critical' },
       { id: 'CVE-wide', severity: 'low' },
     ]),
-    finding('reg/b:1', 'cpe', [{ id: 'CVE-wide', severity: 'low' }]),
-    finding('reg/c:1', 'cpe', [{ id: 'CVE-wide', severity: 'low' }]),
+    finding('reg/b:1', 'platform', [{ id: 'CVE-wide', severity: 'low' }]),
+    finding('reg/c:1', 'platform', [{ id: 'CVE-wide', severity: 'low' }]),
   ]);
   const rank = CVE_COLUMNS[0].sort;
   const ordered = groups.slice().sort((a, b) => rank(b) - rank(a)).map((g) => g.id);
@@ -66,22 +66,22 @@ test('KEV outranks severity, and severity outranks reach', () => {
 
 test('unscanned findings are excluded and reported, never counted as clean', () => {
   const { groups, scanned, total } = groupByCVE([
-    finding('reg/a:1', 'cpe', [{ id: 'CVE-1', severity: 'high' }]),
-    finding('reg/b:1', 'cpe', [], { scanned: false }),
+    finding('reg/a:1', 'platform', [{ id: 'CVE-1', severity: 'high' }]),
+    finding('reg/b:1', 'platform', [], { scanned: false }),
   ]);
   assert.equal(groups.length, 1);
   assert.equal(scanned, 1);
   assert.equal(total, 2);
 
-  renderCVEs([finding('reg/a:1', 'cpe', [{ id: 'CVE-1', severity: 'high' }]),
-              finding('reg/b:1', 'cpe', [], { scanned: false })]);
+  renderCVEs([finding('reg/a:1', 'platform', [{ id: 'CVE-1', severity: 'high' }]),
+              finding('reg/b:1', 'platform', [], { scanned: false })]);
   const note = document.querySelector('#cveNote').textContent;
   assert.match(note, /1 of 2/);
   assert.match(note, /unknown rather than absent/);
 });
 
 test('nothing scanned says why, rather than showing an empty CVE list', () => {
-  renderCVEs([finding('reg/a:1', 'cpe', [], { scanned: false })]);
+  renderCVEs([finding('reg/a:1', 'platform', [], { scanned: false })]);
   const note = document.querySelector('#cveNote').textContent;
   assert.match(note, /No image was scanned/);
   assert.match(note, /vuln-source/);
@@ -89,7 +89,7 @@ test('nothing scanned says why, rather than showing an empty CVE list', () => {
 });
 
 test('a CVE with no fix anywhere says so rather than showing 0', () => {
-  const { groups } = groupByCVE([finding('reg/a:1', 'cpe', [{ id: 'CVE-1', severity: 'high' }])]);
+  const { groups } = groupByCVE([finding('reg/a:1', 'platform', [{ id: 'CVE-1', severity: 'high' }])]);
   const html = CVE_COLUMNS[6].get(groups[0]);
   assert.match(html, /none/);
   assert.doesNotMatch(html, /0\/1/);
@@ -97,7 +97,7 @@ test('a CVE with no fix anywhere says so rather than showing 0', () => {
 
 test('the CVE panel lists every affected image and the teams involved', () => {
   const { groups } = groupByCVE([
-    finding('reg/a:1', 'cpe', [{ id: 'CVE-1', severity: 'critical', kev: true, fix_available: true, fixed_version: '2.0' }]),
+    finding('reg/a:1', 'platform', [{ id: 'CVE-1', severity: 'critical', kev: true, fix_available: true, fixed_version: '2.0' }]),
     finding('reg/b:1', 'sre', [{ id: 'CVE-1', severity: 'critical' }]),
   ]);
   openCVEDetail(groups[0]);
@@ -106,7 +106,7 @@ test('the CVE panel lists every affected image and the teams involved', () => {
   const text = el.textContent;
   assert.match(text, /reg\/a:1/);
   assert.match(text, /reg\/b:1/);
-  assert.match(text, /cpe/);
+  assert.match(text, /platform/);
   assert.match(text, /sre/);
   assert.match(text, /2\.0/);
   assert.match(text, /no fix/, 'the image without a fix must say so');
@@ -116,7 +116,7 @@ test('the CVE panel lists every affected image and the teams involved', () => {
 });
 
 test('rows carry the CVE id so the panel can be reopened after a refresh', () => {
-  renderCVEs([finding('reg/a:1', 'cpe', [{ id: 'CVE-1', severity: 'high' }])]);
+  renderCVEs([finding('reg/a:1', 'platform', [{ id: 'CVE-1', severity: 'high' }])]);
   const tr = document.querySelector('#cves tbody tr');
   assert.equal(tr.dataset.cve, 'CVE-1');
   assert.equal(tr.getAttribute('tabindex'), '0');
@@ -128,8 +128,8 @@ test('an affected image opens its finding, with the way back to the CVE', async 
   const { openCVEDetail, closeDetail } = await import('./detail.js');
   const vulns = [{ id: 'CVE-2024-13176', severity: 'medium', fix_available: true, fixed_version: '3.0.16' }];
   const findings = [
-    finding('acr.io/alfred:1.0.188', 'qa', vulns, { priority: 'urgent' }),
-    finding('acr.io/achievements:1.0.82-rc', '', vulns),
+    finding('acr.io/checkout:1.0.188', 'qa', vulns, { priority: 'urgent' }),
+    finding('acr.io/rewards:1.0.82-rc', '', vulns),
   ];
   S.queueRows = findings;
 
@@ -158,7 +158,7 @@ test('an image filtered out of the queue says so rather than doing nothing', asy
   // Clicking one that is hidden has nothing to open, and silence reads as a broken
   // click.
   const { openCVEDetail, closeDetail } = await import('./detail.js');
-  const carrying = finding('acr.io/hidden:1.0.0', 'cpe', [{ id: 'CVE-1', severity: 'high' }]);
+  const carrying = finding('acr.io/hidden:1.0.0', 'platform', [{ id: 'CVE-1', severity: 'high' }]);
   const { groups: [cve] } = groupByCVE([carrying]);
   S.queueRows = [];   // the finding is not loaded: a filter is hiding it
   openCVEDetail(cve);

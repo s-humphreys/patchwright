@@ -16,10 +16,10 @@ func TestFetchMarksUnassessedRows(t *testing.T) {
 		"severity,last_assessment,public_accessible\n"
 	rows := header +
 		// Assessed, with findings.
-		"1,AZURE_ARM,acc,Production UK,kubernetesdeployment:1:orders:x:,containerdeployment,orders," +
+		"1,AZURE_ARM,acc,Production EU,kubernetesdeployment:1:orders:x:,containerdeployment,orders," +
 		"acme.example.com/orders:1.0.0,3,10,5,2,0,20,700,800,CRITICAL,2026-08-07 18:00:00,0\n" +
 		// Never assessed: UNKNOWN severity, all-zero counts, empty timestamp.
-		"1,AZURE_ARM,acc,Production UK,kubernetesdeployment:1:billing:y:,containerdeployment,billing," +
+		"1,AZURE_ARM,acc,Production EU,kubernetesdeployment:1:billing:y:,containerdeployment,billing," +
 		"private.azurecr.io/billing:2.0.0,0,0,0,0,0,0,196,0,UNKNOWN,,0\n"
 
 	dir := t.TempDir()

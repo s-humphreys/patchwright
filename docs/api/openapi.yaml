@@ -51,7 +51,7 @@ paths:
       parameters:
         - { name: owner_class, in: query, schema: { type: string }, description: "Owner class, e.g. platform" }
         - { name: team, in: query, schema: { type: string } }
-        - { name: repository, in: query, schema: { type: string }, description: "Bare repository, e.g. topnotch" }
+        - { name: repository, in: query, schema: { type: string }, description: "Bare repository, e.g. storefront" }
         - { name: priority, in: query, schema: { type: string, enum: [urgent, high, medium, low] } }
         - { name: actionable, in: query, schema: { type: boolean } }
         - { name: live, in: query, schema: { type: boolean } }
