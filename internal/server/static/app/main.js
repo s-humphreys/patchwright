@@ -3,7 +3,7 @@ import { initConfig } from './config.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup, renderCVEs } from './cves.js';
-import { current as currentView, initTabs } from './tabs.js';
+import { current as currentView, initTabs, show } from './tabs.js';
 import { initPending, loadPending } from './pending.js';
 import { applyOwnerFilters, loadFindings, populateOwnerFilters } from './queue.js';
 import { S } from './state.js';
@@ -89,7 +89,13 @@ export async function loadAll() {
 // init wires every listener and starts the poll. Nothing runs at import time, so a
 // module can be imported by a test without a page to attach to.
 export function init() {
-  initTable();
+  // Drilling into a breakdown count lands on the queue with the filters applied: the
+  // question after "how many" is always "which ones", and the tab has to follow or the
+  // reader applies a filter to a table they cannot see.
+  initTable(() => {
+    show("queue");
+    applyOwnerFilters();
+  });
   initDetail();
   initCVEDetail(cveGroup);
   // Rendered on switch as well as on load: aggregating every CVE across the estate is

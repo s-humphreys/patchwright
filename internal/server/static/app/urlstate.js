@@ -21,6 +21,7 @@ const CONTROLS = [
   { id: '#teamFilter', param: 'team', kind: 'value' },
   { id: '#fixFilter', param: 'fix', kind: 'value' },
   { id: '#signalFilter', param: 'signal', kind: 'value' },
+  { id: '#urgencyFilter', param: 'urgency', kind: 'value' },
   { id: '#search', param: 'q', kind: 'value' },
   { id: '#onlyFixable', param: 'fixable', kind: 'check', dflt: false },
   { id: '#onlyActionable', param: 'actionable', kind: 'check', dflt: true },

@@ -1,7 +1,7 @@
 import { GROUP_COLUMNS, groupFindings } from './groups.js';
 import { writeURL } from './urlstate.js';
 import { SIGNAL_ORDER } from './badges.js';
-import { fixPath, ticketsFor, upgradeText } from './cells.js';
+import { PRI_RANK, fixPath, ticketsFor, upgradeText } from './cells.js';
 import { renderFreshness } from './panels.js';
 import { S } from './state.js';
 import { FINDING_COLUMNS, renderTable } from './table.js';
@@ -97,6 +97,25 @@ export function populateOwnerFilters(rows) {
     .join("");
   fixSel.value = [...fixSel.options].some((o) => o.value === chosenFix) ? chosenFix : "";
 
+  // Urgency, for the question "what is urgent in this team" without reading every row.
+  // Ordered worst-first rather than alphabetically: the list is a severity scale, and
+  // sorting it as text puts "high" above "urgent".
+  const urgSel = $("#urgencyFilter");
+  if (urgSel) {
+    const chosenUrgency = urgSel.value;
+    const urgCounts = new Map();
+    for (const f of rows) {
+      if (chosenClass && (f.owner?.class || "-") !== chosenClass) continue;
+      const p = f.priority || "none";
+      urgCounts.set(p, (urgCounts.get(p) || 0) + 1);
+    }
+    const byRank = [...urgCounts.keys()].sort((a, b) => (PRI_RANK[b] ?? 0) - (PRI_RANK[a] ?? 0));
+    urgSel.innerHTML = [`<option value="">any urgency (${rows.length})</option>`]
+      .concat(byRank.map((k) => `<option value="${esc(k)}">${esc(k)} (${urgCounts.get(k)})</option>`))
+      .join("");
+    urgSel.value = [...urgSel.options].some((o) => o.value === chosenUrgency) ? chosenUrgency : "";
+  }
+
   // Only signals actually present are offered. An option that can only ever return
   // nothing is a worse answer than no option.
   const sigSel = $("#signalFilter");
@@ -133,6 +152,7 @@ export function applyOwnerFilters() {
   writeURL();
   const c = $("#classFilter").value, t = $("#teamFilter").value, x = $("#fixFilter").value;
   const sig = $("#signalFilter").value;
+  const urg = $("#urgencyFilter")?.value || "";
   const q = $("#search").value.trim().toLowerCase();
   const rows = S.queueRows.filter((f) => {
     if (c && (f.owner?.class || "-") !== c) return false;
@@ -143,6 +163,7 @@ export function applyOwnerFilters() {
     // actionable and unfixable, which is a decision rather than a bump.
     if (x && fixPath(f) !== x) return false;
     if (sig && !(f.signals || []).includes(sig)) return false;
+    if (urg && (f.priority || "none") !== urg) return false;
     // "Has a fix" is the common case of the dropdown: something to move to,
     // whether applied here or via a chart or operator.
     if ($("#onlyFixable").checked && !["direct", "managed"].includes(fixPath(f))) return false;

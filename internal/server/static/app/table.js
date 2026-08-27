@@ -110,6 +110,21 @@ export const BREAKDOWN_COLUMNS = [
   { severitySlot: true },
   { label: "Actionable", num: true, get: (r) => countPct(r.actionable, r.total),
     help: "Findings policy marked for action, as a share of this row's findings." },
+  // Asked for by name: "how many kevs or urgent bits have different teams got". The
+  // totals above answer "who has the most work"; these answer "who is carrying the
+  // sharp end", and a row can be quiet on one and loud on the other.
+  //
+  // Each is a link into the queue rather than a number to read out, because the next
+  // question is always "which ones" and copying a team name into a filter by hand is
+  // how a good number becomes a dead end.
+  { label: "Urgent", num: true, get: (r) => drilldown(r, r.urgent, { urgency: "urgent" }),
+    help: "Findings policy rated urgent. Click for the list." },
+  { label: "KEV", num: true, get: (r) => drilldown(r, r.kev, { signal: "kev" }),
+    help: "Findings carrying a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation, not a prediction. Click for the list." },
+  { label: "Exposed", num: true, get: (r) => drilldown(r, r.exposed, { signal: "exposed" }),
+    help: "Findings on workloads reported reachable from the internet. Click for the list." },
+  { label: "EOL", num: true, get: (r) => drilldown(r, r.eol, { signal: "end-of-life" }),
+    help: "Findings whose base image line is no longer maintained, so no future fix reaches them. The only count here that does not fall when somebody rebuilds. Click for the list." },
   { label: "Direct", num: true, get: (r) => countPct(r.direct, r.actionable),
     help: "Actionable findings this team can fix by bumping the image itself." },
   { label: "Managed", num: true, get: (r) => countPct(r.managed, r.actionable),
@@ -124,6 +139,23 @@ export const BREAKDOWN_COLUMNS = [
       : '<span class="unknown" title="Jira is not configured, so ticket state is unknown">?</span>'),
     help: "Actionable findings with an open ticket. \"?\" when Jira is not configured, which is not the same as nothing being tracked." },
 ];
+
+// drilldown renders a count as a link that applies the filters behind it.
+//
+// A zero is rendered as a plain dash rather than a link to an empty queue: offering to
+// show nothing is worse than saying there is nothing. The filters are carried as data
+// attributes and applied by a delegated handler, so this survives the re-render every
+// refresh performs.
+export function drilldown(r, n, filters) {
+  if (!n) return '<span class="muted">-</span>';
+  const attrs = Object.entries({ class: r.classKey || "", team: r.teamKey || "", ...filters })
+    .filter(([, v]) => v)
+    .map(([k, v]) => `data-drill-${k}="${esc(String(v))}"`)
+    .join(" ");
+  const what = Object.entries(filters).map(([k, v]) => `${k} ${v}`).join(", ");
+  const who = r.teamKey ? `team ${r.teamKey}` : `class ${r.classKey || "all"}`;
+  return `<a href="#" class="drill" ${attrs} title="Show these ${n} in the queue: ${esc(who)}, ${esc(what)}">${n}</a>`;
+}
 
 // expandedClasses survives a re-render, so an hourly refresh does not collapse a
 // class someone had opened to read.
@@ -175,6 +207,9 @@ export function renderBreakdown(owners) {
       actionable: sum(teams, "actionable"), direct: sum(teams, "direct"),
       managed: sum(teams, "managed"), fixable: sum(teams, "fixable"),
       ticketed: sum(teams, "ticketed"),
+      urgent: sum(teams, "urgent"), kev: sum(teams, "known_exploited"),
+      exposed: sum(teams, "exposed"), eol: sum(teams, "end_of_life"),
+      classKey: cls,
     });
     // Only break a class down when there is more than one team in it; a single
     // team repeated under its own class is noise.
@@ -185,6 +220,9 @@ export function renderBreakdown(owners) {
         cves: o.cves, cvesFrom: o.cves_from,
         total: o.total, unassessed: o.unassessed, actionable: o.actionable,
         direct: o.direct, managed: o.managed, fixable: o.fixable, ticketed: o.ticketed,
+        urgent: o.urgent, kev: o.known_exploited,
+        exposed: o.exposed, eol: o.end_of_life,
+        classKey: cls, teamKey: o.team || "",
       });
     }
   }
@@ -234,10 +272,66 @@ export function toggleSeverityColumns() {
 // code: importing a module must not require a page to exist, or the rendering cannot
 // be tested without standing up the whole document — which is how this file went
 // untested for as long as it did.
-export function initTable() {
+// applyDrilldown turns a breakdown count into the queue showing exactly those findings.
+//
+// It sets the filters rather than passing a private query, so what the reader lands on is
+// a state they can see, adjust and share: the selects show why the queue looks like this,
+// and the URL carries it. A hidden filter would leave somebody staring at 3 rows out of
+// 500 with no way to tell what had been applied.
+//
+// onApply is injected so this module does not import the queue, which imports this one.
+export function applyDrilldown(data, onApply) {
+  const set = (id, value) => {
+    const el = /** @type {any} */ ($(id));
+    if (!el) return true;
+    if (el.tagName === "SELECT") {
+      // Clearing is always possible and is not a failure: a drilldown that does not
+      // constrain team, say, wants that filter emptied rather than reported missing.
+      if (!value) {
+        el.value = "";
+        return true;
+      }
+      // A value with no matching option IS a failure worth reporting. Selecting
+      // nothing would leave the whole queue showing as though the drilldown had
+      // worked, which is the same lie as a filter that matches everything.
+      if (![...el.options].some((o) => o.value === value)) return false;
+    }
+    el.value = value;
+    return true;
+  };
+  // Suppressed findings are excluded from the breakdown's counts, so the queue has to
+  // agree or the numbers will not match what it lands on.
+  const sup = /** @type {any} */ ($("#showSuppressed"));
+  if (sup) sup.checked = false;
+  // Actionable-only would hide findings the count included: these counts are of
+  // everything in the row, urgent or exploited whether or not policy marked it.
+  const act = /** @type {any} */ ($("#onlyActionable"));
+  if (act && data.urgency) act.checked = false;
+
+  const missed = [];
+  if (!set("#classFilter", data.class || "")) missed.push("class");
+  if (!set("#teamFilter", data.team || "")) missed.push("team");
+  if (!set("#urgencyFilter", data.urgency || "")) missed.push("urgency");
+  if (!set("#signalFilter", data.signal || "")) missed.push("signal");
+  if (onApply) onApply();
+  return missed;
+}
+
+export function initTable(onDrill) {
   const el = $("#breakdown");
   // Delegated, so the handlers survive the re-render that follows every toggle.
   el.addEventListener("click", (e) => {
+    const drill = e.target.closest("a.drill");
+    if (drill) {
+      e.preventDefault();
+      // Stopped, or the row's own expand handler fires too and collapses the class
+      // the reader just drilled into.
+      e.stopPropagation();
+      return applyDrilldown(drill.dataset ? {
+        class: drill.dataset.drillClass, team: drill.dataset.drillTeam,
+        urgency: drill.dataset.drillUrgency, signal: drill.dataset.drillSignal,
+      } : {}, onDrill);
+    }
     if (e.target.closest("th.sev-toggle")) return toggleSeverityColumns();
     const row = e.target.closest("tr.expandable");
     if (row) toggleBreakdownClass(row.dataset.class);

@@ -846,6 +846,26 @@ components:
         direct: { type: integer, description: Actionable findings fixable on the image. }
         managed: { type: integer, description: Actionable findings a chart or operator owns. }
         ticketed: { type: integer }
+        urgent:
+          type: integer
+          description: >-
+            Findings policy rated urgent. Counts of findings, not CVEs: a finding is
+            what gets assigned and fixed, and a CVE count would let one badly-scanned
+            image outrank a team's whole estate.
+        known_exploited:
+          type: integer
+          description: >-
+            Findings carrying a CVE in CISA's Known Exploited Vulnerabilities
+            catalogue: confirmed exploitation, not a prediction.
+        exposed:
+          type: integer
+          description: Findings on workloads something reported reachable from the internet.
+        end_of_life:
+          type: integer
+          description: >-
+            Findings built on a line nobody maintains, so no future fix reaches them.
+            Reported separately from the rest because every other count here falls when
+            somebody rebuilds; this one falls only when somebody migrates.
         cves:
           type: object
           additionalProperties: { type: integer }
