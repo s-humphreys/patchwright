@@ -282,6 +282,16 @@ auth:
     allowedDomains: []
     scopes: []                # default: openid, profile, email
     sessionTTL: ""            # default 12h
+    # Where the secrets come from. Referenced, not inlined: a client secret in values is
+    # readable by anyone who can read the HelmRelease, and lands in git the moment those
+    # values are committed. Point these at whatever your secret store produces - the key
+    # names are that store's, which is why each is a name/key pair.
+    clientSecretRef:
+      name: ""                # Secret holding the OIDC client secret
+      key: clientSecret
+    sessionKeyRef:
+      name: ""                # Secret holding the cookie signing key
+      key: sessionKey
 
 support:
   source: ""                # "endoflife" or empty

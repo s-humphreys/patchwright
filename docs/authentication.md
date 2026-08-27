@@ -26,8 +26,10 @@ patchwright serve \
   --oidc-allowed-group <group-object-id>
 ```
 
-Or in the chart, where the two secrets come from `credentialsSecretName` and never from
-values:
+Or in the chart. The secrets are **referenced**, never inlined: a client secret in values
+is readable by anyone who can read the HelmRelease, and lands in git the moment those
+values are committed. Each is a name/key pair because the key names belong to whatever
+secret store produced them, not to this chart:
 
 ```yaml
 auth:
@@ -36,7 +38,17 @@ auth:
     clientID: <application-id>
     redirectURL: https://patchwright.example.com/auth/callback
     allowedGroups: [<group-object-id>]
+    clientSecretRef:
+      name: patchwright-app-registration-client   # e.g. akv2k8s output
+      key: clientSecret
+    sessionKeyRef:
+      name: patchwright-session
+      key: sessionKey
 ```
+
+They can equally be keys in `credentialsSecretName`, named exactly
+`PATCHWRIGHT_OIDC_CLIENT_SECRET` and `PATCHWRIGHT_SESSION_KEY`, if that suits better than
+a reference.
 
 Three endpoints appear: `/auth/login`, `/auth/callback`, `/auth/logout`. They exist only
 when an issuer is configured, so nobody finds a sign-in that cannot work.
