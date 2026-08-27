@@ -2,7 +2,7 @@
 //
 // Every remote this tool reads is somebody else's service having an ordinary day. On one
 // run a single 502 from the EPSS feed — one request of a hundred and four — discarded a
-// completed scan of 791 images, and five Rapid7 pages returned 502 and cost those images
+// completed scan of the whole estate, and a handful of Rapid7 pages returned 502 and cost those images
 // their CVE detail. Neither was a real answer about the estate; both were a shrug from a
 // load balancer.
 //

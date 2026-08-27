@@ -741,12 +741,12 @@ func TestBaseUpgradesGroupByRepositoryNotByBase(t *testing.T) {
 		Current: "3.12.3", Latest: "3.14.7", Available: true, Resolved: true, Actionable: true,
 	}
 	findings := []sink.FindingView{
-		{Image: "acr.io/topnotch:V3_20.905922", Repository: "topnotch", Tag: "V3_20.905922",
-			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Development US"}}},
-		{Image: "acr.io/topnotch:V3_20.913952", Repository: "topnotch", Tag: "V3_20.913952",
-			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Production US"}}},
-		{Image: "acr.io/data-mcp-tools:789771", Repository: "data-mcp-tools", Tag: "789771",
-			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Development UK"}}},
+		{Image: "acr.io/storefront:V3_20.905922", Repository: "storefront", Tag: "V3_20.905922",
+			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Development NA"}}},
+		{Image: "acr.io/storefront:V3_20.913952", Repository: "storefront", Tag: "V3_20.913952",
+			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Production NA"}}},
+		{Image: "acr.io/etl-tools:789771", Repository: "etl-tools", Tag: "789771",
+			Priority: "urgent", Upgrade: python, Dimensions: map[string][]string{"account": {"Development EU"}}},
 	}
 	groups := group(findings, false)
 	if len(groups) != 2 {
@@ -767,9 +767,9 @@ func TestDeploymentsReadAsAPromotion(t *testing.T) {
 	// The three tags of one application are one change released forward, so the
 	// ticket lists them in the order somebody would move them.
 	group := []sink.FindingView{
-		{Image: "acr.io/app:3", Tag: "3", Dimensions: map[string][]string{"account": {"Production US"}}},
-		{Image: "acr.io/app:1", Tag: "1", Dimensions: map[string][]string{"account": {"Development US"}}},
-		{Image: "acr.io/app:2", Tag: "2", Dimensions: map[string][]string{"account": {"PreProduction US"}}},
+		{Image: "acr.io/app:3", Tag: "3", Dimensions: map[string][]string{"account": {"Production NA"}}},
+		{Image: "acr.io/app:1", Tag: "1", Dimensions: map[string][]string{"account": {"Development NA"}}},
+		{Image: "acr.io/app:2", Tag: "2", Dimensions: map[string][]string{"account": {"PreProduction NA"}}},
 	}
 	got := deployments(group)
 	var envs, tags []string
@@ -788,7 +788,7 @@ func TestDeploymentsReadAsAPromotion(t *testing.T) {
 func TestPreProductionIsNotProduction(t *testing.T) {
 	// "preproduction" contains "prod", so a naive scan puts it last and tells
 	// somebody to release to pre-production after production.
-	env, _ := environmentOf([]string{"PreProduction UK"}, nil)
+	env, _ := environmentOf([]string{"PreProduction EU"}, nil)
 	if env != "staging" {
 		t.Errorf("environmentOf(PreProduction) = %q, want staging", env)
 	}
@@ -801,7 +801,7 @@ func TestUnrecognisedEnvironmentsSortLastAndSayNothing(t *testing.T) {
 	if env != "" {
 		t.Errorf("environment = %q, want empty for an unrecognised name", env)
 	}
-	last, _ := environmentOf([]string{"Production UK"}, nil)
+	last, _ := environmentOf([]string{"Production EU"}, nil)
 	if _, prodRank := environmentOf([]string{last}, nil); rank <= prodRank {
 		t.Errorf("unrecognised rank %d should sort after production %d", rank, prodRank)
 	}

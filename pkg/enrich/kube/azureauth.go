@@ -14,10 +14,11 @@ import (
 
 // Azure AD authentication for AKS API servers.
 //
-// Reading eleven clusters needs a credential per cluster, and the obvious way — a
-// ServiceAccount token per cluster in one kubeconfig Secret — means minting ten
-// long-lived cluster credentials and storing them together. In a tool whose argument is
-// that workload identity beats managed credentials, that is not a trade worth making.
+// Reading a fleet of clusters needs a credential per cluster, and the obvious way, a
+// ServiceAccount token per cluster in one kubeconfig Secret, means minting one
+// long-lived cluster credential per cluster and storing them together. In a tool whose
+// argument is that workload identity beats managed credentials, that is not a trade
+// worth making.
 //
 // So the kubeconfig carries only what is not secret — each cluster's API server URL and
 // CA certificate — and the token comes from the identity the pod already has. There is
@@ -34,7 +35,7 @@ const aksServerAppID = "6dae42f8-4368-4678-94ff-3960e28e3630"
 // azureTokenSource mints and caches AAD tokens for AKS API servers.
 //
 // One token serves every cluster in the tenant, so this caches a single token rather than
-// one per cluster. An assessment reads eleven clusters in a few minutes and a token lasts
+// one per cluster. An assessment reads every cluster in a few minutes and a token lasts
 // about an hour; refreshing early avoids presenting one that lapses mid-run, which would
 // fail a cluster read and report the whole fleet as unreadable.
 type azureTokenSource struct {

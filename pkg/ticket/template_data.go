@@ -54,7 +54,7 @@ type TemplateData struct {
 	//
 	// A ticket for an application deployed to three environments on three different
 	// tags is one piece of work released forward, not three. Without this the ticket
-	// says "upgrade topnotch" and leaves the reader to work out that there are three
+	// says "upgrade storefront" and leaves the reader to work out that there are three
 	// tags and which one moves first.
 	Deployments []Deployment
 

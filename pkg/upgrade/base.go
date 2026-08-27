@@ -75,7 +75,7 @@ func (r *BaseResolver) Upgrades(ctx context.Context, images []model.AssessedImag
 	}
 
 	// One config read per image, and an estate is hundreds of images, so these run
-	// concurrently. Serially this took eighteen minutes on a real estate of 707,
+	// concurrently. Serially this took tens of minutes on a real estate,
 	// which is longer than the refresh interval it has to fit inside.
 	var todo []string
 	for i := range images {
@@ -149,7 +149,7 @@ func (r *BaseResolver) answer(ctx context.Context, ref string, c *baseCache) (mo
 }
 
 // baseCache shares resolved answers across images. One base is commonly shared by
-// hundreds of images — 183 of one estate's 707 sat on a single base — and the answer
+// hundreds of images, a large share of them sharing one base, and the answer
 // for it is identical every time.
 type baseCache struct {
 	mu      sync.Mutex

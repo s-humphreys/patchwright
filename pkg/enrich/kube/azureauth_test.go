@@ -29,7 +29,7 @@ func (s *stubCred) GetToken(context.Context, policy.TokenRequestOptions) (azureT
 
 func TestOneTokenServesEveryClusterAndEveryRequest(t *testing.T) {
 	// A single AAD token is valid for every AAD-integrated cluster in the tenant, so
-	// eleven clusters and thousands of list calls cost one token acquisition.
+	// a whole fleet and thousands of list calls cost one token acquisition.
 	cred := &stubCred{token: "aad", expires: time.Now().Add(time.Hour)}
 	src := &azureTokenSource{cred: cred}
 	for i := 0; i < 50; i++ {

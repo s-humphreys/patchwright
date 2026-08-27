@@ -138,7 +138,7 @@ lying:
 
 CVEs report both `images` and `services`, because they answer different questions: how
 many deployments carry it, and how many pieces of work fixing it takes. One base-image
-CVE on 535 images is a handful of rebuilds.
+CVE on hundreds of images is a handful of rebuilds.
 
 The grouping is implemented twice — in Go here, and in the browser so the queue filters
 instantly — and `testdata/grouping.json` plus `testdata/grouping.expected` hold both to
@@ -151,9 +151,9 @@ The status page shows the same assessment two ways, as tabs, with the view in th
 
 - **Queue** — grouped by service (team, repository and upgrade target) so one row is
   one piece of work: rebuilding a service and promoting it through its environments.
-  On a real estate 621 findings collapsed to 370 items, so most of the queue was the
+  On a real estate most findings collapsed away into shared items, so most of the queue was the
   same work listed again. A grouped row reports the WORST of its deployments and names
-  where that came from ("urgent in Production US"), marks partial provider coverage
+  where that came from ("urgent in Production NA"), marks partial provider coverage
   rather than averaging it away, and only claims a check ran when it ran for every
   deployment. Selecting the row lists them, and selecting one of those drills into it.
   Untick "group by service" for the flat per-deployment list, which is what you want

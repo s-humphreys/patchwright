@@ -9,8 +9,8 @@ import { $, esc, get } from './util.js';
 
 export function renderFindings(rows) {
   // Grouped by default: one row per piece of work rather than per deployment. Both
-  // counts are shown, because neither alone is the whole truth — 370 items is what
-  // there is to do, 621 findings is what it covers.
+  // counts are shown, because neither alone is the whole truth: the item count is what
+  // there is to do, the finding count is what it covers.
   if (grouped()) {
     const groups = groupFindings(rows);
     S.groupRows = groups;

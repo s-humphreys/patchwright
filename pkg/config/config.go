@@ -128,7 +128,7 @@ type UpgradeConfig struct {
 // UpgradeRule constrains upgrades for images whose name matches.
 type UpgradeRule struct {
 	// Name matches the upgrade's image name, e.g. "docker.io/python" or
-	// "capitalontap.azurecr.io/dotnet/*".
+	// "registry.example.com/dotnet/*".
 	Name string `yaml:"name"`
 	// Strategy for matching images. Empty inherits the default.
 	Strategy string `yaml:"strategy"`

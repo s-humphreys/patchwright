@@ -28,7 +28,7 @@ export JIRA_API_TOKEN=...
 jira:
   groupBy: service     # or campaign
   routes:
-    - name: data-engineering
+    - name: data-eng
       groupBy: campaign
 ```
 

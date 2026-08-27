@@ -139,7 +139,7 @@ func (s *Source) restConfigs() (map[string]*rest.Config, error) {
 	}
 
 	// One token source across every context: a single AAD token is valid for every
-	// AAD-integrated cluster in the tenant, so eleven clusters cost one token.
+	// AAD-integrated cluster in the tenant, so a whole fleet costs one token.
 	var tokens *azureTokenSource
 	if strings.EqualFold(s.authMode, "azure") {
 		t, err := newAzureTokenSource()

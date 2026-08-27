@@ -24,7 +24,7 @@ type CVE struct {
 
 	// Images and Services are the two scope numbers, and they answer different
 	// questions: images is how many deployments carry it, services how many pieces of
-	// work fixing it takes. One base image CVE on 535 images is a handful of rebuilds.
+	// work fixing it takes. One base image CVE on hundreds of images is a handful of rebuilds.
 	Images   int `json:"images"`
 	Services int `json:"services"`
 	// Fixable is how many affected images have a published fix. Short of Images means

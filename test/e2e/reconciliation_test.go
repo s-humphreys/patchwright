@@ -48,7 +48,7 @@ var _ = Describe("full pipeline with live reconciliation", func() {
 		return model.Occurrence{
 			Image: model.ParseImageRef(ref),
 			Resource: model.Resource{
-				Dimensions: map[string]string{"namespace": namespace, "account": "Production UK"},
+				Dimensions: map[string]string{"namespace": namespace, "account": "Production EU"},
 			},
 			Counts: model.Counts{model.SeverityCritical: 1},
 		}
@@ -113,7 +113,7 @@ var _ = Describe("namespace-label ownership", func() {
 		occ := []model.Occurrence{{
 			Image: model.ParseImageRef("acr.io/app:1"),
 			Resource: model.Resource{
-				Dimensions: map[string]string{"namespace": "e2e-team-a", "account": "Production UK"},
+				Dimensions: map[string]string{"namespace": "e2e-team-a", "account": "Production EU"},
 			},
 			Counts: model.Counts{model.SeverityCritical: 1},
 		}}

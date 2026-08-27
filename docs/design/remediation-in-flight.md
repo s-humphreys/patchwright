@@ -8,7 +8,7 @@ it asked:
 
 | Open Renovate PR | patchwright was ticketing |
 |---|---|
-| `Update capitalontap.azurecr.io/dotnet/aspnet/10 Docker tag to v1.1.1` (3 days old) | the same base bump |
+| `Update registry.example.com/dotnet/aspnet/10 Docker tag to v1.1.1` (3 days old) | the same base bump |
 | `Update docker.io/octopusdeploy/kubernetes-agent Docker tag to v3.13.0` (7 days) | the agent upgrade |
 | `Update tryretool/backend Docker tag to v3.334.28` (3 days) | the retool base bump |
 | `Update busybox Docker tag to v1.38` (3 days) | the datadog init image |
@@ -46,8 +46,8 @@ by base image rather than replacing it.
 title" produced 14 matches, and the ones it found were mostly wrong:
 
 ```
-capitalontap.azurecr.io/dotnet/aspnet 8.0.13→8.0.22
-  matched  chore(aspnet-ironpdf10): Update capitalontap.azurecr.io/dotnet/aspnet/10 …
+registry.example.com/dotnet/aspnet 8.0.13→8.0.22
+  matched  chore(aspnet-ironpdf10): Update registry.example.com/dotnet/aspnet/10 …
 ```
 
 `dotnet/aspnet` is a prefix of `dotnet/aspnet/10`, so substring matching conflated two
@@ -106,7 +106,7 @@ remediation:
     projects: [DevOps, Apps]
     # Which pull requests count as automated remediation. Defaults cover Renovate's
     # conventions; Dependabot and others are named the same way.
-    authors: [renovate.automations]
+    authors: [renovate-bot]
     branchPrefixes: [renovate/]
     # A fix sitting in review this long is itself the finding.
     staleAfter: 14d

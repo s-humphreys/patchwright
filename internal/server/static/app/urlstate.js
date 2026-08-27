@@ -2,7 +2,7 @@ import { $ } from './util.js';
 
 // Filter state in the URL, so a view can be shared.
 //
-// "The exposed, fixable findings owned by cpe" is the sentence somebody wants to send
+// "The exposed, fixable findings owned by the platform team" is the sentence somebody wants to send
 // to somebody else, and until now the only way was a screenshot plus instructions.
 // A link also survives the refresh, so an hourly poll does not quietly reset what the
 // reader had narrowed down to.

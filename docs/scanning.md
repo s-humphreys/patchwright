@@ -106,7 +106,7 @@ connection — are retried with jittered backoff first, and if exploit intellige
 cannot be gathered the run completes without it: `exploit_checked` stays false, every
 EPSS and KEV cell reads "not checked" rather than "none found", and the failure is
 reported in `source_failures` and on the page. One 502 from a public feed, one request in
-a hundred, used to discard a completed scan of 791 images.
+a hundred, used to discard an entire completed scan.
 
 `EPSS` is the highest score across the image's CVEs: one CVE at 0.93 makes the
 image urgent however many quiet ones sit beside it.

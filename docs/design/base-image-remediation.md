@@ -16,13 +16,13 @@ Verified against the live registry, so this design starts from fact rather than
 assumption. Taking one real image:
 
 ```
-capitalontap.azurecr.io/poc-credit-approval-jobs:1.0.79
+registry.example.com/poc-credit-approval-jobs:1.0.79
 ```
 
 Its config carries the base explicitly:
 
 ```
-image.base.ref.name  = capitalontap.azurecr.io/dotnet/aspnet/10:1.0.5
+image.base.ref.name  = registry.example.com/dotnet/aspnet/10:1.0.5
 image.base.digest    = sha256:395636da1552e928c52620806dd8de096a6d4073f8141659b1d4663fbae…
 ```
 
@@ -30,15 +30,15 @@ It also carries a SLSA provenance attestation listing every resolved input, whic
 distinguishes the runtime base from build-only stages:
 
 ```
-pkg:docker/capitalontap.azurecr.io/dotnet/aspnet/10@1.0.5   ← final stage
-pkg:docker/capitalontap.azurecr.io/dotnet/sdk/10@1.1.0      ← build stage only
+pkg:docker/registry.example.com/dotnet/aspnet/10@1.0.5   ← final stage
+pkg:docker/registry.example.com/dotnet/sdk/10@1.1.0      ← build stage only
 pkg:docker/docker/dockerfile@1-labs
 ```
 
 And the base is itself first-party, with its own base recorded:
 
 ```
-capitalontap.azurecr.io/dotnet/aspnet/10:1.0.5
+registry.example.com/dotnet/aspnet/10:1.0.5
   → image.base.ref.name = mcr.microsoft.com/dotnet/aspnet:10.0.7-azurelinux3.0
 ```
 
@@ -155,7 +155,7 @@ rather than remediation:
 ```yaml
 remediation:
   firstParty:
-    registries: [capitalontap.azurecr.io]
+    registries: [registry.example.com]
 ```
 
 For those, a newer application tag is not a fix and is not reported as one. The

@@ -94,7 +94,7 @@ func (v *vulnSource) buildMap(ctx context.Context) (map[string]string, error) {
 		// API returns one, and treating it as the end truncated the map — which then
 		// reported "no resource runs this image" for everything missing, i.e. a
 		// coverage gap dressed up as an answer. On a live run that silently cost 193
-		// of 840 images.
+		// of the estate.
 		if len(resp.Data) == 0 {
 			slog.WarnContext(ctx, "rapid7 returned an empty page mid-listing; continuing",
 				"page", page, "of", resp.TotalPages)

@@ -93,21 +93,21 @@ func TestGroupingKeepsTeamsApart(t *testing.T) {
 	// an item belonging to nobody and break every team-scoped query.
 	items := group.Items(loadFixture(t))
 	for _, it := range items {
-		if it.Repository != "airstrike" {
+		if it.Repository != "ledger" {
 			continue
 		}
 		if it.Deployments != 1 {
-			t.Errorf("airstrike item for %s covers %d deployments; the teams must stay apart",
+			t.Errorf("ledger item for %s covers %d deployments; the teams must stay apart",
 				it.Team, it.Deployments)
 		}
 	}
 }
 
 func TestPartialCoverageIsVisible(t *testing.T) {
-	// topnotch has three deployments and one the provider never assessed. The counts
+	// storefront has three deployments and one the provider never assessed. The counts
 	// must be the worst KNOWN, and the shortfall must be reportable.
 	for _, it := range group.Items(loadFixture(t)) {
-		if it.Repository != "topnotch" {
+		if it.Repository != "storefront" {
 			continue
 		}
 		if it.Deployments != 3 || it.AssessedImages != 2 {
@@ -122,8 +122,8 @@ func TestPartialCoverageIsVisible(t *testing.T) {
 		if it.Exposure != "public" {
 			t.Errorf("exposure = %q; exposed anywhere is exposed", it.Exposure)
 		}
-		if it.Priority != "urgent" || it.PriorityWhere != "Production US" {
-			t.Errorf("worst verdict = %q in %q, want urgent in Production US", it.Priority, it.PriorityWhere)
+		if it.Priority != "urgent" || it.PriorityWhere != "Production NA" {
+			t.Errorf("worst verdict = %q in %q, want urgent in Production NA", it.Priority, it.PriorityWhere)
 		}
 	}
 }

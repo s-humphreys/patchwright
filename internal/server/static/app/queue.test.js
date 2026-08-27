@@ -26,7 +26,7 @@ const { S } = await import('./state.js');
 function finding(over = {}) {
   return {
     image: 'reg/app:1', repository: 'app', registry: 'reg', digest: '',
-    owner: { class: 'cpo', team: 'cpe', rule: 'by-namespace' },
+    owner: { class: 'cpo', team: 'platform', rule: 'by-namespace' },
     counts: { critical: 2, high: 5 }, provider_assessed: true,
     scanned: true, exploit_checked: true, remediation_checked: true,
     exposure: 'internal', signals: [], vulns: [], workload_count: 3,
@@ -79,7 +79,7 @@ test('urgency names the rule that decided it', () => {
 test('the image cell carries its owner and namespace instead of two more columns', () => {
   const html = FINDING_COLUMNS[2].get(finding());
   assert.match(html, /reg\/app:1/);
-  assert.match(html, /cpe/);
+  assert.match(html, /platform/);
   assert.match(html, /apps/);
   // An unattributed finding says so rather than showing a dash that reads as a team.
   assert.match(FINDING_COLUMNS[2].get(finding({ owner: {} })), /unattributed/);
@@ -188,7 +188,7 @@ test('every stylesheet token it uses is defined', () => {
 });
 
 test('the queue offers the patch now and names the migration separately', async () => {
-  // The topnotch case: a service on python 3.12.3 told to move to 3.14.7 does nothing,
+  // The storefront case: a service on python 3.12.3 told to move to 3.14.7 does nothing,
   // because its dependency tree is not ready. Offering 3.12.14 with the newest named
   // turns "we cannot do that" into "we can do that today".
   const { fixCell } = await import('./cells.js');
