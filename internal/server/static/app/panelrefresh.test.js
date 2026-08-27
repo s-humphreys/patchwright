@@ -158,3 +158,33 @@ test('a refresh keeps the reader where they had scrolled to', () => {
     else delete proto.scrollTop;
   }
 });
+
+test('an ungrouped row opens the deployment, not the work item', async () => {
+  // Unticking "group by service" left the previous grouped rows in state, so a click
+  // looked its image up there and opened the work item panel for a row that was showing
+  // one deployment. The row now says which it is.
+  const { renderTable } = await import('./table.js');
+  const { GROUP_COLUMNS, groupFindings } = await import('./groups.js');
+  const { FINDING_COLUMNS } = await import('./table.js');
+
+  const rows = [
+    finding({ image: 'reg/app:1.0.0', tag: '1.0.0' }),
+    finding({ image: 'reg/app:1.0.1', tag: '1.0.1' }),
+  ];
+
+  // Grouped first: rows declare their work item.
+  const groups = groupFindings(rows);
+  S.groupRows = groups;
+  S.queueRows = rows;
+  renderTable('findings', GROUP_COLUMNS, groups);
+  const groupedRow = document.querySelector('#findings tbody tr');
+  assert.ok(groupedRow.dataset.group, 'a grouped row must carry its work item key');
+
+  // Then ungrouped, as unticking the box does: the state is cleared and the rows carry
+  // no group key, so a click can only resolve to the deployment.
+  S.groupRows = [];
+  renderTable('findings', FINDING_COLUMNS, rows);
+  const plainRow = document.querySelector('#findings tbody tr');
+  assert.equal(plainRow.dataset.group, undefined, 'an ungrouped row must not claim a work item');
+  assert.equal(plainRow.dataset.image, 'reg/app:1.0.0');
+});

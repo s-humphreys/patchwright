@@ -345,12 +345,17 @@ function findingFor(el) {
   return S.queueRows.find((x) => x.image === /** @type {any} */ (tr).dataset.image) || null;
 }
 
-/** groupFor resolves a queue row back to the work item it renders, when grouped. */
+// groupFor resolves a queue row back to the work item it renders, and only when the row
+// says it renders one.
+//
+// Keyed off the row's own data-group rather than looking its image up in S.groupRows:
+// both tables render an image, and the grouped rows linger in state after somebody
+// unticks "group by service", so a lookup by image opened the grouped panel for a row
+// that was showing a single deployment.
 function groupFor(el) {
-  const tr = el.closest("tbody tr");
-  if (!tr) return null;
-  const image = /** @type {any} */ (tr).dataset.image;
-  return (S.groupRows || []).find((g) => g.image === image) || null;
+  const tr = /** @type {any} */ (el.closest("tbody tr"));
+  if (!tr || !tr.dataset.group) return null;
+  return groupByKey(tr.dataset.group);
 }
 
 // initDetail wires opening from the queue and closing with Escape. Delegated, so it

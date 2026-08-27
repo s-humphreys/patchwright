@@ -83,7 +83,11 @@ export function renderTable(id, columns, rows) {
   document.querySelector(`#${id} tbody`).innerHTML = data.map((row) => (openable
     ? `<tr class="openable" tabindex="0" ${id === "cves"
         ? `data-cve="${esc(row.id)}" aria-label="Show scope of ${esc(row.id)}"`
-        : `data-image="${esc(row.image)}" aria-label="Show details for ${esc(row.image)}"`}>`
+        // A work item carries its key, so a click opens what the row actually IS rather
+        // than what state happens to hold. Both tables render an image, so inferring the
+        // kind from the data was how an ungrouped row opened the grouped panel.
+        : `data-image="${esc(row.image)}"${row.key && row.findings ? ` data-group="${esc(row.key)}"` : ""}` +
+          ` aria-label="Show details for ${esc(row.image)}"`}>`
     : "<tr>") +
     columns.map((c) => {
       const cls = [c.num ? "num" : "", typeof c.td === "string" ? c.td : "",

@@ -123,6 +123,10 @@
   td.indent { padding-left: 1.6rem; }
   tr.expandable { cursor: pointer; }
   tr.expandable:hover td, tr.expandable:focus-visible td { background: var(--hover); }
+  /* Team rows highlight on hover too. They are not expandable, but they are dense rows
+     of numbers read across, and without a hover the eye loses the line - which is the
+     one thing a per-team breakdown is for. */
+  #breakdown tbody tr:hover td { background: var(--hover); }
   tr.expandable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .caret { display: inline-block; width: 1rem; color: var(--muted); }
   .linkish {

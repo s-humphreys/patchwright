@@ -20,6 +20,9 @@ export function renderFindings(rows) {
     renderTable("findings", GROUP_COLUMNS, groups);
     return;
   }
+  // Cleared rather than left holding the last grouped render: state that describes
+  // something no longer on screen is state something else will act on.
+  S.groupRows = [];
   $("#queueCount").textContent = rows.length === S.queueRows.length
     ? `${rows.length} findings`
     : `${rows.length} of ${S.queueRows.length} findings`;
