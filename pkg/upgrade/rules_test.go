@@ -4,9 +4,11 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
+	"github.com/s-humphreys/patchwright/pkg/support"
 )
 
 // The case this exists for. A ceiling holding Python at 3.12 was written because ONE
@@ -195,4 +197,66 @@ func TestAScopeSeesEveryDeploymentOfTheImage(t *testing.T) {
 	if v := got["example.azurecr.io/task-daemon:1.0.0"].Latest; v != "3.12.14" {
 		t.Errorf("got %q, want 3.12.14: the second deployment's namespace must be visible", v)
 	}
+}
+
+func TestACeilingIsNotSteppedPastEvenWhenTheLineIsDead(t *testing.T) {
+	// The two features meet here. A ceiling holds this image inside Python 3.12; the
+	// support feed says 3.12 is finished. Recommending the migration would walk past an
+	// explicit constraint, which is the same failure as a rule that silently does not
+	// fire, pointing the other way.
+	//
+	// The honest output is both facts: the line is dead, and policy holds you on it.
+	// That is a conflict for a person to resolve by lifting the ceiling.
+	cfg := config.RemediationConfig{
+		FirstPartyRegistries: []string{"example.azurecr.io"},
+		Upgrade: config.UpgradeConfig{
+			Strategy: "latest",
+			Rules: []config.UpgradeRule{{
+				Name: "docker.io/python", Strategy: "patch", Ceiling: "3.12",
+				Until: "2099-12-31", Reason: "dependencies are not ready",
+			}},
+		},
+	}
+	r := &BaseResolver{
+		Cfg: cfg,
+		Inspector: eolInspector{labels: map[string]string{
+			"org.opencontainers.image.base.name": "docker.io/python:3.12.14",
+		}},
+		// Nothing newer in 3.12, and the off-track target EXISTS as a tag, so the
+		// only thing stopping the migration being recommended is the ceiling. Without
+		// "3.14" here the test would pass because no candidate could be constructed,
+		// which proves nothing about the behaviour under test.
+		Lister:  eolLister{tags: []string{"3.12.14", "3.13", "3.13.2", "3.14", "3.14.7"}},
+		Support: eolSupport{product: pythonDead()},
+		Now:     func() time.Time { return day("2026-08-27") },
+	}
+	got := upgradeFor(t, r, service("legacy-etl", "data-platform", "etl"))
+	up := got["example.azurecr.io/legacy-etl:1.0.0"]
+
+	if up.OutOfTrack {
+		t.Error("recommended a move off the line, stepping past an explicit ceiling")
+	}
+	if up.Latest != "" || up.Available {
+		t.Errorf("Latest = %q available=%v, want no recommendation while the ceiling stands", up.Latest, up.Available)
+	}
+	if !up.HeldBack {
+		t.Error("HeldBack is false: newer versions exist and policy allows none of them")
+	}
+	// And the reader must still be told the line is finished, or the ceiling looks
+	// merely conservative rather than actively harmful.
+	if up.Support == nil || up.Support.Supported || !up.Support.Known {
+		t.Errorf("support = %+v, want a known end-of-life verdict alongside the ceiling", up.Support)
+	}
+	if up.Ceiling != "3.12" || up.Rule == "" {
+		t.Errorf("ceiling=%q rule=%q, want the constraint named", up.Ceiling, up.Rule)
+	}
+}
+
+// pythonDead is the support feed with 3.12 finished and newer lines maintained.
+func pythonDead() support.Product {
+	return support.Product{Name: "python", Cycles: []support.Cycle{
+		{Name: "3.12", EOL: day("2026-01-01"), EOLKnown: true},
+		{Name: "3.13", EOL: day("2029-10-31"), EOLKnown: true},
+		{Name: "3.14", EOL: day("2030-10-31"), EOLKnown: true},
+	}}
 }

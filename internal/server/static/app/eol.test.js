@@ -84,3 +84,21 @@ test("end of life outranks kev in the signal order", () => {
   assert.ok(SIGNAL_WEIGHT["end-of-life"] > SIGNAL_WEIGHT.kev);
   assert.ok(SIGNAL_BADGES["end-of-life"], "the signal needs a badge or it renders as a bare string");
 });
+
+test('a ceiling inside a dead line says so, and does not pretend to a fix', async () => {
+  // Individually unremarkable facts: policy holds this at 3.12, and 3.12 is finished.
+  // Together they are the finding, and the resolver deliberately will not step past the
+  // constraint - so the page has to say a person must lift it.
+  const { upgradeStrategyWhy } = await import("./cells.js");
+  const why = upgradeStrategyWhy({
+    ceiling: "3.12", rule: "docker.io/python", ceiling_reason: "deps not ready",
+    newest: "3.14.7", held_back: true, available: false,
+    support: {
+      product: "python", cycle: "3.12", eol: "2026-01-01",
+      known: true, supported: false, recommended: "3.14", source: "endoflife.date",
+    },
+  });
+  assert.match(why, /docker\.io\/python/, "the deciding rule must be named");
+  assert.match(why, /no longer maintained/);
+  assert.match(why, /ceiling lifted first/, "the reader needs to know what unblocks it");
+});

@@ -416,6 +416,16 @@ export function upgradeStrategyWhy(u) {
   if (u.ceiling_expired) {
     parts.push("That ceiling's end date has passed, so it was NOT applied — the constraint is due a revisit.");
   }
+  // A ceiling inside a line nobody maintains is not merely conservative, it is holding
+  // this image somewhere no fix will ever arrive. Said plainly, because the two facts
+  // are individually unremarkable and together they are the finding: the resolver will
+  // not step past the constraint, so a person has to decide to lift it.
+  if (u.ceiling && endOfLifeStatus(u)) {
+    const st = u.support;
+    parts.push(`That line is no longer maintained${st.eol ? ` (${st.product} ${st.cycle} ended ${st.eol})` : ""},` +
+      ` so no fix will reach this image while the ceiling stands.` +
+      (st.recommended ? ` Moving to ${st.recommended} needs the ceiling lifted first.` : ""));
+  }
   parts.push(`The newest available is ${u.newest}, which is a separate decision.`);
   return parts.join(" ");
 }

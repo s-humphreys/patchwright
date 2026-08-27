@@ -353,7 +353,15 @@ func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtD
 	// only upgrade that helps crosses the line. Applied only when nothing in-track was
 	// found: while the line still has newer patches, the safe rebuild is the better
 	// first move and a migration can follow.
-	if !up.Available {
+	//
+	// NOT applied when a ceiling is what emptied the track. Recommending the migration
+	// then would step straight past an explicit constraint - policy says stop here, and
+	// the report would say go - which is the same failure as a rule that silently does
+	// not fire, in the other direction. The honest output is that the line is dead AND
+	// policy holds this image on it: a conflict for a person to resolve by lifting the
+	// ceiling, not for a resolver to resolve by ignoring it. Both halves are reported,
+	// so the page can say so in as many words.
+	if !up.Available && !up.HeldBack {
 		up = r.offTrackUpgrade(ctx, base, up)
 	}
 	return up, nil
