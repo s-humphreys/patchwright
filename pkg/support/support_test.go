@@ -285,3 +285,80 @@ func TestNearestIsOfferedAlongsideNewest(t *testing.T) {
 		t.Error("want no nearest cycle above the newest one")
 	}
 }
+
+func TestSupportWindowsDoNotGoStaleForThePodsLifetime(t *testing.T) {
+	// The server builds its sources once and reuses them every hour, so a cache with no
+	// expiry is a cache for the pod's lifetime. Cycles die and get promoted to LTS on
+	// published dates: a pod started the day before would otherwise keep recommending
+	// the old answer for weeks.
+	fetches := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetches++
+		_, _ = w.Write([]byte(`[{"cycle":"24","eol":"2028-04-30","lts":"2025-10-28"}]`))
+	}))
+	defer srv.Close()
+
+	clock := date("2026-08-27")
+	s := support.NewEndOfLife(srv.URL, srv.Client())
+	support.SetClock(s, func() time.Time { return clock })
+
+	for i := 0; i < 3; i++ {
+		if _, err := s.Product(context.Background(), "nodejs"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fetches != 1 {
+		t.Errorf("fetches = %d, want 1: hundreds of images share a handful of products", fetches)
+	}
+
+	clock = clock.Add(25 * time.Hour)
+	if _, err := s.Product(context.Background(), "nodejs"); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 2 {
+		t.Errorf("fetches = %d after a day, want 2: the window must be re-read", fetches)
+	}
+}
+
+func TestATransientFailureDoesNotBecomeAPermanentGap(t *testing.T) {
+	// The worse half of the same bug. A remembered failure with no expiry means one 502
+	// leaves every image on that product reporting "not checked" until somebody
+	// restarts the pod - a lasting hole in coverage caused by a moment's outage.
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts <= support.Attempts() {
+			// Fail every retry of the first call, so the first Product() genuinely fails.
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"cycle":"24","eol":"2028-04-30","lts":"2025-10-28"}]`))
+	}))
+	defer srv.Close()
+
+	clock := date("2026-08-27")
+	s := support.NewEndOfLife(srv.URL, srv.Client())
+	support.SetClock(s, func() time.Time { return clock })
+
+	if _, err := s.Product(context.Background(), "nodejs"); err == nil {
+		t.Fatal("want the first lookup to fail")
+	}
+	// Within the same assessment the failure is reused rather than retried per image.
+	before := attempts
+	if _, err := s.Product(context.Background(), "nodejs"); err == nil {
+		t.Fatal("want the remembered failure inside one assessment")
+	}
+	if attempts != before {
+		t.Errorf("attempts = %d, want %d: one assessment should not re-ask per image", attempts, before)
+	}
+
+	// By the next assessment it must try again, and succeed.
+	clock = clock.Add(20 * time.Minute)
+	p, err := s.Product(context.Background(), "nodejs")
+	if err != nil {
+		t.Fatalf("the next assessment must retry: %v", err)
+	}
+	if len(p.Cycles) != 1 {
+		t.Errorf("cycles = %d, want 1", len(p.Cycles))
+	}
+}

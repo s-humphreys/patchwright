@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/httpretry"
@@ -220,12 +221,44 @@ type Source interface {
 	Product(ctx context.Context, product string) (Product, error)
 }
 
+// Cache lifetimes.
+//
+// The server builds its sources ONCE and reuses them for every hourly assessment, so a
+// cache with no expiry here is a cache for the pod's lifetime - days or weeks. Two things
+// then go wrong quietly, and the second is worse:
+//
+//   - A support window that changes while the process runs is never seen. Cycles die and
+//     get promoted to LTS on published dates; a pod started before one would keep
+//     recommending the old answer indefinitely.
+//   - A single failure would mark a product permanently unavailable, so every image on it
+//     reports "not checked" until somebody restarts the pod. A transient 502 must not
+//     turn into a lasting hole in coverage.
+//
+// So successes are held for a day, which is finer-grained than this data ever moves, and
+// failures only until the next assessment is likely to run.
+const (
+	successTTL = 24 * time.Hour
+	failureTTL = 15 * time.Minute
+)
+
 // endOfLife reads endoflife.date.
 type endOfLife struct {
+	mu      sync.Mutex
 	baseURL string
 	client  *http.Client
-	cache   map[string]Product
-	failed  map[string]error
+	now     func() time.Time
+	cache   map[string]cached
+	failed  map[string]cachedErr
+}
+
+type cached struct {
+	product Product
+	at      time.Time
+}
+
+type cachedErr struct {
+	err error
+	at  time.Time
 }
 
 // NewEndOfLife returns a Source backed by endoflife.date.
@@ -239,12 +272,25 @@ func NewEndOfLife(baseURL string, client *http.Client) Source {
 	return &endOfLife{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		client:  client,
-		cache:   map[string]Product{},
-		failed:  map[string]error{},
+		now:     time.Now,
+		cache:   map[string]cached{},
+		failed:  map[string]cachedErr{},
 	}
 }
 
 func (e *endOfLife) Name() string { return "endoflife.date" }
+
+// Attempts reports how many times a fetch is tried, so a test can exhaust the retries
+// deliberately rather than guess.
+func Attempts() int { return httpretry.Attempts }
+
+// SetClock replaces the clock this source reads, so a test can advance time rather than
+// sleep for a day to prove the cache expires.
+func SetClock(s Source, now func() time.Time) {
+	if e, ok := s.(*endOfLife); ok {
+		e.now = now
+	}
+}
 
 // cycleJSON mirrors one entry of endoflife.date's product feed.
 //
@@ -258,20 +304,25 @@ type cycleJSON struct {
 }
 
 func (e *endOfLife) Product(ctx context.Context, product string) (Product, error) {
-	if p, ok := e.cache[product]; ok {
-		return p, nil
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := e.now()
+	if c, ok := e.cache[product]; ok && now.Sub(c.at) < successTTL {
+		return c.product, nil
 	}
-	if err, ok := e.failed[product]; ok {
-		return Product{}, err
+	// Remembered briefly so one assessment does not repeat the same 404 once per image:
+	// hundreds of images share a handful of base products. Not remembered for long,
+	// because a lasting failure would silently become a lasting gap in coverage.
+	if c, ok := e.failed[product]; ok && now.Sub(c.at) < failureTTL {
+		return Product{}, c.err
 	}
 	p, err := e.fetch(ctx, product)
 	if err != nil {
-		// Remembered so a run does not retry a 404 once per image: a product this
-		// source has never heard of is a stable answer.
-		e.failed[product] = err
+		e.failed[product] = cachedErr{err: err, at: now}
 		return Product{}, err
 	}
-	e.cache[product] = p
+	delete(e.failed, product)
+	e.cache[product] = cached{product: p, at: now}
 	return p, nil
 }
 
