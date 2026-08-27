@@ -142,11 +142,16 @@ test('KEV is a share of the estate, not of the row', async () => {
   const text = (tr) => tr.querySelectorAll('td')[kev].textContent.replace(/\s+/g, ' ').trim();
   // 7 and 12 of 19 across the table.
   const cells = rows.map(text).join(' | ');
-  assert.match(cells, /37% of all/, `expected ics at 37%, got: ${cells}`);
-  assert.match(cells, /63% of all/, `expected data-platform at 63%, got: ${cells}`);
-  // Labelled, because an unlabelled percentage beside row-relative ones would be read
-  // as the same kind of number.
-  assert.match(cells, /of all/);
+  assert.match(cells, /37%/, `expected ics at 37%, got: ${cells}`);
+  assert.match(cells, /63%/, `expected data-platform at 63%, got: ${cells}`);
+  // The denominator is not in the cell text any more, so it has to be somewhere a
+  // reader can find it: the hover, and the column's own help. Without either, a
+  // percentage beside row-relative ones is indistinguishable from them.
+  const pctSpan = document.querySelector('#breakdown tbody tr td .pct[title]');
+  assert.ok(pctSpan, 'the KEV percentage needs a hover naming its denominator');
+  assert.match(pctSpan.getAttribute('title'), /estate/i);
+  const kevCol = breakdownColumns().find((c) => c.label === 'KEV');
+  assert.match(kevCol.help, /of every KEV finding in the estate, not of this row/);
 });
 
 test('the actionable count stays visible after losing its column', async () => {
