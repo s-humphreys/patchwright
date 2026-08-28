@@ -116,8 +116,15 @@ type RemediationConfig struct {
 	// mapping to the empty string suppresses the check for that repository, for a base
 	// whose support is genuinely nobody else's business.
 	//
+	// A "product@cycle" value PINS the support cycle instead of reading it from the
+	// image tag. Needed whenever a mirror carries its own version numbers: an internal
+	// "dotnet/aspnet/10" tagged 1.0.2 is .NET 10, and reading the tag makes it .NET
+	// 1.0, which died in 2019. Getting this wrong is not subtle - it reported 382
+	// images as running a dead runtime.
+	//
 	//   supportProducts:
-	//     example.azurecr.io/dotnet/aspnet/10: dotnet
+	//     example.azurecr.io/dotnet/aspnet/10: dotnet@10
+	//     docker.io/node: nodejs
 	//     example.azurecr.io/internal/base: ""
 	SupportProducts map[string]string `yaml:"supportProducts"`
 

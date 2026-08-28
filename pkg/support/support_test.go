@@ -362,3 +362,33 @@ func TestATransientFailureDoesNotBecomeAPermanentGap(t *testing.T) {
 		t.Errorf("cycles = %d, want 1", len(p.Cycles))
 	}
 }
+
+func TestAMirrorCanPinItsCycleBecauseItsTagIsItsOwnVersion(t *testing.T) {
+	// The bug this exists for. An internal "dotnet/aspnet/10" is .NET 10 - the
+	// major is in the PATH - but it is tagged with the mirror's own version,
+	// 1.0.2. Read from the tag, that is .NET 1.0, dead since 2019, and it was
+	// reported that way on 382 images.
+	overrides := map[string]string{
+		"example.azurecr.io/dotnet/aspnet/10": "dotnet@10",
+		"example.azurecr.io/legacy":           "dotnet",
+	}
+	product, cycle, ok := support.ProductAndCycleFor("example.azurecr.io/dotnet/aspnet/10", overrides)
+	if !ok || product != "dotnet" || cycle != "10" {
+		t.Errorf("got product=%q cycle=%q ok=%v, want dotnet/10/true", product, cycle, ok)
+	}
+
+	// Without a pin the cycle still comes from the tag, which is right for an
+	// upstream image.
+	product, cycle, ok = support.ProductAndCycleFor("example.azurecr.io/legacy", overrides)
+	if !ok || product != "dotnet" || cycle != "" {
+		t.Errorf("got product=%q cycle=%q ok=%v, want dotnet//true", product, cycle, ok)
+	}
+}
+
+func TestSuppressingARepositoryStillWorksWithCycleSyntax(t *testing.T) {
+	// An empty product means "this base's support is nobody else's business".
+	if _, _, ok := support.ProductAndCycleFor("example.azurecr.io/internal/base",
+		map[string]string{"example.azurecr.io/internal/base": ""}); ok {
+		t.Error("an empty mapping must suppress the check, not resolve a product")
+	}
+}
