@@ -63,8 +63,14 @@ always right:
 | alpine | 55/57 (97%) |
 | python-pkg | 24/27 (89%) |
 | ubuntu | 32/51 (63%) |
-| dotnet-core | 0/14 (0%) |
+| dotnet-core | 0/14 (0%) - see below |
 | **overall** | **727/773 (94%)** |
+
+The one apparent exception, `dotnet-core` at 0/14, turned out not to be one. It is a
+musl/glibc suffix: on an Alpine image Trivy reports
+`Microsoft.AspNetCore.App.Runtime.linux-musl-x64` where the provider reports the generic
+`linux-x64`. Same package. On the azurelinux ACR base the two agree exactly, so
+`dotnet-core` needs suffix normalisation rather than exclusion.
 
 So the data is accurate as a *fact about the CVE* and wrong as a *fact about the image*.
 That is the whole problem in one line, and it is why the error was easy to make: every
@@ -122,8 +128,8 @@ concurrent-cache problem solved. This is a new scan target, not a new integratio
   there is no base to diff against and no verdict.
 - **`FROM scratch` and multi-stage builds** that copy binaries out of a builder have no
   meaningful base, so those stay unattributed.
-- **Distroless and self-contained .NET** publish the app and its runtime into one layer;
-  `dotnet-core` scored 0/14 above and should be treated as unattributed until measured.
+- **Distroless and self-contained .NET** publish the app and its runtime into one layer,
+  so those stay unattributed.
 - A guess labelled as a guess is useful. A guess labelled as certainty is what `91ab924`
   did. Where the differential has not run, the page must say so rather than fall back to
   an inference that looks identical.
