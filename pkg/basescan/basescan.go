@@ -128,7 +128,7 @@ func (r *Resolver) Scan(ctx context.Context, ref string) (*Result, error) {
 		r.semOnce.Do(func() {
 			n := r.Concurrency
 			if n <= 0 {
-				n = 4
+				n = 8
 			}
 			r.sem = make(chan struct{}, n)
 		})

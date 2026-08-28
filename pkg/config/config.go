@@ -393,12 +393,14 @@ type BaseDiffConfig struct {
 // On reports whether base scanning was asked for.
 func (b BaseDiffConfig) On() bool { return b.Enabled != nil && *b.Enabled }
 
-// EffectiveConcurrency is the configured bound, or a conservative default.
+// EffectiveConcurrency is the configured bound, or a default chosen against the
+// startup budget: base scans are pure pull-and-parse latency, and at four the
+// tail of a 127-tag estate was several minutes on its own.
 func (b BaseDiffConfig) EffectiveConcurrency() int {
 	if b.Concurrency > 0 {
 		return b.Concurrency
 	}
-	return 4
+	return 8
 }
 
 type BaseImageConfig struct {

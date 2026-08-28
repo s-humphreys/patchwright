@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/httpretry"
@@ -145,29 +146,19 @@ func (p *apiProvider) Fetch(ctx context.Context) ([]model.Occurrence, error) {
 	var occurrences []model.Occurrence
 	var statuses = map[string]int{}
 
-	for page := 1; page <= apiMaxPages; page++ {
-		path := fmt.Sprintf("/v3/cvm/resource/vulnerabilities?page=%d&page_size=%d", page, apiPageSize)
-		var resp pagedResponse[resourceVulnRow]
-		if err := p.post(ctx, path, &resp); err != nil {
-			// Failing mid-way is reported rather than returning what arrived so
-			// far: a partial estate silently missing its last pages would read
-			// as an estate that has shrunk, and every count drawn from it would
-			// be wrong in the direction of "better".
-			return nil, fmt.Errorf("rapid7 api: page %d: %w", page, err)
-		}
-		for i := range resp.Data {
-			occurrences = append(occurrences, rowToOccurrence(&resp.Data[i]))
-			statuses[resp.Data[i].AssessmentInfo.Status]++
-		}
-		if page == 1 {
-			slog.InfoContext(ctx, "fetching rapid7 resource vulnerabilities",
-				"total_rows", resp.TotalCount, "pages", resp.TotalPages, "page_size", resp.PageSize)
-		}
-		// Trust the reported page count, but stop on an empty page too: an API
-		// that says "one more page" forever would otherwise spin to the cap.
-		if len(resp.Data) == 0 || page >= resp.TotalPages {
-			break
-		}
+	rows, err := sweep[resourceVulnRow](ctx, p, func(page int) string {
+		return fmt.Sprintf("/v3/cvm/resource/vulnerabilities?page=%d&page_size=%d", page, apiPageSize)
+	})
+	if err != nil {
+		// Failing mid-way is reported rather than returning what arrived so far: a
+		// partial estate silently missing pages would read as an estate that has
+		// shrunk, and every count drawn from it would be wrong in the direction of
+		// "better".
+		return nil, fmt.Errorf("rapid7 api: %w", err)
+	}
+	for i := range rows {
+		occurrences = append(occurrences, rowToOccurrence(&rows[i]))
+		statuses[rows[i].AssessmentInfo.Status]++
 	}
 
 	slog.InfoContext(ctx, "fetched rapid7 resource vulnerabilities",
@@ -337,4 +328,91 @@ func clusterName(s string) string {
 		return strings.TrimSpace(s[i+1:])
 	}
 	return s
+}
+
+// pageConcurrency bounds simultaneous page requests in a listing sweep.
+//
+// These sweeps are the slowest thing in a run: the risk-score sweep walks the
+// estate's entire CVE catalogue a hundred rows at a time, and serially that was
+// minutes of a startup already measured in tens of them. The work is pure
+// latency, so the useful bound is what the API tolerates rather than the CPU.
+const pageConcurrency = 8
+
+// sweep fetches every page of a listing, the first one alone to learn how many
+// there are and the rest concurrently.
+//
+// It fetches all of them rather than stopping at the first empty page. Under load
+// this API returns an empty page BEFORE the last one, and treating that as the end
+// silently truncated the estate - a coverage gap that reads as an estate that has
+// shrunk. The page count it reports has proven trustworthy where an empty page has
+// not.
+func sweep[T any](ctx context.Context, p *apiProvider, path func(page int) string) ([]T, error) {
+	var first pagedResponse[T]
+	if err := p.post(ctx, path(1), &first); err != nil {
+		return nil, fmt.Errorf("page 1: %w", err)
+	}
+	total := first.TotalPages
+	if total > apiMaxPages {
+		slog.WarnContext(ctx, "listing longer than the page cap; truncating",
+			"total_pages", total, "cap", apiMaxPages)
+		total = apiMaxPages
+	}
+	if total <= 1 {
+		return first.Data, nil
+	}
+
+	// Indexed by page so the result order matches a sequential sweep. Callers
+	// build maps from this, but a stable order keeps logs and any future
+	// first-wins merge behaving the same way every run.
+	rest := make([][]T, total+1)
+	rest[1] = first.Data
+
+	sem := make(chan struct{}, pageConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+
+	for page := 2; page <= total; page++ {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return nil, ctx.Err()
+		}
+		wg.Add(1)
+		go func(page int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			mu.Lock()
+			stop := firstErr != nil
+			mu.Unlock()
+			if stop {
+				return
+			}
+			var resp pagedResponse[T]
+			err := p.post(ctx, path(page), &resp)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				// Reported rather than skipped. A partial estate missing a page
+				// is wrong in the direction of "better", which is the direction
+				// nobody checks.
+				if firstErr == nil {
+					firstErr = fmt.Errorf("page %d: %w", page, err)
+				}
+				return
+			}
+			rest[page] = resp.Data
+		}(page)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	out := make([]T, 0, first.TotalCount)
+	for _, chunk := range rest {
+		out = append(out, chunk...)
+	}
+	return out, nil
 }

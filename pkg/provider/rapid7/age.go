@@ -3,7 +3,6 @@ package rapid7
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -57,31 +56,23 @@ func (a *ageSource) FirstSeen(ctx context.Context, cveIDs []string) (map[string]
 		want[strings.ToUpper(id)] = struct{}{}
 	}
 
+	rows, err := sweep[vulnRow](ctx, a.api, func(page int) string {
+		return fmt.Sprintf("/v3/cvm/vulnerabilities?page=%d&page_size=%d", page, apiPageSize)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rapid7 vulnerabilities: %w", err)
+	}
 	out := make(map[string]time.Time, len(cveIDs))
-	for page := 1; page <= apiMaxPages; page++ {
-		path := fmt.Sprintf("/v3/cvm/vulnerabilities?page=%d&page_size=%d", page, apiPageSize)
-		var resp pagedResponse[vulnRow]
-		if err := a.api.post(ctx, path, &resp); err != nil {
-			return nil, fmt.Errorf("rapid7 vulnerabilities: page %d: %w", page, err)
+	for _, row := range rows {
+		id := strings.ToUpper(strings.TrimSpace(row.CVEID))
+		if id == "" {
+			continue
 		}
-		for _, row := range resp.Data {
-			id := strings.ToUpper(strings.TrimSpace(row.CVEID))
-			if id == "" {
-				continue
-			}
-			if _, ok := want[id]; !ok {
-				continue
-			}
-			if t, ok := parseAPITime(row.FirstFound); ok {
-				out[id] = t
-			}
+		if _, ok := want[id]; !ok {
+			continue
 		}
-		if page == 1 {
-			slog.DebugContext(ctx, "sweeping rapid7 vulnerabilities for first-seen dates",
-				"total_cves", resp.TotalCount, "pages", resp.TotalPages)
-		}
-		if len(resp.Data) == 0 || page >= resp.TotalPages {
-			break
+		if t, ok := parseAPITime(row.FirstFound); ok {
+			out[id] = t
 		}
 	}
 	return out, nil
