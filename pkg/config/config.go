@@ -1033,6 +1033,28 @@ func Load(paths ...string) (*Config, error) {
 		if part.Remediation.Upgrade.Rules != nil {
 			cfg.Remediation.Upgrade.Rules = append(cfg.Remediation.Upgrade.Rules, part.Remediation.Upgrade.Rules...)
 		}
+		// Entry-wise, like upgrade rules and unlike the scalars: the mapping is a
+		// list of facts about different base images, and several config files each
+		// contributing a few is the normal shape. Wholesale replacement would mean
+		// the last file silently deleted the others' entries.
+		for repo, product := range part.Remediation.SupportProducts {
+			if cfg.Remediation.SupportProducts == nil {
+				cfg.Remediation.SupportProducts = map[string]string{}
+			}
+			cfg.Remediation.SupportProducts[repo] = product
+		}
+		if part.Remediation.BaseDiff.Enabled != nil {
+			cfg.Remediation.BaseDiff.Enabled = part.Remediation.BaseDiff.Enabled
+		}
+		if part.Remediation.BaseDiff.Binary != "" {
+			cfg.Remediation.BaseDiff.Binary = part.Remediation.BaseDiff.Binary
+		}
+		if part.Remediation.BaseDiff.Timeout != "" {
+			cfg.Remediation.BaseDiff.Timeout = part.Remediation.BaseDiff.Timeout
+		}
+		if part.Remediation.BaseDiff.Concurrency != 0 {
+			cfg.Remediation.BaseDiff.Concurrency = part.Remediation.BaseDiff.Concurrency
+		}
 		if part.Remediation.InFlight.Provider != "" {
 			cfg.Remediation.InFlight = part.Remediation.InFlight
 		}
