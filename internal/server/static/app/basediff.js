@@ -13,6 +13,29 @@ import { esc } from './util.js';
 // application team's work at all, and saying so is what stops this reading as a
 // list of things somebody has been negligent about.
 
+/**
+ * moveKind describes what the recommendation actually is, because "rebuilding"
+ * covers two different asks and reads as the smaller one.
+ *
+ * A base pinned to a floating tag moves by DIGEST: same tag, newer content, so
+ * the fix is genuinely just rebuilding the image and picking up what upstream
+ * has already patched. A base on a version tag moves by VERSION - python 3.12.3
+ * to 3.14.7 is a runtime migration, and calling that "rebuilding" understates it
+ * to the person who has to do it.
+ *
+ * Distinguished by the shape of the target: a digest reference means the tag did
+ * not change.
+ */
+export function moveKind(d) {
+  if (!d || !d.to_ref) return null;
+  if (d.to_ref.includes("@sha256:")) {
+    return { verb: "Rebuilding", label: "Rebuilding clears", target: null };
+  }
+  // Everything after the registry/repository is the tag being moved to.
+  const tag = d.to_ref.slice(d.to_ref.lastIndexOf(":") + 1);
+  return { verb: "Upgrading", label: "Upgrading the base clears", target: tag };
+}
+
 /** The CVE groups a security reader triages by, worst first. */
 const GROUPS = [
   {
@@ -67,7 +90,7 @@ function cveList(vulns) {
 }
 
 /** groupLine renders one triage group: a count, a split, and only the work left. */
-function groupLine(g, vulns) {
+function groupLine(g, vulns, move) {
   const s = splitGroup(vulns, g.match);
   const total = s.cleared.length + s.remaining.length + s.undetermined.length;
   if (!total) return "";
@@ -76,11 +99,21 @@ function groupLine(g, vulns) {
     ? badge(SIGNAL_BADGES.kev, "kev")
     : `<span class="sev-critical">${esc(g.label)}</span>`;
 
+  // A percentage as well as a count: "40 cleared" out of 58 is a different
+  // situation from 40 out of 400, and a reader scanning several images wants the
+  // proportion without doing the division each time.
+  const share = (n) => `${Math.round((n / total) * 100)}%`;
+  const verb = move ? move.verb.toLowerCase() : "the upgrade";
+
   // The cleared ones are a number, not a list. They need nobody to do anything,
   // and printing them is the information overload that hides the ones that do.
   const parts = [];
-  if (s.cleared.length) parts.push(`<span class="ok">${s.cleared.length} cleared by the rebuild</span>`);
-  if (s.remaining.length) parts.push(`<strong>${s.remaining.length} need separate work</strong>`);
+  if (s.cleared.length) {
+    parts.push(`<span class="ok">${s.cleared.length} (${share(s.cleared.length)}) cleared by ${esc(verb)}</span>`);
+  }
+  if (s.remaining.length) {
+    parts.push(`<strong>${s.remaining.length} (${share(s.remaining.length)}) need separate work</strong>`);
+  }
   if (s.undetermined.length) {
     parts.push(`<span class="unknown" title="No candidate base was scanned for these, so whether an upgrade fixes them was never established.">${s.undetermined.length} not established</span>`);
   }
@@ -108,21 +141,26 @@ export function baseDiffSection(f) {
       · <strong>${d.from_app}</strong> from this image <span class="sub">(${pct(d.from_app)}%)</span>
       ${d.unknown ? `· <span class="unknown" title="Not attributed.">${d.unknown} unattributed</span>` : ""}</dd></div>`);
 
-  if (d.determined) {
+  const move = moveKind(d);
+  if (d.determined && move) {
     const intro = d.introduces
       ? ` · <span class="warn">${d.introduces} new</span>`
       : "";
-    rows.push(`<div class="dr"><dt>Rebuilding clears</dt>
-      <dd><strong class="ok">${d.clears}</strong> of ${d.total}
-        <span class="sub">(${pct(d.clears)}% of everything on this image)</span>
-        · ${d.leaves} still from the base${intro}</dd></div>`);
+    const target = move.target
+      ? ` to <code>${esc(move.target)}</code>`
+      : "";
+    rows.push(`<div class="dr"><dt>${esc(move.label)}</dt>
+      <dd><strong class="ok">${d.clears}</strong> of ${d.total} CVEs
+        <span class="sub">(${pct(d.clears)}% of this image's CVEs)</span>
+        · ${d.leaves} still from the base${intro}
+        ${target ? `<div class="sub">moving${target}</div>` : `<div class="sub">same tag, newer digest — a rebuild picks it up</div>`}</dd></div>`);
   } else {
-    rows.push(`<div class="dr"><dt>Rebuilding clears</dt><dd>${
+    rows.push(`<div class="dr"><dt>Upgrading the base clears</dt><dd>${
       `<span class="unknown" title="No candidate base image was scanned, so this was never worked out. It does not mean an upgrade would fix nothing.">not established</span>`
     }</dd></div>`);
   }
 
-  for (const g of GROUPS) rows.push(groupLine(g, f.vulns));
+  for (const g of GROUPS) rows.push(groupLine(g, f.vulns, move));
 
   rows.push(`<div class="dr"><dt>Compared</dt><dd><code>${esc(d.from_ref)}</code>${
     d.to_ref ? ` → <code>${esc(d.to_ref)}</code>` : ""

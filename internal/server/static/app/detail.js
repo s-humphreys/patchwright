@@ -440,7 +440,7 @@ export function openCVEDetail(g) {
       <section><h4>Assessment</h4><dl>
         ${row("Severity", `<span class="${esc(g.severity)}">${esc(g.severity)}</span>`)}
         ${row("CVSS", g.cvss ? g.cvss.toFixed(1) : unknown("unknown", "No CVSS score was reported for this CVE."))}
-        ${row("EPSS", g.epss ? g.epss.toFixed(2) : unknown("?", "No exploit source ran, so exploitation pressure is unknown."))}
+        ${row("EPSS", g.epss ? epssPercent(g.epss) : unknown("?", "No exploit source ran, so exploitation pressure is unknown."))}
         ${row("Risk score", g.risk ? String(Math.round(g.risk)) : unknown("-", "The scan provider scored this CVE for none of these images."))}
         ${row("Known exploited", g.kev ? badge(SIGNAL_BADGES.kev, "kev") : '<span class="muted">not in CISA KEV</span>')}
       </dl></section>

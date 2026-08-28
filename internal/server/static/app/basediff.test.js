@@ -50,7 +50,7 @@ test('it says how much of the image the base accounts for', () => {
 
 test('it says what a rebuild clears, which is the point of the whole thing', () => {
   const out = html(finding());
-  assert.match(out, /70<\/strong> of 100/);
+  assert.match(out, /70<\/strong> of 100 CVEs/);
   assert.match(out, /20 still from the base/);
 });
 
@@ -84,8 +84,8 @@ test('KEV is split into cleared and still-needing-work, and only the latter is n
     ],
   });
   const out = html(f);
-  assert.match(out, /2 cleared by the rebuild/);
-  assert.match(out, /1 need separate work/);
+  assert.match(out, /2 \(67%\) cleared by upgrading/);
+  assert.match(out, /1 \(33%\) need separate work/);
   assert.match(out, /CVE-STAYS/, 'the one needing work must be named');
   assert.doesNotMatch(out, /CVE-FIXED-1/, 'a cleared CVE is a count, not a list entry');
 });
@@ -142,4 +142,33 @@ test('it names exactly what was compared, so the numbers can be checked', () => 
   const out = html(finding());
   assert.match(out, /python@sha256:aaa/);
   assert.match(out, /python:3\.12/);
+});
+
+test('a digest-only move is a rebuild; a version move is an upgrade', () => {
+  // "Rebuilding" covers two different asks. Same tag with a newer digest really
+  // is just a rebuild. python 3.12.3 to 3.14.7 is a runtime migration, and
+  // calling that a rebuild understates it to whoever has to do it.
+  const digest = finding();
+  digest.base_diff.to_ref = 'docker.io/python@sha256:deadbeef';
+  const d = html(digest);
+  assert.match(d, /Rebuilding clears/);
+  assert.match(d, /same tag, newer digest/);
+
+  const version = finding();
+  version.base_diff.to_ref = 'docker.io/python:3.14.7';
+  const v = html(version);
+  assert.match(v, /Upgrading the base clears/);
+  assert.match(v, /moving to <code>3\.14\.7<\/code>/);
+  assert.doesNotMatch(v, /same tag/);
+});
+
+test('each triage group shows its share, not just a count', () => {
+  // 40 of 58 is a different situation from 40 of 400, and a reader comparing
+  // images should not have to do the division.
+  const vulns = [];
+  for (let i = 0; i < 4; i++) vulns.push(vuln({ id: `CVE-C${i}`, kev: true, fixed_by_upgrade: true }));
+  vulns.push(vuln({ id: 'CVE-R', kev: true, fixed_by_upgrade: false }));
+  const out = html(finding({ vulns }));
+  assert.match(out, /4 \(80%\) cleared/);
+  assert.match(out, /1 \(20%\) need separate work/);
 });
