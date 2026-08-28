@@ -1,5 +1,6 @@
 import { SIGNAL_BADGES, badge, count, epss } from './badges.js';
 import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
+import { cveGroup } from './cves.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
 
@@ -75,7 +76,8 @@ function vulnTable(f) {
   const vulns = (f.vulns || []).slice().sort((a, b) =>
     (b.kev ? 1 : 0) - (a.kev ? 1 : 0) || (b.epss || 0) - (a.epss || 0) || (b.cvss || 0) - (a.cvss || 0));
   if (!vulns.length) return `<p class="muted">Scanned, and no CVEs were found.</p>`;
-  const rows = vulns.slice(0, 40).map((v) => `<tr>
+  const rows = vulns.slice(0, 40).map((v) => `<tr class="openable" tabindex="0"
+      data-cve="${esc(v.id)}" aria-label="Show every image affected by ${esc(v.id)}">
     <td><code>${esc(v.id)}</code></td>
     <td class="${esc(v.severity || "")}">${esc(v.severity || "-")}</td>
     <td class="num">${v.cvss ? v.cvss.toFixed(1) : "-"}</td>
@@ -290,6 +292,9 @@ export function openDetail(f) {
   writeDeepLink({ finding: f.image });
   $("#detailClose").addEventListener("click", closeDetail);
   wireBack();
+  // Back here, so the two directions mirror each other: a CVE opened from this image
+  // returns to this image, exactly as an image opened from a CVE returns to the CVE.
+  wireDrillCVEs(el, f.image, () => openDetail(f));
   settle(el, repaint, keepScroll);
 }
 
@@ -620,8 +625,48 @@ export function openFromURL(groups, cveLookup, params = new URLSearchParams(loca
  * Shared by the work item's deployments and a CVE's affected images: both list images,
  * and both should behave the same when clicked.
  */
+// wireDrillCVEs makes the vulnerability rows open the CVE they name, so a reader can go
+// from "this image has CVE-2025-6965" to "what else has it, and how far does it reach".
+//
+// The reverse direction already existed. Without this the panel was a dead end in the
+// middle of the question people actually ask, which is why it had to be closed and the
+// CVE found again by hand in another view.
+function wireDrillCVEs(el, label, reopen) {
+  el.querySelectorAll("tbody tr.openable[data-cve]").forEach((tr) => {
+    const open = (e) => {
+      // Same reason as below: opening the CVE detaches this row, and a detached node is
+      // inside nothing, so the click-away handler would read the click as landing
+      // outside the panel and close it.
+      if (e) e.stopPropagation();
+      const id = /** @type {any} */ (tr).dataset.cve;
+      const g = cveGroup(id);
+      if (!g) {
+        // Nothing to open: no loaded finding carries this CVE, so there is no
+        // cross-image view to show. Say so on the row rather than swallowing the click.
+        const cell = tr.querySelector("td");
+        if (cell && !cell.querySelector(".unknown")) {
+          cell.insertAdjacentHTML("beforeend",
+            " " + unknown("(no scope available)",
+              "Nothing else in the loaded findings carries this CVE, so there is no cross-image view to open."));
+        }
+        return;
+      }
+      drill(label, reopen, () => openCVEDetail(g));
+    };
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (e) => {
+      const k = /** @type {any} */ (e).key;
+      if (k !== "Enter" && k !== " ") return;
+      e.preventDefault();
+      open(/** @type {any} */ (e));
+    });
+  });
+}
+
 function wireDrillRows(el, label, reopen) {
-  el.querySelectorAll("tbody tr.openable").forEach((tr) => {
+  // Scoped to image rows: the vulnerability table's rows are openable too, and they open
+  // a CVE rather than a finding.
+  el.querySelectorAll("tbody tr.openable[data-image]").forEach((tr) => {
     const open = (e) => {
       // Stop here. Opening the finding replaces this panel's contents, which detaches
       // this row — and a detached node is inside nothing, so the click-away handler
