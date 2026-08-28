@@ -792,6 +792,29 @@ components:
           type: string
           description: Who said so. An unattributed claim invites an argument rather than a rebuild.
 
+    Package:
+      type: object
+      required: [name]
+      description: |
+        One package a CVE affects in this image, and the version that resolves it. What
+        makes a fixed version legible: "3.3.5-2.azl3" alone has no subject.
+      properties:
+        name: { type: string }
+        ecosystem:
+          type: string
+          description: >-
+            The packaging system: debian, alpine, azurelinux, gobinary, npm. It answers
+            who can fix this - an OS package arrives with the base image, an application
+            dependency comes from the image's own manifest - which the version alone
+            cannot. An inference from ecosystem rather than layer attribution: a
+            Dockerfile can install a distribution package, and a runtime like dotnet-core
+            is either, depending on whether the app was published self-contained.
+        fixed_in:
+          type: string
+          description: >-
+            The version resolving it, verbatim from the scanner. Sometimes a list
+            ("1.23.10, 1.24.4") when several release lines carry the fix.
+
     Upgrade:
       type: object
       required: [kind, current, available, resolved, actionable]
@@ -884,6 +907,14 @@ components:
         cvss: { type: number }
         fix_available: { type: boolean }
         fixed_version: { type: string }
+        packages:
+          type: array
+          description: >-
+            The packages this CVE affects IN THIS IMAGE, and the version fixing each. One
+            CVE routinely implicates several - up to seventeen in sampled data - so a
+            single name would understate the work. Absent when the source names no
+            package, which is not the same as the CVE affecting nothing.
+          items: { $ref: "#/components/schemas/Package" }
         risk_score:
           type: number
           description: |

@@ -88,6 +88,16 @@
   .tile-explain dd { color: var(--muted); font-size: 0.78rem; margin: 0 0 0.45rem; }
   /* Page-level navigation in the header, as distinct from the tabs that switch views of
      the same findings. */
+  /* Where a package's fix lands. Muted rather than loud: it qualifies the fix, it is
+     not the finding. */
+  .pkg-origin { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+                border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem;
+                color: var(--muted); }
+  .pkg-base { border-color: var(--muted); }
+  .pkg-app { border-color: var(--high); color: var(--high); }
+  /* Ambiguous origin: named by its ecosystem rather than given a verdict it has not
+     earned. */
+  .pkg-either { font-style: italic; }
   .pages a { color: var(--muted); text-decoration: none; font-size: 0.85rem; }
   .pages a:hover { color: var(--fg); text-decoration: underline; }
   /* Fixed-height, scrollable table areas. Without a cap, 700 rows push the second

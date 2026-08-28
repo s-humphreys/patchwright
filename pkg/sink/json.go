@@ -183,6 +183,20 @@ type VulnView struct {
 	// probability. Absent means unscored.
 	RiskScore    float64 `json:"risk_score,omitempty"`
 	ExploitKnown bool    `json:"exploit_known,omitempty"`
+	// Packages are the affected packages in this image, which is what makes a fixed
+	// version legible: "3.3.5-2.azl3" alone has no subject.
+	Packages []PackageView `json:"packages,omitempty"`
+}
+
+// PackageView is one affected package and the version that resolves it.
+type PackageView struct {
+	Name string `json:"name"`
+	// Ecosystem is the packaging system: debian, alpine, azurelinux, gobinary, npm.
+	// It answers who can fix this - an OS package arrives with the base image, an
+	// application dependency is the team's own manifest - which the version alone
+	// cannot say.
+	Ecosystem string `json:"ecosystem,omitempty"`
+	FixedIn   string `json:"fixed_in,omitempty"`
 }
 
 // Emit implements Sink.
@@ -247,6 +261,7 @@ func ToFindingView(f model.Finding) FindingView {
 			KEV:          v.KEV,
 			RiskScore:    v.RiskScore,
 			ExploitKnown: v.ExploitKnown,
+			Packages:     toPackageViews(v.Packages),
 		})
 	}
 	var liveness *LivenessView
@@ -376,4 +391,16 @@ func toSupportView(s *model.Support) *SupportView {
 		Recommended: s.Recommended, Nearest: s.Nearest, Newest: s.Newest,
 		Source: s.Source,
 	}
+}
+
+// toPackageViews maps the affected packages, keeping the order the scanner gave them.
+func toPackageViews(in []model.AffectedPackage) []PackageView {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]PackageView, 0, len(in))
+	for _, p := range in {
+		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn})
+	}
+	return out
 }

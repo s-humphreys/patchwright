@@ -231,6 +231,83 @@ export const isScanned = (f) => f.scanned || (f.vulns || []).length > 0;
 export const fixcrit = (f) => (isScanned(f) ? f.fixable_critical ?? 0 : "-");
 export const maxEPSS = (f) => (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0);
 
+// OS_ECOSYSTEMS are the packaging systems that belong to the image's operating system
+// layer, as opposed to the application's own dependencies.
+//
+// The distinction is the one people actually need: an openssl in azurelinux arrives with
+// the base image, so a rebuild on a newer base fixes it and the team may have nothing to
+// change. A golang.org/x/net in gobinary is compiled into the application, so no rebuild
+// of anyone else's image will help and the fix is in go.mod.
+const OS_ECOSYSTEMS = new Set([
+  "debian", "ubuntu", "alpine", "azurelinux", "mariner", "redhat", "rhel", "centos",
+  "rocky", "almalinux", "amazon", "oracle", "photon", "suse", "opensuse", "apk", "dpkg",
+  "rpm", "os-pkgs",
+]);
+
+// APP_ECOSYSTEMS are the ones that are unambiguously the application's own manifest.
+const APP_ECOSYSTEMS = new Set([
+  "gobinary", "gomod", "npm", "node-pkg", "yarn", "pypi", "python-pkg", "pip", "poetry",
+  "maven", "gradle", "jar", "nuget", "gem", "bundler", "cargo", "composer", "conan",
+  "swift", "pub", "hex", "lang-pkgs",
+]);
+
+/**
+ * packageOrigin says where a fix has to be made, from the package's ecosystem.
+ *
+ * Three answers, not two. An OS package arrives with the base image, an application
+ * dependency comes from the image's own manifest, and some ecosystems are genuinely
+ * either - a .NET runtime is part of the base image unless the application was published
+ * self-contained, in which case it is baked into the app layer and no base bump touches
+ * it. On a real estate that third case was 2,492 rows, so calling it wrongly would send
+ * a lot of work to the wrong team.
+ *
+ * Even the confident answers are inference from the ecosystem, not layer attribution: a
+ * Dockerfile can apt-get install a distribution package, and a base image can ship a Go
+ * binary. Exact attribution needs the layer a package came from, which this provider does
+ * not carry. The ecosystem is the most useful thing available and is right the
+ * overwhelming majority of the time, which is why it is shown rather than asserted.
+ */
+export function packageOrigin(ecosystem) {
+  if (!ecosystem) return null;
+  const e = ecosystem.toLowerCase();
+  if (OS_ECOSYSTEMS.has(e)) return "base";
+  if (APP_ECOSYSTEMS.has(e)) return "app";
+  return "either";
+}
+
+// fixCellForVuln renders what to change for one CVE: the package, where the fix lands,
+// and the version that carries it.
+//
+// A bare version was the old rendering, and it has no subject - "3.3.5-2.azl3" cannot be
+// acted on without knowing which of the image's hundreds of packages it refers to.
+export function vulnFixCell(v, scanned) {
+  const pkgs = v.packages || [];
+  if (!pkgs.length) {
+    if (!v.fix_available) return '<span class="muted">no fix</span>';
+    return `<span class="act-direct">${esc(v.fixed_version || "fix available")}</span>` +
+      (scanned ? ` <span class="unknown" title="The scan provider gave a fixed version but did not say which package it applies to.">(package unknown)</span>` : "");
+  }
+  const first = pkgs[0];
+  const origin = packageOrigin(first.ecosystem);
+  const ORIGINS = {
+    base: ["pkg-base", "base",
+      "An operating system package: it arrives with the base image, so rebuilding on a newer base usually carries the fix."],
+    app: ["pkg-app", "app",
+      "An application dependency: it is built into this image from its own manifest, so no base image rebuild will fix it."],
+    either: ["pkg-either", first.ecosystem || "either",
+      "Could be either: a runtime like this ships with the base image unless the application was published self-contained, in which case it is baked into the app layer. The ecosystem cannot tell them apart - only the layer could, and this provider does not report it."],
+  };
+  const [cls, text, why] = ORIGINS[origin] || ORIGINS.either;
+  const where = `<span class="pkg-origin ${cls}" title="${esc(why)}">${esc(text)}</span>`;
+  const fix = first.fixed_in
+    ? `<span class="act-direct">${esc(first.fixed_in)}</span>`
+    : '<span class="muted">no fix</span>';
+  const more = pkgs.length > 1
+    ? ` <span class="pct" title="${esc(pkgs.slice(1).map((p) => `${p.name} ${p.fixed_in || "(no fix)"}`).join(", "))}">+${pkgs.length - 1}</span>`
+    : "";
+  return `${where} <code>${esc(first.name)}</code> → ${fix}${more}`;
+}
+
 // epssPercent renders an exploit-prediction score as what it actually is: a probability.
 //
 // EPSS is published as 0-1, and shown that way it reads as a rating out of one - "0.61"

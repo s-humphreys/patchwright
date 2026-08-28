@@ -153,12 +153,20 @@ func (s *source) Scan(ctx context.Context, image model.Image) ([]model.Vulnerabi
 // trivyReport is the subset of Trivy's JSON output we consume.
 type trivyReport struct {
 	Results []struct {
+		// Class and Type say which ecosystem a result block came from:
+		// "os-pkgs"/"debian" for the distribution's packages, "lang-pkgs"/"gomod"
+		// for the application's own. That is the distinction between a fix a
+		// rebuild delivers and one only the application's manifest can.
+		Class           string      `json:"Class"`
+		Type            string      `json:"Type"`
 		Vulnerabilities []trivyVuln `json:"Vulnerabilities"`
 	} `json:"Results"`
 }
 
 type trivyVuln struct {
 	VulnerabilityID string `json:"VulnerabilityID"`
+	PkgName         string `json:"PkgName"`
+	InstalledVer    string `json:"InstalledVersion"`
 	FixedVersion    string `json:"FixedVersion"`
 	Severity        string `json:"Severity"`
 	Title           string `json:"Title"`
@@ -180,6 +188,9 @@ func parseReport(data []byte) ([]model.Vulnerability, error) {
 	byID := make(map[string]model.Vulnerability)
 	var order []string
 	for _, result := range report.Results {
+		// The ecosystem comes from the result block rather than the finding, which is
+		// where Trivy puts it.
+		ecosystem := strings.ToLower(strings.TrimSpace(result.Type))
 		for _, v := range result.Vulnerabilities {
 			if v.VulnerabilityID == "" {
 				continue
@@ -192,13 +203,24 @@ func parseReport(data []byte) ([]model.Vulnerability, error) {
 				FixedVersion: v.FixedVersion,
 				Description:  firstNonEmpty(v.Title, v.Description),
 			}
+			if v.PkgName != "" {
+				mv.Packages = []model.AffectedPackage{{
+					Name: v.PkgName, Ecosystem: ecosystem, FixedIn: v.FixedVersion,
+				}}
+			}
 			if v.PrimaryURL != "" {
 				mv.Links = []string{v.PrimaryURL}
 			}
 			if cur, ok := byID[mv.ID]; ok {
+				// One CVE routinely affects several packages in one image. Keeping
+				// only the first would understate the work, so the lists merge even
+				// when the surviving entry is the existing one.
+				merged := append(cur.Packages, mv.Packages...)
 				if !cur.FixAvailable && mv.FixAvailable {
-					byID[mv.ID] = mv
+					cur = mv
 				}
+				cur.Packages = merged
+				byID[mv.ID] = cur
 				continue
 			}
 			byID[mv.ID] = mv

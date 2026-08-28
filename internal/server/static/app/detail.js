@@ -1,5 +1,5 @@
 import { SIGNAL_BADGES, badge, count, epss } from './badges.js';
-import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
+import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy, vulnFixCell } from './cells.js';
 import { cveGroup } from './cves.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
@@ -84,15 +84,14 @@ function vulnTable(f) {
     <td class="num">${v.epss ? epssPercent(v.epss) : (f.exploit_checked ? "-" : "?")}</td>
     <td class="num">${v.risk_score ? Math.round(v.risk_score) : "-"}</td>
     <td>${v.kev ? badge(SIGNAL_BADGES.kev, "kev") : ""}</td>
-    <td>${v.fix_available
-      ? `<span class="act-direct">${esc(v.fixed_version || "fix available")}</span>`
-      : '<span class="muted">no fix</span>'}</td>
+    <td>${vulnFixCell(v, f.scanned)}</td>
   </tr>`).join("");
   const more = vulns.length > 40
     ? `<p class="muted">Showing the 40 worst of ${vulns.length}.</p>` : "";
   return `<div class="scroll-x"><table class="mini">
     <thead><tr><th>CVE</th><th>Severity</th><th class="num">CVSS</th><th class="num">EPSS</th>
-    <th class="num">Risk</th><th>KEV</th><th>Fix</th></tr></thead>
+    <th class="num">Risk</th><th>KEV</th>
+    <th title="The affected package in this image, where its fix lands, and the version that carries it. base = an OS package that arrives with the base image; app = a dependency built in from this image's own manifest.">Package &amp; fix</th></tr></thead>
     <tbody>${rows}</tbody></table></div>${more}`;
 }
 

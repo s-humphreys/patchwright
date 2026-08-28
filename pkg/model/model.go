@@ -107,6 +107,14 @@ type Vulnerability struct {
 	// Vulnerabilities catalog (exploited in the wild).
 	EPSS float64
 	KEV  bool
+	// Packages are the affected packages in THIS image and the versions that fix
+	// them. A list because one CVE routinely implicates several packages in one
+	// image, and naming only the first would understate the work.
+	//
+	// This is what turns "3.3.5-2.azl3" from a version with no subject into a
+	// sentence: which package, in which ecosystem, and therefore whose problem it is.
+	Packages []AffectedPackage
+
 	// RiskScore is a scanner's own composite ranking for this CVE, on whatever
 	// scale that scanner uses (Rapid7's is roughly 0..1000). Deliberately kept
 	// apart from EPSS: EPSS is a calibrated probability, this is a weighting, and
@@ -116,6 +124,28 @@ type Vulnerability struct {
 	// ExploitKnown reports that the scanner has a public exploit on record for
 	// this CVE. Weaker than KEV, which is confirmed exploitation in the wild.
 	ExploitKnown bool
+}
+
+// AffectedPackage is one package in an image that a CVE affects, and the version that
+// resolves it.
+type AffectedPackage struct {
+	Name string
+	// Ecosystem is the packaging system the version belongs to: "debian", "alpine",
+	// "azurelinux", "gobinary", "npm". Carried rather than normalised because it
+	// answers the question the version alone cannot - whose problem this is.
+	//
+	// An OS package almost always arrives with the base image, so the fix is a
+	// rebuild on a newer base. A language package is the application's own
+	// dependency, so the fix is in its manifest and nobody else can make it. That
+	// inference is not a certainty - a Dockerfile can apt-get install, and a base
+	// image can ship a Go binary - which is why the ecosystem is shown rather than a
+	// verdict asserted.
+	Ecosystem string
+	// FixedIn is the version that resolves it, as the scanner states it. Sometimes a
+	// list ("1.23.10, 1.24.4") when several release lines carry the fix; kept
+	// verbatim rather than parsed, because choosing one for the reader would hide
+	// that their line might not be among them.
+	FixedIn string
 }
 
 // Counts holds aggregate vulnerability counts keyed by severity name. A map
