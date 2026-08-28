@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -25,6 +26,13 @@ import (
 type TrivyScanner struct {
 	Binary  string // default "trivy"
 	Timeout string // passed through as --timeout
+	// DBRepository overrides where the vulnerability database is pulled from.
+	// Empty uses Trivy's own mirror list.
+	DBRepository string
+
+	// prepared guards the one-time database download.
+	prepared sync.Once
+	prepErr  error
 
 	// Credentials resolves the credentials for a reference. Defaults to
 	// registryauth.Credentials. Injected so tests need no registry.
@@ -32,6 +40,30 @@ type TrivyScanner struct {
 }
 
 func (t *TrivyScanner) Name() string { return "trivy" }
+
+// prepare downloads the vulnerability database once, before any scan.
+//
+// Serialised deliberately. Concurrent scans each racing to populate the database
+// is the failure --skip-db-update exists to avoid, and doing it here means the
+// bound on concurrent scans does not also become a bound on concurrent downloads.
+func (t *TrivyScanner) prepare(ctx context.Context) error {
+	t.prepared.Do(func() {
+		args := []string{"image", "--quiet", "--download-db-only"}
+		if t.Timeout != "" {
+			args = append(args, "--timeout", t.Timeout)
+		}
+		if t.DBRepository != "" {
+			args = append(args, "--db-repository", t.DBRepository)
+		}
+		cmd := exec.CommandContext(ctx, t.binary(), args...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.prepErr = fmt.Errorf("trivy --download-db-only: %w: %s", err, lastLine(stderr.String()))
+		}
+	})
+	return t.prepErr
+}
 
 func (t *TrivyScanner) binary() string {
 	if t.Binary != "" {
@@ -53,8 +85,6 @@ func (t *TrivyScanner) ScanRef(ctx context.Context, ref string) (*Result, error)
 		args = append(args, "--timeout", t.Timeout)
 	}
 	args = append(args, ref)
-
-	cmd := exec.CommandContext(ctx, t.binary(), args...)
 
 	// Credentials are handed over explicitly rather than left to Trivy's own
 	// keychain, which reaches for the docker credential helper carrying
@@ -80,6 +110,16 @@ func (t *TrivyScanner) ScanRef(ctx context.Context, ref string) (*Result, error)
 		return nil, fmt.Errorf("credentials for %s: %w", ref, err)
 	}
 	defer cleanup()
+
+	// After credentials, deliberately. Resolving them costs nothing and fails
+	// fast; the database download is a network fetch, and doing it first turns a
+	// misconfigured identity into a slow failure - and made the test for that
+	// path pass for the wrong reason.
+	if err := t.prepare(ctx); err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx, t.binary(), args...)
 	cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+dir)
 
 	var stdout, stderr bytes.Buffer

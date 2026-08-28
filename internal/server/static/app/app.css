@@ -316,3 +316,13 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
 
 /* The affected-image list inside a CVE's panel. */
 .detail table.mini td.wrap { white-space: normal; }
+
+  /* Base-image breakdown. The CVEs named here are the ones a rebuild will NOT
+     fix, so they are the only ones spelled out; everything cleared is a count. */
+  .cve-brief { margin: .3rem 0 0; padding-left: 1.1rem; }
+  .cve-brief li { margin: .1rem 0; }
+  .cve-brief [data-cve] { cursor: pointer; text-decoration: underline dotted; }
+  .cve-brief [data-cve]:hover, .cve-brief [data-cve]:focus { color: var(--urgent); }
+  .ok { color: var(--ok); }
+  .warn { color: var(--high); }
+  .sev-critical { color: var(--urgent); }

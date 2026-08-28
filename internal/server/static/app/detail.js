@@ -1,4 +1,5 @@
 import { SIGNAL_BADGES, badge, count, epss } from './badges.js';
+import { baseDiffSection } from './basediff.js';
 import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
 import { cveGroup } from './cves.js';
 import { S } from './state.js';
@@ -223,6 +224,7 @@ function sections(f) {
     <section><h4>Verdict</h4><dl>${verdict}</dl></section>
     <section><h4>Risk</h4><dl>${risk}</dl></section>
     <section><h4>Fix</h4><dl>${fix}</dl></section>
+    ${baseDiffSection(f)}
     <section><h4>In progress</h4><dl>${action}</dl></section>
     <section><h4>Where it runs</h4><dl>${where}</dl></section>
     <section><h4>Vulnerabilities</h4>${vulnTable(f)}</section>`;
@@ -632,7 +634,11 @@ export function openFromURL(groups, cveLookup, params = new URLSearchParams(loca
 // middle of the question people actually ask, which is why it had to be closed and the
 // CVE found again by hand in another view.
 function wireDrillCVEs(el, label, reopen) {
-  el.querySelectorAll("tbody tr.openable[data-cve]").forEach((tr) => {
+  // Both the vulnerability table's rows and the base-image summary's named CVEs.
+  // The summary lists exactly the ones a rebuild will NOT fix, which is the set
+  // somebody is most likely to want to chase across the estate, so leaving those
+  // unclickable would make the useful half the only half you cannot follow.
+  el.querySelectorAll("tbody tr.openable[data-cve], .cve-brief [data-cve]").forEach((tr) => {
     const open = (e) => {
       // Same reason as below: opening the CVE detaches this row, and a detached node is
       // inside nothing, so the click-away handler would read the click as landing
@@ -643,7 +649,7 @@ function wireDrillCVEs(el, label, reopen) {
       if (!g) {
         // Nothing to open: no loaded finding carries this CVE, so there is no
         // cross-image view to show. Say so on the row rather than swallowing the click.
-        const cell = tr.querySelector("td");
+        const cell = tr.querySelector("td") || tr.parentElement;
         if (cell && !cell.querySelector(".unknown")) {
           cell.insertAdjacentHTML("beforeend",
             " " + unknown("(no scope available)",

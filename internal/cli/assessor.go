@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
+	"github.com/s-humphreys/patchwright/pkg/basescan"
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/enrich/registry"
@@ -119,6 +120,19 @@ func newAssessor(in assessInputs) (*assessor, error) {
 				base.Support = src
 			}
 			upgradeSources = append(upgradeSources, base)
+
+			// Base scanning, which turns "a newer base exists" into "this clears
+			// 3,664 of your 4,890". Only meaningful alongside base resolution: it
+			// needs the base references that produces.
+			if cfg.Remediation.BaseDiff.On() {
+				bd := cfg.Remediation.BaseDiff
+				popts = append(popts, pipeline.WithBaseDiffEnricher(&enrich.BaseDiffEnricher{
+					Resolver: &basescan.Resolver{
+						Scanner:     &basescan.TrivyScanner{Binary: bd.Binary, Timeout: bd.Timeout},
+						Concurrency: bd.EffectiveConcurrency(),
+					},
+				}))
+			}
 		}
 		reg := registry.New()
 		reg.Contexts = deployContexts

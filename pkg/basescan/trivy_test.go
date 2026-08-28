@@ -68,8 +68,14 @@ func TestScanRefFailsWhenCredentialsCannotBeResolved(t *testing.T) {
 			return nil, false, errors.New("no identity")
 		},
 	}
-	if _, err := s.ScanRef(context.Background(), "example.azurecr.io/base:1"); err == nil {
-		t.Error("a credential failure must not fall through to an anonymous pull")
+	_, err := s.ScanRef(context.Background(), "example.azurecr.io/base:1")
+	if err == nil {
+		t.Fatal("a credential failure must not fall through to an anonymous pull")
+	}
+	// Asserted on the message so this cannot pass merely because trivy is absent
+	// from the machine, which would make it a test of the environment.
+	if !strings.Contains(err.Error(), "credentials for") {
+		t.Errorf("expected a credential error, got %v", err)
 	}
 }
 

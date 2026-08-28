@@ -95,6 +95,15 @@ type RemediationConfig struct {
 	// Base tunes how a first-party image's base is found.
 	Base BaseImageConfig `yaml:"base"`
 
+	// BaseDiff turns on scanning base images, which is what establishes whether a
+	// CVE came from the base or from the application, and how many of them a base
+	// upgrade would actually remove.
+	//
+	// Off by default: it shells out to a scanner and pulls images, which not every
+	// deployment can do. Without it every CVE reports an unknown origin, which is
+	// honest - and specifically not the same as reporting them as the team's.
+	BaseDiff BaseDiffConfig `yaml:"baseDiff"`
+
 	// SupportProducts maps a base image repository to the software whose support
 	// window governs it, overriding and extending the built-in table.
 	//
@@ -364,6 +373,34 @@ func (i InFlightConfig) Stale(age time.Duration) bool {
 // standard keys are what a spec-compliant builder writes, BuildKit and various CI
 // systems write their own, and some organisations set a label by hand. Naming them
 // is a two-line config change; guessing wrongly is a silent wrong answer.
+// BaseDiffConfig tunes base-image scanning.
+//
+// Only base images are scanned, not the estate: on a real deployment that was 30
+// repositories and 127 tags against several thousand images, shared by everything
+// built on them.
+type BaseDiffConfig struct {
+	// Enabled turns the differential on. Nil means off.
+	Enabled *bool `yaml:"enabled"`
+	// Binary is the scanner to run. Only trivy is supported today.
+	Binary string `yaml:"binary"`
+	// Timeout is passed to the scanner per image.
+	Timeout string `yaml:"timeout"`
+	// Concurrency bounds simultaneous base scans. Each one pulls an image, so this
+	// is a limit on the registry as much as on this process.
+	Concurrency int `yaml:"concurrency"`
+}
+
+// On reports whether base scanning was asked for.
+func (b BaseDiffConfig) On() bool { return b.Enabled != nil && *b.Enabled }
+
+// EffectiveConcurrency is the configured bound, or a conservative default.
+func (b BaseDiffConfig) EffectiveConcurrency() int {
+	if b.Concurrency > 0 {
+		return b.Concurrency
+	}
+	return 4
+}
+
 type BaseImageConfig struct {
 	// RefLabels are the image config labels that may hold the base reference, in
 	// preference order. Defaults to the OCI standard key followed by BuildKit's.
