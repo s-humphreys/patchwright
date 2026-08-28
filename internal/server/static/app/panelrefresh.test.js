@@ -188,3 +188,34 @@ test('an ungrouped row opens the deployment, not the work item', async () => {
   assert.equal(plainRow.dataset.group, undefined, 'an ungrouped row must not claim a work item');
   assert.equal(plainRow.dataset.image, 'reg/app:1.0.0');
 });
+
+test('a CVE in the image panel opens its scope, and comes back', async () => {
+  // The panel was a dead end in the middle of the question people ask: "this image has
+  // CVE-2025-6965" leads straight to "what else has it". The reverse direction already
+  // worked, so the asymmetry was the surprise.
+  const { openCVEDetail } = await import('./detail.js');
+  const vuln = { id: 'CVE-2025-6965', severity: 'critical', cvss: 9.8, epss: 0.76, kev: true,
+    fix_available: true, fixed_version: '3.44.0-2.azl3' };
+  const a = finding({ image: 'reg/app:1.0.0', tag: '1.0.0', scanned: true, vulns: [vuln] });
+  const b = finding({ image: 'reg/other:2.0.0', tag: '2.0.0', scanned: true, vulns: [vuln] });
+  S.queueRows = [a, b];
+  S.filtered = [a, b];
+
+  openDetail(a);
+  const row = document.querySelector('#detail tbody tr[data-cve]');
+  assert.ok(row, 'the vulnerability rows are not openable');
+
+  row.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  const panel = document.querySelector('#detail').textContent;
+  assert.match(panel, /CVE-2025-6965/);
+  // The scope is the point: both images carrying it, not just the one we came from.
+  assert.match(panel, /reg\/other:2\.0\.0/, 'the CVE panel should list every affected image');
+
+  // And back, to the image we came from rather than to the top.
+  const back = document.querySelector('#detailBack');
+  assert.ok(back, 'no way back from a drilled-in CVE');
+  assert.match(back.textContent, /reg\/app:1\.0\.0/);
+  back.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.match(document.querySelector('#detail .detail-title').textContent, /reg\/app:1\.0\.0/);
+  closeDetail();
+});

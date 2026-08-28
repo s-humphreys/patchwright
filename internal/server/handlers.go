@@ -43,6 +43,7 @@ func (s *Server) routes() map[string]http.Handler {
 		// The status page is served by the same process as the API it reads, so
 		// there is no second deployment and no build step.
 		"GET /":                    http.HandlerFunc(s.handleUI),
+		"GET /tickets":             http.HandlerFunc(s.handleTicketsPage),
 		"GET /favicon.png":         http.HandlerFunc(s.handleFavicon),
 		"GET /static/app/":         http.HandlerFunc(s.handleAsset),
 		"GET /healthz":             http.HandlerFunc(s.handleHealthz),

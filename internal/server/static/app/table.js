@@ -133,10 +133,12 @@ export const BREAKDOWN_COLUMNS = [
     // carrying the exploited work" and a row's own percentage cannot answer it: three
     // findings, all exploited, is 100% of a tiny row and might be 10% of the estate's
     // problem. The suffix says which it is, since an unlabelled percentage next to a
-    // row-relative one would be read as the same kind of number.
+    // row-relative one could be read as the same kind of number - so the denominator
+    // lives in the hover and in this column's help text, which is where the rest of
+    // this table explains itself, rather than in three words repeated on every row.
     get: (r) => drilldown(r, r.kev, { signal: "kev" }) +
-      (r.kev ? ` <span class="pct" title="Share of every KEV finding in the estate">${
-        r.estateKEV ? Math.round((r.kev / r.estateKEV) * 100) : 0}% of all</span>` : ""),
+      (r.kev ? ` <span class="pct" title="Share of every KEV finding in the estate, not of this row">${
+        r.estateKEV ? Math.round((r.kev / r.estateKEV) * 100) : 0}%</span>` : ""),
     help: "Findings carrying a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation, not a prediction. The percentage is of every KEV finding in the estate, not of this row, so it answers who carries the exploited work. Click for the list." },
   { label: "Exposed", num: true, get: (r) => drilldown(r, r.exposed, { signal: "exposed" }),
     help: "Findings on workloads reported reachable from the internet. Click for the list." },
