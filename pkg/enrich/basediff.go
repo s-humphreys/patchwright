@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 
 	"github.com/s-humphreys/patchwright/pkg/basescan"
@@ -69,6 +70,31 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 	return nil
 }
 
+// affected converts scanned packages to the model, deduplicated and ordered so
+// the same CVE renders identically between runs.
+func affected(pkgs []basescan.Package) []model.AffectedPackage {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]model.AffectedPackage, 0, len(pkgs))
+	for _, p := range pkgs {
+		if p.Name == "" {
+			continue
+		}
+		key := p.Ecosystem + "\x00" + p.Name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, model.AffectedPackage{
+			Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedVersion,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, up *model.Upgrade) {
 	built, err := e.Resolver.Scan(ctx, up.FromRef)
 	if err != nil {
@@ -97,6 +123,12 @@ func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, u
 		img.Vulns[i].Origin = string(v.Origin)
 		img.Vulns[i].FixedByUpgrade = v.FixedByUpgrade
 		img.Vulns[i].OriginDetermined = v.Determined
+		// Only for CVEs the base scan actually found. An application-introduced
+		// CVE lives in a layer nothing scanned, so naming a package for it would
+		// be a guess, and the guess available is the one measured at 66% wrong.
+		if v.Origin == basescan.OriginBase {
+			img.Vulns[i].Packages = affected(built.CVEs[img.Vulns[i].ID])
+		}
 	}
 
 	img.BaseDiff = &model.BaseDiff{

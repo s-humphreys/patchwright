@@ -1,6 +1,6 @@
 import { SIGNAL_BADGES, badge, count, epss } from './badges.js';
 import { baseDiffSection } from './basediff.js';
-import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy } from './cells.js';
+import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, upgradeStrategyWhy, vulnFixCell } from './cells.js';
 import { cveGroup } from './cves.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
@@ -85,9 +85,7 @@ function vulnTable(f) {
     <td class="num">${v.epss ? epssPercent(v.epss) : (f.exploit_checked ? "-" : "?")}</td>
     <td class="num">${v.risk_score ? Math.round(v.risk_score) : "-"}</td>
     <td>${v.kev ? badge(SIGNAL_BADGES.kev, "kev") : ""}</td>
-    <td>${v.fix_available
-      ? `<span class="act-direct">${esc(v.fixed_version || "fix available")}</span>`
-      : '<span class="muted">no fix</span>'}</td>
+    <td>${vulnFixCell(v)}</td>
   </tr>`).join("");
   const more = vulns.length > 40
     ? `<p class="muted">Showing the 40 worst of ${vulns.length}.</p>` : "";

@@ -1,7 +1,5 @@
 package basescan
 
-import "sort"
-
 // Origin is where a vulnerability came from, established by scanning rather than
 // inferred from a package name.
 type Origin string
@@ -101,28 +99,4 @@ func Diff(cves []string, built, candidate *Result) (map[string]Verdict, Summary)
 		}
 	}
 	return out, s
-}
-
-// FilterPackages narrows a set of provider-supplied package names to the
-// ecosystems the image actually contains.
-//
-// The provider names a package per CVE drawn from a generic remediation record,
-// so it frequently names one from an ecosystem the image does not have - a Debian
-// package for a Red Hat image. Where the named ecosystem IS present, the name
-// agreed with a scanner 94% of the time, so this filter is the difference between
-// unusable and usable, not a cosmetic tidy-up.
-//
-// Returns only packages whose ecosystem the base scan confirms.
-func FilterPackages(pkgs []Package, in *Result) []Package {
-	if in == nil || len(in.Ecosystems) == 0 {
-		return nil
-	}
-	var out []Package
-	for _, p := range pkgs {
-		if in.Ecosystems[p.Ecosystem] {
-			out = append(out, p)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
 }

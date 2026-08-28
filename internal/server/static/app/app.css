@@ -326,3 +326,6 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .ok { color: var(--ok); }
   .warn { color: var(--high); }
   .sev-critical { color: var(--urgent); }
+  .pkg-origin { font-size: .75em; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); border: 1px solid currentColor; border-radius: 3px;
+    padding: 0 .25em; margin-right: .3em; }

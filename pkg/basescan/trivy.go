@@ -142,6 +142,7 @@ type refReport struct {
 		Vulnerabilities []struct {
 			VulnerabilityID string `json:"VulnerabilityID"`
 			PkgName         string `json:"PkgName"`
+			FixedVersion    string `json:"FixedVersion"`
 		} `json:"Vulnerabilities"`
 	} `json:"Results"`
 }
@@ -171,7 +172,7 @@ func parseRefReport(ref string, data []byte) (*Result, error) {
 				continue
 			}
 			out.CVEs[v.VulnerabilityID] = append(out.CVEs[v.VulnerabilityID],
-				Package{Name: v.PkgName, Ecosystem: eco})
+				Package{Name: v.PkgName, Ecosystem: eco, FixedVersion: v.FixedVersion})
 		}
 	}
 	return out, nil

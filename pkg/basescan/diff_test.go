@@ -93,24 +93,3 @@ func TestDiffDeduplicatesAndIgnoresEmpty(t *testing.T) {
 		t.Errorf("the same CVE listed twice is one finding, got Total=%d", s.Total)
 	}
 }
-
-func TestFilterPackagesDropsEcosystemsTheImageDoesNotHave(t *testing.T) {
-	// The measured failure: the provider names a Debian package for a Red Hat
-	// image. 66% of its entries were of this kind.
-	in := res("base:1", "redhat", [3]string{"redhat", "openssl", "CVE-1"})
-	got := FilterPackages([]Package{
-		{Name: "openssl", Ecosystem: "debian"},
-		{Name: "openssl-libs", Ecosystem: "redhat"},
-	}, in)
-	if len(got) != 1 || got[0].Name != "openssl-libs" {
-		t.Errorf("only the redhat package can be in a redhat image, got %+v", got)
-	}
-}
-
-func TestFilterPackagesWithoutAScanReturnsNothing(t *testing.T) {
-	// Without a scan there is no basis to keep any of them, and keeping them
-	// unfiltered is exactly the 66%-wrong display that was reverted.
-	if got := FilterPackages([]Package{{Name: "openssl", Ecosystem: "debian"}}, nil); got != nil {
-		t.Errorf("no scan means no filter and no claim, got %+v", got)
-	}
-}

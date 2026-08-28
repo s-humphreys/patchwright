@@ -197,6 +197,19 @@ type VulnView struct {
 	Origin           string `json:"origin,omitempty"`
 	FixedByUpgrade   bool   `json:"fixed_by_upgrade,omitempty"`
 	OriginDetermined bool   `json:"origin_determined,omitempty"`
+
+	// Packages names what carries this CVE and what fixes it, measured by the base
+	// scan. Absent for application-introduced CVEs, whose layer nothing scanned.
+	Packages []PackageView `json:"packages,omitempty"`
+}
+
+// PackageView is a package carrying a CVE and the version that fixes it. Both
+// come from the same scan, so the version always belongs to the named package's
+// ecosystem.
+type PackageView struct {
+	Name      string `json:"name"`
+	Ecosystem string `json:"ecosystem,omitempty"`
+	FixedIn   string `json:"fixed_in,omitempty"`
 }
 
 // BaseDiffView is what scanning an image's base established.
@@ -284,6 +297,7 @@ func ToFindingView(f model.Finding) FindingView {
 			Origin:           v.Origin,
 			FixedByUpgrade:   v.FixedByUpgrade,
 			OriginDetermined: v.OriginDetermined,
+			Packages:         toPackageViews(v.Packages),
 		})
 	}
 	var baseDiff *BaseDiffView
@@ -423,4 +437,16 @@ func toSupportView(s *model.Support) *SupportView {
 		Recommended: s.Recommended, Nearest: s.Nearest, Newest: s.Newest,
 		Source: s.Source,
 	}
+}
+
+// toPackageViews maps measured packages to the API view.
+func toPackageViews(pkgs []model.AffectedPackage) []PackageView {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	out := make([]PackageView, 0, len(pkgs))
+	for _, p := range pkgs {
+		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn})
+	}
+	return out
 }

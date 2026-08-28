@@ -923,6 +923,32 @@ components:
             A candidate base image was actually scanned. When false, `fixed_by_upgrade`
             is absent because the question was not asked, which must not be read as
             "this upgrade will not fix it".
+        packages:
+          type: array
+          items: { $ref: "#/components/schemas/AffectedPackage" }
+          description: |
+            The packages carrying this CVE in the base image, and the version that
+            fixes each. Measured by scanning the base, so the name and the version
+            come from the same pass and always belong to the same ecosystem.
+
+            Absent for `origin: app`: those packages live in a layer nothing scanned.
+            Absent is "nothing measured", not "no package involved" — the provider's
+            own per-CVE package field is NOT used here, because 66% of its entries
+            name an ecosystem the image does not contain.
+
+    AffectedPackage:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: The package as the scanner names it. }
+        ecosystem:
+          type: string
+          description: debian, ubuntu, alpine, azurelinux, redhat, gobinary, dotnet-core, ...
+        fixed_in:
+          type: string
+          description: |
+            The version fixing this CVE for this package, from the same scan as the
+            name. Absent when the scanner knows of no fix.
 
     BaseDiff:
       type: object

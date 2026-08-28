@@ -1,7 +1,13 @@
 # Design: which package, and whose fix is it
 
-Status: **evidence gathered, not built.** The provider data that looked like it
-answered this does not. What follows is the measurement, and the design it points to.
+Status: **built.** The provider data that looked like it answered this does not; base
+images are scanned instead. What follows is the measurement, and the design it produced.
+
+Measured on the live estate after building it: on an application image with 6,746 CVEs,
+6,736 came from the base and every one of them carries a package named by a scanner -
+`debian libssl-dev`, fixed in `3.0.16-1~deb12u1`. The 10 the application introduced carry
+no package at all, because nothing scanned that layer, and inventing one is the failure
+this document exists to record.
 
 ## The question
 

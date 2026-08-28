@@ -120,6 +120,17 @@ type Vulnerability struct {
 	FixedByUpgrade   bool
 	OriginDetermined bool
 
+	// Packages names the packages carrying this CVE, and the version that fixes
+	// each. Populated only for CVEs the base scan found, where a scanner measured
+	// both in the same pass.
+	//
+	// Empty for application-introduced CVEs: their packages live in a layer
+	// nothing scanned, so there is nothing to name. Empty is the honest answer,
+	// and specifically better than the alternative that was tried - the provider
+	// reports a package per CVE from a generic remediation record, and 66% of
+	// those name an ecosystem the image does not contain.
+	Packages []AffectedPackage
+
 	// RiskScore is a scanner's own composite ranking for this CVE, on whatever
 	// scale that scanner uses (Rapid7's is roughly 0..1000). Deliberately kept
 	// apart from EPSS: EPSS is a calibrated probability, this is a weighting, and
@@ -308,6 +319,17 @@ type AssessedImage struct {
 	// would fix. Nil means the differential did not run for this image, which is
 	// not the same as it finding nothing.
 	BaseDiff *BaseDiff
+}
+
+// AffectedPackage is a package carrying a CVE, and the version that fixes it.
+//
+// Name and FixedIn come from the same scan of the same image, which is what keeps
+// them consistent: a fix version sourced separately from the package name can
+// belong to a different ecosystem entirely.
+type AffectedPackage struct {
+	Name      string
+	Ecosystem string
+	FixedIn   string
 }
 
 // BaseDiff is what scanning an image's base established: how much of its

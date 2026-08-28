@@ -31,10 +31,17 @@ import (
 	"sync"
 )
 
-// Package is one package a scan found, and the ecosystem it belongs to.
+// Package is one package a scan found, the ecosystem it belongs to, and the
+// version that fixes the CVE it was found under.
+//
+// FixedVersion comes from the same scan as the name, which is the point: the
+// provider reports a fix per CVE rather than per package, so its version can
+// belong to a different ecosystem than the package it is shown beside - an Alpine
+// package version next to a Go module was how that failure actually looked.
 type Package struct {
-	Name      string
-	Ecosystem string // "debian", "alpine", "azurelinux", "gobinary", "dotnet-core", ...
+	Name         string
+	Ecosystem    string // "debian", "alpine", "azurelinux", "gobinary", "dotnet-core", ...
+	FixedVersion string
 }
 
 // Result is what a single image reference contains.

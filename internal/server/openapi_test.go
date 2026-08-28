@@ -114,6 +114,19 @@ func TestSpecCoversEveryBaseDiffField(t *testing.T) {
 	}
 }
 
+func TestSpecCoversEveryAffectedPackageField(t *testing.T) {
+	spec := loadSpec(t)
+	schema, ok := spec.Components.Schemas["AffectedPackage"]
+	if !ok {
+		t.Fatal("the spec has no AffectedPackage schema")
+	}
+	for _, field := range jsonFieldNames(reflect.TypeOf(sink.PackageView{})) {
+		if _, ok := schema.Properties[field]; !ok {
+			t.Errorf("package field %q is served but undocumented in %s", field, specPath)
+		}
+	}
+}
+
 func TestSpecCoversEverySummaryField(t *testing.T) {
 	spec := loadSpec(t)
 	schema, ok := spec.Components.Schemas["Summary"]
