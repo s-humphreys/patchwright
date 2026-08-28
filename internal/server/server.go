@@ -47,6 +47,7 @@ type snapshot struct {
 	views       []sink.FindingView
 	summary     summaryView
 	owners      []ownerStats
+	analytics   AnalyticsView
 	byImage     map[string]sink.FindingView
 	generatedAt time.Time
 	err         string
@@ -195,6 +196,9 @@ func (s *Server) Refresh(ctx context.Context) {
 		// already tracked.
 		snap.tickets = s.lookupTickets(ctx)
 		snap.owners = buildOwnerStats(findings, snap.tickets)
+		// Same findings and the same ticket index as the owner rollup, so the two
+		// pages cannot disagree about the same team.
+		snap.analytics = buildAnalytics(findings, snap.tickets, time.Now())
 		// Published after the rollup so the owner series and the fleet totals come
 		// from the same assessment; scraping between the two would show them
 		// disagreeing.

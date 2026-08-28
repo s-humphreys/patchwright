@@ -511,11 +511,29 @@ func metricsSnapshot(snap *snapshot) metrics.Snapshot {
 	if snap.summary.ProviderDataNewest != nil {
 		out.ProviderDataNewest = *snap.summary.ProviderDataNewest
 	}
+	// Responsiveness comes from the analytics rollup, keyed the same way, so the
+	// page and the metrics cannot disagree about a team.
+	resp := map[string]TeamAnalytics{}
+	for _, t := range snap.analytics.Teams {
+		resp[t.Class+"\x00"+t.Team] = t
+	}
 	for _, o := range snap.owners {
-		out.Owners = append(out.Owners, metrics.OwnerSnapshot{
+		snapshot := metrics.OwnerSnapshot{
 			Class: o.Class, Team: o.Team, Findings: o.Total,
 			Actionable: o.Actionable, Unassessed: o.Unassessed, Ticketed: o.Ticketed,
-		})
+			// -1 rather than 0 when nothing is dated: a dashboard must be able to
+			// tell "no age source ran" from "everything was found today".
+			MedianAgeDays: -1,
+		}
+		if t, ok := resp[o.Class+"\x00"+o.Team]; ok {
+			snapshot.Unstarted = t.Unstarted
+			snapshot.StaleUnstarted = t.StaleUnstarted
+			snapshot.InFlightStale = t.InFlightStale
+			if t.MedianAgeDays != nil {
+				snapshot.MedianAgeDays = *t.MedianAgeDays
+			}
+		}
+		out.Owners = append(out.Owners, snapshot)
 	}
 	for _, r := range snap.summary.RemediationBlockers {
 		out.Blockers = append(out.Blockers, metrics.ReasonCount{Reason: r.Reason, Findings: r.Findings})

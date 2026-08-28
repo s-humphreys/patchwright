@@ -60,6 +60,53 @@ paths:
               schema: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /analytics:
+    get:
+      tags: [operations]
+      summary: Security analytics page
+      description: |
+        HTML. Per-team responsiveness: who is working through their findings and who is
+        sitting on them. A page of its own because its subject is how teams are
+        RESPONDING, not what is wrong - a different question read by different people.
+        Reads GET /api/v1/analytics.
+      responses:
+        "200":
+          description: The analytics page
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/analytics:
+    get:
+      tags: [analysis]
+      summary: Per-team responsiveness
+      description: |
+        Who is moving on their findings and who is not, computed from the latest cached
+        assessment.
+
+        The headline metric is `stale_unstarted`: actionable findings with an upgrade
+        available, no open pull request, no ticket, and older than `stale_fix_days`. A
+        fix has existed for a month and nothing has moved, which is a statement about
+        the team rather than about the software.
+
+        `notes` lists the questions this endpoint is asked and cannot answer - read it
+        before building a dashboard on this, because the gaps are the part most likely
+        to be assumed away. Ticket resolution time is the notable one: the tracker index
+        holds only open tickets and carries no dates.
+      responses:
+        "200":
+          description: Per-team responsiveness
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, analytics]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  analytics: { $ref: "#/components/schemas/Analytics" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/findings:
     get:
       tags: [findings]
@@ -996,6 +1043,96 @@ components:
           description: |
             A candidate base was scanned. When false, `clears` and `leaves` are zero
             because the question was not asked, not because the answer is nothing.
+
+    Analytics:
+      type: object
+      required: [teams, estate, age_bucket_order, notes, stale_fix_days]
+      properties:
+        teams:
+          type: array
+          items: { $ref: "#/components/schemas/TeamAnalytics" }
+          description: |
+            One row per owner, worst first: fixes nobody has started, then age, then
+            size. The top row is the one worth a conversation.
+        estate:
+          allOf: [{ $ref: "#/components/schemas/TeamAnalytics" }]
+          description: The same shape summed over every team, so a row can be read against the whole.
+        age_bucket_order:
+          type: array
+          items: { type: string }
+          description: The age bands in order, since the map keys do not sort as strings.
+        notes:
+          type: array
+          items: { type: string }
+          description: |
+            Questions this endpoint is asked that the data cannot answer. Carried in the
+            payload rather than only on the page: a consumer building its own dashboard
+            needs to know what is missing as much as the page does.
+        stale_fix_days:
+          type: integer
+          description: The threshold behind stale_unstarted, so a reader knows what "stale" meant.
+
+    TeamAnalytics:
+      type: object
+      required: [class, team, findings, actionable]
+      properties:
+        class: { type: string }
+        team: { type: string, description: Empty when no ownership rule attributed the workloads. }
+        findings: { type: integer }
+        actionable: { type: integer }
+        median_age_days:
+          type: integer
+          nullable: true
+          description: |
+            Over actionable findings, dated from each one's OLDEST CVE: an image
+            carrying something since June has been exposed since June, whatever
+            arrived later. Null when nothing here is dated, which happens without an
+            age source and is NOT the same as new.
+        p90_age_days: { type: integer, nullable: true, description: As median_age_days, at the 90th percentile. }
+        age_buckets:
+          type: object
+          additionalProperties: { type: integer }
+          description: Actionable findings by age band, keyed by the labels in age_bucket_order.
+        fixable: { type: integer, description: Actionable findings with an upgrade available. }
+        unstarted:
+          type: integer
+          description: Of those, the ones with no open pull request and no open ticket.
+        stale_unstarted:
+          type: integer
+          description: |
+            Unstarted findings older than stale_fix_days. The sharpest single signal
+            here. Counted only where the age is KNOWN: without an age source an
+            unstarted fix is not evidence of anything.
+        in_flight: { type: integer, description: Findings with an open pull request applying the upgrade. }
+        in_flight_stale: { type: integer, description: Of those, open past the configured threshold. }
+        in_flight_median_days:
+          type: integer
+          nullable: true
+          description: |
+            How long those pull requests have been open. A high in_flight with a high
+            median is a review bottleneck, not an engagement problem, and the two need
+            different conversations.
+        tickets_open: { type: integer }
+        tickets_untouched:
+          type: integer
+          description: Open tickets still in the tracker's "new" category - raised and not picked up.
+        kev: { type: integer, description: Findings carrying a known-exploited CVE. }
+        kev_fixable:
+          type: integer
+          description: Of those, the ones with an upgrade available. The gap is what gets escalated.
+        base_clears:
+          type: integer
+          description: CVEs a base rebuild would remove across this team's images.
+        base_total:
+          type: integer
+          description: |
+            CVEs those images carry. The ratio says how much of a team's queue is not
+            theirs to fix line by line. Zero means no base differential ran.
+        unassessed:
+          type: integer
+          description: |
+            Findings the provider never assessed. Read alongside the rest: a team can
+            look responsive purely because nothing scanned its images.
 
     OwnerStats:
       type: object

@@ -98,6 +98,16 @@ var (
 	// unassessedReasons turns a coverage gap into something alertable by cause. On
 	// a real estate one reason accounted for nearly all of it, and a percentage
 	// could not say which.
+	// Responsiveness per team. The queue metrics say what is wrong; these say
+	// whether anyone is working on it, which is the difference between a report
+	// and an alert.
+	ownerResponsiveness = gaugeVec("owner_responsiveness",
+		"Per-team responsiveness. unstarted: actionable findings with an available "+
+			"upgrade, no pull request and no ticket. stale_unstarted: those older than "+
+			"the threshold. in_flight_stale: pull requests open past the threshold. "+
+			"median_age_days: -1 when no finding here is dated, which is NOT zero.",
+		[]string{"class", "team", "metric"})
+
 	unassessedReasons = gaugeVec("findings_unassessed_by_reason",
 		"Findings the scan provider did not assess, by its stated reason.",
 		[]string{"reason"})
@@ -215,6 +225,21 @@ type OwnerSnapshot struct {
 	Actionable int
 	Unassessed int
 	Ticketed   int
+
+	// Responsiveness. These are the ones worth alerting on: the rest of the queue
+	// describes the software, and these describe whether anybody is acting on it.
+	//
+	// Unstarted is actionable findings with an upgrade available, no open pull
+	// request and no ticket. StaleUnstarted is the subset older than the
+	// configured threshold, which is the metric to page on - a fix has existed for
+	// a month and nothing has moved.
+	Unstarted      int
+	StaleUnstarted int
+	InFlightStale  int
+	// MedianAgeDays is -1 when nothing here is dated, which is not the same as
+	// zero. Published as -1 rather than omitted so a dashboard can tell "no age
+	// source" from "everything is new" instead of drawing a flat line at zero.
+	MedianAgeDays int
 }
 
 // ReasonCount is a stated reason for missing coverage and how much it costs.
@@ -263,6 +288,7 @@ func Observe(s Snapshot) {
 	// Reset before republishing: an owner or reason that has gone away must stop
 	// being exported, not linger at its final value.
 	ownerFindings.Reset()
+	ownerResponsiveness.Reset()
 	for _, o := range s.Owners {
 		team := o.Team
 		if team == "" {
@@ -278,6 +304,14 @@ func Observe(s Snapshot) {
 			"ticketed":   o.Ticketed,
 		} {
 			ownerFindings.WithLabelValues(o.Class, team, state).Set(float64(n))
+		}
+		for metric, n := range map[string]int{
+			"unstarted":       o.Unstarted,
+			"stale_unstarted": o.StaleUnstarted,
+			"in_flight_stale": o.InFlightStale,
+			"median_age_days": o.MedianAgeDays,
+		} {
+			ownerResponsiveness.WithLabelValues(o.Class, team, metric).Set(float64(n))
 		}
 	}
 

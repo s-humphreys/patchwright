@@ -329,3 +329,33 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .pkg-origin { font-size: .75em; text-transform: uppercase; letter-spacing: .04em;
     color: var(--muted); border: 1px solid currentColor; border-radius: 3px;
     padding: 0 .25em; margin-right: .3em; }
+
+  /* Analytics. Cards rather than one wide table: the interesting comparison is
+     between a handful of teams, and a table of twelve columns is read by nobody. */
+  .team-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .team-card, .estate, .notes, .chart-box {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: .75rem 1rem; margin-bottom: 1rem; }
+  .team-card h3, .estate h3, .notes h3, .chart-box h3 { margin: 0 0 .4rem; font-size: .95rem; }
+  .headline { margin: .2rem 0 .6rem; }
+  .charts { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .age-strip { margin: .5rem 0 .75rem; }
+  .notes ul { margin: .3rem 0 0; padding-left: 1.1rem; }
+  .notes li { margin: .2rem 0; color: var(--muted); }
+
+  .chart { display: block; overflow: visible; }
+  .chart-track { fill: var(--line); opacity: .35; }
+  .chart-bar { fill: var(--idle); }
+  .chart-bar.bar-urgent { fill: var(--urgent); }
+  .chart-bar.bar-age { fill: var(--high); }
+  .chart-label, .chart-value { font-size: 11px; fill: var(--fg); }
+  .chart-value { font-variant-numeric: tabular-nums; }
+  .chart-legend { margin-top: .3rem; font-size: .8rem; color: var(--muted); }
+  .chart-key { margin-right: .6rem; white-space: nowrap; }
+  .chart-swatch { display: inline-block; width: .6rem; height: .6rem; margin-right: .25rem; border-radius: 2px; }
+  .chart-seg.age-0, .chart-swatch.age-0 { fill: var(--ok); background: var(--ok); }
+  .chart-seg.age-1, .chart-swatch.age-1 { fill: var(--low); background: var(--low); }
+  .chart-seg.age-2, .chart-swatch.age-2 { fill: var(--medium); background: var(--medium); }
+  .chart-seg.age-3, .chart-swatch.age-3 { fill: var(--high); background: var(--high); }
+  .chart-seg.age-4, .chart-swatch.age-4 { fill: var(--urgent); background: var(--urgent); }
+  .urgent { color: var(--urgent); }
