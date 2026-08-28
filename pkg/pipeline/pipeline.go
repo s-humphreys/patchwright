@@ -27,6 +27,7 @@ type Pipeline struct {
 	exploit     *enrich.ExploitEnricher     // optional: EPSS/KEV enrichment after scan
 	age         *enrich.AgeEnricher         // optional: CVE first-seen enrichment after scan
 	remediation *enrich.RemediationEnricher // optional: deployment upgrade detection
+	baseDiff    *enrich.BaseDiffEnricher    // optional: base-image attribution, after remediation
 	inFlight    ImageEnricher               // optional: open pull requests applying those upgrades
 
 	// failures are the enrichments that could not run. An enrichment is not the
@@ -55,6 +56,15 @@ func WithExploitEnricher(e *enrich.ExploitEnricher) Option {
 // stamps ages onto vulnerabilities that already exist.
 func WithAgeEnricher(a *enrich.AgeEnricher) Option {
 	return func(p *Pipeline) { p.age = a }
+}
+
+// WithBaseDiffEnricher enables base-image attribution: which of an image's CVEs
+// came from its base, and which of them the recommended base upgrade would fix.
+//
+// After remediation, because it needs the base references that base-image
+// resolution produces.
+func WithBaseDiffEnricher(b *enrich.BaseDiffEnricher) Option {
+	return func(p *Pipeline) { p.baseDiff = b }
 }
 
 // ImageEnricher annotates assessed images in place. Satisfied by the in-flight
@@ -150,6 +160,14 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 			return nil, err
 		}
 	}
+	if p.baseDiff != nil {
+		// Never fatal. Base attribution is an improvement on the queue, not a
+		// prerequisite for it: without it every CVE reports an unknown origin,
+		// which is exactly what it was before this existed.
+		if err := p.baseDiff.EnrichImages(ctx, images); err != nil {
+			p.recordFailure(ctx, "base-diff", err)
+		}
+	}
 	if p.inFlight != nil {
 		if err := p.inFlight.EnrichImages(ctx, images); err != nil {
 			return nil, err
@@ -221,6 +239,7 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				InFlight:           ai.InFlight,
 				InFlightChecked:    ai.InFlightChecked,
 				InFlightReason:     ai.InFlightReason,
+				BaseDiff:           ai.BaseDiff,
 			})
 		}
 	}

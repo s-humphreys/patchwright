@@ -74,6 +74,10 @@ type FindingView struct {
 	// where in-flight detection did not run at all — consumers must not read its
 	// absence as "nobody is working on this".
 	InFlight *InFlightView `json:"in_flight,omitempty"`
+	// BaseDiff is what scanning this image's base established: how much of its
+	// count the base accounts for, and what upgrading it would clear. Absent when
+	// the differential did not run, which is not the same as it finding nothing.
+	BaseDiff *BaseDiffView `json:"base_diff,omitempty"`
 	// InFlightChecked distinguishes "no pull request found" from "we never looked".
 	// Always emitted: false is the meaningful value.
 	InFlightChecked bool `json:"in_flight_checked"`
@@ -183,6 +187,35 @@ type VulnView struct {
 	// probability. Absent means unscored.
 	RiskScore    float64 `json:"risk_score,omitempty"`
 	ExploitKnown bool    `json:"exploit_known,omitempty"`
+
+	// Origin is where this CVE came from, established by scanning the base image:
+	// "base", "app", or absent when no base scan was available. FixedByUpgrade is
+	// true only when the recommended base does not contain it.
+	//
+	// OriginDetermined distinguishes "this upgrade will not fix it" from "we did
+	// not check", which look identical without it.
+	Origin           string `json:"origin,omitempty"`
+	FixedByUpgrade   bool   `json:"fixed_by_upgrade,omitempty"`
+	OriginDetermined bool   `json:"origin_determined,omitempty"`
+}
+
+// BaseDiffView is what scanning an image's base established.
+type BaseDiffView struct {
+	FromRef  string `json:"from_ref"`
+	ToRef    string `json:"to_ref,omitempty"`
+	OSFamily string `json:"os_family,omitempty"`
+
+	Total      int `json:"total"`
+	FromBase   int `json:"from_base"`
+	FromApp    int `json:"from_app"`
+	Unknown    int `json:"unknown,omitempty"`
+	Clears     int `json:"clears"`
+	Leaves     int `json:"leaves"`
+	Introduces int `json:"introduces"`
+
+	// Determined is false when no candidate base was scanned, in which case clears
+	// and leaves are zero because the question was not asked.
+	Determined bool `json:"determined"`
 }
 
 // Emit implements Sink.
@@ -247,7 +280,20 @@ func ToFindingView(f model.Finding) FindingView {
 			KEV:          v.KEV,
 			RiskScore:    v.RiskScore,
 			ExploitKnown: v.ExploitKnown,
+
+			Origin:           v.Origin,
+			FixedByUpgrade:   v.FixedByUpgrade,
+			OriginDetermined: v.OriginDetermined,
 		})
+	}
+	var baseDiff *BaseDiffView
+	if d := f.BaseDiff; d != nil {
+		baseDiff = &BaseDiffView{
+			FromRef: d.FromRef, ToRef: d.ToRef, OSFamily: d.OSFamily,
+			Total: d.Total, FromBase: d.FromBase, FromApp: d.FromApp, Unknown: d.Unknown,
+			Clears: d.Clears, Leaves: d.Leaves, Introduces: d.Introduces,
+			Determined: d.Determined,
+		}
 	}
 	var liveness *LivenessView
 	if f.Reconciled {
@@ -323,6 +369,7 @@ func ToFindingView(f model.Finding) FindingView {
 		Liveness:           liveness,
 		Upgrade:            upgrade,
 		InFlight:           inflight,
+		BaseDiff:           baseDiff,
 		InFlightChecked:    f.InFlightChecked,
 		InFlightReason:     f.InFlightReason,
 		Dimensions:         f.Dimensions,

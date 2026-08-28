@@ -84,6 +84,36 @@ func TestSpecCoversEveryFindingField(t *testing.T) {
 	}
 }
 
+// The Finding guard only ever checked TOP-LEVEL fields, so a whole nested view
+// could be served undocumented. These cover the two that carry the base
+// differential, which is the part a consumer is most likely to misread if the
+// spec does not spell out what an absent value means.
+func TestSpecCoversEveryVulnerabilityField(t *testing.T) {
+	spec := loadSpec(t)
+	schema, ok := spec.Components.Schemas["Vulnerability"]
+	if !ok {
+		t.Fatal("the spec has no Vulnerability schema")
+	}
+	for _, field := range jsonFieldNames(reflect.TypeOf(sink.VulnView{})) {
+		if _, ok := schema.Properties[field]; !ok {
+			t.Errorf("vulnerability field %q is served but undocumented in %s", field, specPath)
+		}
+	}
+}
+
+func TestSpecCoversEveryBaseDiffField(t *testing.T) {
+	spec := loadSpec(t)
+	schema, ok := spec.Components.Schemas["BaseDiff"]
+	if !ok {
+		t.Fatal("the spec has no BaseDiff schema")
+	}
+	for _, field := range jsonFieldNames(reflect.TypeOf(sink.BaseDiffView{})) {
+		if _, ok := schema.Properties[field]; !ok {
+			t.Errorf("base diff field %q is served but undocumented in %s", field, specPath)
+		}
+	}
+}
+
 func TestSpecCoversEverySummaryField(t *testing.T) {
 	spec := loadSpec(t)
 	schema, ok := spec.Components.Schemas["Summary"]

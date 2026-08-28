@@ -595,6 +595,7 @@ components:
             without an upgrade must check this, or it silently skips images whose
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
+        base_diff: { $ref: "#/components/schemas/BaseDiff" }
         in_flight: { $ref: "#/components/schemas/InFlight" }
         in_flight_reason:
           type: string
@@ -899,6 +900,76 @@ components:
           type: number
           description: Probability of exploitation in 30 days. Needs an exploit source.
         kev: { type: boolean, description: CISA Known Exploited Vulnerabilities. }
+        origin:
+          type: string
+          enum: [base, app]
+          description: |
+            Where this CVE came from, established by scanning the base image rather
+            than inferred from a package name. `base` means the base image as built
+            already contained it, so the application team did not introduce it and
+            mostly cannot fix it in their own repository. `app` means the image has it
+            and its base does not, so the Dockerfile installed it.
+
+            Absent means no base scan was available. That is NOT `app`: "we did not
+            look" and "we looked and it is yours" send work to different people.
+        fixed_by_upgrade:
+          type: boolean
+          description: |
+            The base image being recommended does not contain this CVE, so rebuilding
+            on it removes this one. Only meaningful with `origin_determined` true.
+        origin_determined:
+          type: boolean
+          description: |
+            A candidate base image was actually scanned. When false, `fixed_by_upgrade`
+            is absent because the question was not asked, which must not be read as
+            "this upgrade will not fix it".
+
+    BaseDiff:
+      type: object
+      required: [from_ref, total, from_base, from_app, clears, leaves, introduces, determined]
+      description: |
+        What scanning this image's base image established: how much of its
+        vulnerability count the base accounts for, and how much of that a specific
+        base upgrade would remove.
+
+        Absent when the differential did not run for this image — no resolvable base,
+        or its scan failed. Absent is not "the base accounts for nothing".
+      properties:
+        from_ref:
+          type: string
+          description: |
+            The base as built, digest-pinned whenever the build recorded one, so the
+            comparison describes what the image was actually built on rather than
+            whatever the tag points at now.
+        to_ref:
+          type: string
+          description: |
+            The base compared against. Absent when none was — either the base is
+            current, or the recommendation belongs to a deeper link in the base chain,
+            where diffing this pair would attribute the intermediate base's packages
+            to the application.
+        os_family:
+          type: string
+          description: The distro the base scan identified (debian, alpine, azurelinux, redhat).
+        total: { type: integer, description: CVEs considered. }
+        from_base: { type: integer, description: Present in the base as built. }
+        from_app:
+          type: integer
+          description: In the image but not in its base, so the application team owns them.
+        unknown: { type: integer, description: Not attributed. }
+        clears: { type: integer, description: Removed by moving to `to_ref`. }
+        leaves: { type: integer, description: From the base and still present in `to_ref`. }
+        introduces:
+          type: integer
+          description: |
+            In `to_ref` but not in the base as built. Reported because an upgrade that
+            fixes 3,664 and adds 40 is still worth taking, and stating only the first
+            half is how a recommendation stops being trusted.
+        determined:
+          type: boolean
+          description: |
+            A candidate base was scanned. When false, `clears` and `leaves` are zero
+            because the question was not asked, not because the answer is nothing.
 
     OwnerStats:
       type: object
