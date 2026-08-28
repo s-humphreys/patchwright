@@ -51,28 +51,6 @@ most about. The platform scanned those images from inside the account and hands 
 what it found: severity, CVSS, its own risk score, whether a public exploit exists,
 first-found dates, and the fixed version per CVE.
 
-It also names the **affected packages** in that image and the version fixing each, from
-the solutions the platform attaches to every CVE. That is what makes a fixed version
-legible: `3.3.5-2.azl3` on its own has no subject, while `openssl → 3.3.5-2.azl3` can be
-acted on. One CVE routinely implicates several packages in one image - up to seventeen in
-sampled data - so they are reported as a list rather than a single name.
-
-The package's **ecosystem** answers the question that follows: an OS package (`debian`,
-`alpine`, `azurelinux`) arrives with the base image, so rebuilding on a newer base
-usually carries the fix and the team may have nothing of its own to change; a language
-package (`gobinary`, `npm`, `pypi`) is built in from the image's own manifest, so no
-rebuild of anybody else's image will help.
-
-That is an inference from the ecosystem, not layer attribution, and the page labels it as
-one: a Dockerfile can install a distribution package, and a base image can ship a Go
-binary. Exact attribution needs the layer each package came from, which this API does not
-carry and Trivy does.
-
-Do not confuse the per-image solutions with `/private/vulnerabilities/{cve}/packages`,
-which is keyed per CVE across the whole estate: its rows carry no resource, so the same
-package appears once per version seen anywhere and cannot be attributed to an image. Fix
-data taken from there would be a guess dressed as a fact.
-
 It supplies neither EPSS nor CISA KEV, because the API carries neither. Run
 `--exploit-source public` alongside for those.
 

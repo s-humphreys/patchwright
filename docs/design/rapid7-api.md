@@ -67,12 +67,12 @@ as a clean result.
 
 ## Not done yet: per-CVE detail
 
-**Correction, later.** The conclusion below is about the estate-wide packages endpoint
-and remains true of it - but it was allowed to stand as though no package data were
-available at all, and that was wrong. The PER-RESOURCE endpoint embeds
-`vuln_meta.Solutions[]`, carrying `package_name`, `package_type` and `fix` for the image
-being asked about. That is now decoded, and it is where package data comes from. The
-matching problem described here applies only to the estate-wide endpoint.
+**Read `package-attribution.md` alongside this.** The per-resource endpoint *does*
+embed `vuln_meta.Solutions[]` with `package_name`, `package_type` and `fix`, which
+looks like the per-image package list this section says is missing. It is not one:
+measured against Trivy on six images, 66% of those entries name an ecosystem the
+image does not contain. The matching problem below is real, and that block does not
+solve it.
 
 The two endpoints needed to replace `--vuln-source trivy` both work, but they do
 not compose as neatly as they first appear, and the gap is worth writing down

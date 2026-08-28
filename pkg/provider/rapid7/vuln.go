@@ -148,15 +148,6 @@ type cveRow struct {
 	FirstFound  string  `json:"first_found"`
 	Meta        struct {
 		FixedVersion string `json:"FixedVersion"`
-		// Solutions names the packages affected IN THIS IMAGE and how to fix each.
-		// Scoped to the resource this row came from, unlike the estate-wide
-		// /private/vulnerabilities/{cve}/packages endpoint, whose rows carry no
-		// resource and therefore cannot be attributed to an image at all.
-		Solutions []struct {
-			PackageName string `json:"package_name"`
-			PackageType string `json:"package_type"`
-			Fix         string `json:"fix"`
-		} `json:"Solutions"`
 	} `json:"vuln_meta"`
 }
 
@@ -175,26 +166,6 @@ func (r cveRow) vulnerability() model.Vulnerability {
 		FixedVersion: strings.TrimSpace(r.Meta.FixedVersion),
 	}
 	v.FixAvailable = v.FixedVersion != ""
-	// The packages this CVE affects in this image. Deduplicated because the platform
-	// repeats a package once per fix line, and a reader counting rows would overstate
-	// how much there is to change.
-	seen := map[string]bool{}
-	for _, sol := range r.Meta.Solutions {
-		name := strings.TrimSpace(sol.PackageName)
-		if name == "" {
-			continue
-		}
-		key := name + "\x00" + sol.PackageType
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		v.Packages = append(v.Packages, model.AffectedPackage{
-			Name:      name,
-			Ecosystem: strings.ToLower(strings.TrimSpace(sol.PackageType)),
-			FixedIn:   strings.TrimSpace(sol.Fix),
-		})
-	}
 	if t, ok := parseAPITime(r.FirstFound); ok {
 		v.FirstSeen = t
 	}
