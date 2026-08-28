@@ -1,30 +1,28 @@
 import { esc } from './util.js';
 
-// Charts as inline SVG, hand-rolled.
+// Charts as HTML and CSS rather than SVG.
 //
-// A charting library was the obvious choice and was considered. Three things
-// argued against it here: the page ships as plain ES modules from a Go binary
-// with no build step, so a library means vendoring a minified blob into the
-// repository; that blob is third-party code shipped inside a tool whose whole
-// purpose is telling people about third-party code they are shipping; and what
-// these charts need is bars and a heat strip, which is a few dozen lines.
+// The first version drew SVG with preserveAspectRatio="none" so bars could be
+// sized in percent. That stretches everything inside the viewBox, text included,
+// so every label rendered smeared horizontally. Percentage-width divs give the
+// same layout with no coordinate system to distort: text is text, it wraps and
+// scales like the rest of the page, and it stays legible at any width.
 //
-// If richer interaction is ever wanted - zoom, tooltips, time series - swap this
-// module for uPlot or Chart.js. Everything else on the page talks to the two
-// functions below and nothing else, so that swap is local to this file.
+// A charting library was considered and is still the right answer the moment
+// this needs zoom, a shared time axis or interaction. What is here is bars and a
+// segmented strip. Everything on the page talks to the three functions below, so
+// swapping in uPlot or Chart.js stays local to this file.
 
-/** clamp keeps a bar inside its track when data is unexpected. */
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const pctWidth = (v, max) => (max > 0 ? Math.max(0.5, Math.min(100, (v / max) * 100)) : 0);
 
 /**
- * barChart renders a horizontal bar per row.
+ * barChart renders a labelled horizontal bar per row.
  *
- * Horizontal rather than vertical because the labels are team names, and team
- * names rotated 45 degrees is the single most common way a chart like this
- * becomes unreadable.
+ * Horizontal because the labels are names - images, teams, base tags - and names
+ * rotated on a vertical axis is the commonest way a chart like this becomes
+ * unreadable.
  *
- * @param {{label: string, value: number, title?: string, cls?: string}[]} rows
- * @param {{max?: number, unit?: string, empty?: string}} [opts]
+ * @param {{label: string, value: number, display?: string, title?: string, cls?: string, sub?: string}[]} rows
  */
 export function barChart(rows, opts = {}) {
   const data = (rows || []).filter((r) => r && Number.isFinite(r.value));
@@ -32,37 +30,25 @@ export function barChart(rows, opts = {}) {
     return `<p class="muted">${esc(opts.empty || "Nothing to chart yet.")}</p>`;
   }
   const max = opts.max ?? Math.max(...data.map((r) => r.value), 1);
-  const unit = opts.unit || "";
-  const rowH = 22;
-  const height = data.length * rowH;
-
-  const bars = data.map((r, i) => {
-    const w = max > 0 ? clamp((r.value / max) * 100, 0, 100) : 0;
-    const y = i * rowH;
-    return `<g>
-      <title>${esc(r.title || `${r.label}: ${r.value}${unit}`)}</title>
-      <rect class="chart-track" x="0" y="${y + 4}" width="100%" height="${rowH - 8}" rx="2"></rect>
-      <rect class="chart-bar ${esc(r.cls || "")}" x="0" y="${y + 4}"
-        width="${w}%" height="${rowH - 8}" rx="2"></rect>
-      <text class="chart-label" x="6" y="${y + rowH / 2 + 4}">${esc(r.label)}</text>
-      <text class="chart-value" x="100%" y="${y + rowH / 2 + 4}" text-anchor="end"
-        dx="-6">${esc(String(r.value))}${esc(unit)}</text>
-    </g>`;
-  }).join("");
-
-  return `<svg class="chart" viewBox="0 0 100 ${height}" preserveAspectRatio="none"
-    height="${height}" role="img" width="100%">${bars}</svg>`;
+  const items = data.map((r) => `
+    <li class="bar-row" title="${esc(r.title || `${r.label}: ${r.value}`)}">
+      <span class="bar-name">${esc(r.label)}${
+        r.sub ? `<span class="bar-sub">${esc(r.sub)}</span>` : ""
+      }</span>
+      <span class="bar-track">
+        <span class="bar-fill ${esc(r.cls || "")}" style="width:${pctWidth(r.value, max).toFixed(2)}%"></span>
+      </span>
+      <span class="bar-num">${esc(r.display || String(r.value))}</span>
+    </li>`).join("");
+  return `<ul class="bar-chart">${items}</ul>`;
 }
 
 /**
- * stackedBar renders one bar split into segments, for a composition that adds up
- * to a whole: age bands, fix paths.
+ * stackedBar renders one bar split into segments, for a composition adding to a
+ * whole: age bands, fix paths.
  *
- * A segment with a zero value is dropped rather than rendered at zero width,
- * which would put an invisible node in the tab order and an empty tooltip target
- * on the page.
- *
- * @param {{label: string, value: number, cls: string}[]} segments
+ * Zero-value segments are dropped rather than rendered at zero width, which puts
+ * an empty tooltip target on the page and a node in the tab order for nothing.
  */
 export function stackedBar(segments, opts = {}) {
   const data = (segments || []).filter((s) => s && s.value > 0);
@@ -70,17 +56,38 @@ export function stackedBar(segments, opts = {}) {
   if (!total) {
     return `<p class="muted">${esc(opts.empty || "Nothing to chart yet.")}</p>`;
   }
-  let x = 0;
   const parts = data.map((s) => {
     const w = (s.value / total) * 100;
-    const seg = `<g><title>${esc(`${s.label}: ${s.value} (${Math.round(w)}%)`)}</title>
-      <rect class="chart-seg ${esc(s.cls)}" x="${x}" y="0" width="${w}" height="14"></rect></g>`;
-    x += w;
-    return seg;
+    return `<span class="seg ${esc(s.cls)}" style="width:${w.toFixed(2)}%"
+      title="${esc(`${s.label}: ${s.value} (${Math.round(w)}%)`)}"></span>`;
   }).join("");
   const key = data.map((s) =>
     `<span class="chart-key"><i class="chart-swatch ${esc(s.cls)}"></i>${esc(s.label)} ${s.value}</span>`
   ).join(" ");
-  return `<svg class="chart" viewBox="0 0 100 14" preserveAspectRatio="none" height="14"
-    width="100%" role="img">${parts}</svg><div class="chart-legend">${key}</div>`;
+  return `<div class="stacked">${parts}</div><div class="chart-legend">${key}</div>`;
+}
+
+/**
+ * columnChart renders a value per time bucket, oldest on the left.
+ *
+ * For the one genuine time series available from a single assessment: when the
+ * CVEs still sitting in the queue first appeared. A column per month reads as a
+ * shape - a backlog that arrived in one bad quarter looks nothing like one
+ * accumulating steadily, and they call for different responses.
+ *
+ * @param {{label: string, value: number, title?: string, cls?: string}[]} cols
+ */
+export function columnChart(cols, opts = {}) {
+  const data = (cols || []).filter((c) => c && Number.isFinite(c.value));
+  if (!data.length) {
+    return `<p class="muted">${esc(opts.empty || "No dated findings, so there is no history to plot.")}</p>`;
+  }
+  const max = Math.max(...data.map((c) => c.value), 1);
+  const bars = data.map((c) => `
+    <li class="col" title="${esc(c.title || `${c.label}: ${c.value}`)}">
+      <span class="col-fill ${esc(c.cls || "")}" style="height:${pctWidth(c.value, max).toFixed(2)}%"></span>
+      <span class="col-label">${esc(c.label)}</span>
+    </li>`).join("");
+  return `<ul class="col-chart">${bars}</ul>
+    <div class="chart-legend">${esc(opts.caption || "")} peak ${max}</div>`;
 }

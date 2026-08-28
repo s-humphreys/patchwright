@@ -6,12 +6,16 @@
 <link rel="stylesheet" href="/static/app/app.css">
 
 <!--
-  Responsiveness, not state.
+  Leverage and neglect, not a league table.
 
-  The queue answers "what is wrong right now". It cannot answer "is this team
-  working through it or sitting on it", which is the question behind most of what
-  reaches a security team, and the one people currently answer by eyeballing a
-  table and forming an impression.
+  The queue answers "what is wrong right now". It cannot answer "what should we do
+  first" or "what is nobody acting on", which is what a security team actually
+  needs, and what people currently answer by eyeballing a table.
+
+  An earlier version ranked teams by how slow they were. That reads as an
+  accusation to whoever is on top of it, and it is rarely the useful question:
+  most of the leverage here is a handful of base images, where one rebuild fixes
+  everything built on them.
 
   A page of its own rather than a tab, for the same reason the ticket plan is: a
   different subject, read by different people at different times.
@@ -23,10 +27,10 @@
   <nav class="pages"><a href="/">Queue</a> <a href="/tickets">Ticket plan</a></nav>
 </header>
 
-<h2>Who is moving, and who is not</h2>
+<h2>What to fix first</h2>
 <p class="meta">
-  Per team, from the latest assessment. Sorted by fixes nobody has started, then by
-  age: the top row is the one worth a conversation.
+  From the latest assessment: the rebuilds that clear the most, the problems nobody is
+  acting on, and how the backlog got here.
 </p>
 
 <div id="analytics">loading…</div>

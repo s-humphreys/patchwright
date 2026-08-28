@@ -90,8 +90,77 @@ type TeamAnalytics struct {
 	Unassessed int `json:"unassessed"`
 }
 
+// Win is one base image upgrade and everything it would fix at once.
+//
+// The leverage in this estate is not spread evenly across teams: a handful of
+// base images account for most of the CVE mass, and one rebuild clears them for
+// every image built on that base. Ranking those is a to-do list; ranking teams by
+// how slow they are is a league table, which tells a security engineer who to
+// blame rather than what to do next.
+type Win struct {
+	FromRef string `json:"from_ref"`
+	ToRef   string `json:"to_ref"`
+	// Images is how many images sit on this base, and Teams how many owners they
+	// span. A rebuild crossing eight teams is coordination; one inside a single
+	// team is a morning's work.
+	Images int `json:"images"`
+	Teams  int `json:"teams"`
+	// Clears is the CVEs the move removes across all of those images, Introduces
+	// what it brings with it. Both, always: an upgrade reported only by what it
+	// fixes stops being trusted the first time somebody checks.
+	Clears     int `json:"clears"`
+	Total      int `json:"total"`
+	Introduces int `json:"introduces"`
+	// KEVCleared is known-exploited CVEs among the cleared. The number that moves
+	// a rebuild up a sprint.
+	KEVCleared int `json:"kev_cleared"`
+}
+
+// Issue is a class of problem nobody is acting on, counted across the estate.
+//
+// Grouped by the NATURE of the problem rather than by owner. Each kind needs a
+// different response - an escalation, a nudge, a build-pipeline change, a
+// scanner fix - and a per-team split buries that under names.
+type Issue struct {
+	Key   string `json:"key"`
+	Title string `json:"title"`
+	Count int    `json:"count"`
+	// Why says what the reader should do about it, in a sentence. A count with no
+	// reading is a number somebody has to interpret, and different people
+	// interpret it differently.
+	Why string `json:"why"`
+	// Examples name a few of the affected images, so the issue can be checked
+	// rather than believed.
+	Examples []string `json:"examples,omitempty"`
+	// Teams is how many owners the issue spans, for whether it is one team's
+	// problem or the estate's.
+	Teams int `json:"teams"`
+}
+
+// TrendPoint is one month of the backlog's history.
+type TrendPoint struct {
+	Month string `json:"month"`
+	// First is distinct CVEs still present that were FIRST SEEN in this month. It
+	// is a history of the backlog that remains, not of everything ever found:
+	// anything already fixed has left the data.
+	First int `json:"first"`
+	// StillNoFix is how many of those have no upgrade available on any image
+	// carrying them. A tail of old CVEs with fixes available is a queue nobody is
+	// working; a tail with no fixes is a supply problem, and they read identically
+	// without this.
+	StillNoFix int `json:"still_no_fix"`
+}
+
 // AnalyticsView is the whole page's data.
 type AnalyticsView struct {
+	// Wins are the base upgrades that clear the most, biggest first.
+	Wins []Win `json:"wins"`
+	// Issues are the things nobody is acting on, worst first.
+	Issues []Issue `json:"issues"`
+	// Trend is when the CVEs still in the queue first appeared, oldest month
+	// first. Empty without an age source.
+	Trend []TrendPoint `json:"trend"`
+
 	Teams []TeamAnalytics `json:"teams"`
 	// Estate is the same shape summed over every team, so a row can be read
 	// against the whole rather than in isolation.
@@ -144,6 +213,9 @@ func buildAnalytics(findings []model.Finding, tickets map[string][]ticketRef, no
 	}
 
 	out := AnalyticsView{
+		Wins:           buildWins(findings),
+		Issues:         buildIssues(findings, tickets, now),
+		Trend:          buildTrend(findings),
 		AgeBucketOrder: bucketNames(),
 		Notes:          analyticsNotes,
 		StaleFixDays:   staleFixDays,
@@ -333,4 +405,244 @@ func itoa(v int) string {
 		v /= 10
 	}
 	return string(b)
+}
+
+// maxWins and maxIssueExamples bound what the page shows. A ranked list stops
+// being a ranking somewhere, and past a handful nobody reads it.
+const (
+	maxWins           = 8
+	maxIssueExamples  = 5
+	minWinCVEsCleared = 1
+)
+
+// buildWins ranks base upgrades by how much they clear across every image on them.
+func buildWins(findings []model.Finding) []Win {
+	type acc struct {
+		w      Win
+		teams  map[string]bool
+		images map[string]bool
+	}
+	byBase := map[string]*acc{}
+
+	for i := range findings {
+		f := &findings[i]
+		if f.Suppressed {
+			continue
+		}
+		d := f.BaseDiff
+		if d == nil || !d.Determined || d.Clears < minWinCVEsCleared {
+			continue
+		}
+		key := d.FromRef + " -> " + d.ToRef
+		a, ok := byBase[key]
+		if !ok {
+			a = &acc{
+				w:      Win{FromRef: d.FromRef, ToRef: d.ToRef},
+				teams:  map[string]bool{},
+				images: map[string]bool{},
+			}
+			byBase[key] = a
+		}
+		// Per IMAGE, not per finding: one image owned by three teams is one
+		// rebuild, and counting it three times would treble the headline.
+		if a.images[f.Image.Key()] {
+			a.teams[f.Owner.Class+"/"+f.Owner.Team] = true
+			continue
+		}
+		a.images[f.Image.Key()] = true
+		a.teams[f.Owner.Class+"/"+f.Owner.Team] = true
+		a.w.Clears += d.Clears
+		a.w.Total += d.Total
+		a.w.Introduces += d.Introduces
+		for _, v := range f.Vulns {
+			if v.KEV && v.FixedByUpgrade {
+				a.w.KEVCleared++
+			}
+		}
+	}
+
+	out := make([]Win, 0, len(byBase))
+	for _, a := range byBase {
+		a.w.Images = len(a.images)
+		a.w.Teams = len(a.teams)
+		out = append(out, a.w)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Clears != out[j].Clears {
+			return out[i].Clears > out[j].Clears
+		}
+		return out[i].Images > out[j].Images
+	})
+	if len(out) > maxWins {
+		out = out[:maxWins]
+	}
+	return out
+}
+
+// issueAccumulator collects one class of problem.
+type issueAccumulator struct {
+	count    int
+	teams    map[string]bool
+	examples []string
+}
+
+func (a *issueAccumulator) add(f *model.Finding) {
+	a.count++
+	if a.teams == nil {
+		a.teams = map[string]bool{}
+	}
+	a.teams[f.Owner.Class+"/"+f.Owner.Team] = true
+	if len(a.examples) < maxIssueExamples {
+		a.examples = append(a.examples, f.Image.Ref)
+	}
+}
+
+func (a *issueAccumulator) issue(key, title, why string) Issue {
+	return Issue{
+		Key: key, Title: title, Why: why,
+		Count: a.count, Teams: len(a.teams), Examples: a.examples,
+	}
+}
+
+// buildIssues counts what is not being acted on, by the nature of the problem.
+func buildIssues(findings []model.Finding, tickets map[string][]ticketRef, now time.Time) []Issue {
+	var (
+		kevNoFix   issueAccumulator
+		kevWaiting issueAccumulator
+		stale      issueAccumulator
+		eol        issueAccumulator
+		blind      issueAccumulator
+		prStale    issueAccumulator
+	)
+
+	for i := range findings {
+		f := &findings[i]
+		if f.Suppressed {
+			continue
+		}
+		upgradable := f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable
+		kev := false
+		for _, v := range f.Vulns {
+			if v.KEV {
+				kev = true
+				break
+			}
+		}
+		if kev && !upgradable {
+			kevNoFix.add(f)
+		}
+		if !f.ProviderAssessed() {
+			blind.add(f)
+		}
+		if f.Upgrade != nil && f.Upgrade.Support != nil {
+			st := f.Upgrade.Support
+			if st.Known && !st.Supported {
+				eol.add(f)
+			}
+		}
+		if f.InFlight != nil && f.InFlight.Stale {
+			prStale.add(f)
+		}
+		if !f.Actionable || !upgradable {
+			continue
+		}
+		started := f.InFlight != nil || len(tickets[f.Image.Repository]) > 0
+		if kev && !started {
+			kevWaiting.add(f)
+		}
+		if started {
+			continue
+		}
+		if t, ok := f.OldestVuln(); ok && int(now.Sub(t).Hours()/24) >= staleFixDays {
+			stale.add(f)
+		}
+	}
+
+	out := []Issue{
+		kevWaiting.issue("kev-unstarted", "Known-exploited, fix available, nobody started",
+			"Confirmed exploitation in the wild and an upgrade sitting there. This is the queue's top of list."),
+		kevNoFix.issue("kev-no-fix", "Known-exploited with no upgrade available",
+			"No version to move to, so it needs a decision - mitigate, isolate or accept - rather than a ticket."),
+		stale.issue("stale-fix", "Fixes available for over "+itoa(staleFixDays)+" days, untouched",
+			"The software is not the blocker here. Nothing has been started on any of these."),
+		eol.issue("eol-base", "Built on a line nobody maintains",
+			"No further fix is coming to these tags, so the CVE count is the lowest it will ever be. Needs a migration, not a patch."),
+		prStale.issue("pr-stale", "Pull requests open past the stale threshold",
+			"Somebody did the work and it has not landed. A review bottleneck, which is a different conversation from an engagement one."),
+		blind.issue("unassessed", "Images the provider never assessed",
+			"Zero findings here is absence of data, not a clean result. These images can hide anything."),
+	}
+	// Empty categories are dropped: a page of zeroes trains people to skim past
+	// the ones that are not zero.
+	kept := out[:0]
+	for _, i := range out {
+		if i.Count > 0 {
+			kept = append(kept, i)
+		}
+	}
+	sort.SliceStable(kept, func(i, j int) bool { return kept[i].Count > kept[j].Count })
+	return kept
+}
+
+// buildTrend counts, per month, the CVEs still present that first appeared then.
+//
+// The one genuine time series a single assessment can produce. It is a history of
+// what REMAINS: anything already fixed has left the data, so a tall old column
+// means those CVEs have survived every release since.
+func buildTrend(findings []model.Finding) []TrendPoint {
+	type cveState struct {
+		anyFix bool
+		month  string
+	}
+	seen := map[string]*cveState{}
+
+	for i := range findings {
+		f := &findings[i]
+		if f.Suppressed {
+			continue
+		}
+		fixable := f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable
+		for _, v := range f.Vulns {
+			if v.FirstSeen.IsZero() || v.ID == "" {
+				continue
+			}
+			m := v.FirstSeen.Format("2006-01")
+			st, ok := seen[v.ID]
+			if !ok {
+				seen[v.ID] = &cveState{anyFix: fixable, month: m}
+				continue
+			}
+			// Earliest sighting wins: the same CVE on two images entered the
+			// estate when the first of them did.
+			if m < st.month {
+				st.month = m
+			}
+			// A CVE fixable on ANY image carrying it is not a supply problem.
+			st.anyFix = st.anyFix || fixable
+		}
+	}
+
+	byMonth := map[string]*TrendPoint{}
+	for _, st := range seen {
+		p, ok := byMonth[st.month]
+		if !ok {
+			p = &TrendPoint{Month: st.month}
+			byMonth[st.month] = p
+		}
+		p.First++
+		if !st.anyFix {
+			p.StillNoFix++
+		}
+	}
+	out := make([]TrendPoint, 0, len(byMonth))
+	for _, p := range byMonth {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Month < out[j].Month })
+	// The recent tail is what a reader acts on; years of history compress the
+	// interesting months into nothing.
+	if len(out) > 18 {
+		out = out[len(out)-18:]
+	}
+	return out
 }

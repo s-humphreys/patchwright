@@ -34,6 +34,9 @@ function view(over = {}) {
   const t = over.teams || [team()];
   return {
     teams: t,
+    wins: over.wins || [],
+    issues: over.issues || [],
+    trend: over.trend || [],
     estate: team({ team: '', class: '' }),
     age_bucket_order: ['0-7d', '7-30d', '30-90d', '90-180d', '180d+'],
     notes: ['Ticket resolution time is not shown.'],
@@ -42,50 +45,90 @@ function view(over = {}) {
   };
 }
 
-test('the headline names the worst thing, not a row of numbers', () => {
-  // A row of numbers makes each reader interpret for themselves, and they reach
-  // different conclusions from the same row.
+test('the page leads with the biggest win, not with a team', () => {
+  // The earlier version ranked teams by how slow they were. That reads as an
+  // accusation to whoever is on top, and it is rarely the useful question: most
+  // of the leverage is a base image, where one rebuild fixes everything on it.
+  const out = render(view({ wins: [{
+    from_ref: 'docker.io/python@sha256:aaaaaaaaaaaaaaaa', to_ref: 'docker.io/python:3.14',
+    images: 12, teams: 3, clears: 5860, total: 6746, introduces: 284, kev_cleared: 10,
+  }] }));
+  assert.match(out, /Biggest wins/);
+  assert.match(out, /5860/);
+  assert.match(out, /12 images/);
+  assert.doesNotMatch(out, /who is not/i);
+});
+
+test('a win reports what it introduces as well as what it clears', () => {
+  // One-sided arithmetic is how a recommendation stops being trusted.
+  const out = render(view({ wins: [{
+    from_ref: 'b@sha256:aaaaaaaaaaaaaaaa', to_ref: 'b:2',
+    images: 1, teams: 1, clears: 100, total: 120, introduces: 7, kev_cleared: 0,
+  }] }));
+  assert.match(out, /introduces 7/);
+});
+
+test('a win that introduces nothing says so rather than staying silent', () => {
+  const out = render(view({ wins: [{
+    from_ref: 'b@sha256:aaaaaaaaaaaaaaaa', to_ref: 'b:2',
+    images: 1, teams: 1, clears: 100, total: 120, introduces: 0, kev_cleared: 0,
+  }] }));
+  assert.match(out, /introduces none/);
+});
+
+test('issues are grouped by what the problem is, with what to do about it', () => {
+  const out = render(view({ issues: [{
+    key: 'kev-no-fix', title: 'Known-exploited with no upgrade available', count: 3,
+    why: 'No version to move to, so it needs a decision.', teams: 2,
+    examples: ['reg/a:1', 'reg/b:2'],
+  }] }));
+  assert.match(out, /Not being addressed/);
+  assert.match(out, /Known-exploited with no upgrade available/);
+  assert.match(out, /needs a decision/, 'a count with no reading is left to interpretation');
+  assert.match(out, /across 2 teams/);
+  assert.match(out, /reg\/a:1/);
+});
+
+test('with no issues it says so rather than rendering an empty list', () => {
+  const out = render(view({ issues: [] }));
+  assert.match(out, /Nothing outstanding/);
+});
+
+test('the trend plots the backlog by when it first appeared', () => {
+  const out = render(view({ trend: [
+    { month: '2026-01', first: 40, still_no_fix: 30 },
+    { month: '2026-02', first: 10, still_no_fix: 1 },
+  ] }));
+  assert.match(out, /How the backlog accumulated/);
+  assert.match(out, /26-01/);
+  assert.match(out, /31<\/strong> of them have no upgrade/,
+    'a tail with no fixes is a supply problem, not a queue nobody is working');
+});
+
+test('without an age source the trend says why it is empty', () => {
+  const out = render(view({ trend: [] }));
+  assert.match(out, /age source/);
+});
+
+test('with no base differential the wins panel explains how to turn it on', () => {
+  const out = render(view({ wins: [] }));
+  assert.match(out, /baseDiff/);
+});
+
+test('the owner table is framed as context, not a ranking', () => {
   const out = render(view());
-  assert.match(out, /3<\/strong> fixes available for over\s*30 days that nobody has started/);
+  assert.match(out, /not a ranking/);
 });
 
-test('a team with everything started is said to be fine, not left ambiguous', () => {
-  const out = render(view({ teams: [team({
-    stale_unstarted: 0, unstarted: 0, in_flight_stale: 0, kev: 2, kev_fixable: 2,
-  })] }));
-  assert.match(out, /everything actionable is started or tracked/);
-});
-
-test('known-exploited findings with no fix outrank merely unstarted ones', () => {
-  const out = render(view({ teams: [team({
-    stale_unstarted: 0, kev: 5, kev_fixable: 1, unstarted: 2,
-  })] }));
-  assert.match(out, /4<\/span> known-exploited findings with no upgrade available/);
-});
-
-test('stale pull requests are called a review bottleneck, not an engagement problem', () => {
-  // The distinction changes who the conversation is with.
-  const out = render(view({ teams: [team({
-    stale_unstarted: 0, kev: 0, kev_fixable: 0, in_flight_stale: 4,
-  })] }));
-  assert.match(out, /review bottleneck/);
-});
-
-test('an undated team says so instead of showing zero days', () => {
-  // Zero reads as "found today", which is the opposite of "we never looked".
-  const out = render(view({ teams: [team({ median_age_days: null, p90_age_days: null })] }));
-  assert.match(out, /not dated/);
-  assert.doesNotMatch(out, /median <strong>0d/);
-});
-
-test('unassessed findings are surfaced, since they can fake responsiveness', () => {
+test('unassessed findings are surfaced, since they can fake a quiet team', () => {
   const out = render(view({ teams: [team({ unassessed: 12 })] }));
-  assert.match(out, /12<\/span> findings the provider never looked at/);
+  assert.match(out, /12/);
+  assert.match(out, /Unassessed/);
 });
 
-test('base leverage says how much of the queue is not the team\'s to fix', () => {
+test('base leverage is on the estate summary, since it is the biggest single lever', () => {
   const out = render(view());
-  assert.match(out, /clears <strong>500<\/strong> of 1000 CVEs/);
+  assert.match(out, /clears <strong class="ok">500<\/strong> of 1000 CVEs/);
   assert.match(out, /50%/);
 });
 
@@ -95,7 +138,7 @@ test('the notes are rendered, not just carried in the payload', () => {
   assert.match(out, /Ticket resolution time is not shown/);
 });
 
-test('an empty estate says so rather than rendering an empty grid', () => {
+test('an empty estate says so rather than rendering an empty page', () => {
   const out = render(view({ teams: [] }));
   assert.match(out, /No findings/);
 });

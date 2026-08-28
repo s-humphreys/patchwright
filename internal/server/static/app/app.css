@@ -330,32 +330,56 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
     color: var(--muted); border: 1px solid currentColor; border-radius: 3px;
     padding: 0 .25em; margin-right: .3em; }
 
-  /* Analytics. Cards rather than one wide table: the interesting comparison is
-     between a handful of teams, and a table of twelve columns is read by nobody. */
-  .team-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
-  .team-card, .estate, .notes, .chart-box {
-    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+  /* Analytics. Panels rather than a card grid: the page reads top to bottom as
+     "do this, then look at this", and a grid invites scanning it as a league table. */
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 6px;
     padding: .75rem 1rem; margin-bottom: 1rem; }
-  .team-card h3, .estate h3, .notes h3, .chart-box h3 { margin: 0 0 .4rem; font-size: .95rem; }
-  .headline { margin: .2rem 0 .6rem; }
-  .charts { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-  .age-strip { margin: .5rem 0 .75rem; }
+  .panel h3 { margin: 0 0 .3rem; font-size: .95rem; }
+  .panel .sub { color: var(--muted); font-size: .85rem; }
   .notes ul { margin: .3rem 0 0; padding-left: 1.1rem; }
   .notes li { margin: .2rem 0; color: var(--muted); }
-
-  .chart { display: block; overflow: visible; }
-  .chart-track { fill: var(--line); opacity: .35; }
-  .chart-bar { fill: var(--idle); }
-  .chart-bar.bar-urgent { fill: var(--urgent); }
-  .chart-bar.bar-age { fill: var(--high); }
-  .chart-label, .chart-value { font-size: 11px; fill: var(--fg); }
-  .chart-value { font-variant-numeric: tabular-nums; }
-  .chart-legend { margin-top: .3rem; font-size: .8rem; color: var(--muted); }
-  .chart-key { margin-right: .6rem; white-space: nowrap; }
-  .chart-swatch { display: inline-block; width: .6rem; height: .6rem; margin-right: .25rem; border-radius: 2px; }
-  .chart-seg.age-0, .chart-swatch.age-0 { fill: var(--ok); background: var(--ok); }
-  .chart-seg.age-1, .chart-swatch.age-1 { fill: var(--low); background: var(--low); }
-  .chart-seg.age-2, .chart-swatch.age-2 { fill: var(--medium); background: var(--medium); }
-  .chart-seg.age-3, .chart-swatch.age-3 { fill: var(--high); background: var(--high); }
-  .chart-seg.age-4, .chart-swatch.age-4 { fill: var(--urgent); background: var(--urgent); }
+  .age-strip { margin: .6rem 0 .2rem; }
   .urgent { color: var(--urgent); }
+
+  .win-list, .issue-list { list-style: none; margin: .6rem 0 0; padding: 0; }
+  .win-list li, .issue { padding: .4rem 0; border-top: 1px solid var(--line); }
+  .issue-head { margin-bottom: .1rem; }
+  .issue-head strong { color: var(--urgent); font-size: 1.05rem; }
+  .issue-eg { margin-top: .25rem; font-size: .8rem; color: var(--muted);
+    display: flex; flex-wrap: wrap; gap: .3rem; }
+
+  /* Bars are divs, not SVG: an SVG scaled with preserveAspectRatio="none" stretches
+     its text along with the geometry, which is what made the first version smear. */
+  .bar-chart { list-style: none; margin: .5rem 0 0; padding: 0; }
+  .bar-row { display: grid; grid-template-columns: minmax(9rem, 34%) 1fr auto;
+    gap: .5rem; align-items: center; padding: .15rem 0; }
+  .bar-name { font-size: .82rem; overflow-wrap: anywhere; }
+  .bar-sub { display: block; color: var(--muted); font-size: .74rem; }
+  .bar-track { background: var(--line); border-radius: 3px; height: .7rem; overflow: hidden; }
+  .bar-fill { display: block; height: 100%; background: var(--idle); border-radius: 3px; }
+  .bar-fill.bar-win { background: var(--ok); }
+  .bar-fill.bar-urgent { background: var(--urgent); }
+  .bar-fill.bar-age { background: var(--high); }
+  .bar-num { font-variant-numeric: tabular-nums; font-size: .82rem; min-width: 3rem; text-align: right; }
+
+  .stacked { display: flex; height: .8rem; border-radius: 3px; overflow: hidden; background: var(--line); }
+  .stacked .seg { display: block; height: 100%; }
+  .chart-legend { margin-top: .3rem; font-size: .78rem; color: var(--muted); }
+  .chart-key { margin-right: .6rem; white-space: nowrap; }
+  .chart-swatch { display: inline-block; width: .6rem; height: .6rem; margin-right: .25rem;
+    border-radius: 2px; vertical-align: baseline; }
+  .seg.age-0, .chart-swatch.age-0 { background: var(--ok); }
+  .seg.age-1, .chart-swatch.age-1 { background: var(--low); }
+  .seg.age-2, .chart-swatch.age-2 { background: var(--medium); }
+  .seg.age-3, .chart-swatch.age-3 { background: var(--high); }
+  .seg.age-4, .chart-swatch.age-4 { background: var(--urgent); }
+
+  .col-chart { list-style: none; margin: .6rem 0 0; padding: 0; display: flex;
+    align-items: flex-end; gap: 2px; height: 7rem; }
+  .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end;
+    align-items: center; height: 100%; min-width: 0; }
+  .col-fill { width: 100%; background: var(--idle); border-radius: 2px 2px 0 0; min-height: 1px; }
+  .col-fill.col-nofix { background: var(--urgent); }
+  .col-fill.col-normal { background: var(--high); }
+  .col-label { font-size: .62rem; color: var(--muted); margin-top: .2rem;
+    white-space: nowrap; overflow: hidden; }

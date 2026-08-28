@@ -222,3 +222,190 @@ func indexFold(hay, needle string) int {
 	}
 	return -1
 }
+
+func TestWinsRankBaseUpgradesByWhatTheyClear(t *testing.T) {
+	// The leverage is not per team: one rebuild fixes every image on that base, so
+	// that is what a security engineer should be handed first.
+	mk := func(team, from string, clears, total int) model.Finding {
+		f := aFinding(team, 10)
+		f.Image = model.Image{Ref: "reg/" + team + "-" + from + ":1", Digest: "sha256:" + team + from}
+		f.BaseDiff = &model.BaseDiff{
+			FromRef: from, ToRef: from + ":new", Determined: true,
+			Clears: clears, Total: total,
+		}
+		return f
+	}
+	v := buildAnalytics([]model.Finding{
+		mk("a", "python", 100, 120),
+		mk("b", "python", 100, 120),
+		mk("c", "node", 500, 600),
+	}, nil, analyticsNow)
+
+	if len(v.Wins) != 2 {
+		t.Fatalf("expected two bases, got %d: %+v", len(v.Wins), v.Wins)
+	}
+	// node clears 500 on one image; python clears 200 across two. Ranked by total
+	// cleared, node comes first.
+	if v.Wins[0].FromRef != "node" || v.Wins[0].Clears != 500 {
+		t.Errorf("first win = %+v, want node clearing 500", v.Wins[0])
+	}
+	if v.Wins[1].Clears != 200 || v.Wins[1].Images != 2 || v.Wins[1].Teams != 2 {
+		t.Errorf("python win = %+v, want 200 cleared over 2 images and 2 teams", v.Wins[1])
+	}
+}
+
+func TestAWinCountsAnImageOnceEvenWhenSeveralTeamsOwnIt(t *testing.T) {
+	// One image is one rebuild. Counting it per owner would treble the headline,
+	// which is the number somebody schedules work against.
+	shared := func(team string) model.Finding {
+		f := aFinding(team, 10)
+		f.Image = model.Image{Ref: "reg/shared:1", Digest: "sha256:shared"}
+		f.BaseDiff = &model.BaseDiff{FromRef: "base", ToRef: "base:2", Determined: true, Clears: 50, Total: 60}
+		return f
+	}
+	v := buildAnalytics([]model.Finding{shared("a"), shared("b"), shared("c")}, nil, analyticsNow)
+	if len(v.Wins) != 1 {
+		t.Fatalf("expected one win, got %+v", v.Wins)
+	}
+	if v.Wins[0].Clears != 50 || v.Wins[0].Images != 1 {
+		t.Errorf("win = %+v, want 50 cleared over 1 image", v.Wins[0])
+	}
+	if v.Wins[0].Teams != 3 {
+		t.Errorf("teams = %d, want 3: the rebuild still spans three owners", v.Wins[0].Teams)
+	}
+}
+
+func TestUndeterminedDifferentialsAreNotRankedAsWins(t *testing.T) {
+	// Clears is zero when no candidate was scanned. Ranking that as a win of zero
+	// is noise; presenting it as measured would be worse.
+	f := aFinding("a", 10)
+	f.BaseDiff = &model.BaseDiff{FromRef: "base", Determined: false, Total: 100}
+	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	if len(v.Wins) != 0 {
+		t.Errorf("an unmeasured base should not be a win: %+v", v.Wins)
+	}
+}
+
+func TestIssuesGroupByProblemAndDropEmptyCategories(t *testing.T) {
+	// A page of zeroes trains people to skim past the ones that are not zero.
+	kevNoFix := aFinding("a", 10)
+	kevNoFix.Upgrade = nil
+	kevNoFix.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(10)}}
+
+	v := buildAnalytics([]model.Finding{kevNoFix}, nil, analyticsNow)
+	keys := map[string]Issue{}
+	for _, i := range v.Issues {
+		keys[i.Key] = i
+	}
+	if got, ok := keys["kev-no-fix"]; !ok || got.Count != 1 {
+		t.Errorf("kev-no-fix = %+v, want one", got)
+	}
+	if _, ok := keys["stale-fix"]; ok {
+		t.Error("an empty category should not be rendered at zero")
+	}
+	if got := keys["kev-no-fix"]; got.Why == "" {
+		t.Error("an issue needs a reading; a bare count is left to interpretation")
+	}
+}
+
+func TestKEVWithAFixNobodyStartedIsItsOwnIssue(t *testing.T) {
+	// Confirmed exploitation with an upgrade sitting there is the top of the list,
+	// and must not be diluted into the general unstarted count.
+	f := aFinding("a", 60)
+	f.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(60)}}
+	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	found := false
+	for _, i := range v.Issues {
+		if i.Key == "kev-unstarted" && i.Count == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a kev-unstarted issue: %+v", v.Issues)
+	}
+}
+
+func TestStartedWorkIsNotReportedAsAnIssue(t *testing.T) {
+	f := aFinding("a", 90, func(f *model.Finding) {
+		f.InFlight = &model.InFlight{Opened: daysAgo(2)}
+	})
+	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	for _, i := range v.Issues {
+		if i.Key == "stale-fix" {
+			t.Errorf("work in progress reported as untouched: %+v", i)
+		}
+	}
+}
+
+func TestTrendBucketsTheRemainingBacklogByFirstSighting(t *testing.T) {
+	// A history of what REMAINS: anything fixed has left the data, so a tall old
+	// column is a CVE that survived every release since.
+	old := aFinding("a", 0)
+	old.Vulns = []model.Vulnerability{
+		{ID: "CVE-OLD", FirstSeen: time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)},
+		{ID: "CVE-NEW", FirstSeen: time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)},
+	}
+	v := buildAnalytics([]model.Finding{old}, nil, analyticsNow)
+	if len(v.Trend) != 2 {
+		t.Fatalf("expected two months, got %+v", v.Trend)
+	}
+	if v.Trend[0].Month != "2026-01" || v.Trend[0].First != 1 {
+		t.Errorf("first point = %+v, want 2026-01 with one CVE", v.Trend[0])
+	}
+}
+
+func TestTrendCountsACVEOnceAtItsEarliestSighting(t *testing.T) {
+	// The same CVE on two images entered the estate when the first of them did.
+	// Counting it per image would make a widespread CVE look like a bad month.
+	a := aFinding("a", 0)
+	a.Vulns = []model.Vulnerability{{ID: "CVE-1", FirstSeen: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)}}
+	b := aFinding("b", 0)
+	b.Vulns = []model.Vulnerability{{ID: "CVE-1", FirstSeen: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)}}
+
+	v := buildAnalytics([]model.Finding{a, b}, nil, analyticsNow)
+	total := 0
+	for _, p := range v.Trend {
+		total += p.First
+	}
+	if total != 1 {
+		t.Errorf("one CVE counted %d times: %+v", total, v.Trend)
+	}
+	if v.Trend[0].Month != "2026-03" {
+		t.Errorf("counted at %s, want its earliest sighting 2026-03", v.Trend[0].Month)
+	}
+}
+
+func TestTrendSeparatesCVEsWithNoFixAnywhere(t *testing.T) {
+	// A tail of old CVEs with fixes available is a queue nobody is working. A tail
+	// with no fixes is a supply problem, and they read identically without this.
+	f := aFinding("a", 0)
+	f.Upgrade = nil
+	f.Vulns = []model.Vulnerability{{ID: "CVE-1", FirstSeen: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)}}
+	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	if len(v.Trend) != 1 || v.Trend[0].StillNoFix != 1 {
+		t.Errorf("trend = %+v, want one month with one unfixable CVE", v.Trend)
+	}
+}
+
+func TestACVEFixableOnAnyImageIsNotASupplyProblem(t *testing.T) {
+	// "No upgrade available anywhere" has to mean anywhere. The same CVE unfixable
+	// on one image and fixable on another is a queue problem, not a supply one,
+	// and calling it a supply problem sends people to argue with a vendor.
+	stuck := aFinding("a", 0)
+	stuck.Upgrade = nil
+	stuck.Vulns = []model.Vulnerability{{ID: "CVE-1", FirstSeen: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)}}
+
+	fixable := aFinding("b", 0) // aFinding carries an available upgrade
+	fixable.Vulns = []model.Vulnerability{{ID: "CVE-1", FirstSeen: time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)}}
+
+	// Fixable FIRST, so a bug that lets the last sighting overwrite the verdict
+	// actually shows up rather than being masked by slice order.
+	v := buildAnalytics([]model.Finding{fixable, stuck}, nil, analyticsNow)
+	if len(v.Trend) != 1 {
+		t.Fatalf("expected one month, got %+v", v.Trend)
+	}
+	if v.Trend[0].StillNoFix != 0 {
+		t.Errorf("still_no_fix = %d, want 0: it is fixable on one of the two images",
+			v.Trend[0].StillNoFix)
+	}
+}
