@@ -62,7 +62,7 @@ function winsSection(wins) {
           · ${w.images} image${w.images === 1 ? "" : "s"}${w.teams > 1 ? ` · ${w.teams} teams` : ""}
           ${w.kev_cleared ? ` · ${w.kev_cleared} KEV` : ""}
           · ${w.introduces ? `<span class="warn">+${w.introduces} new</span>` : "none new"}</span></summary>
-        ${serviceList(w.services)}
+        ${serviceTable(w.services)}
       </details>
     </li>`).join("");
   return `<section class="panel"><h3>Biggest wins</h3>
@@ -71,24 +71,34 @@ function winsSection(wins) {
 }
 
 /**
- * serviceList renders the affected services as links into the queue.
+ * serviceTable renders the affected services as a table.
  *
  * A count somebody cannot expand is a number they have to take on trust, so the
  * list is there. By SERVICE rather than by image reference: one service is
  * typically present at an rc, a preview and a release at once, so an image list is
- * mostly the same name repeated - a wall to read, and something a reader is
- * tempted to paste somewhere as though it were a work list. The service is what
- * somebody owns and fixes once.
+ * mostly the same name repeated.
+ *
+ * A table rather than a two-column list. The list wrapped into columns, which put
+ * the second service level with the first and read as two unrelated things; and
+ * with the owner and version count beside each name there are three fields per row,
+ * which is a table whether or not it is drawn as one. Rows highlight on hover and
+ * the body scrolls, so a base carrying a hundred services stays one screen.
  */
-function serviceList(services) {
+function serviceTable(services) {
   if (!services || !services.length) return "";
-  return `<ul class="img-list">${services.map((s) => {
+  const rows = services.map((s) => {
     const name = s.service.split("/").pop();
-    return `<li><a href="/?service=${encodeURIComponent(name)}${
-      s.team ? `&team=${encodeURIComponent(s.team)}` : ""
-    }" title="${esc(s.service)}"><code>${esc(name)}</code></a>${
-      s.images > 1 ? ` <span class="sub">${s.images} versions</span>` : ""}</li>`;
-  }).join("")}</ul>`;
+    return `<tr>
+      <td><a href="/?service=${encodeURIComponent(name)}${
+        s.team ? `&team=${encodeURIComponent(s.team)}` : ""
+      }" title="${esc(s.service)}"><code>${esc(name)}</code></a></td>
+      <td>${s.team ? esc(s.team) : '<span class="muted">unattributed</span>'}</td>
+      <td class="num">${s.images}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="svc-scroll"><table class="mini svc-table">
+    <thead><tr><th>Service</th><th>Owner</th><th class="num">Versions</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 
 /** issuesSection lists what nobody is acting on, by the nature of the problem. */
@@ -101,7 +111,7 @@ function issuesSection(issues) {
       <details>
         <summary><strong>${i.count}</strong> ${esc(i.title)}
           <span class="sub">${esc(i.why)}${i.teams > 1 ? ` · ${i.teams} teams` : ""}</span></summary>
-        ${serviceList(i.services)}
+        ${serviceTable(i.services)}
       </details>
     </li>`).join("");
   return `<section class="panel"><h3>Not being addressed</h3>

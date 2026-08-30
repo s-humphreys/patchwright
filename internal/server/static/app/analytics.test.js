@@ -87,8 +87,9 @@ test('issues are grouped by what the problem is, with what to do about it', () =
   assert.match(out, /2 teams/);
   assert.match(out, />a</);
   assert.match(out, /<details>/, 'a count somebody cannot expand is one they must take on trust');
+  assert.match(out, /<table class="mini svc-table">/, 'three fields per row is a table');
   assert.match(out, /href="\/\?service=/, 'each service should open its queue item');
-  assert.match(out, /2 versions/, 'a service present at several tags says so');
+  assert.match(out, /<td class="num">2<\/td>/, 'a service present at several tags says how many');
 });
 
 test('with no issues it says so rather than rendering an empty list', () => {
@@ -158,7 +159,7 @@ test('a win expands to the services on that base, not every image tag', () => {
   }] }));
   assert.match(out, />one</);
   assert.match(out, />two</);
-  assert.match(out, /3 versions/);
+  assert.match(out, /<td class="num">3<\/td>/);
   assert.match(out, /href="\/\?service=one"/);
 });
 

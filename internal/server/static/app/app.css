@@ -1,5 +1,6 @@
   :root {
     --bg: #fbfbfa; --fg: #1c1c1a; --muted: #6b6b66; --line: #e3e3df;
+    --page-pad: 1.5rem;
     --card: #ffffff; --warn-bg: #fff6e5; --warn-line: #e0b050; --warn-fg: #6b4c00;
     --urgent: #a4262c; --high: #b8590a; --medium: #6b6b00; --low: #4a6b4a;
     --ok: #1f6b3a; --idle: #6b6b66;
@@ -16,7 +17,7 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 1.5rem; background: var(--bg); color: var(--fg);
+    margin: 0; padding: var(--page-pad); background: var(--bg); color: var(--fg);
     font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   h1 { font-size: 1.1rem; margin: 0; letter-spacing: -0.01em; }
@@ -353,12 +354,18 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .win-list summary .sub, .issue summary .sub { display: block; margin-left: 0; }
   /* The list is the point of expanding, so give it room to be scanned and a cap
      so one issue covering the estate does not become the whole page. */
-  .img-list { list-style: none; margin: .1rem 0 .5rem; padding: 0 0 0 1rem;
-    max-height: 16rem; overflow-y: auto; columns: 2; column-gap: 1rem; }
-  .img-list li { margin: .1rem 0; break-inside: avoid; font-size: .82rem; }
-  .img-list a { text-decoration: none; }
-  .img-list a:hover code { text-decoration: underline; }
-  @media (max-width: 700px) { .img-list { columns: 1; } }
+  /* The expanded service list. A table because there are three fields per row -
+     name, owner, versions - and the previous two-column list put the second service
+     level with the first, which read as two unrelated things. The body scrolls so a
+     base carrying a hundred services stays one screen. */
+  .svc-scroll { max-height: 18rem; overflow-y: auto; margin: .2rem 0 .5rem; }
+  .svc-table { width: 100%; font-size: .82rem; }
+  .svc-table th { position: sticky; top: 0; background: var(--card); z-index: 1; }
+  .svc-table td, .svc-table th { padding: .25rem .6rem; }
+  .svc-table td:first-child, .svc-table th:first-child { padding-left: 0; }
+  .svc-table tbody tr:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+  .svc-table a { text-decoration: none; }
+  .svc-table tr:hover a code { text-decoration: underline; }
 
   /* Bars are divs, not SVG: an SVG scaled with preserveAspectRatio="none" stretches
      its text along with the geometry, which is what made the first version smear. */
@@ -401,7 +408,10 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
      people look for after scrolling, and both used to be at the top of a long page. */
   .app-header { position: sticky; top: 0; z-index: 20;
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-    padding: .55rem .9rem; margin: -1rem -1rem 1rem;
+    /* Pulled out of the page padding so the bar is full width. Both sides read the
+       same variable: hardcoding -1rem against a 1.5rem page left a half-rem gap down
+       each edge and above the bar, which is exactly the drift a shared value avoids. */
+    padding: .55rem var(--page-pad); margin: calc(var(--page-pad) * -1) calc(var(--page-pad) * -1) var(--page-pad);
     background: color-mix(in srgb, var(--card) 92%, transparent);
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line); }

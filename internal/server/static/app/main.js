@@ -1,5 +1,6 @@
 import { initialQuery, readURL } from './urlstate.js';
 import { initConfig } from './config.js';
+import { initCSV } from './csv.js';
 import { nav } from './nav.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
@@ -124,6 +125,7 @@ export function init() {
   document.addEventListener("pw:assessed", () => loadAll());
   document.addEventListener("pw:assessing", (e) => renderFreshness(/** @type {any} */ (e).detail));
 
+  initCSV();
   loadAll();
   setInterval(loadAll, 60000);
 }
