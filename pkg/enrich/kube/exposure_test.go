@@ -6,7 +6,6 @@ import (
 
 	"errors"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -31,22 +30,15 @@ func svc(ns, name string, typ corev1.ServiceType, selector, annotations map[stri
 	}
 }
 
-func ingress(ns, name, service string, class *string) *networkingv1.Ingress {
-	return &networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
-		Spec: networkingv1.IngressSpec{
-			IngressClassName: class,
-			Rules: []networkingv1.IngressRule{{
-				IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
-					Paths: []networkingv1.HTTPIngressPath{{
-						Backend: networkingv1.IngressBackend{
-							Service: &networkingv1.IngressServiceBackend{Name: service},
-						},
-					}},
-				}},
-			}},
-		},
+func httpRouteHosts(ns, name, service string, hosts ...string) *unstructured.Unstructured {
+	r := httpRoute(ns, name, service, "gw", "public-gateway")
+	spec := r.Object["spec"].(map[string]any)
+	hh := make([]any, 0, len(hosts))
+	for _, h := range hosts {
+		hh = append(hh, h)
 	}
+	spec["hostnames"] = hh
+	return r
 }
 
 func httpRoute(ns, name, service, gatewayNS, gateway string) *unstructured.Unstructured {
@@ -104,34 +96,6 @@ func TestAnInternalLoadBalancerIsNotInternetExposure(t *testing.T) {
 	)
 	if exposureOf(t, &Source{}, typed, dynFor())["acme.io/web:1"] {
 		t.Error("an internal load balancer is not internet exposure")
-	}
-}
-
-func TestAnIngressExposesItsBackend(t *testing.T) {
-	typed := kubefake.NewSimpleClientset(
-		svc("web", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, nil),
-		ingress("web", "api", "api", nil),
-		pod("web", "api-1", "acme.io/api:1", map[string]string{"app": "api"}),
-	)
-	if !exposureOf(t, &Source{}, typed, dynFor())["acme.io/api:1"] {
-		t.Error("a ClusterIP service behind an ingress is still reachable from outside")
-	}
-}
-
-func TestAnIngressOnAnInternalClassIsNotExposure(t *testing.T) {
-	class := "internal-nginx"
-	typed := kubefake.NewSimpleClientset(
-		svc("web", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, nil),
-		ingress("web", "api", "api", &class),
-		pod("web", "api-1", "acme.io/api:1", map[string]string{"app": "api"}),
-	)
-	s := &Source{InternalIngressClasses: []string{"internal-nginx"}}
-	if exposureOf(t, s, typed, dynFor())["acme.io/api:1"] {
-		t.Error("an ingress class declared internal must not count as exposure")
-	}
-	// And with no declaration it counts, which is the safe direction to be wrong in.
-	if !exposureOf(t, &Source{}, typed, dynFor())["acme.io/api:1"] {
-		t.Error("an undeclared ingress class should be treated as public")
 	}
 }
 
@@ -224,5 +188,86 @@ func TestAMissingGatewayAPIIsToldApartFromARefusal(t *testing.T) {
 		if isMissingResource(errors.New(r)) {
 			t.Errorf("a refusal must not be swallowed as absence: %q", r)
 		}
+	}
+}
+
+func TestHostnamesDecideExposureWhenTheOperatorNamesThem(t *testing.T) {
+	// The case this exists for. A gateway is not necessarily internet-facing: a
+	// proxy can sit in front of it that Kubernetes knows nothing about. On this
+	// estate a service answers on BOTH "<svc>.pro.example.com", which is internal,
+	// and "api-<svc>.example.com", which is not, so the hostname is the only thing
+	// in the cluster that separates them.
+	typed := kubefake.NewSimpleClientset(
+		svc("web", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, nil),
+		pod("web", "api-1", "acme.io/api:1", map[string]string{"app": "api"}),
+		svc("web", "internal", corev1.ServiceTypeClusterIP, map[string]string{"app": "internal"}, nil),
+		pod("web", "internal-1", "acme.io/internal:1", map[string]string{"app": "internal"}),
+	)
+	dyn := dynFor(
+		httpRouteHosts("web", "public", "api", "api-thing.example.com", "thing.pro.example.com"),
+		httpRouteHosts("web", "private", "internal", "other.pro.example.com"),
+	)
+	s := &Source{
+		PublicHostnames:   []string{"example.com"},
+		InternalHostnames: []string{"pro.example.com"},
+	}
+	got := exposureOf(t, s, typed, dyn)
+	if !got["acme.io/api:1"] {
+		t.Error("a route answering on a public hostname is internet-facing")
+	}
+	if got["acme.io/internal:1"] {
+		t.Error("a route only on an internal subdomain is not")
+	}
+}
+
+func TestTheMostSpecificHostnameSuffixWins(t *testing.T) {
+	// Without this a single public domain drags every internal subdomain in with
+	// it, which on a real estate is most of the routes.
+	public := []string{"example.com"}
+	internal := []string{"pro.example.com"}
+	cases := map[string]bool{
+		"api-thing.example.com":      true,
+		"thing.pro.example.com":      false,
+		"deep.thing.pro.example.com": false,
+		"example.com":                true,
+		"thing.elsewhere.com":        false,
+	}
+	for host, want := range cases {
+		if got := hostnameIsPublic(host, public, internal); got != want {
+			t.Errorf("hostnameIsPublic(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+func TestAContradictoryHostnameRuleDoesNotEscalate(t *testing.T) {
+	// Naming the same suffix public and internal is a mistake. The safe reading of
+	// a contradiction about exposure is the one that does not put somebody in the
+	// urgent tier.
+	if hostnameIsPublic("a.example.com", []string{"example.com"}, []string{"example.com"}) {
+		t.Error("a suffix in both lists should not resolve to public")
+	}
+}
+
+func TestWithoutHostnamesConfiguredTheGatewayStillDecides(t *testing.T) {
+	// Coarse and over-reporting, but it is what an estate that has not stated its
+	// domains gets, and over-reporting is the safe direction.
+	typed := kubefake.NewSimpleClientset(
+		svc("web", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, nil),
+		pod("web", "api-1", "acme.io/api:1", map[string]string{"app": "api"}),
+	)
+	dyn := dynFor(httpRouteHosts("web", "api", "api", "anything.internal.local"))
+	if !exposureOf(t, &Source{}, typed, dyn)["acme.io/api:1"] {
+		t.Error("with no public hostnames declared, a routed service counts as exposed")
+	}
+}
+
+func TestARouteWithNoHostnameIsNotEvidence(t *testing.T) {
+	typed := kubefake.NewSimpleClientset(
+		svc("web", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, nil),
+		pod("web", "api-1", "acme.io/api:1", map[string]string{"app": "api"}),
+	)
+	s := &Source{PublicHostnames: []string{"example.com"}}
+	if exposureOf(t, s, typed, dynFor(httpRoute("web", "api", "api", "gw", "gw")))["acme.io/api:1"] {
+		t.Error("a route with no hostname is not evidence of a public address")
 	}
 }

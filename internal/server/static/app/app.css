@@ -446,3 +446,19 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
      and the default one disappears against the dark card. */
   :focus-visible { outline: 2px solid color-mix(in srgb, var(--fg) 55%, transparent);
     outline-offset: 2px; border-radius: 3px; }
+  /* A filter with nothing behind it. Dimmed and disabled rather than removed: the
+     bar keeps its shape, so controls do not jump about as the data changes. */
+  .sel.inert { opacity: .45; }
+  .sel.inert select { cursor: not-allowed; }
+
+  /* The owner table is nine columns of short numbers under long headings, and at
+     full width the gap between a heading and its value is wide enough that the eye
+     cannot pair them. Columns hug their content instead of sharing the slack, and
+     the heading tracking is tightened so a heading is no wider than it needs to be.
+     Structurally it was always aligned; it did not read as aligned. */
+  .panel table.mini { width: auto; min-width: 100%; }
+  .panel table.mini th { letter-spacing: .02em; padding-left: 1rem; }
+  .panel table.mini td, .panel table.mini th { padding-top: .3rem; padding-bottom: .3rem; }
+  .panel table.mini tbody tr:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+  /* The owner name is the row's subject: it stays left and does not shrink. */
+  .panel table.mini td:first-child, .panel table.mini th:first-child { padding-left: 0; }

@@ -79,15 +79,16 @@ test('issues are grouped by what the problem is, with what to do about it', () =
   const out = render(view({ issues: [{
     key: 'kev-no-fix', title: 'Known-exploited with no upgrade available', count: 3,
     why: 'No version to move to, so it needs a decision.', teams: 2,
-    images: ['reg/a:1', 'reg/b:2'],
+    services: [{ service: 'reg/a', images: 2, team: 'orders' }, { service: 'reg/b', images: 1 }],
   }] }));
   assert.match(out, /Not being addressed/);
   assert.match(out, /Known-exploited with no upgrade available/);
   assert.match(out, /needs a decision/, 'a count with no reading is left to interpretation');
   assert.match(out, /2 teams/);
-  assert.match(out, /reg\/a:1/);
+  assert.match(out, />a</);
   assert.match(out, /<details>/, 'a count somebody cannot expand is one they must take on trust');
-  assert.match(out, /href="\/\?finding=/, 'each image should open the finding it names');
+  assert.match(out, /href="\/\?service=/, 'each service should open its queue item');
+  assert.match(out, /2 versions/, 'a service present at several tags says so');
 });
 
 test('with no issues it says so rather than rendering an empty list', () => {
@@ -147,22 +148,24 @@ test('chart labels are escaped, since team names come from cluster labels', () =
   assert.match(out, /&lt;img/);
 });
 
-test('a win expands to the images on that base', () => {
-  // "3 images" with no list is a number somebody has to reconstruct by hand.
+test('a win expands to the services on that base, not every image tag', () => {
+  // "156 images" with no list is a number somebody reconstructs by hand, and a
+  // list of 156 references is mostly the same services at different tags.
   const out = render(view({ wins: [{
     from_ref: 'b@sha256:aaaaaaaaaaaaaaaa', to_ref: 'b:2',
-    images: 2, teams: 1, clears: 100, total: 120, introduces: 0, kev_cleared: 0,
-    image_refs: ['reg/one:1', 'reg/two:2'],
+    images: 5, teams: 1, clears: 100, total: 120, introduces: 0, kev_cleared: 0,
+    services: [{ service: 'reg/one', images: 3 }, { service: 'reg/two', images: 2 }],
   }] }));
-  assert.match(out, /reg\/one:1/);
-  assert.match(out, /reg\/two:2/);
-  assert.match(out, /href="\/\?finding=reg%2Fone%3A1"/);
+  assert.match(out, />one</);
+  assert.match(out, />two</);
+  assert.match(out, /3 versions/);
+  assert.match(out, /href="\/\?service=one"/);
 });
 
-test('image references are escaped and URL-encoded, not concatenated raw', () => {
+test('service names are escaped and URL-encoded, not concatenated raw', () => {
   const out = render(view({ issues: [{
     key: 'x', title: 't', count: 1, why: 'w', teams: 1,
-    images: ['reg/<img src=x>:1'],
+    services: [{ service: 'reg/<img src=x>', images: 1 }],
   }] }));
   assert.doesNotMatch(out, /<img src=x/);
   assert.match(out, /&lt;img/);

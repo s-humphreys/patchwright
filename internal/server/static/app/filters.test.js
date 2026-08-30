@@ -10,9 +10,13 @@ import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM('<!doctype html><html><body>' +
   '<input type="search" id="search">' +
-  '<select id="classFilter"></select><select id="teamFilter"></select>' +
-  '<select id="urgencyFilter"></select><select id="signalFilter"></select>' +
-  '<select id="fixFilter"></select>' +
+  // Wrapped in labels like the real page: the inert styling is applied to the
+  // label, so a bare select would let that go untested.
+  '<label class="sel"><select id="classFilter"></select></label>' +
+  '<label class="sel"><select id="teamFilter"></select></label>' +
+  '<label class="sel"><select id="urgencyFilter"></select></label>' +
+  '<label class="sel"><select id="signalFilter"></select></label>' +
+  '<label class="sel"><select id="fixFilter"></select></label>' +
   '<input type="checkbox" id="onlyActionable" checked>' +
   '<input type="checkbox" id="onlyFixable">' +
   '<input type="checkbox" id="showSuppressed">' +
@@ -43,7 +47,7 @@ function finding(over = {}) {
     image: `reg/${team}-${cve}:1`, repository: team, registry: 'reg', tag: '1',
     owner: { class: cls, team }, priority: 'high', signals: [], counts: { critical: 1 },
     provider_assessed: true, scanned: true, exploit_checked: true,
-    vulns: [{ id: cve, severity: 'critical', cvss: 9, epss: 0.5, kev: false }],
+    vulns: rest.vulns || [{ id: cve, severity: 'critical', cvss: 9, epss: 0.5, kev: false }],
     upgrade: { kind: 'base', resolved: true, available: true, actionable: true,
       name: 'docker.io/base', current: '1', latest: '2' },
     ...rest,
@@ -264,4 +268,72 @@ test('a link naming a combination with nothing behind it shows empty, not everyt
   applyOwnerFilters();
   assert.equal(queueRowCount(), 0);
   assert.match(count(), /0 of 4 findings/);
+});
+
+test('picking the kev signal lists KEV CVEs, not every CVE on a KEV finding', () => {
+  // The bug as reported. Narrowing the FINDINGS to those carrying a
+  // known-exploited CVE and then listing every CVE on them gave a reader who asked
+  // for KEV nine thousand rows, most of them not known-exploited.
+  setUp();
+  S.queueRows = [finding({
+    team: 'orders', cve: 'CVE-KEV', signals: ['kev'],
+    vulns: [
+      { id: 'CVE-KEV', severity: 'critical', cvss: 9, epss: 0.5, kev: true },
+      { id: 'CVE-QUIET', severity: 'low', cvss: 2, epss: 0.01, kev: false },
+    ],
+  })];
+  applyOwnerFilters();
+  show('cves');
+  renderCurrentView();
+  assert.equal(cveRowCount(), 2, 'unfiltered, both CVEs are listed');
+
+  choose('#signalFilter', 'kev');
+  assert.equal(cveRowCount(), 1, 'only the known-exploited CVE should survive');
+  assert.match(document.querySelector('#cves tbody').textContent, /CVE-KEV/);
+  assert.doesNotMatch(document.querySelector('#cves tbody').textContent, /CVE-QUIET/);
+});
+
+test('a finding-level signal still filters findings rather than CVEs', () => {
+  // Exposure, in-flight and the rest describe the image or its deployment.
+  // Filtering individual CVEs by those would be meaningless, so they narrow the
+  // findings and every CVE on a surviving finding is listed.
+  setUp();
+  S.queueRows = [finding({
+    team: 'orders', cve: 'CVE-A', signals: ['in-flight'],
+    vulns: [
+      { id: 'CVE-A', severity: 'high', cvss: 7, epss: 0.1, kev: false },
+      { id: 'CVE-B', severity: 'low', cvss: 2, epss: 0.01, kev: false },
+    ],
+  })];
+  applyOwnerFilters();
+  show('cves');
+  choose('#signalFilter', 'in-flight');
+  assert.equal(cveRowCount(), 2, 'both CVEs of the surviving finding should be listed');
+});
+
+test('a filter with nothing behind it is disabled rather than left looking operable', () => {
+  // Every dropdown looks identical whether or not it has options, so a reader who
+  // picks one and sees nothing happen concludes the filters are broken.
+  setUp();
+  S.queueRows = [finding({ team: 'orders', cve: 'CVE-A' })];
+  applyOwnerFilters();
+  const signal = document.querySelector('#signalFilter');
+  assert.equal(signal.disabled, true, 'no finding here carries any signal');
+  assert.equal(signal.closest('label').classList.contains('inert'), true);
+
+  // And it comes back the moment there is something to choose.
+  S.queueRows = [finding({ team: 'orders', cve: 'CVE-A', signals: ['kev'] })];
+  applyOwnerFilters();
+  assert.equal(document.querySelector('#signalFilter').disabled, false);
+});
+
+test('a filter is never disabled while a value is selected', () => {
+  // That would strand a filter whose effect the reader can see but cannot clear.
+  setUp();
+  choose('#urgencyFilter', 'low');
+  S.queueRows = rows.filter((f) => f.priority !== 'low');
+  applyOwnerFilters();
+  const urg = document.querySelector('#urgencyFilter');
+  assert.equal(urg.value, 'low');
+  assert.equal(urg.disabled, false, 'a selected filter must stay clearable');
 });

@@ -1107,10 +1107,13 @@ components:
             Distinct images on this base. Counted per IMAGE, not per finding: one image
             owned by three teams is one rebuild.
         teams: { type: integer, description: How many owners those images span. }
-        image_refs:
+        services:
           type: array
-          items: { type: string }
-          description: The images themselves, so the rebuild can be scoped rather than guessed at.
+          items: { $ref: "#/components/schemas/ServiceCount" }
+          description: |
+            The services on this base, so the rebuild can be scoped rather than guessed
+            at. Grouped by service because one service appears at several tags at once,
+            and the rebuild is per service.
         clears: { type: integer, description: CVEs the move removes across those images. }
         total: { type: integer, description: CVEs those images carry. }
         introduces:
@@ -1134,12 +1137,26 @@ components:
           type: string
           description: What to do about it. A bare count is left to interpretation.
         teams: { type: integer, description: How many owners the issue spans. }
-        images:
+        services:
           type: array
-          items: { type: string }
+          items: { $ref: "#/components/schemas/ServiceCount" }
           description: |
-            Every affected image, not a sample: a count somebody cannot expand is a
-            number they have to take on trust.
+            Every affected service, not a sample: a count somebody cannot expand is a
+            number they have to take on trust. Grouped by service rather than by image
+            reference, since one service is typically present at an rc, a preview and a
+            release simultaneously.
+
+    ServiceCount:
+      type: object
+      required: [service, images]
+      properties:
+        service:
+          type: string
+          description: The image repository, which is what a team owns and rebuilds.
+        images:
+          type: integer
+          description: How many distinct image versions of it are affected.
+        team: { type: string, description: The owner, when one was attributed. }
 
     TeamAnalytics:
       type: object

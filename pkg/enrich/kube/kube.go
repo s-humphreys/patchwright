@@ -34,8 +34,9 @@ func init() {
 			// URL and CA — nothing secret, and nothing to rotate.
 			authMode: opts.String("authMode"),
 
-			InternalIngressClasses: splitCSV(opts.String("internalIngressClasses")),
-			InternalGateways:       splitCSV(opts.String("internalGateways")),
+			PublicHostnames:   splitCSV(opts.String("publicHostnames")),
+			InternalHostnames: splitCSV(opts.String("internalHostnames")),
+			InternalGateways:  splitCSV(opts.String("internalGateways")),
 		}, nil
 	})
 }
@@ -49,17 +50,21 @@ type Source struct {
 	// uses whatever the kubeconfig carries.
 	authMode string
 
-	// InternalIngressClasses and InternalGateways name the routes that do NOT reach
-	// the internet, for a cluster whose ingress controllers or gateways are split
-	// between public and private.
+	// PublicHostnames and InternalHostnames name the DNS suffixes that do and do
+	// not reach the internet. Most specific wins, so "example.com" can be public
+	// while "pro.example.com" beneath it is not.
 	//
-	// Empty means every ingress and gateway is treated as public, which is the
-	// safe direction to be wrong in: it over-reports exposure rather than telling
-	// somebody an internet-facing service is internal. A LoadBalancer Service
-	// annotated as an internal Azure load balancer is excluded regardless, since
-	// that one is stated by the platform rather than guessed.
-	InternalIngressClasses []string
-	InternalGateways       []string
+	// This is the only thing in a cluster that can tell a route fronted by a public
+	// load balancer from an identical one that is not: a gateway may have a proxy
+	// in front of it that Kubernetes knows nothing about.
+	PublicHostnames   []string
+	InternalHostnames []string
+
+	// InternalGateways names gateways that do not reach the internet, used only
+	// when no public hostnames are configured. Coarser than hostnames and it
+	// over-reports, which is the safe direction to be wrong in: it will not tell
+	// somebody an internet-facing service is internal.
+	InternalGateways []string
 
 	// resolvers detect available upgrades per deployment system. Nil uses the
 	// defaults (Flux HelmRelease); set for tests or to add resolvers.

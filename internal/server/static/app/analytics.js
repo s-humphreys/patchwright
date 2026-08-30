@@ -58,10 +58,11 @@ function winsSection(wins) {
       <details>
         <summary><strong class="ok">${w.clears}</strong> cleared of ${w.total}
           <span class="sub"><code>${esc(shortRef(w.from_ref))}</code> → <code>${esc(shortRef(w.to_ref))}</code>
+          · ${(w.services || []).length} service${(w.services || []).length === 1 ? "" : "s"}
           · ${w.images} image${w.images === 1 ? "" : "s"}${w.teams > 1 ? ` · ${w.teams} teams` : ""}
           ${w.kev_cleared ? ` · ${w.kev_cleared} KEV` : ""}
           · ${w.introduces ? `<span class="warn">+${w.introduces} new</span>` : "none new"}</span></summary>
-        ${imageList(w.image_refs)}
+        ${serviceList(w.services)}
       </details>
     </li>`).join("");
   return `<section class="panel"><h3>Biggest wins</h3>
@@ -70,16 +71,24 @@ function winsSection(wins) {
 }
 
 /**
- * imageList renders images as links into the queue.
+ * serviceList renders the affected services as links into the queue.
  *
- * A count somebody cannot expand is a number they have to take on trust. Each one
- * opens the finding it names, so "15 images on a dead line" ends at the image
- * rather than at a number.
+ * A count somebody cannot expand is a number they have to take on trust, so the
+ * list is there. By SERVICE rather than by image reference: one service is
+ * typically present at an rc, a preview and a release at once, so an image list is
+ * mostly the same name repeated - a wall to read, and something a reader is
+ * tempted to paste somewhere as though it were a work list. The service is what
+ * somebody owns and fixes once.
  */
-function imageList(images) {
-  if (!images || !images.length) return "";
-  return `<ul class="img-list">${images.map((i) =>
-    `<li><a href="/?finding=${encodeURIComponent(i)}"><code>${esc(i)}</code></a></li>`).join("")}</ul>`;
+function serviceList(services) {
+  if (!services || !services.length) return "";
+  return `<ul class="img-list">${services.map((s) => {
+    const name = s.service.split("/").pop();
+    return `<li><a href="/?service=${encodeURIComponent(name)}${
+      s.team ? `&team=${encodeURIComponent(s.team)}` : ""
+    }" title="${esc(s.service)}"><code>${esc(name)}</code></a>${
+      s.images > 1 ? ` <span class="sub">${s.images} versions</span>` : ""}</li>`;
+  }).join("")}</ul>`;
 }
 
 /** issuesSection lists what nobody is acting on, by the nature of the problem. */
@@ -92,7 +101,7 @@ function issuesSection(issues) {
       <details>
         <summary><strong>${i.count}</strong> ${esc(i.title)}
           <span class="sub">${esc(i.why)}${i.teams > 1 ? ` · ${i.teams} teams` : ""}</span></summary>
-        ${imageList(i.images)}
+        ${serviceList(i.services)}
       </details>
     </li>`).join("");
   return `<section class="panel"><h3>Not being addressed</h3>

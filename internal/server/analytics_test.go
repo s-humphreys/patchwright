@@ -306,10 +306,10 @@ func TestIssuesGroupByProblemAndDropEmptyCategories(t *testing.T) {
 	if got := keys["kev-no-fix"]; got.Why == "" {
 		t.Error("an issue needs a reading; a bare count is left to interpretation")
 	}
-	// Every affected image, not a sample: a count somebody cannot expand is a
+	// Every affected service, not a sample: a count somebody cannot expand is a
 	// number they have to take on trust.
-	if got := keys["kev-no-fix"]; len(got.Images) != 1 || got.Images[0] != kevNoFix.Image.Ref {
-		t.Errorf("images = %v, want the affected image named", got.Images)
+	if got := keys["kev-no-fix"]; len(got.Services) != 1 {
+		t.Errorf("services = %+v, want the affected service named", got.Services)
 	}
 }
 
@@ -342,9 +342,11 @@ func TestStartedWorkIsNotReportedAsAnIssue(t *testing.T) {
 	}
 }
 
-func TestAnIssueNamesEachImageOnce(t *testing.T) {
-	// One image with several findings is one image to go and look at. Listing it
-	// per finding turns an expandable list into a wall of duplicates.
+func TestAnIssueGroupsImagesByService(t *testing.T) {
+	// One service appears at several tags at once - an rc, a preview, a release -
+	// so a list of image references is mostly the same name repeated. That is a
+	// wall to read and an invitation to paste it somewhere as a work list. The
+	// service is the thing somebody owns and fixes once.
 	a := aFinding("a", 10)
 	a.Upgrade = nil
 	a.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(10)}}
@@ -356,8 +358,8 @@ func TestAnIssueNamesEachImageOnce(t *testing.T) {
 		if i.Key != "kev-no-fix" {
 			continue
 		}
-		if len(i.Images) != 1 {
-			t.Errorf("images = %v, want the image listed once", i.Images)
+		if len(i.Services) != 1 {
+			t.Errorf("services = %+v, want one service", i.Services)
 		}
 		if i.Count != 2 {
 			t.Errorf("count = %d, want 2: it is still two findings", i.Count)
@@ -365,12 +367,45 @@ func TestAnIssueNamesEachImageOnce(t *testing.T) {
 	}
 }
 
-func TestWinsNameTheImagesOnTheBase(t *testing.T) {
-	// A rebuild has to be scoped to something. "3 images" with no list is a number
-	// somebody has to go and reconstruct by hand.
+func TestServicesCountTheirImageVersions(t *testing.T) {
+	// "accounts-api, 3 versions" is the useful shape: one service to rebuild, and
+	// how many tags of it are currently affected.
+	mk := func(ref string) model.Finding {
+		f := aFinding("a", 10)
+		f.Image = model.ParseImageRef(ref)
+		f.Upgrade = nil
+		f.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(10)}}
+		return f
+	}
+	v := buildAnalytics([]model.Finding{
+		mk("reg.io/accounts-api:1.0.1"),
+		mk("reg.io/accounts-api:1.0.2-rc"),
+		mk("reg.io/other:2"),
+	}, nil, analyticsNow)
+	for _, i := range v.Issues {
+		if i.Key != "kev-no-fix" {
+			continue
+		}
+		if len(i.Services) != 2 {
+			t.Fatalf("services = %+v, want two", i.Services)
+		}
+		// Worst first: the service with the most affected versions leads.
+		if i.Services[0].Service != "reg.io/accounts-api" || i.Services[0].Images != 2 {
+			t.Errorf("first service = %+v, want accounts-api with 2 versions", i.Services[0])
+		}
+	}
+}
+
+func TestWinsNameTheServicesOnTheBase(t *testing.T) {
+	// A rebuild has to be scoped to something. "156 images" with no list is a
+	// number somebody reconstructs by hand, and a list of 156 image references is
+	// mostly the same services at different tags.
 	mk := func(name string) model.Finding {
 		f := aFinding("a", 10)
-		f.Image = model.Image{Ref: "reg/" + name + ":1", Digest: "sha256:" + name}
+		// Parsed, not hand-built: services are keyed on the registry and repository,
+		// which only exist once a reference has been through the parser.
+		f.Image = model.ParseImageRef("reg/" + name + ":1")
+		f.Image.Digest = "sha256:" + name
 		f.BaseDiff = &model.BaseDiff{FromRef: "base", ToRef: "base:2", Determined: true, Clears: 10, Total: 12}
 		return f
 	}
@@ -378,9 +413,13 @@ func TestWinsNameTheImagesOnTheBase(t *testing.T) {
 	if len(v.Wins) != 1 {
 		t.Fatalf("wins = %+v", v.Wins)
 	}
-	got := v.Wins[0].ImageRefs
-	if len(got) != 2 || got[0] != "reg/a:1" || got[1] != "reg/b:1" {
-		t.Errorf("image refs = %v, want both, sorted so two runs render the same", got)
+	got := v.Wins[0].Services
+	if len(got) != 2 {
+		t.Fatalf("services = %+v, want two", got)
+	}
+	// Equal counts fall back to name order, so two runs render the same list.
+	if got[0].Service != "docker.io/reg/a" || got[1].Service != "docker.io/reg/b" {
+		t.Errorf("services = %+v, want a then b", got)
 	}
 }
 

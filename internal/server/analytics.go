@@ -38,6 +38,18 @@ const staleFixDays = 30
 // places with two values would be worse than having it here.
 const epssUrgent = 0.5
 
+// ServiceCount is one service and how many of its image versions are involved.
+type ServiceCount struct {
+	// Service is the image repository, which is what a team owns and rebuilds.
+	Service string `json:"service"`
+	// Images is how many distinct image references of it are affected - typically
+	// an rc, a preview and a release of the same thing.
+	Images int `json:"images"`
+	// Team is the owner, when one was attributed, so a list spanning several teams
+	// can be read without opening each row.
+	Team string `json:"team,omitempty"`
+}
+
 // TeamAnalytics is one team's responsiveness.
 type TeamAnalytics struct {
 	Class string `json:"class"`
@@ -122,8 +134,10 @@ type Win struct {
 	// team is a morning's work.
 	Images int `json:"images"`
 	Teams  int `json:"teams"`
-	// ImageRefs names them, so the rebuild can be scoped rather than guessed at.
-	ImageRefs []string `json:"image_refs,omitempty"`
+	// Services names them, so the rebuild can be scoped rather than guessed at.
+	// Grouped by service: 156 image references are mostly one service at several
+	// tags, and the rebuild is per service.
+	Services []ServiceCount `json:"services,omitempty"`
 	// Clears is the CVEs the move removes across all of those images, Introduces
 	// what it brings with it. Both, always: an upgrade reported only by what it
 	// fixes stops being trusted the first time somebody checks.
@@ -148,10 +162,15 @@ type Issue struct {
 	// reading is a number somebody has to interpret, and different people
 	// interpret it differently.
 	Why string `json:"why"`
-	// Images names every affected image. All of them, not a sample: a security
-	// engineer reading "15 images built on a dead line" wants the fifteen, and a
-	// count they cannot expand is a number they have to take on trust.
-	Images []string `json:"images,omitempty"`
+	// Services names the affected services, each with how many image versions of
+	// it are involved.
+	//
+	// By service rather than by image reference. One service typically appears at
+	// several tags at once - an rc, a preview and a release - so an image list is
+	// mostly the same name repeated, which is a wall to read and an invitation to
+	// paste it somewhere as if it were a work list. The service is the thing
+	// somebody owns and fixes once.
+	Services []ServiceCount `json:"services,omitempty"`
 	// Teams is how many owners the issue spans, for whether it is one team's
 	// problem or the estate's.
 	Teams int `json:"teams"`
@@ -431,10 +450,10 @@ const (
 // buildWins ranks base upgrades by how much they clear across every image on them.
 func buildWins(findings []model.Finding) []Win {
 	type acc struct {
-		w      Win
-		teams  map[string]bool
-		images map[string]bool
-		refs   []string
+		w        Win
+		teams    map[string]bool
+		images   map[string]bool
+		services map[string]*ServiceCount
 	}
 	byBase := map[string]*acc{}
 
@@ -451,9 +470,10 @@ func buildWins(findings []model.Finding) []Win {
 		a, ok := byBase[key]
 		if !ok {
 			a = &acc{
-				w:      Win{FromRef: d.FromRef, ToRef: d.ToRef},
-				teams:  map[string]bool{},
-				images: map[string]bool{},
+				w:        Win{FromRef: d.FromRef, ToRef: d.ToRef},
+				teams:    map[string]bool{},
+				images:   map[string]bool{},
+				services: map[string]*ServiceCount{},
 			}
 			byBase[key] = a
 		}
@@ -464,7 +484,7 @@ func buildWins(findings []model.Finding) []Win {
 			continue
 		}
 		a.images[f.Image.Key()] = true
-		a.refs = append(a.refs, f.Image.Ref)
+		addService(a.services, f)
 		a.teams[f.Owner.Class+"/"+f.Owner.Team] = true
 		a.w.Clears += d.Clears
 		a.w.Total += d.Total
@@ -478,9 +498,7 @@ func buildWins(findings []model.Finding) []Win {
 
 	out := make([]Win, 0, len(byBase))
 	for _, a := range byBase {
-		refs := make([]string, 0, len(a.refs))
-		refs = append(refs, a.refs...)
-		a.w.ImageRefs = sortedCopy(refs)
+		a.w.Services = sortedServices(a.services)
 		a.w.Images = len(a.images)
 		a.w.Teams = len(a.teams)
 		out = append(out, a.w)
@@ -499,10 +517,10 @@ func buildWins(findings []model.Finding) []Win {
 
 // issueAccumulator collects one class of problem.
 type issueAccumulator struct {
-	count  int
-	teams  map[string]bool
-	seen   map[string]bool
-	images []string
+	count    int
+	teams    map[string]bool
+	seen     map[string]bool
+	services map[string]*ServiceCount
 }
 
 func (a *issueAccumulator) add(f *model.Finding) {
@@ -513,20 +531,20 @@ func (a *issueAccumulator) add(f *model.Finding) {
 	if a.seen == nil {
 		a.seen = map[string]bool{}
 	}
+	if a.services == nil {
+		a.services = map[string]*ServiceCount{}
+	}
 	a.teams[f.Owner.Class+"/"+f.Owner.Team] = true
 	if !a.seen[f.Image.Ref] {
-		if a.seen == nil {
-			a.seen = map[string]bool{}
-		}
 		a.seen[f.Image.Ref] = true
-		a.images = append(a.images, f.Image.Ref)
+		addService(a.services, f)
 	}
 }
 
 func (a *issueAccumulator) issue(key, title, why string) Issue {
 	return Issue{
 		Key: key, Title: title, Why: why,
-		Count: a.count, Teams: len(a.teams), Images: sortedCopy(a.images),
+		Count: a.count, Teams: len(a.teams), Services: sortedServices(a.services),
 	}
 }
 
@@ -610,13 +628,33 @@ func buildIssues(findings []model.Finding, tickets map[string][]ticketRef, now t
 	return kept
 }
 
-// sortedCopy returns the names in a stable order, so the same assessment renders
-// the same list twice running.
-func sortedCopy(in []string) []string {
+// addService records one more affected image version of a finding's service.
+func addService(into map[string]*ServiceCount, f *model.Finding) {
+	key := f.Image.Registry + "/" + f.Image.Repository
+	sc, ok := into[key]
+	if !ok {
+		sc = &ServiceCount{Service: key, Team: f.Owner.Team}
+		into[key] = sc
+	}
+	sc.Images++
+}
+
+// sortedServices returns services worst-first by how many image versions are
+// affected, then by name so the same assessment renders the same list twice
+// running.
+func sortedServices(in map[string]*ServiceCount) []ServiceCount {
 	if len(in) == 0 {
 		return nil
 	}
-	out := append([]string(nil), in...)
-	sort.Strings(out)
+	out := make([]ServiceCount, 0, len(in))
+	for _, sc := range in {
+		out = append(out, *sc)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Images != out[j].Images {
+			return out[i].Images > out[j].Images
+		}
+		return out[i].Service < out[j].Service
+	})
 	return out
 }

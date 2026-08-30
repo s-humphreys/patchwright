@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -26,9 +25,18 @@ import (
 // "high exploitation probability AND internet-facing" can never fire if nothing is
 // ever internet-facing, so the rule looks configured and does nothing.
 //
-// The clusters already being read for liveness know the answer. A workload is
-// reachable if something in front of it is: a LoadBalancer Service, an Ingress, or
-// a Gateway API HTTPRoute.
+// The clusters know most of the answer, but not all of it. A gateway is not
+// necessarily internet-facing: on this estate an nginx VM sits in front of it, and
+// nothing inside Kubernetes records that. What the cluster does carry is the
+// HOSTNAME a route answers on, and hostnames are where the split actually lives -
+// a service is typically reachable at both "<svc>.pro.example.com", which is
+// internal, and "api-<svc>.example.com", which is not.
+//
+// So exposure is decided by hostname when the operator has said which suffixes
+// are public, and falls back to the coarser "is it routed at all" when they have
+// not. Ingresses are deliberately not read: the estate this serves routes through
+// the Gateway API, and an Ingress-shaped answer would have been a second, less
+// accurate source of the same fact.
 
 var httpRouteGVR = schema.GroupVersionResource{
 	Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes",
@@ -94,23 +102,6 @@ func (s *Source) clusterExposure(ctx context.Context, cluster string,
 		exposed[serviceKey{svc.Namespace, svc.Name}] = true
 	}
 
-	// Ingresses. A failure here is reported rather than skipped: a cluster whose
-	// ingresses could not be read would report everything behind them as internal,
-	// which is the false negative this whole thing exists to remove.
-	ings, err := typed.NetworkingV1().Ingresses(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("list ingresses: %w", err)
-	}
-	for i := range ings.Items {
-		ing := &ings.Items[i]
-		if s.internalIngressClass(ing) {
-			continue
-		}
-		for _, svc := range ingressServices(ing) {
-			exposed[serviceKey{ing.Namespace, svc}] = true
-		}
-	}
-
 	// HTTPRoutes, when the CRD is installed. Absence is normal - plenty of clusters
 	// run no Gateway API at all - so a "no matches for kind" is not an error, while
 	// any other failure is.
@@ -120,7 +111,7 @@ func (s *Source) clusterExposure(ctx context.Context, cluster string,
 	case err == nil:
 		for i := range routes.Items {
 			r := &routes.Items[i]
-			if s.internalGateway(r) {
+			if !s.routeIsPublic(r) {
 				continue
 			}
 			for _, svc := range routeServices(r) {
@@ -170,25 +161,73 @@ func (s *Source) clusterExposure(ctx context.Context, cluster string,
 	return nil
 }
 
-// internalIngressClass reports whether this ingress is served by a controller the
-// operator has declared internal-only.
-func (s *Source) internalIngressClass(ing *networkingv1.Ingress) bool {
-	if len(s.InternalIngressClasses) == 0 {
+// routeIsPublic decides whether a route answers on the internet.
+//
+// By hostname when the operator has named public suffixes, because that is the
+// only thing in the cluster that distinguishes a route fronted by a public load
+// balancer from an identical one that is not. Otherwise by gateway, which is
+// coarse and over-reports - the safe direction, but worth replacing with
+// hostnames the moment somebody can state them.
+func (s *Source) routeIsPublic(r *unstructured.Unstructured) bool {
+	if len(s.PublicHostnames) > 0 {
+		return s.anyHostnamePublic(r)
+	}
+	return !s.internalGateway(r)
+}
+
+// anyHostnamePublic reports whether any hostname on this route is one the
+// operator calls public.
+//
+// Most specific suffix wins, so "example.com" can be public while
+// "pro.example.com" underneath it is not. Without that a single public domain
+// would drag every internal subdomain in with it, which on this estate is most of
+// the routes.
+func (s *Source) anyHostnamePublic(r *unstructured.Unstructured) bool {
+	hosts, found, err := unstructured.NestedStringSlice(r.Object, "spec", "hostnames")
+	if err != nil || !found {
+		// A route with no hostname answers on anything the gateway accepts, which
+		// is not evidence of a public address either way.
 		return false
 	}
-	class := ""
-	if ing.Spec.IngressClassName != nil {
-		class = *ing.Spec.IngressClassName
-	}
-	if class == "" {
-		class = ing.Annotations["kubernetes.io/ingress.class"]
-	}
-	for _, c := range s.InternalIngressClasses {
-		if strings.EqualFold(strings.TrimSpace(c), class) {
+	for _, h := range hosts {
+		if hostnameIsPublic(strings.ToLower(strings.TrimSpace(h)),
+			s.PublicHostnames, s.InternalHostnames) {
 			return true
 		}
 	}
 	return false
+}
+
+// hostnameIsPublic matches a hostname against the public and internal suffix
+// lists, longest match winning.
+func hostnameIsPublic(host string, public, internal []string) bool {
+	best, isPublic := -1, false
+	for _, suffix := range public {
+		if n := suffixLen(host, suffix); n > best {
+			best, isPublic = n, true
+		}
+	}
+	for _, suffix := range internal {
+		// Ties go to internal: an operator who has named the same suffix in both
+		// lists has contradicted themselves, and the safe reading of a
+		// contradiction about exposure is the one that does not escalate.
+		if n := suffixLen(host, suffix); n >= best && n >= 0 {
+			best, isPublic = n, false
+		}
+	}
+	return isPublic
+}
+
+// suffixLen returns how many characters of the suffix matched, or -1.
+func suffixLen(host, suffix string) int {
+	suffix = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(suffix, "*.")))
+	if suffix == "" {
+		return -1
+	}
+	if host == suffix || strings.HasSuffix(host, "."+suffix) {
+		return len(suffix)
+	}
+	return -1
 }
 
 // internalGateway reports whether every parent of this route is a gateway the
@@ -227,25 +266,6 @@ func (s *Source) gatewayIsInternal(namespace, name string) bool {
 		}
 	}
 	return false
-}
-
-// ingressServices names the backend services an ingress routes to.
-func ingressServices(ing *networkingv1.Ingress) []string {
-	var out []string
-	if b := ing.Spec.DefaultBackend; b != nil && b.Service != nil {
-		out = append(out, b.Service.Name)
-	}
-	for _, rule := range ing.Spec.Rules {
-		if rule.HTTP == nil {
-			continue
-		}
-		for _, path := range rule.HTTP.Paths {
-			if path.Backend.Service != nil {
-				out = append(out, path.Backend.Service.Name)
-			}
-		}
-	}
-	return out
 }
 
 // routeServices names the backend services an HTTPRoute sends traffic to.
