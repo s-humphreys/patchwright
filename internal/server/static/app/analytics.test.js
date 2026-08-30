@@ -36,7 +36,6 @@ function view(over = {}) {
     teams: t,
     wins: over.wins || [],
     issues: over.issues || [],
-    trend: over.trend || [],
     estate: team({ team: '', class: '' }),
     age_bucket_order: ['0-7d', '7-30d', '30-90d', '90-180d', '180d+'],
     notes: ['Ticket resolution time is not shown.'],
@@ -80,34 +79,20 @@ test('issues are grouped by what the problem is, with what to do about it', () =
   const out = render(view({ issues: [{
     key: 'kev-no-fix', title: 'Known-exploited with no upgrade available', count: 3,
     why: 'No version to move to, so it needs a decision.', teams: 2,
-    examples: ['reg/a:1', 'reg/b:2'],
+    images: ['reg/a:1', 'reg/b:2'],
   }] }));
   assert.match(out, /Not being addressed/);
   assert.match(out, /Known-exploited with no upgrade available/);
   assert.match(out, /needs a decision/, 'a count with no reading is left to interpretation');
-  assert.match(out, /across 2 teams/);
+  assert.match(out, /2 teams/);
   assert.match(out, /reg\/a:1/);
+  assert.match(out, /<details>/, 'a count somebody cannot expand is one they must take on trust');
+  assert.match(out, /href="\/\?finding=/, 'each image should open the finding it names');
 });
 
 test('with no issues it says so rather than rendering an empty list', () => {
   const out = render(view({ issues: [] }));
   assert.match(out, /Nothing outstanding/);
-});
-
-test('the trend plots the backlog by when it first appeared', () => {
-  const out = render(view({ trend: [
-    { month: '2026-01', first: 40, still_no_fix: 30 },
-    { month: '2026-02', first: 10, still_no_fix: 1 },
-  ] }));
-  assert.match(out, /How the backlog accumulated/);
-  assert.match(out, /26-01/);
-  assert.match(out, /31<\/strong> of them have no upgrade/,
-    'a tail with no fixes is a supply problem, not a queue nobody is working');
-});
-
-test('without an age source the trend says why it is empty', () => {
-  const out = render(view({ trend: [] }));
-  assert.match(out, /age source/);
 });
 
 test('with no base differential the wins panel explains how to turn it on', () => {
@@ -159,5 +144,26 @@ test('a stacked bar with nothing in it says so instead of rendering an empty svg
 test('chart labels are escaped, since team names come from cluster labels', () => {
   const out = barChart([{ label: '<img src=x onerror=alert(1)>', value: 1 }]);
   assert.doesNotMatch(out, /<img/);
+  assert.match(out, /&lt;img/);
+});
+
+test('a win expands to the images on that base', () => {
+  // "3 images" with no list is a number somebody has to reconstruct by hand.
+  const out = render(view({ wins: [{
+    from_ref: 'b@sha256:aaaaaaaaaaaaaaaa', to_ref: 'b:2',
+    images: 2, teams: 1, clears: 100, total: 120, introduces: 0, kev_cleared: 0,
+    image_refs: ['reg/one:1', 'reg/two:2'],
+  }] }));
+  assert.match(out, /reg\/one:1/);
+  assert.match(out, /reg\/two:2/);
+  assert.match(out, /href="\/\?finding=reg%2Fone%3A1"/);
+});
+
+test('image references are escaped and URL-encoded, not concatenated raw', () => {
+  const out = render(view({ issues: [{
+    key: 'x', title: 't', count: 1, why: 'w', teams: 1,
+    images: ['reg/<img src=x>:1'],
+  }] }));
+  assert.doesNotMatch(out, /<img src=x/);
   assert.match(out, /&lt;img/);
 });

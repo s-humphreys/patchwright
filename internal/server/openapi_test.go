@@ -127,6 +127,31 @@ func TestSpecCoversEveryAffectedPackageField(t *testing.T) {
 	}
 }
 
+// The analytics payload was documented by hand and its top-level fields were not
+// checked at all, so wins and issues were served undocumented for a while without
+// anything noticing. Same lesson as the Finding schema: a guard that only covers
+// some schemas covers none of the ones added later.
+func TestSpecCoversEveryAnalyticsField(t *testing.T) {
+	spec := loadSpec(t)
+	for name, typ := range map[string]reflect.Type{
+		"Analytics":     reflect.TypeOf(AnalyticsView{}),
+		"Win":           reflect.TypeOf(Win{}),
+		"Issue":         reflect.TypeOf(Issue{}),
+		"TeamAnalytics": reflect.TypeOf(TeamAnalytics{}),
+	} {
+		schema, ok := spec.Components.Schemas[name]
+		if !ok {
+			t.Errorf("the spec has no %s schema", name)
+			continue
+		}
+		for _, field := range jsonFieldNames(typ) {
+			if _, ok := schema.Properties[field]; !ok {
+				t.Errorf("%s field %q is served but undocumented in %s", name, field, specPath)
+			}
+		}
+	}
+}
+
 func TestSpecCoversEverySummaryField(t *testing.T) {
 	spec := loadSpec(t)
 	schema, ok := spec.Components.Schemas["Summary"]

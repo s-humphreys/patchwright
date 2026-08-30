@@ -1,4 +1,4 @@
-import { barChart, columnChart, stackedBar } from './charts.js';
+import { barChart, stackedBar } from './charts.js';
 import { $, esc } from './util.js';
 
 // What to do next, and what nobody is doing.
@@ -44,75 +44,58 @@ function shortRef(ref) {
 function winsSection(wins) {
   if (!wins || !wins.length) {
     return `<section class="panel"><h3>Biggest wins</h3>
-      <p class="muted">No base differential has run, so there is nothing to rank.
-      Enable <code>remediation.baseDiff</code> to see what a rebuild would clear.</p></section>`;
+      <p class="muted">No base differential has run. Enable <code>remediation.baseDiff</code>.</p></section>`;
   }
   const rows = wins.map((w) => ({
     label: shortRef(w.from_ref),
     value: w.clears,
-    display: `${w.clears}`,
     cls: "bar-win",
-    sub: `${w.images} image${w.images === 1 ? "" : "s"} · ${w.teams} team${w.teams === 1 ? "" : "s"}`,
-    title: `${shortRef(w.from_ref)} → ${shortRef(w.to_ref)}: clears ${w.clears} of ${w.total}` +
-      (w.introduces ? `, introduces ${w.introduces}` : ", introduces none"),
+    sub: `→ ${shortRef(w.to_ref)} · ${w.images} image${w.images === 1 ? "" : "s"}`,
+    title: `clears ${w.clears} of ${w.total}` + (w.introduces ? `, introduces ${w.introduces}` : ", introduces none"),
   }));
   const detail = wins.map((w) => `<li>
-      <code>${esc(shortRef(w.from_ref))}</code> → <code>${esc(shortRef(w.to_ref))}</code>
-      <div class="sub">clears <strong class="ok">${w.clears}</strong> of ${w.total} CVEs
-        across ${w.images} image${w.images === 1 ? "" : "s"}${w.teams > 1 ? ` in ${w.teams} teams` : ""}
-        ${w.kev_cleared ? ` · <span class="ok">${w.kev_cleared} known-exploited</span>` : ""}
-        ${w.introduces ? ` · <span class="warn">introduces ${w.introduces}</span>` : " · introduces none"}</div>
+      <details>
+        <summary><strong class="ok">${w.clears}</strong> cleared of ${w.total}
+          <span class="sub"><code>${esc(shortRef(w.from_ref))}</code> → <code>${esc(shortRef(w.to_ref))}</code>
+          · ${w.images} image${w.images === 1 ? "" : "s"}${w.teams > 1 ? ` · ${w.teams} teams` : ""}
+          ${w.kev_cleared ? ` · ${w.kev_cleared} KEV` : ""}
+          · ${w.introduces ? `<span class="warn">+${w.introduces} new</span>` : "none new"}</span></summary>
+        ${imageList(w.image_refs)}
+      </details>
     </li>`).join("");
   return `<section class="panel"><h3>Biggest wins</h3>
-    <p class="sub">One rebuild each. Ranked by the CVEs it removes across every image on that base.</p>
     ${barChart(rows, { empty: "Nothing to rank." })}
     <ul class="win-list">${detail}</ul></section>`;
+}
+
+/**
+ * imageList renders images as links into the queue.
+ *
+ * A count somebody cannot expand is a number they have to take on trust. Each one
+ * opens the finding it names, so "15 images on a dead line" ends at the image
+ * rather than at a number.
+ */
+function imageList(images) {
+  if (!images || !images.length) return "";
+  return `<ul class="img-list">${images.map((i) =>
+    `<li><a href="/?finding=${encodeURIComponent(i)}"><code>${esc(i)}</code></a></li>`).join("")}</ul>`;
 }
 
 /** issuesSection lists what nobody is acting on, by the nature of the problem. */
 function issuesSection(issues) {
   if (!issues || !issues.length) {
     return `<section class="panel"><h3>Not being addressed</h3>
-      <p class="ok">Nothing outstanding in any of the tracked categories.</p></section>`;
+      <p class="ok">Nothing outstanding.</p></section>`;
   }
   const items = issues.map((i) => `<li class="issue">
-      <div class="issue-head"><strong>${i.count}</strong> ${esc(i.title)}
-        ${i.teams > 1 ? `<span class="sub">across ${i.teams} teams</span>` : ""}</div>
-      <div class="sub">${esc(i.why)}</div>
-      ${(i.examples || []).length
-        ? `<div class="issue-eg">${(i.examples || []).map((e) => `<code>${esc(e)}</code>`).join(" ")}</div>`
-        : ""}
+      <details>
+        <summary><strong>${i.count}</strong> ${esc(i.title)}
+          <span class="sub">${esc(i.why)}${i.teams > 1 ? ` · ${i.teams} teams` : ""}</span></summary>
+        ${imageList(i.images)}
+      </details>
     </li>`).join("");
   return `<section class="panel"><h3>Not being addressed</h3>
-    <p class="sub">Grouped by what the problem is, because each needs a different response.</p>
     <ul class="issue-list">${items}</ul></section>`;
-}
-
-/** trendSection plots when the CVEs still in the queue first appeared. */
-function trendSection(trend) {
-  if (!trend || !trend.length) {
-    return `<section class="panel"><h3>How the backlog accumulated</h3>
-      <p class="muted">No dated findings: this needs an age source
-      (<code>--age-source</code>), without which nothing carries a first-seen date.</p></section>`;
-  }
-  const cols = trend.map((t) => ({
-    label: t.month.slice(2),
-    value: t.first,
-    cls: t.still_no_fix > t.first / 2 ? "col-nofix" : "col-normal",
-    title: `${t.month}: ${t.first} CVEs still present first appeared this month` +
-      (t.still_no_fix ? `, ${t.still_no_fix} of them with no upgrade available anywhere` : ""),
-  }));
-  const oldest = trend[0];
-  const noFix = trend.reduce((n, t) => n + t.still_no_fix, 0);
-  const total = trend.reduce((n, t) => n + t.first, 0);
-  return `<section class="panel"><h3>How the backlog accumulated</h3>
-    <p class="sub">CVEs still in the queue, by the month they were first seen. Anything already
-      fixed has left the data, so a tall old column is a CVE that has survived every release since.</p>
-    ${columnChart(cols, { caption: `${total} CVEs, oldest ${esc(oldest.month)} ·` })}
-    <p class="sub">${noFix
-      ? `<strong>${noFix}</strong> of them have no upgrade available on any image carrying them —
-         a supply problem rather than a queue nobody is working.`
-      : "Every one of them has an upgrade available somewhere."}</p></section>`;
 }
 
 /** teamTable is supporting context, not a ranking. */
@@ -128,8 +111,7 @@ function teamTable(teams, view) {
     </tr>`).join("");
   if (!rows) return "";
   return `<section class="panel"><h3>By owner</h3>
-    <p class="sub">Context for the above, not a ranking. A team with unassessed images can look
-      quiet because nothing scanned them, so that column belongs next to the rest.</p>
+    <p class="sub">Context, not a ranking.</p>
     <div class="scroll-x"><table class="mini">
       <thead><tr><th>Owner</th><th class="num">Actionable</th><th class="num">Median age</th>
       <th class="num">Not started</th><th class="num">In progress</th><th class="num">KEV</th>
@@ -151,12 +133,11 @@ export function render(view) {
     <div class="dr"><dt>Base image leverage</dt>
       <dd>${e.base_total
         ? `a rebuild clears <strong class="ok">${e.base_clears}</strong> of ${e.base_total} CVEs
-           <span class="sub">(${pct(e.base_clears, e.base_total)} of everything measured)</span>`
+           <span class="sub">(${pct(e.base_clears, e.base_total)})</span>`
         : '<span class="unknown">not measured</span>'}</dd></div>
     <div class="dr"><dt>Known exploited</dt><dd>${e.kev} · ${e.kev_fixable} with an upgrade available</dd></div>
     <div class="dr"><dt>Fixes not started</dt>
-      <dd>${e.unstarted} · <span class="urgent">${e.stale_unstarted}</span>
-      older than ${view.stale_fix_days} days</dd></div>
+      <dd>${e.unstarted} · <span class="urgent">${e.stale_unstarted}</span> over ${view.stale_fix_days}d</dd></div>
     <div class="age-strip"><div class="sub">Age of everything actionable</div>
       ${ageStrip(e, view.age_bucket_order)}</div>
   </section>`;
@@ -170,7 +151,6 @@ export function render(view) {
   return `${estate}
     ${winsSection(view.wins)}
     ${issuesSection(view.issues)}
-    ${trendSection(view.trend)}
     ${teamTable(teams, view)}
     ${notes}`;
 }

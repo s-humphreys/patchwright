@@ -1046,8 +1046,22 @@ components:
 
     Analytics:
       type: object
-      required: [teams, estate, age_bucket_order, notes, stale_fix_days]
+      required: [wins, issues, teams, estate, age_bucket_order, notes, stale_fix_days]
       properties:
+        wins:
+          type: array
+          items: { $ref: "#/components/schemas/Win" }
+          description: |
+            Base upgrades ranked by the CVEs they remove across every image on that
+            base, biggest first. Most of the leverage in an estate is here rather than
+            per-team: one rebuild fixes everything built on that base.
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/Issue" }
+          description: |
+            Classes of problem nobody is acting on, worst first. Grouped by what the
+            problem IS rather than by owner, because each needs a different response.
+            Empty categories are omitted.
         teams:
           type: array
           items: { $ref: "#/components/schemas/TeamAnalytics" }
@@ -1071,6 +1085,52 @@ components:
         stale_fix_days:
           type: integer
           description: The threshold behind stale_unstarted, so a reader knows what "stale" meant.
+
+    Win:
+      type: object
+      required: [from_ref, to_ref, images, teams, clears, total, introduces]
+      properties:
+        from_ref: { type: string, description: The base as built, digest-pinned where known. }
+        to_ref: { type: string, description: The base this would move to. }
+        images:
+          type: integer
+          description: |
+            Distinct images on this base. Counted per IMAGE, not per finding: one image
+            owned by three teams is one rebuild.
+        teams: { type: integer, description: How many owners those images span. }
+        image_refs:
+          type: array
+          items: { type: string }
+          description: The images themselves, so the rebuild can be scoped rather than guessed at.
+        clears: { type: integer, description: CVEs the move removes across those images. }
+        total: { type: integer, description: CVEs those images carry. }
+        introduces:
+          type: integer
+          description: |
+            CVEs the new base brings with it. Always reported: an upgrade described only
+            by what it fixes stops being trusted the first time somebody checks.
+        kev_cleared: { type: integer, description: Known-exploited CVEs among the cleared. }
+
+    Issue:
+      type: object
+      required: [key, title, count, why, teams]
+      properties:
+        key:
+          type: string
+          description: Stable identifier for the category, for alerting on a specific one.
+          enum: [kev-unstarted, kev-no-fix, stale-fix, eol-base, pr-stale, unassessed]
+        title: { type: string }
+        count: { type: integer }
+        why:
+          type: string
+          description: What to do about it. A bare count is left to interpretation.
+        teams: { type: integer, description: How many owners the issue spans. }
+        images:
+          type: array
+          items: { type: string }
+          description: |
+            Every affected image, not a sample: a count somebody cannot expand is a
+            number they have to take on trust.
 
     TeamAnalytics:
       type: object

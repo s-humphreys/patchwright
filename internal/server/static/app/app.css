@@ -342,11 +342,18 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .urgent { color: var(--urgent); }
 
   .win-list, .issue-list { list-style: none; margin: .6rem 0 0; padding: 0; }
-  .win-list li, .issue { padding: .4rem 0; border-top: 1px solid var(--line); }
-  .issue-head { margin-bottom: .1rem; }
-  .issue-head strong { color: var(--urgent); font-size: 1.05rem; }
-  .issue-eg { margin-top: .25rem; font-size: .8rem; color: var(--muted);
-    display: flex; flex-wrap: wrap; gap: .3rem; }
+  .win-list li, .issue { border-top: 1px solid var(--line); }
+  .win-list summary, .issue summary { padding: .4rem 0; cursor: pointer; }
+  .issue summary strong { color: var(--urgent); font-size: 1.05rem; }
+  .win-list summary .sub, .issue summary .sub { display: block; margin-left: 0; }
+  /* The list is the point of expanding, so give it room to be scanned and a cap
+     so one issue covering the estate does not become the whole page. */
+  .img-list { list-style: none; margin: .1rem 0 .5rem; padding: 0 0 0 1rem;
+    max-height: 16rem; overflow-y: auto; columns: 2; column-gap: 1rem; }
+  .img-list li { margin: .1rem 0; break-inside: avoid; font-size: .82rem; }
+  .img-list a { text-decoration: none; }
+  .img-list a:hover code { text-decoration: underline; }
+  @media (max-width: 700px) { .img-list { columns: 1; } }
 
   /* Bars are divs, not SVG: an SVG scaled with preserveAspectRatio="none" stretches
      its text along with the geometry, which is what made the first version smear. */
