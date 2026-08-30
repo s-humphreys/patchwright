@@ -33,6 +33,9 @@ func init() {
 			// process already has, so the kubeconfig needs to carry only each cluster's
 			// URL and CA — nothing secret, and nothing to rotate.
 			authMode: opts.String("authMode"),
+
+			InternalIngressClasses: splitCSV(opts.String("internalIngressClasses")),
+			InternalGateways:       splitCSV(opts.String("internalGateways")),
 		}, nil
 	})
 }
@@ -45,6 +48,18 @@ type Source struct {
 	// from the ambient identity (workload identity, managed identity, az login). Empty
 	// uses whatever the kubeconfig carries.
 	authMode string
+
+	// InternalIngressClasses and InternalGateways name the routes that do NOT reach
+	// the internet, for a cluster whose ingress controllers or gateways are split
+	// between public and private.
+	//
+	// Empty means every ingress and gateway is treated as public, which is the
+	// safe direction to be wrong in: it over-reports exposure rather than telling
+	// somebody an internet-facing service is internal. A LoadBalancer Service
+	// annotated as an internal Azure load balancer is excluded regardless, since
+	// that one is stated by the platform rather than guessed.
+	InternalIngressClasses []string
+	InternalGateways       []string
 
 	// resolvers detect available upgrades per deployment system. Nil uses the
 	// defaults (Flux HelmRelease); set for tests or to add resolvers.

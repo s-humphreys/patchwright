@@ -82,6 +82,13 @@ func newAssessor(in assessInputs) (*assessor, error) {
 			return nil, err
 		}
 		liveEnrichers = append(liveEnrichers, enrich.NewLiveness(src))
+		// Internet exposure, when the source can measure it. Without this the scan
+		// provider's own field stands, and on at least one platform that field is
+		// constant false - so everything reads as internal and an urgency tier
+		// keyed on exposure can never fire.
+		if es, ok := src.(enrich.ExposureSource); ok {
+			liveEnrichers = append(liveEnrichers, enrich.Exposure{Source: es, SourceName: src.Name()})
+		}
 		if ls, ok := src.(enrich.LabelSource); ok {
 			liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
 		}
