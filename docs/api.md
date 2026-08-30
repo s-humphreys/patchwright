@@ -14,10 +14,12 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | Status page: coverage, per-class and per-team breakdown, the queue, ticket state |
+| `GET /analytics` | What to fix first: the rebuilds that clear the most, and what nobody is acting on |
 | `GET /api/v1/findings` | Findings, filterable by `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved` |
 | `GET /api/v1/finding?image=<ref>` | One image's finding |
 | `GET /api/v1/owners` | Per-team triage: where the fix goes, how much is ticketed, and how much of it is the sharp end (`urgent`, `known_exploited`, `exposed`, `end_of_life`) |
 | `GET /api/v1/summary` | Fleet headline, coverage counts, and `unassessed_reasons` |
+| `GET /api/v1/analytics` | What to fix first: base upgrades ranked by what they clear, the classes of problem nobody is acting on, and per-owner responsiveness |
 | `GET /api/v1/config` | The ownership and policy rules as parsed at startup |
 | `POST /api/v1/assessments` | Trigger a refresh |
 | `GET /api/v1/tickets` | What ticket reconciliation would do. Changes nothing |
@@ -50,7 +52,7 @@ applied.
 
 ## Pending ticket actions on the page
 
-Its own page, at `/tickets`, linked from the dashboard header.
+Its own page, at `/tickets`, linked from the shared header.
 
 It sat above the queue originally, where it was impossible to miss and, on a page whose
 subject is the estate, usually beside the point. A separate page rather than a third tab
@@ -244,3 +246,49 @@ The CVE view is aggregated in the browser from the findings the API already retu
 there is no second endpoint that could disagree with the first. It needs a vuln source:
 the scan provider reports severity totals rather than individual CVEs, so without
 `--vuln-source` the view says so rather than showing an empty list.
+
+## Analytics
+
+`GET /api/v1/analytics` answers a different question from the queue. The queue says
+what is wrong; this says what to do first and what nobody is acting on.
+
+Three parts:
+
+- **`wins`** - base upgrades ranked by the CVEs they remove across every image on
+  that base, with the services affected. Most of the leverage in an estate is here
+  rather than per-team: one rebuild fixes everything built on that base, and images
+  are counted per image rather than per finding so one image owned by three teams
+  is one rebuild.
+- **`issues`** - classes of problem nobody is acting on, grouped by what the problem
+  IS rather than by owner, because each needs a different response. Known-exploited
+  with a fix nobody started is not the same conversation as known-exploited with no
+  fix available. Empty categories are omitted.
+- **`teams`** - per-owner responsiveness: age percentiles, work not started, pull
+  requests in flight, tickets, KEV, EPSS, and how much of that owner's queue a base
+  rebuild would clear.
+
+Read **`notes`** before building anything on this. It lists the questions the
+endpoint is asked and cannot answer, and it travels in the payload rather than only
+on the page because a consumer needs the gaps as much as the page does. Ticket
+resolution time is the notable absence: the tracker index holds only open tickets
+and carries no dates, so a pilot can be reported as adopted but not as faster.
+
+Nulls are meaningful throughout. `median_age_days` is null when nothing is dated,
+which is not zero - "no age source ran" and "everything was found today" are
+different states and only one of them is good news.
+
+## Getting the queue out of the page
+
+The status page filters are multi-select and travel in the URL, so a narrowed view
+is a link somebody can send: `?view=cves&signal=kev,exposed&team=orders`. Several
+values within one filter mean ANY of them; the filters are still ANDed with each
+other.
+
+**Export CSV** beside the queue count writes the rows currently on screen, in
+whichever view is showing, with the filters applied - which is the point, since the
+reader has usually already narrowed to the thing they were asked about. The
+findings export carries the columns somebody would filter or pivot on, including
+EPSS and its percentile.
+
+For anything scripted, use the API instead: the page's export is what a person
+reaches for mid-question, not a data feed.

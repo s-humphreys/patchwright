@@ -26,6 +26,7 @@ Enabling both is refused: two monitors on one target double every counter.
 | `patchwright_findings_by_state{state}` | `actionable`, `suppressed`, `provider_assessed`, `provider_unassessed`, `scanned`, `exploit_checked`, `upgradable`, `known_exploited`, `remediation_unknown`, `actionable_unassessed` |
 | `patchwright_findings_unassessed_by_reason{reason}` | The provider's stated reasons |
 | `patchwright_owner_findings{class,team,state}` | `total`, `actionable`, `unassessed`, `ticketed` |
+| `patchwright_owner_responsiveness{class,team,metric}` | `unstarted`, `stale_unstarted`, `in_flight_stale`, `median_age_days` |
 | `patchwright_images_unique` | |
 
 ## Failures
@@ -63,3 +64,25 @@ the JSON API answers at that grain. Jira paths reduce to bounded operation label
 Provider reason strings are trimmed to their first clause and capped, with the tail
 summed into `other`. Gauges reset between assessments, so a team that leaves the
 estate stops being reported rather than freezing at its last value.
+
+## Responsiveness
+
+The coverage series describe what is wrong. `patchwright_owner_responsiveness`
+describes whether anyone is acting on it, which is the difference between a report
+and an alert.
+
+| Metric value | Meaning |
+|---|---|
+| `unstarted` | Actionable findings with an upgrade available, no open pull request and no ticket |
+| `stale_unstarted` | Those older than the configured threshold. The one worth paging on: a fix has existed for a month and nothing has moved |
+| `in_flight_stale` | Pull requests open past the threshold. Somebody did the work and it has not landed, which is a review bottleneck rather than an engagement one |
+| `median_age_days` | Median age of actionable findings, dated from each one's oldest CVE |
+
+`median_age_days` is **-1 when nothing here is dated**, which is not zero. Without
+an age source no finding carries a date, and a dashboard that drew that as zero
+would show a team with no history as the most current in the estate. Alert on the
+difference, not on the value.
+
+`stale_unstarted` counts only findings whose age is KNOWN, for the same reason:
+without dates an unstarted fix is not evidence of anything, and counting it would
+manufacture the signal out of missing data.

@@ -59,6 +59,55 @@ resource running it, preferring one the platform actually assessed — an unasse
 resource reports no CVEs, which would read as a clean image. An image no resource runs
 is an error rather than an empty result, for the same reason.
 
+## What a base rebuild would fix
+
+A newer base image being available is not the same as knowing what moving to it
+buys. Without that, every row asks a team for an upgrade of unknown value.
+
+```yaml
+remediation:
+  baseDiff:
+    enabled: true
+    concurrency: 8
+```
+
+It scans the base image the finding was built on and the base it is being asked to
+move to, then answers by subtraction:
+
+| | |
+|---|---|
+| in the base as built | the base image's, not the team's |
+| in the image, not in its base | the Dockerfile installed it, the team owns it |
+| gone in the candidate base | this upgrade fixes it |
+
+Which produces the sentence the queue was missing: *rebuilding clears 3,664 of these
+4,890, and leaves 93 that are actually yours*. What the upgrade INTRODUCES is
+reported too - an upgrade described only by what it fixes stops being trusted the
+first time somebody checks.
+
+Only BASE images are scanned, not the estate: on a real deployment that was about
+110 distinct base tags against several thousand images, shared by everything built
+on them and cached per digest for the life of the process. The cost is fixed in the
+number of bases. The first run after a restart is the expensive one; every run
+after it reuses the cache.
+
+The base is identified by digest wherever the build recorded one, because a tag can
+have moved since and scanning where it points now would credit the base's
+since-fixed CVEs to the application.
+
+It also names the package. For a CVE the base scan found, the package and the
+version that fixes it come from the same pass, so the version always belongs to the
+named package's ecosystem. Application-introduced CVEs carry no package: nothing
+scanned that layer, and the provider's own per-CVE package field names an ecosystem
+the image does not even contain 66% of the time - see
+[docs/design/package-attribution.md](design/package-attribution.md) for the
+measurement.
+
+Needs the `trivy` binary (it ships in the image) and pull access to the base
+images. Credentials are resolved through patchwright's own registry keychains and
+handed to Trivy in an isolated docker config rather than letting it find its own -
+see [SECURITY.md](../SECURITY.md).
+
 ## Exploitability
 
 `--exploit-source public` annotates each CVE with its
@@ -86,8 +135,13 @@ first source to set one winning:
 ```
 
 - `public` supplies **EPSS** (FIRST.org, a probability between 0 and 1 of exploitation
-  in the next 30 days) and **KEV** (membership of CISA's Known Exploited Vulnerabilities
-  catalogue).
+  in the next 30 days), its **percentile**, and **KEV** (membership of CISA's Known
+  Exploited Vulnerabilities catalogue).
+
+  Both EPSS numbers are carried because either alone misleads. Almost every CVE
+  scores near zero, so 0.08 reads as negligible and is in fact the 94th percentile;
+  a high percentile with a low score is a crowded field rather than a real threat.
+  Threshold on the score, read the percentile.
 - `rapid7` supplies **`risk_score`**, the platform's own composite ranking, and
   `exploit_known` where it has a public exploit on record.
 

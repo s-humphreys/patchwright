@@ -37,8 +37,9 @@ cannot work.
 ## RBAC
 
 For the cluster patchwright runs in, the chart creates a ServiceAccount and a minimal
-read-only ClusterRole: `get`/`list` on `pods` and `namespaces`. No Secrets, no write
-verbs, no credentials to manage.
+read-only ClusterRole: `get`/`list` on `pods` and `namespaces`, plus `services` and
+Gateway API `httproutes` when `reconcile.exposure` is on. No Secrets, no write verbs,
+no credentials to manage.
 
 ## Multi-cluster
 
@@ -227,12 +228,52 @@ A cluster that cannot be read fails the run rather than being skipped: partial l
 indistinguishable from workloads having stopped, and the queue would shrink for the wrong
 reason.
 
+## Internet exposure
+
+Off by default, because it needs permissions the other live reads do not and because
+the defaults it would run with are the coarse ones.
+
+```yaml
+reconcile:
+  exposure:
+    enabled: true
+    publicHostnames: [example.com]
+    internalHostnames: [internal.example.com]
+```
+
+Remote clusters need the updated reader role before it means anything: the read is
+all-or-nothing across the fleet, so one cluster refusing it discards the result for
+every cluster. It fails soft either way - logged, with the provider's own value
+standing - so a role that has not caught up costs the exposure data and nothing else.
+
+See [live reconciliation](reconciliation.md) for how hostnames decide it.
+
+## Base-image scanning and memory
+
+`remediation.baseDiff` scans each distinct base tag rather than each image, so its
+cost is fixed in the number of bases. On a real estate that was about 110 tags
+against several thousand images: roughly eighteen minutes on the first run after a
+restart, and close to nothing afterwards, because results are cached per digest for
+the life of the process.
+
+Give it memory before turning it on. Each scan is a Trivy process holding its
+analysis in memory - the on-disk cache is deliberately off, since concurrent
+processes deadlock on its lock - and eight at once over full language base images is
+a peak the pod does not otherwise reach. A 2Gi limit that was ample before is not
+necessarily ample now, and an OOM kill costs the whole assessment rather than the
+scan that caused it.
+
+If it does get OOM-killed, drop `remediation.baseDiff.concurrency` to 4 before
+lowering the limit. Halving the concurrency roughly doubles that phase, which is the
+slower outcome but not the one that loses data.
+
 ## Rollouts take as long as an assessment
 
 Readiness means "an assessment is cached". A new pod serves nothing until its first run
 finishes, which is deliberate — a Service endpoint answering with an empty page is worse
 than one that does not answer — but on a large estate that is fifteen to twenty minutes,
-and every tool involved defaults to less:
+or closer to half an hour with base-image scanning on a cold cache, and every tool
+involved defaults to less:
 
 | | Default | Needs to be |
 | --- | --- | --- |
