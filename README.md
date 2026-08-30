@@ -111,8 +111,17 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
 - **Phase 6** ✅ [Remediation already in flight](docs/design/remediation-in-flight.md)
   so a fix sitting in an open PR is not ticketed again. ✅ Base-image differential
   and measured internet exposure. ✅ Analytics: what to fix first, and what nobody is
-  acting on. Remaining: GitOps PR automation to roll fixes out, and an
-  [MCP server](docs/design/mcp-server.md) for natural-language queries.
+  acting on. Remaining: an [MCP server](docs/design/mcp-server.md) for
+  natural-language queries.
+
+  Rolling fixes out is deliberately **not** here. An update bot already opens those
+  pull requests, and a second thing computing versions would be two answers to one
+  question. What is missing is knowing which repositories it covers, which is a read
+  rather than an automation.
+- **Next** [Remembering what changed](docs/design/persistence.md). Every assessment
+  is a snapshot, so nothing the tool says is about movement: it cannot report time to
+  remediate, whether a queue is shrinking, or whether a change actually helped. The
+  first phase needs no storage at all.
 
 ## Licence
 

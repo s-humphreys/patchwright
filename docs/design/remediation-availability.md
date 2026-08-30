@@ -1,7 +1,9 @@
 # Design: remediation availability / upgrade path
 
-Status: **in progress** — two `UpgradeSource`s implemented behind a common
-interface, run in order (deployment-aware first, then fallback):
+Status: **shipped.** Three `UpgradeSource`s behind a common interface, run in order
+(deployment-aware first, then fallback). Base-image resolution for first-party
+images arrived later and is documented in
+[base-image-remediation.md](base-image-remediation.md):
 
 1. **Flux Helm chart** (cluster) — reads Flux `HelmRelease`s, resolves each
    chart's `HelmRepository`, and checks the repo index for a newer chart version.

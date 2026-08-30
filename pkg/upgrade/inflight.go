@@ -170,7 +170,8 @@ func (e *InFlightEnricher) buildRepo(ctx context.Context, ref string) (string, e
 	if len(keys) == 0 {
 		return "", nil
 	}
-	labels, err := e.Inspector.Labels(ctx, ref)
+	cfg, err := e.Inspector.Config(ctx, ref)
+	labels := cfg.Labels
 	if err != nil {
 		return "", err
 	}

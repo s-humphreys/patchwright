@@ -163,6 +163,10 @@ function sections(f) {
     row("Highest risk score", f.exploit_checked
       ? (maxRisk(f) ? String(Math.round(maxRisk(f))) : unknown("-", "The provider scored none of these CVEs."))
       : unknown("?", "No exploit source ran.")),
+    row("Image built", f.image_age_days != null
+      ? `${f.image_age_days} days ago <span class="sub">${esc(String(f.image_built || "").slice(0, 10))}</span>`
+      : unknown("not stated", "Only first-party images are read for this, and some builders omit the field or zero it for reproducibility."),
+      "Most of a queue is not neglect: an image drifts because nothing rebuilt it. An old build date means this has not shipped in a while, which is a different conversation from ignoring a finding."),
     row("Oldest CVE", f.oldest_cve_days != null
       ? `${f.oldest_cve_days} days (first seen ${esc(String(f.oldest_cve_first_seen || "").slice(0, 10))})`
       : unknown("unknown", "No CVE here carries a first-seen date: either no age source ran, or the provider has never seen these CVEs.")),

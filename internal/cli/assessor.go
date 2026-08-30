@@ -148,6 +148,12 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		r := enrich.NewRemediationEnricher(upgradeSources...)
 		popts = append(popts, pipeline.WithRemediationEnricher(&r))
 
+		// How long since each first-party image was built. Reads the same cached
+		// image config the base resolver just read, so it adds no registry calls.
+		popts = append(popts, pipeline.WithImageAgeEnricher(&upgrade.ImageAgeEnricher{
+			Cfg: cfg.Remediation, Inspector: inspector,
+		}))
+
 		// Remediation already under way, so an upgrade with an open pull request
 		// can be told apart from one nobody has started.
 		if cfg.Remediation.InFlight.Enabled() {

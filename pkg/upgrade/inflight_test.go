@@ -23,8 +23,8 @@ type stubInspector struct {
 	labels map[string]map[string]string
 }
 
-func (s stubInspector) Labels(_ context.Context, ref string) (map[string]string, error) {
-	return s.labels[ref], nil
+func (s stubInspector) Config(_ context.Context, ref string) (ImageConfig, error) {
+	return ImageConfig{Labels: s.labels[ref]}, nil
 }
 func (s stubInspector) Digest(context.Context, string) (string, error) { return "", nil }
 

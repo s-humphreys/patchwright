@@ -1,9 +1,11 @@
 # Design: Trivy / per-CVE fix availability
 
-Status: **core implemented** — `VulnSource` + image-level `ImageScanner` (post
-dedupe) + a `trivy` source are wired through the pipeline, CLI
-(`--vuln-source trivy`), and sinks (`FIXCRIT` / `fixable_critical`). Remaining:
-digest cache, Trivy server mode, and a Rapid7-API vuln source (see "Phasing").
+Status: **shipped.** `VulnSource` + image-level `ImageScanner` (post dedupe) + a
+`trivy` source are wired through the pipeline, CLI (`--vuln-source trivy`), and
+sinks (`FIXCRIT` / `fixable_critical`). The Rapid7-API vuln source it lists as
+remaining also shipped, and Trivy now has a second job this document does not
+cover: scanning BASE images to establish what a rebuild would clear, which caches
+per digest for the life of the process. Remaining: Trivy server mode.
 
 ## Check before replacing this with a provider-native vuln source
 
@@ -22,8 +24,8 @@ From a real InsightCloudSec export of 4,311 rows covering 815 images:
                                                     severity UNKNOWN, all counts 0)
 
 The gap is not about private-registry access, which is the intuitive explanation.
-Whole public registries were unassessed too: `xpkg.crossplane.io` (143 rows),
-`registry.datadoghq.com`, `registry.istio.io`, `cr.agentgateway.dev`. And where the
+Whole public registries were unassessed too - a package registry accounted for 143
+rows on its own, and three vendor registries for most of the rest. And where the
 scanner was allowed to look at those same public images, it found real work:
 
     14 of 35 actionable findings existed ONLY because the scanner ran
