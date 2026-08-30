@@ -25,7 +25,7 @@ vulnerability report can do.
 
 ## Quickstart
 
-Requires Go 1.26+.
+Requires Go 1.27+.
 
 ```sh
 go build ./cmd/patchwright
@@ -63,14 +63,24 @@ provider → dedupe (by image) → attribute (owner) → policy (actionable?) �
   images are routed differently because you cannot patch them directly.
 - **Policy** decides what is actionable, at what priority, and what to suppress.
 
+Two things it measures rather than assumes, because the alternative is a number
+somebody acts on:
+
+- **What a base rebuild would clear.** Scanning the base image and the one being
+  recommended turns "a newer base exists" into "this clears 3,664 of your 4,890,
+  and 93 of them are actually yours".
+- **Whether a workload is reachable from the internet**, read from the clusters. A
+  scan provider that reports the same value for every workload makes an urgency
+  rule mentioning exposure look configured and do nothing.
+
 ## Documentation
 
 | | |
 |---|---|
 | [CLI](docs/cli.md) | Commands, flags, and how to read the report |
 | [Providers](docs/providers.md) | Rapid7 CSV export vs the API |
-| [Live reconciliation](docs/reconciliation.md) | Drop what is not running; multi-cluster |
-| [Scanning](docs/scanning.md) | Fix availability, EPSS and KEV |
+| [Live reconciliation](docs/reconciliation.md) | Drop what is not running; multi-cluster; internet exposure |
+| [Scanning](docs/scanning.md) | Fix availability, EPSS and KEV, and what a base rebuild would clear |
 | [Remediation](docs/remediation.md) | Is there a newer version, and can you apply it? |
 | [Rules](docs/rules.md) | Writing ownership and policy rules |
 | [Ticketing](docs/ticketing.md) | Raising, routing, updating and closing Jira tickets |
@@ -90,17 +100,18 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
 - **Phase 2** ✅ Multi-cluster live reconciliation, ownership from namespace labels,
   Helm chart and image, kind-based e2e, Rapid7 API provider.
 - **Phase 3** ✅ Fix availability (`--vuln-source trivy`) and exploitability
-  (`--exploit-source public`). Remaining: per-CVE detail from the Rapid7 API, digest
-  cache, VEX, reachability.
+  (`--exploit-source public`). ✅ Per-CVE detail from the Rapid7 API. Remaining: VEX,
+  reachability.
 - **Phase 4** ✅ [Remediation availability](docs/design/remediation-availability.md):
-  Flux charts and registry tags. Remaining:
-  [base-image upgrades for first-party images](docs/design/base-image-remediation.md),
-  git/OCI source revisions.
+  Flux charts and registry tags. ✅
+  [Base-image upgrades for first-party images](docs/design/base-image-remediation.md),
+  with support-window checking. Remaining: git/OCI source revisions.
 - **Phase 5** ✅ Jira ticketing with routing, reconciliation and evidence-based
   closing. ✅ API, status page and metrics.
-- **Phase 6** Reconcile against
-  [remediation already in flight](docs/design/remediation-in-flight.md) so a fix sitting
-  in an open PR is not ticketed again, GitOps PR automation to roll fixes out, and an
+- **Phase 6** ✅ [Remediation already in flight](docs/design/remediation-in-flight.md)
+  so a fix sitting in an open PR is not ticketed again. ✅ Base-image differential
+  and measured internet exposure. ✅ Analytics: what to fix first, and what nobody is
+  acting on. Remaining: GitOps PR automation to roll fixes out, and an
   [MCP server](docs/design/mcp-server.md) for natural-language queries.
 
 ## Licence

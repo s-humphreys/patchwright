@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/cel-go/cel"
+	"cel.dev/cel-go/cel"
 
 	"github.com/s-humphreys/patchwright/internal/celx"
 	"github.com/s-humphreys/patchwright/pkg/config"

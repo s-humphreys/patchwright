@@ -19,10 +19,22 @@ requests, and does not change cluster state.
 | Cluster inventory (images, namespaces, labels) | Internal | In memory only |
 | CVE metadata, EPSS scores, KEV membership | Public | In memory only |
 | Jira credentials, API token | **Secret** | Environment variables from Secrets |
+| Registry credentials for base-image scanning | **Secret** | Minted per scan, written to a private file under `/tmp` for the length of one scan, then deleted |
 
-No personal data is processed. Nothing is written to disk except Trivy's cache
-(`/tmp`, an `emptyDir`), and no database is used: the service holds one assessment
-in memory and rebuilds it on refresh.
+No personal data is processed. Nothing is written to disk except Trivy's cache and
+that credential file (`/tmp`, an `emptyDir`, mode 0600 and removed when the scan
+returns), and no database is used: the service holds one assessment in memory and
+rebuilds it on refresh.
+
+The credential file deserves a note, because handing a subprocess a secret is
+exactly the kind of thing a review should ask about. Base-image scanning shells out
+to Trivy, which would otherwise find its own credentials through the docker
+credential helper chain - and that chain carries GO-2026-6225, credential leakage
+to untrusted hosts, with no fixed version. Rather than let it, patchwright resolves
+the credential itself through its own registry keychains and writes an isolated
+docker config holding exactly one registry, with no `credsStore` and no
+`credHelpers`. That both keeps the vulnerable path out of the process and stops
+Trivy inheriting an ambient config it was never meant to read.
 
 The assessment itself is sensitive output. Anyone who can read the API or the status
 page can see which production images have unpatched criticals and no fix applied,
@@ -33,6 +45,8 @@ which is a useful shopping list to an attacker. Treat access accordingly.
 Read-only, and narrow. The chart's ClusterRole grants `get` and `list` only, on:
 
 - `pods`, `namespaces`
+- `services` and Gateway API `httproutes`, to measure whether a workload is
+  reachable from the internet (only when exposure is enabled)
 - `deployments`, `statefulsets`, `daemonsets`
 - Flux resources: `helmreleases`, `kustomizations`, `helmrepositories`,
   `gitrepositories`, `ocirepositories`
@@ -51,10 +65,11 @@ connections beyond the Kubernetes API.
 | Destination | Why | Enabled by |
 |---|---|---|
 | Kubernetes API servers | Reconcile against live clusters | `--live-source=kube` |
-| Image registries (`ghcr.io`, `quay.io`, `docker.io`, your own) | Read tags to detect newer versions; pull images to scan | `--remediation`, `--vuln-source` |
+| Image registries (`ghcr.io`, `quay.io`, `docker.io`, your own) | Read tags to detect newer versions; read image labels to find a base image; pull images to scan | `--remediation`, `--vuln-source`, `remediation.baseDiff` |
 | Helm chart repositories (from your own HelmReleases) | Read chart versions | `--remediation` |
 | `api.first.org` | EPSS exploitation-probability scores | `--exploit-source=public` |
 | `www.cisa.gov` | CISA Known Exploited Vulnerabilities catalogue | `--exploit-source=public` |
+| `endoflife.date` | Whether a base image's line is still maintained | `--support-source=endoflife` |
 | Trivy's vulnerability database (an OCI registry) | Scanner database updates | `--vuln-source=trivy` |
 | Your Jira instance | Search for existing tickets; create, edit, comment, and (opt-in) transition to done | `jira:` config + credentials |
 
@@ -80,8 +95,26 @@ page; health probes stay open. Comparison is constant-time over SHA-256 digests.
   concurrent refreshes collapse into one, so the cost is bounded, but it is
   authenticated for a reason.
 
-For anything reachable beyond a trusted network, put OIDC in front (an ingress
-authenticator or oauth2-proxy). The built-in token is a floor, not a substitute.
+### Sign-in (OIDC)
+
+For anything reachable beyond a trusted network, use the built-in OIDC sign-in
+rather than the shared token. Authorization code flow with PKCE, state and nonce,
+JWKS fetched from the provider, and an HMAC-signed session cookie; see
+[docs/authentication.md](docs/authentication.md).
+
+It answers the limitations above: sign-ins carry an identity, and access is decided
+by the provider rather than by possession of a string. Two things still worth
+stating:
+
+- **It fails closed on a missing groups claim.** A provider that stops sending
+  groups, or that truncates the claim because the user is in too many, denies
+  access rather than granting it. That is the correct direction and it will look
+  like an outage.
+- **Authorisation is still all-or-nothing.** Signing in gets the whole estate;
+  there is no per-team scoping.
+
+The shared token remains for machine callers and for environments with no provider.
+It is a floor, not a substitute.
 
 ## Writes to Jira
 
@@ -150,7 +183,8 @@ to their first clause and capped in number.
 - static binary, `CGO_ENABLED=0`, `-trimpath`
 - `runAsNonRoot`, `allowPrivilegeEscalation: false`, all capabilities dropped,
   `readOnlyRootFilesystem`, `seccompProfile: RuntimeDefault`
-- writable paths limited to an `emptyDir` at `/tmp` for the scanner cache
+- writable paths limited to an `emptyDir` at `/tmp`, for the scanner cache and the
+  short-lived per-scan registry credential described above
 
 ## Supply chain
 

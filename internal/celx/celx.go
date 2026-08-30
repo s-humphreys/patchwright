@@ -5,8 +5,8 @@ package celx
 import (
 	"fmt"
 
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/common/types/ref"
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/types/ref"
 )
 
 // CompileBool compiles expr against env and requires it to yield a bool.
