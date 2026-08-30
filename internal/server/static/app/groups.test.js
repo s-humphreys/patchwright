@@ -255,3 +255,28 @@ test('drilling into a deployment does not close the panel', async () => {
   assert.match(el.textContent, /Verdict/, 'and show the deployment it drilled into');
   closeDetail();
 });
+
+test('a grouped row opens the work item, not one of its images', () => {
+  // The key travels through a data attribute so the click can tell a work item from
+  // a deployment. It was joined with NUL, which an HTML attribute cannot carry: the
+  // browser substitutes U+FFFD, the key read back matched no group, and every
+  // grouped row quietly opened one of its images instead.
+  //
+  // The assertion is the ROUND TRIP, not the format. Anything that survives writing
+  // to the DOM and reading it back is fine; anything that does not is this bug again.
+  const groups = groupFindings([
+    deployment('topnotch', '1', 'Production EU'),
+    deployment('topnotch', '2', 'Production EU'),
+    deployment('topnotch', '3', 'Production EU'),
+  ]);
+  assert.equal(groups.length, 1, 'three tags of one service are one work item');
+
+  const el = document.createElement('div');
+  el.innerHTML = `<table><tbody><tr data-group="${groups[0].key.replace(/"/g, '&quot;')}">`
+    + `</tr></tbody></table>`;
+  const readBack = el.querySelector('tr').dataset.group;
+
+  assert.equal(readBack, groups[0].key,
+    'the key did not survive the DOM: a click will not find its group');
+  assert.doesNotMatch(readBack, /\uFFFD/, 'a replacement character means an unencodable byte');
+});
