@@ -72,37 +72,54 @@ Write tools - raising a ticket, applying the ticket plan - are deliberately not 
 the first phase. The ticket plan is already exposed read-only with an explicit
 apply, and moving that behind a conversational interface deserves its own decision.
 
-## The problem worth deciding first: authentication
+## Authentication: none, on a port only the gateway can reach
 
-This is the part that needs an answer before any of the above matters, and it is not
-a small one.
+Where an MCP gateway in front handles authentication and authorisation, patchwright
+does not need its own. Re-authenticating behind a gateway that has already decided
+who the caller is buys nothing and adds a credential to manage.
 
-The page is protected by OIDC: an interactive browser flow, an identity, and group
-membership decided by the provider. That was a security requirement, not a
-preference. An MCP client is not a browser and cannot complete that flow the same
-way.
+The condition is that "in front" has to be enforced rather than assumed, and the
+obvious implementation gets that wrong.
 
-Three options, none free:
+`Handler()` wraps every route in `authorize`, with an exemption list for metrics and
+the probes. Mounting `/mcp` and exempting it is the small change - and it would put
+an unauthenticated read of the whole estate on the same port and the same hostname
+as the page, which is behind sign-in because that was a security requirement.
+Anything that can route to the page could then read the same data without
+credentials. Two doors to one room, one of them locked.
 
-1. **The existing shared token.** Works today, and throws away the property that was
-   asked for: one credential, no identity, no attribution. Acceptable for a
-   single-user local client, poor for anything hosted.
-2. **MCP's own OAuth flow**, against the same identity provider and app
-   registration. Correct, and the most work: authorisation-server metadata,
-   dynamic client registration or a pre-registered client, and token validation on
-   every call. It reuses the group assignment already in place, so authorisation
-   stays where security put it.
-3. **Local only.** Each user runs `patchwright mcp` against their own credentials and
-   their own assessment, which sidesteps the question and reintroduces the
-   twenty-five-minute startup per person.
+NetworkPolicy cannot fix that, because it selects on port and not on path.
 
-Option 2 is the right end state. Option 1 is a legitimate first step ONLY if the
-endpoint is not reachable beyond the network the token already protects, and the
-note should say so plainly rather than letting it become permanent by default.
+**So serve MCP on its own port**, in the same process:
 
-Authorisation is unchanged either way: whoever gets in sees the whole estate. Every
-answer here is derived from a page that has no per-team scoping, so a tool cannot
-offer one honestly.
+- MCP port: admits the gateway's namespace only. No auth in patchwright, because
+  the network guarantees the caller came through something that already
+  authenticated them.
+- API and page port: unchanged, behind sign-in, reachable from the ingress
+  namespace.
+
+Both are the same process reading the same cached assessment, so the "same
+deployment" argument is untouched - it is one more listener, not one more thing to
+operate. And the claim being relied on becomes checkable: a NetworkPolicy naming the
+gateway namespace is a thing somebody can read, unlike an assumption that nothing
+else will call the endpoint.
+
+The deployed policy already has this shape - ingress on the API port is restricted to
+the ingress gateway, kubelet probes and the Prometheus namespace - so this adds one
+rule rather than introducing a pattern.
+
+Two consequences worth accepting explicitly:
+
+- **Attribution moves to the gateway.** Patchwright's own logs will say a tool was
+  called, not who called it. That is fine if the gateway keeps that record, and it
+  should be confirmed rather than assumed, because "who asked" was a stated
+  requirement for the page.
+- **Authorisation stays all-or-nothing.** Whatever the gateway lets through sees the
+  whole estate, because the underlying views have no per-team scoping to offer.
+
+If the endpoint ever needs to be reachable from somewhere the gateway does not
+front, this decision has to be revisited rather than patched: at that point the
+control that was doing the work is gone.
 
 ## Cost
 
@@ -115,10 +132,9 @@ enough by the time this is built.
 ## Phasing
 
 1. Tool implementations over the existing cached assessment, wired to the CLI's
-   stdio transport. No server change, no auth question, testable.
-2. Streamable HTTP at `/mcp` on the existing server, behind the shared token, on a
-   network where that is already the control.
-3. OAuth against the same provider as the page, which is what makes it hostable.
+   stdio transport. No server change, no network question, testable.
+2. Streamable HTTP on its own port in the `serve` process, with a NetworkPolicy
+   admitting the gateway's namespace and nothing else.
 
 ## Open questions
 
@@ -130,3 +146,8 @@ enough by the time this is built.
    same thing.
 3. **Does this want rate limiting?** A conversational client can call a tool in a
    loop. Reads are cheap, but `refresh` is not, and the API has no limiting today.
+   Whether that belongs here or at the gateway is worth settling before a client
+   discovers it.
+4. **Is `refresh` a tool at all?** It is the one expensive operation, and a
+   scheduled assessment already keeps the cache current. Leaving it out removes the
+   rate-limiting question entirely.
