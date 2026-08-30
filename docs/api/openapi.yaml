@@ -60,6 +60,53 @@ paths:
               schema: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /analytics:
+    get:
+      tags: [operations]
+      summary: Security analytics page
+      description: |
+        HTML. Per-team responsiveness: who is working through their findings and who is
+        sitting on them. A page of its own because its subject is how teams are
+        RESPONDING, not what is wrong - a different question read by different people.
+        Reads GET /api/v1/analytics.
+      responses:
+        "200":
+          description: The analytics page
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/analytics:
+    get:
+      tags: [analysis]
+      summary: Per-team responsiveness
+      description: |
+        Who is moving on their findings and who is not, computed from the latest cached
+        assessment.
+
+        The headline metric is `stale_unstarted`: actionable findings with an upgrade
+        available, no open pull request, no ticket, and older than `stale_fix_days`. A
+        fix has existed for a month and nothing has moved, which is a statement about
+        the team rather than about the software.
+
+        `notes` lists the questions this endpoint is asked and cannot answer - read it
+        before building a dashboard on this, because the gaps are the part most likely
+        to be assumed away. Ticket resolution time is the notable one: the tracker index
+        holds only open tickets and carries no dates.
+      responses:
+        "200":
+          description: Per-team responsiveness
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, analytics]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  analytics: { $ref: "#/components/schemas/Analytics" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/findings:
     get:
       tags: [findings]
@@ -595,6 +642,7 @@ components:
             without an upgrade must check this, or it silently skips images whose
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
+        base_diff: { $ref: "#/components/schemas/BaseDiff" }
         in_flight: { $ref: "#/components/schemas/InFlight" }
         in_flight_reason:
           type: string
@@ -898,7 +946,292 @@ components:
         epss:
           type: number
           description: Probability of exploitation in 30 days. Needs an exploit source.
+        epss_percentile:
+          type: number
+          description: |
+            Where that probability ranks against every scored CVE, 0..1. Reported
+            because the score alone misleads: nearly every CVE scores near zero, so
+            0.08 reads as negligible when it is in fact the 94th percentile.
+
+            Absent when no exploit source ran, or when the feed carried no percentile
+            for this CVE.
         kev: { type: boolean, description: CISA Known Exploited Vulnerabilities. }
+        origin:
+          type: string
+          enum: [base, app]
+          description: |
+            Where this CVE came from, established by scanning the base image rather
+            than inferred from a package name. `base` means the base image as built
+            already contained it, so the application team did not introduce it and
+            mostly cannot fix it in their own repository. `app` means the image has it
+            and its base does not, so the Dockerfile installed it.
+
+            Absent means no base scan was available. That is NOT `app`: "we did not
+            look" and "we looked and it is yours" send work to different people.
+        fixed_by_upgrade:
+          type: boolean
+          description: |
+            The base image being recommended does not contain this CVE, so rebuilding
+            on it removes this one. Only meaningful with `origin_determined` true.
+        origin_determined:
+          type: boolean
+          description: |
+            A candidate base image was actually scanned. When false, `fixed_by_upgrade`
+            is absent because the question was not asked, which must not be read as
+            "this upgrade will not fix it".
+        packages:
+          type: array
+          items: { $ref: "#/components/schemas/AffectedPackage" }
+          description: |
+            The packages carrying this CVE in the base image, and the version that
+            fixes each. Measured by scanning the base, so the name and the version
+            come from the same pass and always belong to the same ecosystem.
+
+            Absent for `origin: app`: those packages live in a layer nothing scanned.
+            Absent is "nothing measured", not "no package involved" — the provider's
+            own per-CVE package field is NOT used here, because 66% of its entries
+            name an ecosystem the image does not contain.
+
+    AffectedPackage:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: The package as the scanner names it. }
+        ecosystem:
+          type: string
+          description: debian, ubuntu, alpine, azurelinux, redhat, gobinary, dotnet-core, ...
+        fixed_in:
+          type: string
+          description: |
+            The version fixing this CVE for this package, from the same scan as the
+            name. Absent when the scanner knows of no fix.
+
+    BaseDiff:
+      type: object
+      required: [from_ref, total, from_base, from_app, clears, leaves, introduces, determined]
+      description: |
+        What scanning this image's base image established: how much of its
+        vulnerability count the base accounts for, and how much of that a specific
+        base upgrade would remove.
+
+        Absent when the differential did not run for this image — no resolvable base,
+        or its scan failed. Absent is not "the base accounts for nothing".
+      properties:
+        from_ref:
+          type: string
+          description: |
+            The base as built, digest-pinned whenever the build recorded one, so the
+            comparison describes what the image was actually built on rather than
+            whatever the tag points at now.
+        to_ref:
+          type: string
+          description: |
+            The base compared against. Absent when none was — either the base is
+            current, or the recommendation belongs to a deeper link in the base chain,
+            where diffing this pair would attribute the intermediate base's packages
+            to the application.
+        os_family:
+          type: string
+          description: The distro the base scan identified (debian, alpine, azurelinux, redhat).
+        total: { type: integer, description: CVEs considered. }
+        from_base: { type: integer, description: Present in the base as built. }
+        from_app:
+          type: integer
+          description: In the image but not in its base, so the application team owns them.
+        unknown: { type: integer, description: Not attributed. }
+        clears: { type: integer, description: Removed by moving to `to_ref`. }
+        leaves: { type: integer, description: From the base and still present in `to_ref`. }
+        introduces:
+          type: integer
+          description: |
+            In `to_ref` but not in the base as built. Reported because an upgrade that
+            fixes 3,664 and adds 40 is still worth taking, and stating only the first
+            half is how a recommendation stops being trusted.
+        determined:
+          type: boolean
+          description: |
+            A candidate base was scanned. When false, `clears` and `leaves` are zero
+            because the question was not asked, not because the answer is nothing.
+
+    Analytics:
+      type: object
+      required: [wins, issues, teams, estate, age_bucket_order, notes, stale_fix_days]
+      properties:
+        wins:
+          type: array
+          items: { $ref: "#/components/schemas/Win" }
+          description: |
+            Base upgrades ranked by the CVEs they remove across every image on that
+            base, biggest first. Most of the leverage in an estate is here rather than
+            per-team: one rebuild fixes everything built on that base.
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/Issue" }
+          description: |
+            Classes of problem nobody is acting on, worst first. Grouped by what the
+            problem IS rather than by owner, because each needs a different response.
+            Empty categories are omitted.
+        teams:
+          type: array
+          items: { $ref: "#/components/schemas/TeamAnalytics" }
+          description: |
+            One row per owner, worst first: fixes nobody has started, then age, then
+            size. The top row is the one worth a conversation.
+        estate:
+          allOf: [{ $ref: "#/components/schemas/TeamAnalytics" }]
+          description: The same shape summed over every team, so a row can be read against the whole.
+        age_bucket_order:
+          type: array
+          items: { type: string }
+          description: The age bands in order, since the map keys do not sort as strings.
+        notes:
+          type: array
+          items: { type: string }
+          description: |
+            Questions this endpoint is asked that the data cannot answer. Carried in the
+            payload rather than only on the page: a consumer building its own dashboard
+            needs to know what is missing as much as the page does.
+        stale_fix_days:
+          type: integer
+          description: The threshold behind stale_unstarted, so a reader knows what "stale" meant.
+
+    Win:
+      type: object
+      required: [from_ref, to_ref, images, teams, clears, total, introduces]
+      properties:
+        from_ref: { type: string, description: The base as built, digest-pinned where known. }
+        to_ref: { type: string, description: The base this would move to. }
+        images:
+          type: integer
+          description: |
+            Distinct images on this base. Counted per IMAGE, not per finding: one image
+            owned by three teams is one rebuild.
+        teams: { type: integer, description: How many owners those images span. }
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/ServiceCount" }
+          description: |
+            The services on this base, so the rebuild can be scoped rather than guessed
+            at. Grouped by service because one service appears at several tags at once,
+            and the rebuild is per service.
+        clears: { type: integer, description: CVEs the move removes across those images. }
+        total: { type: integer, description: CVEs those images carry. }
+        introduces:
+          type: integer
+          description: |
+            CVEs the new base brings with it. Always reported: an upgrade described only
+            by what it fixes stops being trusted the first time somebody checks.
+        kev_cleared: { type: integer, description: Known-exploited CVEs among the cleared. }
+
+    Issue:
+      type: object
+      required: [key, title, count, why, teams]
+      properties:
+        key:
+          type: string
+          description: Stable identifier for the category, for alerting on a specific one.
+          enum: [kev-unstarted, kev-no-fix, stale-fix, eol-base, pr-stale, unassessed]
+        title: { type: string }
+        count: { type: integer }
+        why:
+          type: string
+          description: What to do about it. A bare count is left to interpretation.
+        teams: { type: integer, description: How many owners the issue spans. }
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/ServiceCount" }
+          description: |
+            Every affected service, not a sample: a count somebody cannot expand is a
+            number they have to take on trust. Grouped by service rather than by image
+            reference, since one service is typically present at an rc, a preview and a
+            release simultaneously.
+
+    ServiceCount:
+      type: object
+      required: [service, images]
+      properties:
+        service:
+          type: string
+          description: The image repository, which is what a team owns and rebuilds.
+        images:
+          type: integer
+          description: How many distinct image versions of it are affected.
+        team: { type: string, description: The owner, when one was attributed. }
+
+    TeamAnalytics:
+      type: object
+      required: [class, team, findings, actionable]
+      properties:
+        class: { type: string }
+        team: { type: string, description: Empty when no ownership rule attributed the workloads. }
+        findings: { type: integer }
+        actionable: { type: integer }
+        median_age_days:
+          type: integer
+          nullable: true
+          description: |
+            Over actionable findings, dated from each one's OLDEST CVE: an image
+            carrying something since June has been exposed since June, whatever
+            arrived later. Null when nothing here is dated, which happens without an
+            age source and is NOT the same as new.
+        p90_age_days: { type: integer, nullable: true, description: As median_age_days, at the 90th percentile. }
+        age_buckets:
+          type: object
+          additionalProperties: { type: integer }
+          description: Actionable findings by age band, keyed by the labels in age_bucket_order.
+        fixable: { type: integer, description: Actionable findings with an upgrade available. }
+        unstarted:
+          type: integer
+          description: Of those, the ones with no open pull request and no open ticket.
+        stale_unstarted:
+          type: integer
+          description: |
+            Unstarted findings older than stale_fix_days. The sharpest single signal
+            here. Counted only where the age is KNOWN: without an age source an
+            unstarted fix is not evidence of anything.
+        in_flight: { type: integer, description: Findings with an open pull request applying the upgrade. }
+        in_flight_stale: { type: integer, description: Of those, open past the configured threshold. }
+        in_flight_median_days:
+          type: integer
+          nullable: true
+          description: |
+            How long those pull requests have been open. A high in_flight with a high
+            median is a review bottleneck, not an engagement problem, and the two need
+            different conversations.
+        tickets_open: { type: integer }
+        tickets_untouched:
+          type: integer
+          description: Open tickets still in the tracker's "new" category - raised and not picked up.
+        kev: { type: integer, description: Findings carrying a known-exploited CVE. }
+        kev_fixable:
+          type: integer
+          description: Of those, the ones with an upgrade available. The gap is what gets escalated.
+        epss_high:
+          type: integer
+          description: |
+            Findings carrying a CVE at or above the urgency threshold (EPSS 0.5).
+        top_epss:
+          type: number
+          description: The highest exploitation probability this owner holds, 0..1.
+        top_epss_percentile:
+          type: number
+          description: |
+            Where that score ranks against every scored CVE, 0..1. Both are reported
+            because either alone misleads: a high percentile with a low score is a
+            crowded field rather than a real threat.
+        base_clears:
+          type: integer
+          description: CVEs a base rebuild would remove across this team's images.
+        base_total:
+          type: integer
+          description: |
+            CVEs those images carry. The ratio says how much of a team's queue is not
+            theirs to fix line by line. Zero means no base differential ran.
+        unassessed:
+          type: integer
+          description: |
+            Findings the provider never assessed. Read alongside the rest: a team can
+            look responsive purely because nothing scanned its images.
 
     OwnerStats:
       type: object

@@ -99,7 +99,7 @@ func writeLegend(w io.Writer) {
 	fmt.Fprintln(w, "  FIXCRIT    criticals with a fix available, from the vuln scanner. - = not scanned, err = failed")
 	fmt.Fprintln(w, "  AGE        days since the scan provider first saw the oldest CVE on the image; \"-\" when")
 	fmt.Fprintln(w, "             no CVE is dated (no --age-source, or the provider has not seen them)")
-	fmt.Fprintln(w, "  KEV/EPSS   known-exploited count, and the highest exploitation probability (0-1) across the")
+	fmt.Fprintln(w, "  KEV/EPSS   known-exploited count, and the highest probability of exploitation in 30 days, across the")
 	fmt.Fprintln(w, "             image's CVEs. - = exploit intel not gathered, so 0/0.00 means checked and clear")
 	fmt.Fprintln(w, "  LIVE       running in a cluster right now. ? = no live reconciliation ran")
 	fmt.Fprintln(w, "  TEAM       - = no ownership rule could attribute this workload to a real team")
@@ -307,7 +307,31 @@ func epssMark(f model.Finding) string {
 			max = v.EPSS
 		}
 	}
-	return fmt.Sprintf("%.2f", max)
+	return epssPercent(max)
+}
+
+// epssPercent renders EPSS the way the status page does.
+//
+// Published as 0-1, and shown that way it reads as a rating out of one: "0.61"
+// invites comparison with a CVSS of 6.1, a different scale measuring a different
+// thing. As a percentage it says what it means - a 61% chance of exploitation
+// activity in the next thirty days.
+//
+// The small end matters more than the large one, because most scores live there.
+// A naive round sends everything under half a percent to "0%", which reads as
+// "no chance" on a CVE that has some, so anything non-zero keeps a floor.
+func epssPercent(v float64) string {
+	if v <= 0 {
+		return "0%"
+	}
+	pct := v * 100
+	if pct < 0.1 {
+		return "<0.1%"
+	}
+	if pct < 10 {
+		return fmt.Sprintf("%.1f%%", pct)
+	}
+	return fmt.Sprintf("%.0f%%", pct)
 }
 
 // liveMark reports liveness: yes/no when reconciled, "?" when liveness is

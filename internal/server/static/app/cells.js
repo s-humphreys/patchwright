@@ -454,3 +454,33 @@ export function upgradeStrategyWhy(u) {
 export function heldBackCell(u) {
   return `<span class="act-managed" title="${esc(upgradeStrategyWhy(u))}">held at ${esc(u.ceiling || u.strategy || "policy")}</span>`;
 }
+
+/**
+ * vulnFixCell renders the Fix column: what to upgrade, not just a version.
+ *
+ * The column used to read "3.3.5-2.azl3" — a version with no subject, which a
+ * reader cannot act on without knowing which of an image's several hundred
+ * packages it refers to, and could not find out from this page.
+ *
+ * The package is named only when a scan measured it in the base image. For an
+ * application-introduced CVE nothing scanned that layer, so the version stands
+ * alone rather than being attached to a guessed package: the provider's own
+ * per-CVE package field names an ecosystem the image does not contain 66% of the
+ * time, and a confidently wrong package name is worse than none.
+ */
+export function vulnFixCell(v) {
+  const pkgs = v.packages || [];
+  if (!pkgs.length) {
+    if (!v.fix_available) return '<span class="muted">no fix</span>';
+    return `<span class="act-direct">${esc(v.fixed_version || "fix available")}</span>`;
+  }
+  const first = pkgs[0];
+  const more = pkgs.length > 1
+    ? ` <span class="sub" title="${esc(pkgs.slice(1).map((p) => p.name).join(", "))}">+${pkgs.length - 1}</span>`
+    : "";
+  const fix = first.fixed_in
+    ? ` → <span class="act-direct">${esc(first.fixed_in)}</span>`
+    : ' <span class="muted">no fix</span>';
+  return `<span class="pkg-origin" title="Measured in the base image, so this is the base's to fix.">base</span>
+    <code>${esc(first.name)}</code>${more}${fix}`;
+}

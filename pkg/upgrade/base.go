@@ -283,7 +283,16 @@ func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache
 		if derr == nil && deeper.upgrade.Available {
 			// Reported against this image, but naming the link that is actually
 			// behind, so the ticket lands on whoever can move it.
-			ans := &baseAnswer{upgrade: deeper.upgrade}
+			//
+			// The differential refs are rewritten to this image's own base. The
+			// deeper pair describes two OTHER images, and diffing against it would
+			// attribute everything the intermediate base adds to the application.
+			// ToRef is cleared rather than guessed: ownership stays answerable,
+			// "what would this fix" becomes undetermined, which is true.
+			chained := deeper.upgrade
+			chained.FromRef = up.FromRef
+			chained.ToRef = ""
+			ans := &baseAnswer{upgrade: chained}
 			cache.put(ref, ans)
 			return ans, nil
 		}
@@ -307,6 +316,7 @@ func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtD
 		// actionable by the team that owns the image.
 		Actionable: true,
 		Source:     base.NameTag(),
+		FromRef:    baseRefAsBuilt(base, builtDigest),
 	}
 
 	current, err := semver.StrictNewVersion(strings.TrimPrefix(base.Tag, "v"))
@@ -334,6 +344,7 @@ func (r *BaseResolver) baseUpgrade(ctx context.Context, base model.Image, builtD
 	if recommended != nil {
 		up.Latest = recommended.Original()
 		up.Available = true
+		up.ToRef = up.Name + ":" + up.Latest
 	}
 	if newest != nil {
 		up.Newest = newest.Original()
@@ -394,6 +405,7 @@ func (r *BaseResolver) floatingBase(ctx context.Context, base model.Image, built
 		up.Latest = shortDigest(now)
 		up.Current = shortDigest(builtDigest)
 		up.Available = true
+		up.ToRef = base.Registry + "/" + base.Repository + "@" + now
 	}
 	return up, nil
 }
@@ -516,3 +528,15 @@ func shortDigest(d string) string {
 
 // compile-time check that this satisfies the enricher's source interface.
 var _ enrich.UpgradeSource = (*BaseResolver)(nil)
+
+// baseRefAsBuilt is the reference to scan for "what did this image start from".
+//
+// Digest-pinned when the build recorded one: a tag can have moved since, and
+// scanning where it points now would attribute the base's since-fixed CVEs to the
+// application.
+func baseRefAsBuilt(base model.Image, builtDigest string) string {
+	if builtDigest != "" {
+		return base.Registry + "/" + base.Repository + "@" + builtDigest
+	}
+	return base.NameTag()
+}

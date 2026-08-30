@@ -95,6 +95,15 @@ type RemediationConfig struct {
 	// Base tunes how a first-party image's base is found.
 	Base BaseImageConfig `yaml:"base"`
 
+	// BaseDiff turns on scanning base images, which is what establishes whether a
+	// CVE came from the base or from the application, and how many of them a base
+	// upgrade would actually remove.
+	//
+	// Off by default: it shells out to a scanner and pulls images, which not every
+	// deployment can do. Without it every CVE reports an unknown origin, which is
+	// honest - and specifically not the same as reporting them as the team's.
+	BaseDiff BaseDiffConfig `yaml:"baseDiff"`
+
 	// SupportProducts maps a base image repository to the software whose support
 	// window governs it, overriding and extending the built-in table.
 	//
@@ -107,8 +116,15 @@ type RemediationConfig struct {
 	// mapping to the empty string suppresses the check for that repository, for a base
 	// whose support is genuinely nobody else's business.
 	//
+	// A "product@cycle" value PINS the support cycle instead of reading it from the
+	// image tag. Needed whenever a mirror carries its own version numbers: an internal
+	// "dotnet/aspnet/10" tagged 1.0.2 is .NET 10, and reading the tag makes it .NET
+	// 1.0, which died in 2019. Getting this wrong is not subtle - it reported 382
+	// images as running a dead runtime.
+	//
 	//   supportProducts:
-	//     example.azurecr.io/dotnet/aspnet/10: dotnet
+	//     example.azurecr.io/dotnet/aspnet/10: dotnet@10
+	//     docker.io/node: nodejs
 	//     example.azurecr.io/internal/base: ""
 	SupportProducts map[string]string `yaml:"supportProducts"`
 
@@ -364,6 +380,36 @@ func (i InFlightConfig) Stale(age time.Duration) bool {
 // standard keys are what a spec-compliant builder writes, BuildKit and various CI
 // systems write their own, and some organisations set a label by hand. Naming them
 // is a two-line config change; guessing wrongly is a silent wrong answer.
+// BaseDiffConfig tunes base-image scanning.
+//
+// Only base images are scanned, not the estate: on a real deployment that was 30
+// repositories and 127 tags against several thousand images, shared by everything
+// built on them.
+type BaseDiffConfig struct {
+	// Enabled turns the differential on. Nil means off.
+	Enabled *bool `yaml:"enabled"`
+	// Binary is the scanner to run. Only trivy is supported today.
+	Binary string `yaml:"binary"`
+	// Timeout is passed to the scanner per image.
+	Timeout string `yaml:"timeout"`
+	// Concurrency bounds simultaneous base scans. Each one pulls an image, so this
+	// is a limit on the registry as much as on this process.
+	Concurrency int `yaml:"concurrency"`
+}
+
+// On reports whether base scanning was asked for.
+func (b BaseDiffConfig) On() bool { return b.Enabled != nil && *b.Enabled }
+
+// EffectiveConcurrency is the configured bound, or a default chosen against the
+// startup budget: base scans are pure pull-and-parse latency, and at four the
+// tail of a 127-tag estate was several minutes on its own.
+func (b BaseDiffConfig) EffectiveConcurrency() int {
+	if b.Concurrency > 0 {
+		return b.Concurrency
+	}
+	return 8
+}
+
 type BaseImageConfig struct {
 	// RefLabels are the image config labels that may hold the base reference, in
 	// preference order. Defaults to the OCI standard key followed by BuildKit's.
@@ -995,6 +1041,28 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Remediation.Upgrade.Rules != nil {
 			cfg.Remediation.Upgrade.Rules = append(cfg.Remediation.Upgrade.Rules, part.Remediation.Upgrade.Rules...)
+		}
+		// Entry-wise, like upgrade rules and unlike the scalars: the mapping is a
+		// list of facts about different base images, and several config files each
+		// contributing a few is the normal shape. Wholesale replacement would mean
+		// the last file silently deleted the others' entries.
+		for repo, product := range part.Remediation.SupportProducts {
+			if cfg.Remediation.SupportProducts == nil {
+				cfg.Remediation.SupportProducts = map[string]string{}
+			}
+			cfg.Remediation.SupportProducts[repo] = product
+		}
+		if part.Remediation.BaseDiff.Enabled != nil {
+			cfg.Remediation.BaseDiff.Enabled = part.Remediation.BaseDiff.Enabled
+		}
+		if part.Remediation.BaseDiff.Binary != "" {
+			cfg.Remediation.BaseDiff.Binary = part.Remediation.BaseDiff.Binary
+		}
+		if part.Remediation.BaseDiff.Timeout != "" {
+			cfg.Remediation.BaseDiff.Timeout = part.Remediation.BaseDiff.Timeout
+		}
+		if part.Remediation.BaseDiff.Concurrency != 0 {
+			cfg.Remediation.BaseDiff.Concurrency = part.Remediation.BaseDiff.Concurrency
 		}
 		if part.Remediation.InFlight.Provider != "" {
 			cfg.Remediation.InFlight = part.Remediation.InFlight

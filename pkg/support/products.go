@@ -81,19 +81,49 @@ var products = map[string]string{
 // as the thing it is built from ("example.azurecr.io/dotnet/aspnet/10" is a .NET support
 // cycle even though the path is the organisation's own).
 func ProductFor(repository string, overrides map[string]string) (string, bool) {
+	product, _, ok := ProductAndCycleFor(repository, overrides)
+	return product, ok
+}
+
+// ProductAndCycleFor resolves a repository to a product and, optionally, the
+// support cycle it is pinned to.
+//
+// The cycle normally comes from the image's TAG, which is right for an upstream
+// image: docker.io/node:20 is nodejs 20. It is wrong for a mirror that carries
+// its own versioning. An internal "dotnet/aspnet/10" tagged 1.0.2 is .NET 10 - the
+// major is in the PATH, and reading the tag makes it .NET 1.0, which reached end
+// of life in 2019. That misfired on 382 images before anyone noticed, every one of
+// them reported as running a dead runtime.
+//
+// So a mapping may pin the cycle explicitly:
+//
+//	example.azurecr.io/dotnet/aspnet/10: dotnet@10
+//
+// An empty product still suppresses the check for that repository.
+func ProductAndCycleFor(repository string, overrides map[string]string) (product, cycle string, ok bool) {
 	repo := strings.ToLower(strings.Trim(repository, "/"))
 	if repo == "" {
-		return "", false
+		return "", "", false
 	}
 	// Longest override match first: an override is somebody's explicit statement
 	// about this repository and outranks the built-in table entirely.
-	if p, ok := matchLongest(repo, overrides); ok {
-		return p, p != ""
+	if p, found := matchLongest(repo, overrides); found {
+		name, pinned := splitCycle(p)
+		return name, pinned, name != ""
 	}
-	if p, ok := matchLongest(repo, products); ok {
-		return p, p != ""
+	if p, found := matchLongest(repo, products); found {
+		name, pinned := splitCycle(p)
+		return name, pinned, name != ""
 	}
-	return "", false
+	return "", "", false
+}
+
+// splitCycle separates "dotnet@10" into its product and the cycle it pins.
+func splitCycle(v string) (product, cycle string) {
+	if i := strings.Index(v, "@"); i >= 0 {
+		return strings.TrimSpace(v[:i]), strings.TrimSpace(v[i+1:])
+	}
+	return strings.TrimSpace(v), ""
 }
 
 // matchLongest finds the entry matching the most trailing path segments, so a specific

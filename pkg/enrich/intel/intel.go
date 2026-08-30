@@ -57,7 +57,8 @@ func (p *public) Lookup(ctx context.Context, cveIDs []string) (map[string]enrich
 	}
 	out := make(map[string]enrich.ExploitInfo, len(cveIDs))
 	for _, id := range cveIDs {
-		out[id] = enrich.ExploitInfo{EPSS: epss[id], KEV: kev[id]}
+		e := epss[id]
+		out[id] = enrich.ExploitInfo{EPSS: e.Score, EPSSPercentile: e.Percentile, KEV: kev[id]}
 	}
 	return out, nil
 }
@@ -76,8 +77,8 @@ func (p *public) fetchKEV(ctx context.Context) (map[string]bool, error) {
 	return kev, nil
 }
 
-func (p *public) fetchEPSS(ctx context.Context, cveIDs []string) (map[string]float64, error) {
-	scores := make(map[string]float64, len(cveIDs))
+func (p *public) fetchEPSS(ctx context.Context, cveIDs []string) (map[string]epssScore, error) {
+	scores := make(map[string]epssScore, len(cveIDs))
 	for start := 0; start < len(cveIDs); start += p.batch {
 		end := start + p.batch
 		if end > len(cveIDs) {
@@ -137,19 +138,30 @@ func parseKEV(data []byte) (map[string]bool, error) {
 	return set, nil
 }
 
-// parseEPSS extracts CVE->EPSS score from a FIRST EPSS API response. Scores are
-// returned as strings in the feed.
-func parseEPSS(data []byte) (map[string]float64, error) {
+// epssScore is what the feed says about one CVE.
+type epssScore struct {
+	Score float64
+	// Percentile is where that score sits against every scored CVE, 0..1. The two
+	// answer different questions and both get asked: 0.08 sounds negligible until
+	// you learn it is the 94th percentile, because most CVEs never get exploited
+	// and the whole distribution sits near zero.
+	Percentile float64
+}
+
+// parseEPSS extracts CVE -> score and percentile from a FIRST EPSS API response.
+// Both are returned as strings in the feed.
+func parseEPSS(data []byte) (map[string]epssScore, error) {
 	var doc struct {
 		Data []struct {
-			CVE  string `json:"cve"`
-			EPSS string `json:"epss"`
+			CVE        string `json:"cve"`
+			EPSS       string `json:"epss"`
+			Percentile string `json:"percentile"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse epss json: %w", err)
 	}
-	out := make(map[string]float64, len(doc.Data))
+	out := make(map[string]epssScore, len(doc.Data))
 	for _, d := range doc.Data {
 		if d.CVE == "" {
 			continue
@@ -158,7 +170,11 @@ func parseEPSS(data []byte) (map[string]float64, error) {
 		if err != nil {
 			continue // skip unparseable rows rather than failing the batch
 		}
-		out[d.CVE] = score
+		// A missing or unparseable percentile leaves the score usable rather than
+		// dropping the row: the feed has carried both for years, but one absent
+		// field should not cost the number people actually threshold on.
+		pct, _ := strconv.ParseFloat(d.Percentile, 64)
+		out[d.CVE] = epssScore{Score: score, Percentile: pct}
 	}
 	return out, nil
 }

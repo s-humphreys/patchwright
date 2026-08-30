@@ -148,5 +148,20 @@ export function populate(rows, st) {
         `<option value="${esc(k)}">${esc(text(k))} (${counts.get(k)})</option>`))
       .join("");
     sel.value = chosen;
+
+    // A control offering only "all" cannot change anything, so it is disabled and
+    // dimmed rather than left looking operable. Every dropdown here looks
+    // identical whether or not it has options behind it, and a reader who picks one
+    // and sees nothing happen reasonably concludes the filters are broken.
+    //
+    // A selection is always in `keys` by this point - it is pushed above at zero
+    // when it no longer matches - so this cannot strand a filter the reader can
+    // see the effect of but not clear.
+    const inert = keys.length === 0;
+    sel.disabled = inert;
+    sel.closest("label")?.classList.toggle("inert", inert);
+    sel.title = inert
+      ? "Nothing in the current view differs by this, so it would not change anything."
+      : "";
   }
 }

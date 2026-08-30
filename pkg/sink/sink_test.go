@@ -85,18 +85,26 @@ func TestPriorityMarkDistinguishesSuppressed(t *testing.T) {
 }
 
 func TestEpssMark(t *testing.T) {
-	// Not checked -> "-", so "0.00" unambiguously means "checked, no pressure".
+	// Not checked -> "-", so "0%" unambiguously means "checked, no pressure".
 	if got := epssMark(model.Finding{}); got != "-" {
 		t.Errorf("unchecked: got %q, want \"-\"", got)
 	}
 	f := model.Finding{ExploitChecked: true, Vulns: []model.Vulnerability{
 		{ID: "a", EPSS: 0.01}, {ID: "b", EPSS: 0.933}, {ID: "c", EPSS: 0.5},
 	}}
-	if got := epssMark(f); got != "0.93" {
-		t.Errorf("max EPSS: got %q, want \"0.93\"", got)
+	// A percentage, matching the status page: as 0-1 it reads as a rating out of
+	// one and invites comparison with CVSS, which is a different scale.
+	if got := epssMark(f); got != "93%" {
+		t.Errorf("max EPSS: got %q, want \"93%%\"", got)
 	}
-	if got := epssMark(model.Finding{ExploitChecked: true}); got != "0.00" {
-		t.Errorf("checked, no vulns: got %q, want \"0.00\"", got)
+	if got := epssMark(model.Finding{ExploitChecked: true}); got != "0%" {
+		t.Errorf("checked, no vulns: got %q, want \"0%%\"", got)
+	}
+	// Most scores live at the small end, where a naive round would print "0%" on
+	// a CVE that has real pressure.
+	low := model.Finding{ExploitChecked: true, Vulns: []model.Vulnerability{{ID: "a", EPSS: 0.0004}}}
+	if got := epssMark(low); got != "<0.1%" {
+		t.Errorf("small EPSS: got %q, want \"<0.1%%\"", got)
 	}
 	if got := epssMark(model.Finding{ScanError: "no creds"}); got != "err" {
 		t.Errorf("scan error: got %q, want \"err\"", got)

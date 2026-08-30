@@ -70,36 +70,24 @@ type resourceRef struct {
 func (v *vulnSource) buildMap(ctx context.Context) (map[string]string, error) {
 	out := map[string]string{}
 	assessed := map[string]bool{}
-	for page := 1; page <= apiMaxPages; page++ {
-		path := fmt.Sprintf("/v3/cvm/resource/vulnerabilities?page=%d&page_size=%d", page, apiPageSize)
-		var resp pagedResponse[resourceRef]
-		if err := v.api.post(ctx, path, &resp); err != nil {
-			return nil, fmt.Errorf("rapid7 resource vulnerabilities: page %d: %w", page, err)
-		}
-		for _, r := range resp.Data {
-			img := strings.TrimSpace(r.ImageID)
-			if img == "" || r.ResourceID == "" {
-				continue
-			}
-			ok := strings.EqualFold(r.Assessment.Status, "COMPLETED")
-			if _, seen := out[img]; seen && (!ok || assessed[img]) {
-				continue
-			}
-			out[img], assessed[img] = r.ResourceID, ok
-		}
-		if page >= resp.TotalPages {
-			break
-		}
-		// An empty page before the last one does NOT mean the end. Under load this
-		// API returns one, and treating it as the end truncated the map — which then
-		// reported "no resource runs this image" for everything missing, i.e. a
-		// coverage gap dressed up as an answer. On a live run that silently cost 193
-		// of the estate.
-		if len(resp.Data) == 0 {
-			slog.WarnContext(ctx, "rapid7 returned an empty page mid-listing; continuing",
-				"page", page, "of", resp.TotalPages)
-		}
+	refs, err := sweep[resourceRef](ctx, v.api, func(page int) string {
+		return fmt.Sprintf("/v3/cvm/resource/vulnerabilities?page=%d&page_size=%d", page, apiPageSize)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rapid7 resource vulnerabilities: %w", err)
 	}
+	for _, r := range refs {
+		img := strings.TrimSpace(r.ImageID)
+		if img == "" || r.ResourceID == "" {
+			continue
+		}
+		ok := strings.EqualFold(r.Assessment.Status, "COMPLETED")
+		if _, seen := out[img]; seen && (!ok || assessed[img]) {
+			continue
+		}
+		out[img], assessed[img] = r.ResourceID, ok
+	}
+
 	slog.InfoContext(ctx, "mapped images to rapid7 resources", "images", len(out))
 	return out, nil
 }
@@ -119,20 +107,16 @@ func (v *vulnSource) Scan(ctx context.Context, image model.Image) ([]model.Vulne
 		return nil, fmt.Errorf("no rapid7 resource runs %s, so it has no vulnerability data for it", image.NameTag())
 	}
 
-	var out []model.Vulnerability
-	for page := 1; page <= apiMaxPages; page++ {
-		path := fmt.Sprintf("/v3/cvm/resource/%s/vulnerabilities?page=%d&page_size=%d",
+	rows, err := sweep[cveRow](ctx, v.api, func(page int) string {
+		return fmt.Sprintf("/v3/cvm/resource/%s/vulnerabilities?page=%d&page_size=%d",
 			url.PathEscape(resource), page, apiPageSize)
-		var resp pagedResponse[cveRow]
-		if err := v.api.post(ctx, path, &resp); err != nil {
-			return nil, fmt.Errorf("rapid7 vulnerabilities for %s: page %d: %w", image.NameTag(), page, err)
-		}
-		for _, row := range resp.Data {
-			out = append(out, row.vulnerability())
-		}
-		if len(resp.Data) == 0 || page >= resp.TotalPages {
-			break
-		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rapid7 vulnerabilities for %s: %w", image.NameTag(), err)
+	}
+	out := make([]model.Vulnerability, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.vulnerability())
 	}
 	return out, nil
 }

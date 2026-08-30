@@ -2,6 +2,7 @@ package enrich_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -347,5 +348,59 @@ func TestExploitEnricherDoesNotClaimToHaveCheckedUnscannedImages(t *testing.T) {
 	}
 	if images[0].ExploitChecked {
 		t.Fatal("an unscanned image must not be reported as exploit-checked")
+	}
+}
+
+type stubExposure struct {
+	seen map[string]bool
+	err  error
+}
+
+func (s stubExposure) ExposedImages(context.Context) (map[string]bool, error) {
+	return s.seen, s.err
+}
+
+func TestExposureMarksOnlyWhatWasSeen(t *testing.T) {
+	// An image no cluster reported running cannot be pronounced unreachable.
+	// Overwriting the provider's value with a guess trades one unfounded claim
+	// for another.
+	provider := false
+	// Parsed, not hand-built: the lookup is keyed on NameTag(), which is derived
+	// from the registry, repository and tag rather than the raw reference.
+	occ := []model.Occurrence{
+		{Image: model.ParseImageRef("reg/public:1")},
+		{Image: model.ParseImageRef("reg/private:1")},
+		{Image: model.ParseImageRef("reg/unseen:1"), Exposed: &provider},
+	}
+	e := enrich.Exposure{Source: stubExposure{seen: map[string]bool{
+		model.ParseImageRef("reg/public:1").NameTag():  true,
+		model.ParseImageRef("reg/private:1").NameTag(): false,
+	}}, SourceName: "stub"}
+	if err := e.Enrich(context.Background(), occ); err != nil {
+		t.Fatal(err)
+	}
+	if occ[0].Exposed == nil || !*occ[0].Exposed {
+		t.Error("an image behind an ingress should be marked exposed")
+	}
+	if occ[1].Exposed == nil || *occ[1].Exposed {
+		t.Error("an image seen and not exposed should be marked internal, not left unknown")
+	}
+	if occ[2].Exposed != &provider {
+		t.Error("an unseen image should keep whatever the provider said")
+	}
+}
+
+func TestExposureFailureLeavesEverythingAlone(t *testing.T) {
+	// It needs permissions the other live enrichers do not, so a role that has not
+	// caught up must not take down the assessment. And half a fleet's worth of
+	// exposure is worse than none: it would mark workloads internal that are
+	// reachable via a cluster that refused the request.
+	occ := []model.Occurrence{{Image: model.ParseImageRef("reg/a:1")}}
+	e := enrich.Exposure{Source: stubExposure{err: errors.New("forbidden")}, SourceName: "stub"}
+	if err := e.Enrich(context.Background(), occ); err != nil {
+		t.Errorf("a permissions gap must not fail the assessment: %v", err)
+	}
+	if occ[0].Exposed != nil {
+		t.Error("a failed read must not assert anything about exposure")
 	}
 }

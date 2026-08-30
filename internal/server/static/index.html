@@ -4,15 +4,9 @@
 <title>patchwright</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/static/app/app.css">
+<script type="module" src="/static/app/nav.js"></script>
 
-<header>
-  <span class="brand"><img class="logo" src="/favicon.png" alt="" width="24" height="24"><h1>patchwright</h1></span>
-  <span class="meta" id="freshness">loading…</span>
-  <span class="meta" id="dataAge"></span>
-  <span style="flex:1"></span>
-  <nav class="pages"><a href="/tickets">Ticket plan</a></nav>
-  <button id="refresh" title="Ask the server to run a new assessment">Refresh assessment</button>
-</header>
+<pw-nav page="queue"></pw-nav>
 
 <div id="coverage"></div>
 

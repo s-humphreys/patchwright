@@ -17,7 +17,8 @@ import { $, UNKNOWN, esc } from './util.js';
 /**
  * A CVE across the estate.
  * @typedef {{
- *   id: string, severity: string, cvss: number, epss: number, risk: number, kev: boolean,
+ *   id: string, severity: string, cvss: number, epss: number, epss_percentile: number,
+ *   risk: number, kev: boolean,
  *   fixable: number, images: {image: string, team: string, fixed: string, fix: string}[],
  *   teams: Set<string>,
  * }} CVEGroup
@@ -25,13 +26,34 @@ import { $, UNKNOWN, esc } from './util.js';
 
 const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
 
+// CVE_SIGNALS are the signals that describe a CVE rather than the finding carrying
+// it. Everything else - exposed, in-flight, unassessed, end-of-life - is a property
+// of the image or its deployment, and filtering individual CVEs by those would be
+// meaningless.
+const CVE_SIGNALS = {
+  kev: (v) => !!v.kev,
+};
+
+/** cveMatches applies the CVE-level part of the filter state to one vulnerability. */
+export function cveMatches(v, state) {
+  const signal = state && state.signal;
+  const pred = signal && CVE_SIGNALS[signal];
+  return pred ? pred(v) : true;
+}
+
 /**
  * groupByCVE inverts findings into CVEs. Only scanned findings carry per-CVE detail,
  * so this reports what it aggregated over — a CVE list built from a third of the
  * estate is not the estate.
+ *
+ * `state` is the filter bar. Filtering the FINDINGS is not enough here: picking the
+ * kev signal narrowed the queue to findings carrying a known-exploited CVE and then
+ * listed every CVE on them, most of which are not known-exploited. The reader asked
+ * for KEV and got 9,457 rows. Signals that describe a CVE are applied to the CVEs
+ * as well; the rest describe a finding and are already handled upstream.
  * @returns {{groups: CVEGroup[], scanned: number, total: number}}
  */
-export function groupByCVE(findings) {
+export function groupByCVE(findings, state) {
   /** @type {Map<string, CVEGroup>} */
   const byID = new Map();
   let scanned = 0;
@@ -39,9 +61,10 @@ export function groupByCVE(findings) {
     if (!f.scanned) continue;
     scanned++;
     for (const v of f.vulns || []) {
+      if (!cveMatches(v, state)) continue;
       let g = byID.get(v.id);
       if (!g) {
-        g = { id: v.id, severity: v.severity || "unknown", cvss: 0, epss: 0, risk: 0,
+        g = { id: v.id, severity: v.severity || "unknown", cvss: 0, epss: 0, epss_percentile: 0, risk: 0,
               kev: false, fixable: 0, images: [], teams: new Set() };
         byID.set(v.id, g);
       }
@@ -50,6 +73,9 @@ export function groupByCVE(findings) {
       if ((SEVERITY_RANK[v.severity] || 0) > (SEVERITY_RANK[g.severity] || 0)) g.severity = v.severity;
       g.cvss = Math.max(g.cvss, v.cvss || 0);
       g.epss = Math.max(g.epss, v.epss || 0);
+      // The same CVE carries the same percentile wherever it appears, so the max is
+      // just "the one we have" rather than an aggregation of different values.
+      g.epss_percentile = Math.max(g.epss_percentile || 0, v.epss_percentile || 0);
       g.risk = Math.max(g.risk, v.risk_score || 0);
       g.kev = g.kev || !!v.kev;
       if (v.fix_available) g.fixable++;
@@ -109,8 +135,8 @@ function fixableCell(g) {
  * of the estate this is. It renders whatever findings it is given: the filtering decision
  * belongs to the page, not to this view.
  */
-export function renderCVEs(findings) {
-  const { groups, scanned, total } = groupByCVE(findings);
+export function renderCVEs(findings, state) {
+  const { groups, scanned, total } = groupByCVE(findings, state);
   const note = $("#cveNote");
   if (scanned === 0) {
     // Absolutely not "no CVEs found": nothing was looked at.

@@ -44,6 +44,7 @@ func (s *Server) routes() map[string]http.Handler {
 		// there is no second deployment and no build step.
 		"GET /":                    http.HandlerFunc(s.handleUI),
 		"GET /tickets":             http.HandlerFunc(s.handleTicketsPage),
+		"GET /analytics":           http.HandlerFunc(s.handleAnalyticsPage),
 		"GET /favicon.png":         http.HandlerFunc(s.handleFavicon),
 		"GET /static/app/":         http.HandlerFunc(s.handleAsset),
 		"GET /healthz":             http.HandlerFunc(s.handleHealthz),
@@ -57,6 +58,7 @@ func (s *Server) routes() map[string]http.Handler {
 		"GET /api/v1/cve":          http.HandlerFunc(s.handleCVE),
 		"GET /api/v1/owners":       http.HandlerFunc(s.handleOwners),
 		"GET /api/v1/summary":      http.HandlerFunc(s.handleSummary),
+		"GET /api/v1/analytics":    http.HandlerFunc(s.handleAnalytics),
 		"GET /api/v1/config":       http.HandlerFunc(s.handleConfig),
 		"POST /api/v1/assessments": http.HandlerFunc(s.handleRefresh),
 		"GET /api/v1/tickets":      http.HandlerFunc(s.handleTicketPlan),
@@ -199,6 +201,26 @@ func (s *Server) handleOwners(w http.ResponseWriter, _ *http.Request) {
 		Assessment assessmentMeta `json:"assessment"`
 		Owners     []ownerStats   `json:"owners"`
 	}{s.meta(), owners})
+}
+
+// handleAnalytics serves per-team responsiveness: who is not moving, and on what.
+func (s *Server) handleAnalytics(w http.ResponseWriter, _ *http.Request) {
+	snap := s.snapshot()
+	var a AnalyticsView
+	if snap != nil {
+		a = snap.analytics
+	}
+	// Notes travel with an empty payload too. A consumer that reaches this before
+	// the first assessment should still learn what the page can and cannot answer.
+	if a.Notes == nil {
+		a.Notes = analyticsNotes
+		a.AgeBucketOrder = bucketNames()
+		a.StaleFixDays = staleFixDays
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Assessment assessmentMeta `json:"assessment"`
+		Analytics  AnalyticsView  `json:"analytics"`
+	}{s.meta(), a})
 }
 
 func (s *Server) handleSummary(w http.ResponseWriter, _ *http.Request) {

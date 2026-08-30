@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>patchwright · analytics</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/static/app/app.css">
+<script type="module" src="/static/app/nav.js"></script>
+
+<!--
+  Leverage and neglect, not a league table.
+
+  The queue answers "what is wrong right now". It cannot answer "what should we do
+  first" or "what is nobody acting on", which is what a security team actually
+  needs, and what people currently answer by eyeballing a table.
+
+  An earlier version ranked teams by how slow they were. That reads as an
+  accusation to whoever is on top of it, and it is rarely the useful question:
+  most of the leverage here is a handful of base images, where one rebuild fixes
+  everything built on them.
+
+  A page of its own rather than a tab, for the same reason the ticket plan is: a
+  different subject, read by different people at different times.
+-->
+<pw-nav page="analytics"></pw-nav>
+
+<h2>What to fix first</h2>
+<p class="meta">
+  The rebuilds that clear the most, and the problems nobody is acting on. Expand any row
+  for the images behind it.
+</p>
+
+<div id="analytics">loading…</div>
+
+<script type="module" src="/static/app/analytics.js"></script>

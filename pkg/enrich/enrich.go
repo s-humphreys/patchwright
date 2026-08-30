@@ -38,6 +38,13 @@ type LabelSource interface {
 	NamespaceLabels(ctx context.Context) (map[string]map[string]string, error)
 }
 
+// ExposureSource reports which running images are reachable from outside the
+// cluster. Optional on a LiveSource, like LabelSource: the offline file source
+// cannot know, and says so by not implementing it.
+type ExposureSource interface {
+	ExposedImages(ctx context.Context) (map[string]bool, error)
+}
+
 // Options is source-specific configuration, interpreted by each LiveSource.
 type Options map[string]string
 
@@ -156,5 +163,59 @@ func (n NamespaceLabeler) Enrich(ctx context.Context, occurrences []model.Occurr
 			}
 		}
 	}
+	return nil
+}
+
+// Exposure is an Enricher that records whether each workload is reachable from
+// the internet, measured from the clusters rather than taken from the scan
+// provider.
+//
+// The provider's own field was constant false on the estate this was built
+// against, so every finding reported "internal" - an assertion, not an absence -
+// and an urgency tier defined as "high exploitation probability AND
+// internet-facing" could never fire.
+type Exposure struct {
+	Source ExposureSource
+	// Name of the underlying live source, for logging.
+	SourceName string
+}
+
+// Enrich implements Enricher.
+//
+// Only occurrences whose image the source actually saw are touched. An image no
+// cluster reported running cannot be pronounced unreachable, and overwriting the
+// provider's value with a guess would trade one unfounded claim for another.
+//
+// A failure here is logged and swallowed, unlike liveness and labels. Two
+// reasons. It needs permissions the others do not - services, ingresses and
+// httproutes - so a role that has not caught up would otherwise take down the
+// whole assessment over an enrichment. And the result is all-or-nothing by
+// design: reading one cluster and being refused another would mark workloads
+// internal that are exposed somewhere else, which is precisely the false negative
+// this exists to remove. So either every cluster answers or none of it is
+// applied, and the provider's own value stands.
+func (e Exposure) Enrich(ctx context.Context, occurrences []model.Occurrence) error {
+	seen, err := e.Source.ExposedImages(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "internet exposure not established; the scan provider's own value stands",
+			"source", e.SourceName, "error", err)
+		return nil
+	}
+	public, internal := 0, 0
+	for i := range occurrences {
+		exposed, ok := seen[occurrences[i].Image.NameTag()]
+		if !ok {
+			continue
+		}
+		v := exposed
+		occurrences[i].Exposed = &v
+		if exposed {
+			public++
+		} else {
+			internal++
+		}
+	}
+	slog.InfoContext(ctx, "reconciled internet exposure", "source", e.SourceName,
+		"images_seen", len(seen), "occurrences_public", public, "occurrences_internal", internal)
 	return nil
 }

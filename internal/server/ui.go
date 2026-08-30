@@ -10,7 +10,7 @@ import (
 // self-contained binary: the page ships with the API it reads, so the two cannot
 // drift apart in a deployment.
 //
-//go:embed static/index.html static/tickets.html static/favicon.png static/app
+//go:embed static/index.html static/tickets.html static/analytics.html static/favicon.png static/app
 var staticFS embed.FS
 
 // handleFavicon serves the logo as the tab icon. Downscaled and cropped from
@@ -47,6 +47,15 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 // also means the dashboard no longer queries the tracker on every load.
 func (s *Server) handleTicketsPage(w http.ResponseWriter, _ *http.Request) {
 	s.servePage(w, "static/tickets.html")
+}
+
+// handleAnalyticsPage serves the security analytics as a page of its own.
+//
+// Separate from the queue for the same reason the ticket plan is: its subject is
+// how teams are RESPONDING, not what is wrong, and the two are read by different
+// people at different times.
+func (s *Server) handleAnalyticsPage(w http.ResponseWriter, _ *http.Request) {
+	s.servePage(w, "static/analytics.html")
 }
 
 // servePage writes an embedded HTML page.

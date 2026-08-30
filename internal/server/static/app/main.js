@@ -1,5 +1,6 @@
 import { initialQuery, readURL } from './urlstate.js';
 import { initConfig } from './config.js';
+import { nav } from './nav.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup } from './cves.js';
@@ -19,6 +20,9 @@ export async function loadAll() {
       get("/api/v1/summary"), get("/api/v1/owners"),
     ]);
     renderFreshness(summary.assessment);
+    // The header already polls, but this reload has fresher data in hand; feeding it
+    // in avoids a redundant request and a second of disagreement between the two.
+    nav()?.observe(summary.assessment);
     if (!hasAssessment(summary.assessment)) {
       // Show nothing rather than zeros: an empty dashboard is honest, a dashboard
       // of zeros is a claim.
@@ -114,15 +118,11 @@ export function init() {
   $("#signalFilter").addEventListener("change", applyOwnerFilters);
   $("#onlyFixable").addEventListener("change", applyOwnerFilters);
   $("#search").addEventListener("input", applyOwnerFilters);
-  $("#refresh").addEventListener("click", async () => {
-  await fetch("/api/v1/assessments", { method: "POST" });
-  // The refresh is asynchronous, so poll until the server stops reporting it.
-  const poll = setInterval(async () => {
-    const s = await get("/api/v1/summary");
-    if (!s.assessment?.running) { clearInterval(poll); loadAll(); }
-    else renderFreshness(s.assessment);
-  }, 2000);
-});
+  // The header owns the refresh control and knows when an assessment finishes;
+  // this page owns what to reload when it does. Wiring it the other way round put
+  // polling logic in three page scripts and let two of them drift.
+  document.addEventListener("pw:assessed", () => loadAll());
+  document.addEventListener("pw:assessing", (e) => renderFreshness(/** @type {any} */ (e).detail));
 
   loadAll();
   setInterval(loadAll, 60000);

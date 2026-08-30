@@ -70,7 +70,11 @@ export function applyOwnerFilters() {
  */
 export function renderCurrentView() {
   if (currentView() === "cves") {
-    const { groups, total } = renderCVEs(S.filtered);
+    // The filter state goes in too: narrowing the FINDINGS is not enough here.
+    // Picking the kev signal narrowed the queue to findings carrying a
+    // known-exploited CVE and then listed every CVE on them, so a reader who asked
+    // for KEV got nine thousand rows.
+    const { groups, total } = renderCVEs(S.filtered, filterState());
     $("#queueCount").textContent = countText(
       `${groups.length} CVE${groups.length === 1 ? "" : "s"} across`, total);
     return;

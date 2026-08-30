@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -102,12 +103,28 @@ func TestFetchPagesUntilTheLastPage(t *testing.T) {
 	if len(a.requests) != 3 {
 		t.Errorf("made %d requests, want 3: %v", len(a.requests), a.requests)
 	}
-	// The contract this API actually enforces: paging in the query string, an
-	// empty JSON object as the body, and the key in Api-Key.
-	for i, req := range a.requests {
-		if !strings.Contains(req, fmt.Sprintf("page=%d", i+1)) {
-			t.Errorf("request %d did not ask for page %d: %s", i, i+1, req)
+	// Every page is asked for, but no longer in order: pages after the first are
+	// fetched concurrently, because sweeping them one at a time was minutes of a
+	// startup already measured in tens of them. Order of REQUESTS is not a
+	// contract; covering every page is, and so is the order of the RESULT, which
+	// the occurrence check above pins.
+	asked := map[string]bool{}
+	for _, req := range a.requests {
+		for page := 1; page <= len(a.pages); page++ {
+			if strings.Contains(req, fmt.Sprintf("page=%d&", page)) ||
+				strings.HasSuffix(req, fmt.Sprintf("page=%d", page)) {
+				asked[fmt.Sprintf("%d", page)] = true
+			}
 		}
+	}
+	for page := 1; page <= len(a.pages); page++ {
+		if !asked[fmt.Sprintf("%d", page)] {
+			t.Errorf("page %d was never requested: %v", page, a.requests)
+		}
+	}
+	// The rest of the contract this API enforces: the maximum page size, an empty
+	// JSON object as the body, and the key in Api-Key.
+	for i, req := range a.requests {
 		if !strings.Contains(req, fmt.Sprintf("page_size=%d", apiPageSize)) {
 			t.Errorf("request %d did not use the maximum page size: %s", i, req)
 		}
@@ -323,5 +340,63 @@ func TestAssessmentIssuesReachTheFinding(t *testing.T) {
 	}
 	if len(model.Finding{Occurrences: []model.Occurrence{{Assessed: true}}}.AssessmentIssues()) != 0 {
 		t.Error("a fully assessed finding reported issues")
+	}
+}
+
+func TestSweepFetchesPagesConcurrently(t *testing.T) {
+	// The sweeps are the slowest thing in a run - the risk-score one walks the
+	// estate's whole CVE catalogue a hundred rows at a time - and serially they
+	// were minutes of a startup already measured in tens of them.
+	//
+	// Pages after the first must overlap. Fetched one at a time this deadlocks
+	// rather than merely running slowly, which is the point: a timing assertion
+	// would pass on a fast machine whatever the code did.
+	const pages = 4
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	gate := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := 1
+		fmt.Sscanf(r.URL.Query().Get("page"), "%d", &page)
+		if page > 1 {
+			mu.Lock()
+			inFlight++
+			if inFlight > peak {
+				peak = inFlight
+			}
+			reached := inFlight == pages-1
+			mu.Unlock()
+			if reached {
+				close(gate)
+			}
+			<-gate
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+		}
+		fmt.Fprintf(w, `{"data":[{"cve_id":"CVE-%d"}],"page":%d,"page_size":1,"total_count":%d,"total_pages":%d}`,
+			page, page, pages, pages)
+	}))
+	defer srv.Close()
+
+	p := &apiProvider{baseURL: srv.URL, apiKey: "k", client: srv.Client()}
+	rows, err := sweep[exploitVulnRow](context.Background(), p, func(page int) string {
+		return fmt.Sprintf("/v3/cvm/vulnerabilities?page=%d&page_size=1", page)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != pages {
+		t.Errorf("got %d rows, want one per page (%d)", len(rows), pages)
+	}
+	// Result order must still be page order, whatever order the network answered.
+	for i, r := range rows {
+		if want := fmt.Sprintf("CVE-%d", i+1); r.CVEID != want {
+			t.Errorf("row %d = %q, want %q: the sweep must reassemble pages in order", i, r.CVEID, want)
+		}
+	}
+	if peak < 2 {
+		t.Errorf("peak concurrent page requests = %d, want the pages after the first to overlap", peak)
 	}
 }

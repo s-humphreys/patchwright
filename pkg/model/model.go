@@ -106,7 +106,35 @@ type Vulnerability struct {
 	// 30 days (0..1, FIRST.org); KEV marks membership of CISA's Known Exploited
 	// Vulnerabilities catalog (exploited in the wild).
 	EPSS float64
-	KEV  bool
+	// EPSSPercentile ranks that probability against every scored CVE (0..1). The
+	// score alone misleads: nearly every CVE scores near zero, so 0.08 reads as
+	// negligible when it is in fact the 94th percentile.
+	EPSSPercentile float64
+	KEV            bool
+	// Origin says where this CVE came from, established by scanning the base image
+	// rather than inferred from a package name: "base" if the base image as built
+	// already had it, "app" if the image has it and its base does not, "" if no
+	// base scan was available. FixedByUpgrade is true only when the CVE is absent
+	// from the base being recommended.
+	//
+	// OriginDetermined reports whether a candidate base was actually scanned.
+	// Without it, "this upgrade will not fix it" cannot be told apart from "we
+	// never checked", and those must not render the same way.
+	Origin           string
+	FixedByUpgrade   bool
+	OriginDetermined bool
+
+	// Packages names the packages carrying this CVE, and the version that fixes
+	// each. Populated only for CVEs the base scan found, where a scanner measured
+	// both in the same pass.
+	//
+	// Empty for application-introduced CVEs: their packages live in a layer
+	// nothing scanned, so there is nothing to name. Empty is the honest answer,
+	// and specifically better than the alternative that was tried - the provider
+	// reports a package per CVE from a generic remediation record, and 66% of
+	// those name an ecosystem the image does not contain.
+	Packages []AffectedPackage
+
 	// RiskScore is a scanner's own composite ranking for this CVE, on whatever
 	// scale that scanner uses (Rapid7's is roughly 0..1000). Deliberately kept
 	// apart from EPSS: EPSS is a calibrated probability, this is a weighting, and
@@ -290,6 +318,50 @@ type AssessedImage struct {
 	// gap rather than "already on the latest".
 	Upgrade            *Upgrade
 	RemediationChecked bool
+
+	// BaseDiff summarises what the base image accounts for, and what upgrading it
+	// would fix. Nil means the differential did not run for this image, which is
+	// not the same as it finding nothing.
+	BaseDiff *BaseDiff
+}
+
+// AffectedPackage is a package carrying a CVE, and the version that fixes it.
+//
+// Name and FixedIn come from the same scan of the same image, which is what keeps
+// them consistent: a fix version sourced separately from the package name can
+// belong to a different ecosystem entirely.
+type AffectedPackage struct {
+	Name      string
+	Ecosystem string
+	FixedIn   string
+}
+
+// BaseDiff is what scanning an image's base established: how much of its
+// vulnerability count the base accounts for, and how much of that a specific
+// upgrade would remove.
+//
+// The counts are what makes a queue row worth working. "A newer base exists" asks
+// a team for an upgrade of unknown value; "this clears 3,664 of your 4,890" does
+// not.
+type BaseDiff struct {
+	// FromRef is the base as built, digest-pinned when the build recorded one.
+	// ToRef is the base compared against, empty when none was.
+	FromRef  string
+	ToRef    string
+	OSFamily string
+
+	Total      int // CVEs considered
+	FromBase   int // present in the base as built
+	FromApp    int // in the image but not in its base, so the team owns them
+	Unknown    int // not attributed
+	Clears     int // removed by moving to ToRef
+	Leaves     int // from the base and still present in ToRef
+	Introduces int // in ToRef but not in the base as built
+
+	// Determined reports whether a candidate base was scanned. When false, Clears
+	// and Leaves are both zero because the question was not asked - which must not
+	// be shown as "this upgrade fixes nothing".
+	Determined bool
 }
 
 // Upgrade describes a newer version available for the artifact that deploys an
@@ -340,6 +412,20 @@ type Upgrade struct {
 	// restrained recommendation and an exhausted one look identical otherwise: without
 	// it, a reader cannot tell "policy says stop here" from "this is all there is".
 	Rule string
+
+	// FromRef and ToRef are the exact references a base differential would scan:
+	// the base this image was actually built on, and the base this recommendation
+	// would move it to. FromRef is digest-pinned whenever the build recorded one,
+	// so the scan describes what the image was built on rather than whatever the
+	// tag points at today.
+	//
+	// Populated only for Kind "base". ToRef is empty when there is nothing to move
+	// to, and also when the recommendation belongs to a deeper link in the base
+	// chain: ownership is still answerable from FromRef, but "what would this
+	// upgrade fix" is a question about a different pair of images and must not be
+	// answered by comparing the wrong two.
+	FromRef string
+	ToRef   string
 
 	// Comparison says how the verdict was reached: "version" when tags were
 	// compared, "digest" when the reference is a floating tag with no version and
@@ -453,6 +539,9 @@ type Finding struct {
 	InFlight        *InFlight
 	InFlightChecked bool
 	InFlightReason  string
+	// BaseDiff is what scanning this image's base established. Nil when the
+	// differential did not run.
+	BaseDiff *BaseDiff
 
 	Actionable bool
 	Suppressed bool

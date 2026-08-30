@@ -39,7 +39,7 @@ func (r *BaseResolver) supportStatus(ctx context.Context, base model.Image, now 
 	if r.Support == nil {
 		return nil
 	}
-	product, ok := support.ProductFor(base.Registry+"/"+base.Repository, r.Cfg.SupportProducts)
+	product, pinned, ok := support.ProductAndCycleFor(base.Registry+"/"+base.Repository, r.Cfg.SupportProducts)
 	if !ok {
 		return nil
 	}
@@ -50,8 +50,18 @@ func (r *BaseResolver) supportStatus(ctx context.Context, base model.Image, now 
 		slog.DebugContext(ctx, "support windows unavailable", "product", product, "error", err)
 		return nil
 	}
-	cycle, found := prod.Cycle(base.Tag)
+	// A pinned cycle beats the tag. For a mirror carrying its own version numbers
+	// the tag says nothing about the upstream release: "dotnet/aspnet/10:1.0.2" is
+	// .NET 10, and reading the tag makes it .NET 1.0, dead since 2019.
+	lookup := base.Tag
+	if pinned != "" {
+		lookup = pinned
+	}
+	cycle, found := prod.Cycle(lookup)
 	if !found {
+		// Including a pinned cycle the product does not have. Somebody naming a
+		// cycle that does not exist has made a mistake, and inventing a verdict
+		// from the tag instead would hide it behind a plausible answer.
 		return nil
 	}
 	supported, known := cycle.Supported(now)

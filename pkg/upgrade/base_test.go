@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
@@ -12,16 +13,32 @@ import (
 
 // fakeRegistry answers with whatever a test puts in it. Registry names here are
 // deliberately generic: nothing in the resolver knows about any real registry.
+// Upgrades resolves images concurrently, so `asked` is written from several
+// goroutines at once. Unguarded it is a real data race that -race catches only
+// sometimes, which is the worst kind: it failed one run in eight and looked like
+// a flaky test rather than a broken double.
 type fakeRegistry struct {
 	labels  map[string]map[string]string
 	digests map[string]string
 	tags    map[string][]string
 	err     error
-	asked   []string
+
+	mu    sync.Mutex
+	asked []string
+}
+
+// askedFor returns a copy of the references looked up, safe to read after a
+// concurrent resolve.
+func (f *fakeRegistry) askedFor() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.asked...)
 }
 
 func (f *fakeRegistry) Labels(_ context.Context, ref string) (map[string]string, error) {
+	f.mu.Lock()
 	f.asked = append(f.asked, ref)
+	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -143,8 +160,8 @@ func TestThirdPartyImagesAreLeftAlone(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("reported upgrades for third-party images: %+v", got)
 	}
-	if len(reg.asked) != 0 {
-		t.Errorf("inspected third-party images: %v", reg.asked)
+	if len(reg.askedFor()) != 0 {
+		t.Errorf("inspected third-party images: %v", reg.askedFor())
 	}
 }
 
@@ -153,8 +170,8 @@ func TestThirdPartyImagesAreLeftAlone(t *testing.T) {
 func TestNoFirstPartyRegistriesIsANoOp(t *testing.T) {
 	reg := &fakeRegistry{}
 	got := resolve(t, reg, config.RemediationConfig{}, "registry.example.com/app:1.0.0")
-	if len(got) != 0 || len(reg.asked) != 0 {
-		t.Errorf("did work with no first-party registries configured: %+v %v", got, reg.asked)
+	if len(got) != 0 || len(reg.askedFor()) != 0 {
+		t.Errorf("did work with no first-party registries configured: %+v %v", got, reg.askedFor())
 	}
 }
 
@@ -209,7 +226,7 @@ func TestChainStopsAtThirdPartyBase(t *testing.T) {
 	if !u.Resolved {
 		t.Errorf("a current base was reported unresolved: %+v", u)
 	}
-	for _, ref := range reg.asked {
+	for _, ref := range reg.askedFor() {
 		if strings.HasPrefix(ref, "mcr.example.com/") {
 			t.Errorf("inspected a third-party base: %s", ref)
 		}
