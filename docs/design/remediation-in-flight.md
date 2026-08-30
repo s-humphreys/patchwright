@@ -9,10 +9,10 @@ it asked:
 | Open Renovate PR | patchwright was ticketing |
 |---|---|
 | `Update registry.example.com/dotnet/aspnet/10 Docker tag to v1.1.1` (3 days old) | the same base bump |
-| `Update docker.io/octopusdeploy/kubernetes-agent Docker tag to v3.13.0` (7 days) | the agent upgrade |
-| `Update tryretool/backend Docker tag to v3.334.28` (3 days) | the retool base bump |
-| `Update busybox Docker tag to v1.38` (3 days) | the datadog init image |
-| `Update Helm release k8s-guardrails to v5.3.0` (4 days) | the chart upgrade |
+| `Update example.com/vendor/agent Docker tag to v3.13.0` (7 days) | the agent upgrade |
+| `Update vendor/backend Docker tag to v3.334.28` (3 days) | that image's base bump |
+| `Update busybox Docker tag to v1.38` (3 days) | an init image |
+| `Update Helm release policy-controller to v5.3.0` (4 days) | the chart upgrade |
 
 A ticket asking somebody to do work that is sitting in a review queue is worse than no
 ticket: it costs triage time and teaches people that the queue is noise.

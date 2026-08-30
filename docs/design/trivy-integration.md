@@ -24,8 +24,8 @@ From a real InsightCloudSec export of 4,311 rows covering 815 images:
                                                     severity UNKNOWN, all counts 0)
 
 The gap is not about private-registry access, which is the intuitive explanation.
-Whole public registries were unassessed too: `xpkg.crossplane.io` (143 rows),
-`registry.datadoghq.com`, `registry.istio.io`, `cr.agentgateway.dev`. And where the
+Whole public registries were unassessed too - a package registry accounted for 143
+rows on its own, and three vendor registries for most of the rest. And where the
 scanner was allowed to look at those same public images, it found real work:
 
     14 of 35 actionable findings existed ONLY because the scanner ran

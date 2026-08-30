@@ -26,8 +26,7 @@ owners:
         'kube-system', 'kube-public', 'kube-node-lease',
         'flux-system', 'crossplane-system', 'cert-manager',
         'istio-system', 'gatekeeper-system', 'keda',
-        'datadog', 'datadog-operator', 'argo-events',
-        'agentgateway-system', 'monitoring'
+        'argo-events', 'monitoring'
       ]
     class: platform
     team: platform

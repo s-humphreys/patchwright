@@ -72,54 +72,38 @@ Write tools - raising a ticket, applying the ticket plan - are deliberately not 
 the first phase. The ticket plan is already exposed read-only with an explicit
 apply, and moving that behind a conversational interface deserves its own decision.
 
-## Authentication: none, on a port only the gateway can reach
+## Authentication: whatever the API already uses
 
-Where an MCP gateway in front handles authentication and authorisation, patchwright
-does not need its own. Re-authenticating behind a gateway that has already decided
-who the caller is buys nothing and adds a credential to manage.
+Nothing new. The MCP endpoint registers in the same route table as everything else
+and inherits the middleware that wraps it, which already has exactly the behaviour
+wanted:
 
-The condition is that "in front" has to be enforced rather than assumed, and the
-obvious implementation gets that wrong.
+- a shared token is configured, and the endpoint requires it
+- nothing is configured, and the endpoint is open, like the rest of the service
 
-`Handler()` wraps every route in `authorize`, with an exemption list for metrics and
-the probes. Mounting `/mcp` and exempting it is the small change - and it would put
-an unauthenticated read of the whole estate on the same port and the same hostname
-as the page, which is behind sign-in because that was a security requirement.
-Anything that can route to the page could then read the same data without
-credentials. Two doors to one room, one of them locked.
+That is the whole design. Mounting it as a normal route rather than an exempt one
+also removes the failure worth avoiding: an exempt path would put an
+unauthenticated read of the estate on the same port and hostname as a page that is
+behind sign-in, and network policy cannot separate them because it selects on port
+rather than path. Inheriting the middleware means the endpoint can never be the
+weakest door into the same room.
 
-NetworkPolicy cannot fix that, because it selects on port and not on path.
+Where something in front already authenticates callers, run without a token and let
+it. Re-checking a credential behind a component that has already decided who the
+caller is buys nothing and adds a secret to manage. That is a deployment decision
+rather than a code one, which is the point: the service does not need to know.
 
-**So serve MCP on its own port**, in the same process:
+One interaction to state, because it will otherwise be discovered by a client that
+cannot report it usefully. Interactive sign-in and the shared token are alternatives
+in the same middleware, and an MCP client is not a browser: with sign-in configured
+and no token set, a headless caller has no way to authenticate. It does at least
+fail clearly - a non-HTML request gets a 401 saying to present a token, rather than
+a redirect into a login page - but the answer is to set the token alongside sign-in
+wherever machine callers are expected.
 
-- MCP port: admits the gateway's namespace only. No auth in patchwright, because
-  the network guarantees the caller came through something that already
-  authenticated them.
-- API and page port: unchanged, behind sign-in, reachable from the ingress
-  namespace.
-
-Both are the same process reading the same cached assessment, so the "same
-deployment" argument is untouched - it is one more listener, not one more thing to
-operate. And the claim being relied on becomes checkable: a NetworkPolicy naming the
-gateway namespace is a thing somebody can read, unlike an assumption that nothing
-else will call the endpoint.
-
-The deployed policy already has this shape - ingress on the API port is restricted to
-the ingress gateway, kubelet probes and the Prometheus namespace - so this adds one
-rule rather than introducing a pattern.
-
-Two consequences worth accepting explicitly:
-
-- **Attribution moves to the gateway.** Patchwright's own logs will say a tool was
-  called, not who called it. That is fine if the gateway keeps that record, and it
-  should be confirmed rather than assumed, because "who asked" was a stated
-  requirement for the page.
-- **Authorisation stays all-or-nothing.** Whatever the gateway lets through sees the
-  whole estate, because the underlying views have no per-team scoping to offer.
-
-If the endpoint ever needs to be reachable from somewhere the gateway does not
-front, this decision has to be revisited rather than patched: at that point the
-control that was doing the work is gone.
+Authorisation is unchanged and all-or-nothing: whatever reaches the endpoint sees
+the whole estate, because the underlying views have no per-team scoping to offer. If
+something in front enforces narrower access, that narrowing cannot be enforced here.
 
 ## Cost
 
@@ -133,8 +117,8 @@ enough by the time this is built.
 
 1. Tool implementations over the existing cached assessment, wired to the CLI's
    stdio transport. No server change, no network question, testable.
-2. Streamable HTTP on its own port in the `serve` process, with a NetworkPolicy
-   admitting the gateway's namespace and nothing else.
+2. Streamable HTTP at `/mcp` on the existing server, behind whatever authentication
+   the API already has.
 
 ## Open questions
 
@@ -146,7 +130,7 @@ enough by the time this is built.
    same thing.
 3. **Does this want rate limiting?** A conversational client can call a tool in a
    loop. Reads are cheap, but `refresh` is not, and the API has no limiting today.
-   Whether that belongs here or at the gateway is worth settling before a client
+   Whether that belongs here or in front of it is worth settling before a client
    discovers it.
 4. **Is `refresh` a tool at all?** It is the one expensive operation, and a
    scheduled assessment already keeps the cache current. Leaving it out removes the
