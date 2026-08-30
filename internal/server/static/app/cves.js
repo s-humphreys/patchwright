@@ -17,7 +17,8 @@ import { $, UNKNOWN, esc } from './util.js';
 /**
  * A CVE across the estate.
  * @typedef {{
- *   id: string, severity: string, cvss: number, epss: number, risk: number, kev: boolean,
+ *   id: string, severity: string, cvss: number, epss: number, epss_percentile: number,
+ *   risk: number, kev: boolean,
  *   fixable: number, images: {image: string, team: string, fixed: string, fix: string}[],
  *   teams: Set<string>,
  * }} CVEGroup
@@ -41,7 +42,7 @@ export function groupByCVE(findings) {
     for (const v of f.vulns || []) {
       let g = byID.get(v.id);
       if (!g) {
-        g = { id: v.id, severity: v.severity || "unknown", cvss: 0, epss: 0, risk: 0,
+        g = { id: v.id, severity: v.severity || "unknown", cvss: 0, epss: 0, epss_percentile: 0, risk: 0,
               kev: false, fixable: 0, images: [], teams: new Set() };
         byID.set(v.id, g);
       }
@@ -50,6 +51,9 @@ export function groupByCVE(findings) {
       if ((SEVERITY_RANK[v.severity] || 0) > (SEVERITY_RANK[g.severity] || 0)) g.severity = v.severity;
       g.cvss = Math.max(g.cvss, v.cvss || 0);
       g.epss = Math.max(g.epss, v.epss || 0);
+      // The same CVE carries the same percentile wherever it appears, so the max is
+      // just "the one we have" rather than an aggregation of different values.
+      g.epss_percentile = Math.max(g.epss_percentile || 0, v.epss_percentile || 0);
       g.risk = Math.max(g.risk, v.risk_score || 0);
       g.kev = g.kev || !!v.kev;
       if (v.fix_available) g.fixable++;

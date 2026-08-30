@@ -383,3 +383,55 @@ func TestWinsNameTheImagesOnTheBase(t *testing.T) {
 		t.Errorf("image refs = %v, want both, sorted so two runs render the same", got)
 	}
 }
+
+func TestPerTeamEPSSReportsBothScoreAndPercentile(t *testing.T) {
+	// Asked for by name for vulnerability-management reporting, and both halves
+	// are needed: 0.08 sounds negligible and can be the 94th percentile, because
+	// almost every CVE scores near zero.
+	f := aFinding("a", 10)
+	f.Vulns = []model.Vulnerability{
+		{ID: "CVE-1", EPSS: 0.08, EPSSPercentile: 0.94, FirstSeen: daysAgo(10)},
+		{ID: "CVE-2", EPSS: 0.61, EPSSPercentile: 0.98, FirstSeen: daysAgo(10)},
+	}
+	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	got := v.Teams[0]
+	if got.TopEPSS != 0.61 {
+		t.Errorf("top epss = %v, want 0.61", got.TopEPSS)
+	}
+	if got.TopPercentile != 0.98 {
+		t.Errorf("top percentile = %v, want 0.98", got.TopPercentile)
+	}
+	if got.EPSSHigh != 1 {
+		t.Errorf("epss_high = %d, want 1: one finding carries a CVE over the threshold", got.EPSSHigh)
+	}
+}
+
+func TestEPSSHighCountsFindingsNotCVEs(t *testing.T) {
+	// The column sits beside other per-finding counts. Counting CVEs there would
+	// make one bad image look like a department-wide problem.
+	f := aFinding("a", 10)
+	f.Vulns = []model.Vulnerability{
+		{ID: "CVE-1", EPSS: 0.9, FirstSeen: daysAgo(10)},
+		{ID: "CVE-2", EPSS: 0.8, FirstSeen: daysAgo(10)},
+		{ID: "CVE-3", EPSS: 0.7, FirstSeen: daysAgo(10)},
+	}
+	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	if got := v.Teams[0].EPSSHigh; got != 1 {
+		t.Errorf("epss_high = %d, want 1: three CVEs on one image is one finding", got)
+	}
+}
+
+func TestATeamBelowTheThresholdIsNotCountedHigh(t *testing.T) {
+	f := aFinding("a", 10)
+	f.Vulns = []model.Vulnerability{{ID: "CVE-1", EPSS: 0.49, EPSSPercentile: 0.9, FirstSeen: daysAgo(10)}}
+	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	got := v.Teams[0]
+	if got.EPSSHigh != 0 {
+		t.Errorf("epss_high = %d, want 0 just below the threshold", got.EPSSHigh)
+	}
+	// The percentile is still reported: a crowded field is worth seeing even when
+	// nothing crosses the line.
+	if got.TopPercentile != 0.9 {
+		t.Errorf("top percentile = %v, want 0.9", got.TopPercentile)
+	}
+}

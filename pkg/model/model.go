@@ -106,7 +106,11 @@ type Vulnerability struct {
 	// 30 days (0..1, FIRST.org); KEV marks membership of CISA's Known Exploited
 	// Vulnerabilities catalog (exploited in the wild).
 	EPSS float64
-	KEV  bool
+	// EPSSPercentile ranks that probability against every scored CVE (0..1). The
+	// score alone misleads: nearly every CVE scores near zero, so 0.08 reads as
+	// negligible when it is in fact the 94th percentile.
+	EPSSPercentile float64
+	KEV            bool
 	// Origin says where this CVE came from, established by scanning the base image
 	// rather than inferred from a package name: "base" if the base image as built
 	// already had it, "app" if the image has it and its base does not, "" if no

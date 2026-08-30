@@ -82,7 +82,11 @@ function vulnTable(f) {
     <td><code>${esc(v.id)}</code></td>
     <td class="${esc(v.severity || "")}">${esc(v.severity || "-")}</td>
     <td class="num">${v.cvss ? v.cvss.toFixed(1) : "-"}</td>
-    <td class="num">${v.epss ? epssPercent(v.epss) : (f.exploit_checked ? "-" : "?")}</td>
+    <td class="num" title="${v.epss_percentile
+      ? `${Math.round(v.epss_percentile * 100)}th percentile of all scored CVEs`
+      : "No percentile reported for this CVE."}">${
+      v.epss ? epssPercent(v.epss) : (f.exploit_checked ? "-" : "?")}${
+      v.epss_percentile ? ` <span class="sub">p${Math.round(v.epss_percentile * 100)}</span>` : ""}</td>
     <td class="num">${v.risk_score ? Math.round(v.risk_score) : "-"}</td>
     <td>${v.kev ? badge(SIGNAL_BADGES.kev, "kev") : ""}</td>
     <td>${vulnFixCell(v)}</td>
@@ -440,7 +444,10 @@ export function openCVEDetail(g) {
       <section><h4>Assessment</h4><dl>
         ${row("Severity", `<span class="${esc(g.severity)}">${esc(g.severity)}</span>`)}
         ${row("CVSS", g.cvss ? g.cvss.toFixed(1) : unknown("unknown", "No CVSS score was reported for this CVE."))}
-        ${row("EPSS", g.epss ? epssPercent(g.epss) : unknown("?", "No exploit source ran, so exploitation pressure is unknown."))}
+        ${row("EPSS", g.epss
+          ? `${epssPercent(g.epss)}${g.epss_percentile
+              ? ` <span class="sub">${Math.round(g.epss_percentile * 100)}th percentile of all scored CVEs</span>` : ""}`
+          : unknown("?", "No exploit source ran, so exploitation pressure is unknown."))}
         ${row("Risk score", g.risk ? String(Math.round(g.risk)) : unknown("-", "The scan provider scored this CVE for none of these images."))}
         ${row("Known exploited", g.kev ? badge(SIGNAL_BADGES.kev, "kev") : '<span class="muted">not in CISA KEV</span>')}
       </dl></section>

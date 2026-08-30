@@ -32,6 +32,12 @@ var ageBuckets = []int{7, 30, 90, 180}
 // queue nobody is reading.
 const staleFixDays = 30
 
+// epssUrgent is the exploitation probability at which a finding is treated as
+// pressing regardless of anything else. Agreed with security rather than derived:
+// it is the threshold their urgency definition already uses, and having it in two
+// places with two values would be worse than having it here.
+const epssUrgent = 0.5
+
 // TeamAnalytics is one team's responsiveness.
 type TeamAnalytics struct {
 	Class string `json:"class"`
@@ -78,6 +84,17 @@ type TeamAnalytics struct {
 	// upgrade available. The gap between them is what a security team escalates on.
 	KEV        int `json:"kev"`
 	KEVFixable int `json:"kev_fixable"`
+
+	// EPSSHigh counts findings carrying a CVE at or above the urgency threshold.
+	// TopEPSS and TopPercentile are the worst single CVE this team holds.
+	//
+	// Both numbers, because either alone misleads. A score of 0.08 sounds
+	// negligible and can be the 94th percentile, since almost every CVE scores
+	// near zero; a high percentile with a low score is a crowded field rather than
+	// a real threat. Asked for by name for vulnerability-management reporting.
+	EPSSHigh      int     `json:"epss_high"`
+	TopEPSS       float64 `json:"top_epss"`
+	TopPercentile float64 `json:"top_epss_percentile"`
 
 	// BaseClears and BaseTotal are the CVEs a base rebuild would remove across this
 	// team's images, and the CVEs those images carry. The ratio says how much of a
@@ -233,6 +250,7 @@ func deref(v *int) int {
 }
 
 type teamAccumulator struct {
+	epssHigh bool
 	t        TeamAnalytics
 	ages     []int
 	prAgeDay []int
@@ -257,8 +275,20 @@ func (a *teamAccumulator) add(f *model.Finding, tickets map[string][]ticketRef, 
 	for _, v := range f.Vulns {
 		if v.KEV {
 			kev = true
-			break
 		}
+		if v.EPSS > a.t.TopEPSS {
+			a.t.TopEPSS = v.EPSS
+		}
+		if v.EPSSPercentile > a.t.TopPercentile {
+			a.t.TopPercentile = v.EPSSPercentile
+		}
+		if v.EPSS >= epssUrgent {
+			a.epssHigh = true
+		}
+	}
+	if a.epssHigh {
+		a.t.EPSSHigh++
+		a.epssHigh = false
 	}
 	upgradable := f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable
 	if kev {

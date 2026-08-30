@@ -181,7 +181,10 @@ type VulnView struct {
 	FixAvailable bool       `json:"fix_available"`
 	FixedVersion string     `json:"fixed_version,omitempty"`
 	EPSS         float64    `json:"epss,omitempty"`
-	KEV          bool       `json:"kev,omitempty"`
+	// EPSSPercentile ranks the score against every scored CVE (0..1). Absent when
+	// no exploit source ran, or when the feed carried no percentile for this CVE.
+	EPSSPercentile float64 `json:"epss_percentile,omitempty"`
+	KEV            bool    `json:"kev,omitempty"`
 	// RiskScore is the scan provider's own composite ranking, on its own scale
 	// (Rapid7's is roughly 0..1000). Not comparable with epss, which is a
 	// probability. Absent means unscored.
@@ -283,16 +286,17 @@ func ToFindingView(f model.Finding) FindingView {
 			knownExploited = true
 		}
 		vulns = append(vulns, VulnView{
-			ID:           v.ID,
-			Severity:     v.Severity,
-			FirstSeen:    firstSeen(v),
-			CVSS:         v.CVSS,
-			FixAvailable: v.FixAvailable,
-			FixedVersion: v.FixedVersion,
-			EPSS:         v.EPSS,
-			KEV:          v.KEV,
-			RiskScore:    v.RiskScore,
-			ExploitKnown: v.ExploitKnown,
+			ID:             v.ID,
+			Severity:       v.Severity,
+			FirstSeen:      firstSeen(v),
+			CVSS:           v.CVSS,
+			FixAvailable:   v.FixAvailable,
+			FixedVersion:   v.FixedVersion,
+			EPSS:           v.EPSS,
+			EPSSPercentile: v.EPSSPercentile,
+			KEV:            v.KEV,
+			RiskScore:      v.RiskScore,
+			ExploitKnown:   v.ExploitKnown,
 
 			Origin:           v.Origin,
 			FixedByUpgrade:   v.FixedByUpgrade,

@@ -108,6 +108,9 @@ function teamTable(teams, view) {
       <td class="num">${t.unstarted || "-"}</td>
       <td class="num">${t.in_flight || "-"}</td>
       <td class="num">${t.kev || "-"}</td>
+      <td class="num">${t.epss_high || "-"}</td>
+      <td class="num"${t.top_epss ? ` title="highest score ${(t.top_epss * 100).toFixed(1)}%"` : ""}>${
+        t.top_epss_percentile ? "p" + Math.round(t.top_epss_percentile * 100) : "-"}</td>
       <td class="num">${t.unassessed || "-"}</td>
     </tr>`).join("");
   if (!rows) return "";
@@ -116,6 +119,8 @@ function teamTable(teams, view) {
     <div class="scroll-x"><table class="mini">
       <thead><tr><th>Owner</th><th class="num">Actionable</th><th class="num">Median age</th>
       <th class="num">Not started</th><th class="num">In progress</th><th class="num">KEV</th>
+      <th class="num" title="Findings carrying a CVE at or above EPSS 0.5.">EPSS&nbsp;≥50%</th>
+      <th class="num" title="Where this owner's worst CVE ranks against every scored CVE.">Worst&nbsp;pctl</th>
       <th class="num">Unassessed</th></tr></thead>
       <tbody>${rows}</tbody></table></div></section>`;
 }

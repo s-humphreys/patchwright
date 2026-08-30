@@ -946,6 +946,15 @@ components:
         epss:
           type: number
           description: Probability of exploitation in 30 days. Needs an exploit source.
+        epss_percentile:
+          type: number
+          description: |
+            Where that probability ranks against every scored CVE, 0..1. Reported
+            because the score alone misleads: nearly every CVE scores near zero, so
+            0.08 reads as negligible when it is in fact the 94th percentile.
+
+            Absent when no exploit source ran, or when the feed carried no percentile
+            for this CVE.
         kev: { type: boolean, description: CISA Known Exploited Vulnerabilities. }
         origin:
           type: string
@@ -1180,6 +1189,19 @@ components:
         kev_fixable:
           type: integer
           description: Of those, the ones with an upgrade available. The gap is what gets escalated.
+        epss_high:
+          type: integer
+          description: |
+            Findings carrying a CVE at or above the urgency threshold (EPSS 0.5).
+        top_epss:
+          type: number
+          description: The highest exploitation probability this owner holds, 0..1.
+        top_epss_percentile:
+          type: number
+          description: |
+            Where that score ranks against every scored CVE, 0..1. Both are reported
+            because either alone misleads: a high percentile with a low score is a
+            crowded field rather than a real threat.
         base_clears:
           type: integer
           description: CVEs a base rebuild would remove across this team's images.
