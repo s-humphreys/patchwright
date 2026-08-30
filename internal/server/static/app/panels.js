@@ -1,5 +1,5 @@
 import { S } from './state.js';
-import { $, elapsed, esc, hasAssessment } from './util.js';
+import { $, ago, elapsed, esc, hasAssessment } from './util.js';
 
 export function renderFreshness(a) {
   const el = $("#freshness");
@@ -17,9 +17,11 @@ export function renderFreshness(a) {
     el.className = "meta";
     return;
   }
-  let text = `assessed ${new Date(a.generated_at).toLocaleString()}`;
-  if (a.running) text += ` (refresh in progress${elapsed(a)})`;
-  el.textContent = text;
+  // Relative, because the question is "is this recent" and not "what time was it".
+  // The exact timestamp stays in the tooltip for when somebody does need it.
+  el.textContent = `assessed ${ago(a.generated_at)}`;
+  el.title = new Date(a.generated_at).toLocaleString();
+  if (a.running) el.textContent += ` · reassessing${elapsed(a)}`;
   el.className = "meta";
 }
 

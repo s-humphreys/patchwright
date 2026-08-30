@@ -22,11 +22,8 @@
   h1 { font-size: 1.1rem; margin: 0; letter-spacing: -0.01em; }
   h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
        color: var(--muted); margin: 2rem 0 0.6rem; font-weight: 600; }
-  header { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-           border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; }
   /* The same asset as the tab icon, 64px served and drawn at 24, so it stays crisp
      on a high-density display without embedding a second copy. */
-  .brand { display: flex; align-items: center; gap: 0.5rem; }
   .logo { display: block; }
   .meta { color: var(--muted); font-size: 0.82rem; }
   /* One panel for every data gap. Quiet by default: a page that opens with three
@@ -88,8 +85,6 @@
   .tile-explain dd { color: var(--muted); font-size: 0.78rem; margin: 0 0 0.45rem; }
   /* Page-level navigation in the header, as distinct from the tabs that switch views of
      the same findings. */
-  .pages a { color: var(--muted); text-decoration: none; font-size: 0.85rem; }
-  .pages a:hover { color: var(--fg); text-decoration: underline; }
   /* Fixed-height, scrollable table areas. Without a cap, 700 rows push the second
      table and every summary number off the screen, so the page can only be read
      top to bottom once. */
@@ -390,3 +385,54 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .col-fill.col-normal { background: var(--high); }
   .col-label { font-size: .62rem; color: var(--muted); margin-top: .2rem;
     white-space: nowrap; overflow: hidden; }
+
+  /* The header, shared by every page via <pw-nav>.
+     Sticky because the refresh control and the freshness line are the two things
+     people look for after scrolling, and both used to be at the top of a long page. */
+  .app-header { position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    padding: .55rem .9rem; margin: -1rem -1rem 1rem;
+    background: color-mix(in srgb, var(--card) 92%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: .5rem; text-decoration: none; color: var(--fg); }
+  .brand-name { font-weight: 600; letter-spacing: -0.01em; }
+  .app-header .logo { border-radius: 4px; }
+
+  /* Page navigation as a segmented control: three destinations that look like a
+     choice, rather than a run-on line of links that reads as one sentence. */
+  .pages { display: flex; gap: .15rem; padding: .15rem;
+    background: color-mix(in srgb, var(--fg) 6%, transparent);
+    border-radius: 7px; }
+  .pages a { padding: .25rem .6rem; border-radius: 5px; font-size: .84rem;
+    color: var(--muted); text-decoration: none; white-space: nowrap;
+    transition: background .12s ease, color .12s ease; }
+  .pages a:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 7%, transparent); }
+  .pages a[aria-current="page"] { color: var(--fg); background: var(--card);
+    box-shadow: 0 1px 2px rgb(0 0 0 / .18); font-weight: 550; }
+
+  /* Status sits between the nav and the button, and takes the slack: it is the part
+     that can wrap without costing anyone a control. */
+  .header-status { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; }
+  .header-status .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .refresh { display: inline-flex; align-items: center; gap: .45rem; }
+  /* Disabled, never hidden: a control that vanishes takes its explanation with it,
+     and the reader is left wondering whether they mis-clicked. */
+  .refresh:disabled { opacity: .75; cursor: progress; }
+  .refresh .spinner { width: .8rem; height: .8rem; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--fg) 25%, transparent);
+    border-top-color: var(--fg); display: none; }
+  .refresh.is-running .spinner { display: inline-block; animation: pw-spin .7s linear infinite; }
+  @keyframes pw-spin { to { transform: rotate(360deg); } }
+  /* Respect a reader who has asked the platform to stop moving things. The spinner
+     still reads as busy without rotating, because the button is disabled with it. */
+  @media (prefers-reduced-motion: reduce) {
+    .refresh.is-running .spinner { animation: none; opacity: .6; }
+    .pages a { transition: none; }
+  }
+
+  /* A visible focus ring everywhere, since the whole page is keyboard-reachable
+     and the default one disappears against the dark card. */
+  :focus-visible { outline: 2px solid color-mix(in srgb, var(--fg) 55%, transparent);
+    outline-offset: 2px; border-radius: 3px; }

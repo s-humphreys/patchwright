@@ -4,6 +4,7 @@
 <title>patchwright · analytics</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/static/app/app.css">
+<script type="module" src="/static/app/nav.js"></script>
 
 <!--
   Leverage and neglect, not a league table.
@@ -20,12 +21,7 @@
   A page of its own rather than a tab, for the same reason the ticket plan is: a
   different subject, read by different people at different times.
 -->
-<header>
-  <span class="brand"><img class="logo" src="/favicon.png" alt="" width="24" height="24"><h1>patchwright</h1></span>
-  <span class="meta">analytics</span>
-  <span style="flex:1"></span>
-  <nav class="pages"><a href="/">Queue</a> <a href="/tickets">Ticket plan</a></nav>
-</header>
+<pw-nav page="analytics"></pw-nav>
 
 <h2>What to fix first</h2>
 <p class="meta">

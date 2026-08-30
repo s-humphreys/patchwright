@@ -114,15 +114,11 @@ export function init() {
   $("#signalFilter").addEventListener("change", applyOwnerFilters);
   $("#onlyFixable").addEventListener("change", applyOwnerFilters);
   $("#search").addEventListener("input", applyOwnerFilters);
-  $("#refresh").addEventListener("click", async () => {
-  await fetch("/api/v1/assessments", { method: "POST" });
-  // The refresh is asynchronous, so poll until the server stops reporting it.
-  const poll = setInterval(async () => {
-    const s = await get("/api/v1/summary");
-    if (!s.assessment?.running) { clearInterval(poll); loadAll(); }
-    else renderFreshness(s.assessment);
-  }, 2000);
-});
+  // The header owns the refresh control and knows when an assessment finishes;
+  // this page owns what to reload when it does. Wiring it the other way round put
+  // polling logic in three page scripts and let two of them drift.
+  document.addEventListener("pw:assessed", () => loadAll());
+  document.addEventListener("pw:assessing", (e) => renderFreshness(/** @type {any} */ (e).detail));
 
   loadAll();
   setInterval(loadAll, 60000);

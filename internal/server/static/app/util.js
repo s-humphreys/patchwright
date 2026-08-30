@@ -76,3 +76,27 @@ export function countPct(n, of) {
 // toggle rather than a per-row one: severity is a property of every row, so
 // expanding it row by row would mean the same question asked repeatedly, and a
 // second kind of expansion inside rows that already expand into teams.
+
+/**
+ * ago renders a timestamp as something a person reads without doing arithmetic.
+ *
+ * "assessed 28/08/2026, 14:24:37" makes the reader work out whether that is recent.
+ * "assessed 4 minutes ago" is the question they were actually asking, and the exact
+ * time stays in the tooltip for when it matters.
+ */
+export function ago(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const secs = Math.round((t - now) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const units = /** @type {const} */ ([
+    ["second", 60], ["minute", 60], ["hour", 24], ["day", 30], ["month", 12], ["year", Infinity],
+  ]);
+  let v = secs;
+  for (const [unit, span] of units) {
+    if (Math.abs(v) < span) return rtf.format(Math.round(v), unit);
+    v /= span;
+  }
+  return rtf.format(Math.round(v), "year");
+}
+

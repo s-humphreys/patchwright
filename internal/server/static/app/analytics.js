@@ -1,4 +1,5 @@
 import { barChart, stackedBar } from './charts.js';
+import { showStatus } from './status.js';
 import { $, esc } from './util.js';
 
 // What to do next, and what nobody is doing.
@@ -170,4 +171,10 @@ async function load() {
   }
 }
 
-if (typeof document !== "undefined" && $("#analytics")) load();
+if (typeof document !== "undefined" && $("#analytics")) {
+  load();
+  showStatus();
+  // A completed assessment changes every number here, so follow it rather than
+  // leaving the reader on figures the header says are stale.
+  document.addEventListener("pw:assessed", () => { load(); showStatus(); });
+}

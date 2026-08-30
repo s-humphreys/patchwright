@@ -34,15 +34,25 @@ func TestTheTicketPlanIsItsOwnPage(t *testing.T) {
 			t.Errorf("the ticket page carries the dashboard's %s", absent)
 		}
 	}
-	// And each page links to the other, or a separate page is a dead end.
-	if !strings.Contains(body, `href="/"`) {
-		t.Error("no way back to the dashboard")
+	// And every page mounts the shared header, or a separate page is a dead end.
+	//
+	// The links themselves used to be checked here, and are now rendered by the
+	// header component - which is where they are tested (nav.test.js covers the
+	// destinations and which one is marked current). What this can still prove is
+	// that each document actually mounts it, and says which page it is.
+	if !strings.Contains(body, `<pw-nav page="tickets">`) {
+		t.Error("the ticket page does not mount the shared header")
+	}
+	if !strings.Contains(body, "/static/app/nav.js") {
+		t.Error("the ticket page does not load the header component")
 	}
 
-	rec2 := httptest.NewRecorder()
-	h.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/", nil))
-	if !strings.Contains(rec2.Body.String(), `href="/tickets"`) {
-		t.Error("the dashboard does not link to the ticket plan")
+	for path, page := range map[string]string{"/": "queue", "/analytics": "analytics"} {
+		rec2 := httptest.NewRecorder()
+		h.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, path, nil))
+		if want := `<pw-nav page="` + page + `">`; !strings.Contains(rec2.Body.String(), want) {
+			t.Errorf("%s does not mount the header as %q", path, page)
+		}
 	}
 }
 
