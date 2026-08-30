@@ -1,4 +1,4 @@
-package server
+package analytics
 
 import (
 	"math"
@@ -20,17 +20,30 @@ import (
 // approximated: an invented responsiveness number would be acted on by someone
 // deciding which team to chase.
 
+// Ticket is an open tracker item covering a service, as much of one as this package
+// needs: whether anybody has picked it up. Defined here rather than imported so the
+// analytics can be computed by anything holding an assessment - the API server, the
+// MCP tools - without either of them owning the other.
+type Ticket struct {
+	Key string
+	// Category is the tracker's status category. "new" means raised and untouched,
+	// which is a different state from being worked on.
+	Category string
+}
+
 // ageBuckets are the age bands findings are counted into, in days. Open-ended at
 // the top: the tail is the interesting part, and a bucket that closes hides it.
 var ageBuckets = []int{7, 30, 90, 180}
 
-// staleFixDays is when an available fix that nobody has started becomes a
+// StaleFixDays is when an available fix that nobody has started becomes a
 // finding about the team rather than about the software.
 //
 // Thirty days is a month of releases: long enough that a team shipping normally
 // would have picked up a base image rebuild in passing, short enough to catch a
 // queue nobody is reading.
-const staleFixDays = 30
+// StaleFixDays is when an available fix nobody has started becomes a finding about
+// the team rather than about the software.
+const StaleFixDays = 30
 
 // epssUrgent is the exploitation probability at which a finding is treated as
 // pressing regardless of anything else. Agreed with security rather than derived:
@@ -203,7 +216,8 @@ type AnalyticsView struct {
 // Stated rather than omitted. A dashboard with no mention of ticket resolution
 // time reads as a dashboard whose author did not think of it; one that says the
 // data is not collected tells a reader where to look next.
-var analyticsNotes = []string{
+// Notes are the questions this package is asked and cannot answer.
+var Notes = []string{
 	"Ticket resolution time is not shown: the tracker index holds only open tickets, " +
 		"and carries no created or resolved date. Measuring it needs those fields fetched " +
 		"and closed tickets indexed.",
@@ -214,7 +228,8 @@ var analyticsNotes = []string{
 }
 
 // buildAnalytics computes per-team responsiveness from the cached assessment.
-func buildAnalytics(findings []model.Finding, tickets map[string][]ticketRef, now time.Time) AnalyticsView {
+// Build computes the analytics for one assessment.
+func Build(findings []model.Finding, tickets map[string][]Ticket, now time.Time) AnalyticsView {
 	byTeam := map[string]*teamAccumulator{}
 	estate := newAccumulator("", "")
 
@@ -236,9 +251,9 @@ func buildAnalytics(findings []model.Finding, tickets map[string][]ticketRef, no
 	out := AnalyticsView{
 		Wins:           buildWins(findings),
 		Issues:         buildIssues(findings, tickets, now),
-		AgeBucketOrder: bucketNames(),
-		Notes:          analyticsNotes,
-		StaleFixDays:   staleFixDays,
+		AgeBucketOrder: BucketNames(),
+		Notes:          Notes,
+		StaleFixDays:   StaleFixDays,
 		Estate:         estate.result(),
 	}
 	for _, acc := range byTeam {
@@ -281,7 +296,7 @@ func newAccumulator(class, team string) *teamAccumulator {
 	}}
 }
 
-func (a *teamAccumulator) add(f *model.Finding, tickets map[string][]ticketRef, now time.Time) {
+func (a *teamAccumulator) add(f *model.Finding, tickets map[string][]Ticket, now time.Time) {
 	a.t.Findings++
 	if !f.ProviderAssessed() {
 		a.t.Unassessed++
@@ -361,7 +376,7 @@ func (a *teamAccumulator) add(f *model.Finding, tickets map[string][]ticketRef, 
 		// Only counted as stale when the age is KNOWN. Without an age source an
 		// unstarted fix is not evidence of anything, and counting it as stale
 		// would manufacture a signal out of missing data.
-		if age >= staleFixDays {
+		if age >= StaleFixDays {
 			a.t.StaleUnstarted++
 		}
 	}
@@ -397,7 +412,8 @@ func percentile(vals []int, p int) *int {
 	return &v
 }
 
-func bucketNames() []string {
+// BucketNames lists the age bands in order.
+func BucketNames() []string {
 	out := make([]string, 0, len(ageBuckets)+1)
 	prev := 0
 	for _, b := range ageBuckets {
@@ -549,7 +565,7 @@ func (a *issueAccumulator) issue(key, title, why string) Issue {
 }
 
 // buildIssues counts what is not being acted on, by the nature of the problem.
-func buildIssues(findings []model.Finding, tickets map[string][]ticketRef, now time.Time) []Issue {
+func buildIssues(findings []model.Finding, tickets map[string][]Ticket, now time.Time) []Issue {
 	var (
 		kevNoFix   issueAccumulator
 		kevWaiting issueAccumulator
@@ -597,7 +613,7 @@ func buildIssues(findings []model.Finding, tickets map[string][]ticketRef, now t
 		if started {
 			continue
 		}
-		if t, ok := f.OldestVuln(); ok && int(now.Sub(t).Hours()/24) >= staleFixDays {
+		if t, ok := f.OldestVuln(); ok && int(now.Sub(t).Hours()/24) >= StaleFixDays {
 			stale.add(f)
 		}
 	}
@@ -607,7 +623,7 @@ func buildIssues(findings []model.Finding, tickets map[string][]ticketRef, now t
 			"Top of the list."),
 		kevNoFix.issue("kev-no-fix", "Known-exploited, no upgrade available",
 			"Needs a decision: mitigate, isolate or accept."),
-		stale.issue("stale-fix", "Fix available over "+itoa(staleFixDays)+" days, untouched",
+		stale.issue("stale-fix", "Fix available over "+itoa(StaleFixDays)+" days, untouched",
 			"The software is not the blocker."),
 		eol.issue("eol-base", "Built on an unmaintained line",
 			"Needs a migration, not a patch. No further fix is coming."),

@@ -85,6 +85,7 @@ somebody acts on:
 | [Rules](docs/rules.md) | Writing ownership and policy rules |
 | [Ticketing](docs/ticketing.md) | Raising, routing, updating and closing Jira tickets |
 | [API](docs/api.md) · [reference](https://patchwright.shumphreys.com) | `serve`, endpoints, the status page |
+| [MCP](docs/mcp.md) | Read-only tools an LLM client can ask about the estate |
 | [Authentication](docs/authentication.md) | Sign-in with OIDC, and tokens for scripts |
 | [Metrics](docs/metrics.md) | Prometheus metrics and what to alert on |
 | [Deploying](docs/deploying.md) | Helm chart, RBAC, registry credentials |

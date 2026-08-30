@@ -155,6 +155,27 @@ without them. `autoClose` is separately off by default, and both it and the
 transition used are per-tracker, so enabling closing for one team's board does not
 enable it anywhere else.
 
+## MCP
+
+`/mcp` serves read-only Model Context Protocol tools over the same cached assessment
+the API serves, in the same process.
+
+It is registered as a normal route, so it is authenticated exactly like every other
+one: the shared token where a token is configured, open where nothing is. This is the
+deliberate part - an exempt path would have been an unauthenticated read of the whole
+estate on the same port and hostname as a page that is behind sign-in, and network
+policy selects on port rather than path, so nothing downstream could have separated
+them.
+
+Authorisation is unchanged and all-or-nothing: whatever reaches the endpoint sees the
+whole estate. The underlying views have no per-team scoping to offer, so a narrowing
+enforced by something in front cannot be enforced here.
+
+Every tool is read-only, and there is no `refresh`: an MCP client can read the
+assessment and can neither trigger one nor write a ticket. What it reads is the same
+data `/api/v1/findings` returns to the same caller, so the endpoint widens the
+transport rather than the exposure.
+
 ## Metrics
 
 `GET /metrics` serves Prometheus metrics in server mode, **unauthenticated by

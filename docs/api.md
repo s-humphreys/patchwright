@@ -24,6 +24,7 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `POST /api/v1/assessments` | Trigger a refresh |
 | `GET /api/v1/tickets` | What ticket reconciliation would do. Changes nothing |
 | `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}` |
+| `POST /mcp` | [MCP tools](mcp.md) an LLM client can call, over the same cached assessment |
 | `GET /metrics` | [Prometheus metrics](metrics.md) |
 | `GET /healthz`, `GET /readyz` | Health; ready once a first assessment is cached |
 

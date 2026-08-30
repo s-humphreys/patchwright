@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
+	"github.com/s-humphreys/patchwright/pkg/analytics"
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
@@ -513,7 +514,7 @@ func metricsSnapshot(snap *snapshot) metrics.Snapshot {
 	}
 	// Responsiveness comes from the analytics rollup, keyed the same way, so the
 	// page and the metrics cannot disagree about a team.
-	resp := map[string]TeamAnalytics{}
+	resp := map[string]analytics.TeamAnalytics{}
 	for _, t := range snap.analytics.Teams {
 		resp[t.Class+"\x00"+t.Team] = t
 	}

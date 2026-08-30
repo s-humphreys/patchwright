@@ -495,3 +495,6 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .ms-count { margin-left: auto; padding-left: .8rem; color: var(--muted);
     font-variant-numeric: tabular-nums; }
   .ms-empty { padding: .3rem .4rem; color: var(--muted); font-size: .82rem; }
+  /* The build serving the page. Quiet by default - it matters when a rollout has
+     half happened and not otherwise. */
+  .version { opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }

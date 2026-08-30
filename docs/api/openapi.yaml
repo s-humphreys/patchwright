@@ -29,6 +29,7 @@ tags:
   - name: findings
   - name: tickets
   - name: operations
+  - name: mcp
 
 paths:
   /:
@@ -455,6 +456,43 @@ paths:
                     items: { $ref: "#/components/schemas/TicketAction" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /mcp:
+    post:
+      tags: [mcp]
+      summary: Model Context Protocol endpoint (JSON-RPC over Streamable HTTP)
+      description: |
+        Read-only MCP tools answering from the same cached assessment the API serves:
+        `estate_summary`, `service_report`, `worst_first`, `team_report`, `explain_cve`.
+
+        Not a REST endpoint. The body is JSON-RPC 2.0 as defined by the MCP
+        Streamable HTTP transport, and it is documented here only so the route is
+        discoverable; use an MCP client rather than calling it by hand.
+
+        It is authenticated exactly like every other route, so a machine caller needs
+        the shared token wherever one is configured. Interactive sign-in cannot serve
+        an MCP client: set the token alongside it where machine callers are expected.
+      responses:
+        "200":
+          description: JSON-RPC response, or an SSE stream when the client accepts one
+          content:
+            application/json:
+              schema: { type: object }
+    get:
+      tags: [mcp]
+      summary: Server-to-client event stream for an MCP session
+      responses:
+        "200":
+          description: Server-sent events
+          content:
+            text/event-stream:
+              schema: { type: string }
+    delete:
+      tags: [mcp]
+      summary: End an MCP session
+      responses:
+        "204":
+          description: Session ended
+
   /metrics:
     get:
       tags: [operations]
@@ -558,6 +596,13 @@ components:
       properties:
         generated_at: { type: string, format: date-time }
         running: { type: boolean }
+        version:
+          type: string
+          description: |
+            The build serving this. Reported so a reader can tell which deployment
+            they are looking at rather than inferring it from the image tag they
+            believe is running, which is what goes wrong when a rollout half
+            succeeds. "dev" when the binary was not stamped at build time.
         started_at:
           type: string
           format: date-time

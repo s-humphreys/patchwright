@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
+	"github.com/s-humphreys/patchwright/internal/version"
+	"github.com/s-humphreys/patchwright/pkg/analytics"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -33,23 +35,38 @@ type assessmentMeta struct {
 	// long it has been going rather than showing an empty page and leaving the
 	// viewer to guess whether anything is happening.
 	StartedAt *time.Time `json:"started_at,omitempty"`
+	// Version is the build serving this. Reported so a reader can tell which
+	// deployment they are looking at rather than inferring it from the image tag
+	// they believe is running - which is the thing that goes wrong when a rollout
+	// half-succeeds.
+	Version string `json:"version"`
 }
 
 // routes is the one place a pattern is written down: Handler registers from it and
 // the OpenAPI drift test reads it, so a route cannot be served and undocumented, or
 // documented and unserved.
 func (s *Server) routes() map[string]http.Handler {
+	mcpH := s.mcpHandler()
 	return map[string]http.Handler{
 		// The status page is served by the same process as the API it reads, so
 		// there is no second deployment and no build step.
-		"GET /":                    http.HandlerFunc(s.handleUI),
-		"GET /tickets":             http.HandlerFunc(s.handleTicketsPage),
-		"GET /analytics":           http.HandlerFunc(s.handleAnalyticsPage),
-		"GET /favicon.png":         http.HandlerFunc(s.handleFavicon),
-		"GET /static/app/":         http.HandlerFunc(s.handleAsset),
-		"GET /healthz":             http.HandlerFunc(s.handleHealthz),
-		"GET /readyz":              http.HandlerFunc(s.handleReadyz),
-		"GET /metrics":             metrics.Handler(),
+		"GET /":            http.HandlerFunc(s.handleUI),
+		"GET /tickets":     http.HandlerFunc(s.handleTicketsPage),
+		"GET /analytics":   http.HandlerFunc(s.handleAnalyticsPage),
+		"GET /favicon.png": http.HandlerFunc(s.handleFavicon),
+		"GET /static/app/": http.HandlerFunc(s.handleAsset),
+		"GET /healthz":     http.HandlerFunc(s.handleHealthz),
+		"GET /readyz":      http.HandlerFunc(s.handleReadyz),
+		"GET /metrics":     metrics.Handler(),
+		// MCP is a normal route, so it sits behind the same authentication as
+		// everything else. An exempt path here would be an unauthenticated read of
+		// the whole estate on the same port as a page that is behind sign-in.
+		// Methods are named individually because a bare "/mcp" would out-specify
+		// "GET /" and collide with it. Streamable HTTP uses all three: POST to call
+		// a tool, GET for the server's stream, DELETE to end a session.
+		"POST /mcp":                mcpH,
+		"GET /mcp":                 mcpH,
+		"DELETE /mcp":              mcpH,
 		"GET /api/v1/findings":     http.HandlerFunc(s.handleFindings),
 		"GET /api/v1/finding":      http.HandlerFunc(s.handleFinding),
 		"GET /api/v1/items":        http.HandlerFunc(s.handleItems),
@@ -107,7 +124,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) meta() assessmentMeta {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	m := assessmentMeta{Running: s.running}
+	m := assessmentMeta{Running: s.running, Version: version.String()}
 	if s.running && !s.startedAt.IsZero() {
 		t := s.startedAt
 		m.StartedAt = &t
@@ -206,20 +223,20 @@ func (s *Server) handleOwners(w http.ResponseWriter, _ *http.Request) {
 // handleAnalytics serves per-team responsiveness: who is not moving, and on what.
 func (s *Server) handleAnalytics(w http.ResponseWriter, _ *http.Request) {
 	snap := s.snapshot()
-	var a AnalyticsView
+	var a analytics.AnalyticsView
 	if snap != nil {
 		a = snap.analytics
 	}
 	// Notes travel with an empty payload too. A consumer that reaches this before
 	// the first assessment should still learn what the page can and cannot answer.
 	if a.Notes == nil {
-		a.Notes = analyticsNotes
-		a.AgeBucketOrder = bucketNames()
-		a.StaleFixDays = staleFixDays
+		a.Notes = analytics.Notes
+		a.AgeBucketOrder = analytics.BucketNames()
+		a.StaleFixDays = analytics.StaleFixDays
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Assessment assessmentMeta `json:"assessment"`
-		Analytics  AnalyticsView  `json:"analytics"`
+		Assessment assessmentMeta          `json:"assessment"`
+		Analytics  analytics.AnalyticsView `json:"analytics"`
 	}{s.meta(), a})
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/s-humphreys/patchwright/pkg/analytics"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -134,10 +135,10 @@ func TestSpecCoversEveryAffectedPackageField(t *testing.T) {
 func TestSpecCoversEveryAnalyticsField(t *testing.T) {
 	spec := loadSpec(t)
 	for name, typ := range map[string]reflect.Type{
-		"Analytics":     reflect.TypeOf(AnalyticsView{}),
-		"Win":           reflect.TypeOf(Win{}),
-		"Issue":         reflect.TypeOf(Issue{}),
-		"TeamAnalytics": reflect.TypeOf(TeamAnalytics{}),
+		"Analytics":     reflect.TypeOf(analytics.AnalyticsView{}),
+		"Win":           reflect.TypeOf(analytics.Win{}),
+		"Issue":         reflect.TypeOf(analytics.Issue{}),
+		"TeamAnalytics": reflect.TypeOf(analytics.TeamAnalytics{}),
 	} {
 		schema, ok := spec.Components.Schemas[name]
 		if !ok {

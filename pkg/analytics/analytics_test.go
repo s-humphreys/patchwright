@@ -1,4 +1,4 @@
-package server
+package analytics
 
 import (
 	"testing"
@@ -35,7 +35,7 @@ func TestStaleUnstartedIsTheHeadlineSignal(t *testing.T) {
 		aFinding("slow", 45),
 		aFinding("slow", 3), // available, unstarted, but not yet stale
 	}
-	v := buildAnalytics(findings, nil, analyticsNow)
+	v := Build(findings, nil, analyticsNow)
 	if len(v.Teams) != 1 {
 		t.Fatalf("expected one team, got %d", len(v.Teams))
 	}
@@ -55,9 +55,9 @@ func TestAnOpenPullRequestOrTicketMeansStarted(t *testing.T) {
 		f.InFlight = &model.InFlight{Opened: daysAgo(10)}
 	})
 	withTicket := aFinding("busy", 90)
-	tickets := map[string][]ticketRef{"busy": {{Key: "OPS-1", Category: "indeterminate"}}}
+	tickets := map[string][]Ticket{"busy": {{Key: "OPS-1", Category: "indeterminate"}}}
 
-	v := buildAnalytics([]model.Finding{withPR, withTicket}, tickets, analyticsNow)
+	v := Build([]model.Finding{withPR, withTicket}, tickets, analyticsNow)
 	got := v.Teams[0]
 	if got.StaleUnstarted != 0 {
 		t.Errorf("stale unstarted = %d, want 0: both are started", got.StaleUnstarted)
@@ -75,7 +75,7 @@ func TestUndatedFindingsAreNotCountedAsStale(t *testing.T) {
 	// manufacture the page's headline signal out of missing data.
 	f := aFinding("nodates", 0)
 	f.Vulns = []model.Vulnerability{{ID: "CVE-1"}} // no FirstSeen
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	got := v.Teams[0]
 	if got.StaleUnstarted != 0 {
 		t.Errorf("stale unstarted = %d, want 0 with no dates", got.StaleUnstarted)
@@ -108,7 +108,7 @@ func TestSuppressedFindingsAreExcluded(t *testing.T) {
 	// reports somebody's accepted risk as their negligence.
 	f := aFinding("team", 90)
 	f.Suppressed = true
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	if len(v.Teams) != 0 {
 		t.Errorf("suppressed findings should not create a row: %+v", v.Teams)
 	}
@@ -122,7 +122,7 @@ func TestTeamsSortWorstFirst(t *testing.T) {
 		aFinding("bad", 200), aFinding("bad", 190),
 		aFinding("middling", 100),
 	}
-	v := buildAnalytics(findings, nil, analyticsNow)
+	v := Build(findings, nil, analyticsNow)
 	if v.Teams[0].Team != "bad" {
 		t.Errorf("first team = %q, want \"bad\"", v.Teams[0].Team)
 	}
@@ -135,7 +135,7 @@ func TestKEVAndBaseLeverageAreCountedOverAllFindings(t *testing.T) {
 	f.Actionable = false
 	f.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(10)}}
 	f.BaseDiff = &model.BaseDiff{Total: 100, Clears: 80}
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	got := v.Teams[0]
 	if got.KEV != 1 || got.KEVFixable != 1 {
 		t.Errorf("kev = %d, fixable = %d, want 1/1", got.KEV, got.KEVFixable)
@@ -149,7 +149,7 @@ func TestKEVAndBaseLeverageAreCountedOverAllFindings(t *testing.T) {
 }
 
 func TestEstateSumsEveryTeam(t *testing.T) {
-	v := buildAnalytics([]model.Finding{
+	v := Build([]model.Finding{
 		aFinding("a", 90), aFinding("b", 90), aFinding("b", 1),
 	}, nil, analyticsNow)
 	if v.Estate.Actionable != 3 {
@@ -161,7 +161,7 @@ func TestEstateSumsEveryTeam(t *testing.T) {
 }
 
 func TestAgeBucketsCoverTheWholeRange(t *testing.T) {
-	v := buildAnalytics([]model.Finding{
+	v := Build([]model.Finding{
 		aFinding("t", 1), aFinding("t", 20), aFinding("t", 60),
 		aFinding("t", 120), aFinding("t", 400),
 	}, nil, analyticsNow)
@@ -181,7 +181,7 @@ func TestAgeBucketsCoverTheWholeRange(t *testing.T) {
 func TestNotesTravelWithThePayload(t *testing.T) {
 	// A consumer building its own dashboard needs to know what is missing as much
 	// as the page does. Ticket resolution time is the one people assume is here.
-	v := buildAnalytics(nil, nil, analyticsNow)
+	v := Build(nil, nil, analyticsNow)
 	if len(v.Notes) == 0 {
 		t.Fatal("no notes in the payload")
 	}
@@ -235,7 +235,7 @@ func TestWinsRankBaseUpgradesByWhatTheyClear(t *testing.T) {
 		}
 		return f
 	}
-	v := buildAnalytics([]model.Finding{
+	v := Build([]model.Finding{
 		mk("a", "python", 100, 120),
 		mk("b", "python", 100, 120),
 		mk("c", "node", 500, 600),
@@ -263,7 +263,7 @@ func TestAWinCountsAnImageOnceEvenWhenSeveralTeamsOwnIt(t *testing.T) {
 		f.BaseDiff = &model.BaseDiff{FromRef: "base", ToRef: "base:2", Determined: true, Clears: 50, Total: 60}
 		return f
 	}
-	v := buildAnalytics([]model.Finding{shared("a"), shared("b"), shared("c")}, nil, analyticsNow)
+	v := Build([]model.Finding{shared("a"), shared("b"), shared("c")}, nil, analyticsNow)
 	if len(v.Wins) != 1 {
 		t.Fatalf("expected one win, got %+v", v.Wins)
 	}
@@ -280,7 +280,7 @@ func TestUndeterminedDifferentialsAreNotRankedAsWins(t *testing.T) {
 	// is noise; presenting it as measured would be worse.
 	f := aFinding("a", 10)
 	f.BaseDiff = &model.BaseDiff{FromRef: "base", Determined: false, Total: 100}
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	if len(v.Wins) != 0 {
 		t.Errorf("an unmeasured base should not be a win: %+v", v.Wins)
 	}
@@ -292,7 +292,7 @@ func TestIssuesGroupByProblemAndDropEmptyCategories(t *testing.T) {
 	kevNoFix.Upgrade = nil
 	kevNoFix.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(10)}}
 
-	v := buildAnalytics([]model.Finding{kevNoFix}, nil, analyticsNow)
+	v := Build([]model.Finding{kevNoFix}, nil, analyticsNow)
 	keys := map[string]Issue{}
 	for _, i := range v.Issues {
 		keys[i.Key] = i
@@ -318,7 +318,7 @@ func TestKEVWithAFixNobodyStartedIsItsOwnIssue(t *testing.T) {
 	// and must not be diluted into the general unstarted count.
 	f := aFinding("a", 60)
 	f.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(60)}}
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	found := false
 	for _, i := range v.Issues {
 		if i.Key == "kev-unstarted" && i.Count == 1 {
@@ -334,7 +334,7 @@ func TestStartedWorkIsNotReportedAsAnIssue(t *testing.T) {
 	f := aFinding("a", 90, func(f *model.Finding) {
 		f.InFlight = &model.InFlight{Opened: daysAgo(2)}
 	})
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	for _, i := range v.Issues {
 		if i.Key == "stale-fix" {
 			t.Errorf("work in progress reported as untouched: %+v", i)
@@ -353,7 +353,7 @@ func TestAnIssueGroupsImagesByService(t *testing.T) {
 	b := a
 	b.Owner = model.Owner{Class: "engineering", Team: "other"}
 
-	v := buildAnalytics([]model.Finding{a, b}, nil, analyticsNow)
+	v := Build([]model.Finding{a, b}, nil, analyticsNow)
 	for _, i := range v.Issues {
 		if i.Key != "kev-no-fix" {
 			continue
@@ -377,7 +377,7 @@ func TestServicesCountTheirImageVersions(t *testing.T) {
 		f.Vulns = []model.Vulnerability{{ID: "CVE-1", KEV: true, FirstSeen: daysAgo(10)}}
 		return f
 	}
-	v := buildAnalytics([]model.Finding{
+	v := Build([]model.Finding{
 		mk("reg.io/accounts-api:1.0.1"),
 		mk("reg.io/accounts-api:1.0.2-rc"),
 		mk("reg.io/other:2"),
@@ -409,7 +409,7 @@ func TestWinsNameTheServicesOnTheBase(t *testing.T) {
 		f.BaseDiff = &model.BaseDiff{FromRef: "base", ToRef: "base:2", Determined: true, Clears: 10, Total: 12}
 		return f
 	}
-	v := buildAnalytics([]model.Finding{mk("b"), mk("a")}, nil, analyticsNow)
+	v := Build([]model.Finding{mk("b"), mk("a")}, nil, analyticsNow)
 	if len(v.Wins) != 1 {
 		t.Fatalf("wins = %+v", v.Wins)
 	}
@@ -432,7 +432,7 @@ func TestPerTeamEPSSReportsBothScoreAndPercentile(t *testing.T) {
 		{ID: "CVE-1", EPSS: 0.08, EPSSPercentile: 0.94, FirstSeen: daysAgo(10)},
 		{ID: "CVE-2", EPSS: 0.61, EPSSPercentile: 0.98, FirstSeen: daysAgo(10)},
 	}
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	got := v.Teams[0]
 	if got.TopEPSS != 0.61 {
 		t.Errorf("top epss = %v, want 0.61", got.TopEPSS)
@@ -454,7 +454,7 @@ func TestEPSSHighCountsFindingsNotCVEs(t *testing.T) {
 		{ID: "CVE-2", EPSS: 0.8, FirstSeen: daysAgo(10)},
 		{ID: "CVE-3", EPSS: 0.7, FirstSeen: daysAgo(10)},
 	}
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	if got := v.Teams[0].EPSSHigh; got != 1 {
 		t.Errorf("epss_high = %d, want 1: three CVEs on one image is one finding", got)
 	}
@@ -463,7 +463,7 @@ func TestEPSSHighCountsFindingsNotCVEs(t *testing.T) {
 func TestATeamBelowTheThresholdIsNotCountedHigh(t *testing.T) {
 	f := aFinding("a", 10)
 	f.Vulns = []model.Vulnerability{{ID: "CVE-1", EPSS: 0.49, EPSSPercentile: 0.9, FirstSeen: daysAgo(10)}}
-	v := buildAnalytics([]model.Finding{f}, nil, analyticsNow)
+	v := Build([]model.Finding{f}, nil, analyticsNow)
 	got := v.Teams[0]
 	if got.EPSSHigh != 0 {
 		t.Errorf("epss_high = %d, want 0 just below the threshold", got.EPSSHigh)

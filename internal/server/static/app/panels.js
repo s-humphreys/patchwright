@@ -2,6 +2,13 @@ import { S } from './state.js';
 import { $, ago, elapsed, esc, hasAssessment } from './util.js';
 
 export function renderFreshness(a) {
+  // Which build is answering. Rendered from the same payload as the freshness line
+  // because they are read together: "assessed 4 minutes ago, by v1.29.0" is one
+  // fact about what you are looking at, and the version is the half that tells two
+  // deployments apart when a rollout has only half happened.
+  const ver = $("#version");
+  if (ver) ver.textContent = a && a.version ? a.version : "";
+
   const el = $("#freshness");
   if (a && a.error) {
     el.textContent = `last refresh failed: ${a.error}`;
