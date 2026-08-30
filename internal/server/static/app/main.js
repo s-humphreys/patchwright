@@ -6,7 +6,8 @@ import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './p
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup } from './cves.js';
 import { initTabs, show } from './tabs.js';
-import { applyOwnerFilters, loadFindings, populateOwnerFilters, renderCurrentView } from './queue.js';
+import { wireFacets } from './filters.js';
+import { applyOwnerFilters, loadFindings, renderCurrentView } from './queue.js';
 import { S } from './state.js';
 import { initTable, renderBreakdown } from './table.js';
 import { $, get, hasAssessment } from './util.js';
@@ -109,14 +110,10 @@ export function init() {
   $("#groupRows").addEventListener("change", applyOwnerFilters);
   $("#onlyActionable").addEventListener("change", loadFindings);
   $("#showSuppressed").addEventListener("change", loadFindings);
-  $("#classFilter").addEventListener("change", () => {
-  // Team options depend on the chosen class, so rebuild them before filtering.
-  populateOwnerFilters(S.queueRows);
-  applyOwnerFilters();
-});
-  $("#teamFilter").addEventListener("change", applyOwnerFilters);
-  $("#fixFilter").addEventListener("change", applyOwnerFilters);
-  $("#signalFilter").addEventListener("change", applyOwnerFilters);
+  // Every facet through one wiring: they are multi-select now, so "which control
+  // changed" no longer decides anything - each change re-filters and repopulates the
+  // rest, which is what faceting means.
+  wireFacets(applyOwnerFilters);
   $("#onlyFixable").addEventListener("change", applyOwnerFilters);
   $("#search").addEventListener("input", applyOwnerFilters);
   // The header owns the refresh control and knows when an assessment finishes;

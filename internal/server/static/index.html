@@ -31,11 +31,15 @@
   <div class="controls-row">
     <input type="search" id="search" placeholder="search image, team, namespace, ticket"
            title="Case-insensitive substring match across the image reference, team, namespaces, the upgrade text and any ticket key.">
-    <label class="sel">class <select id="classFilter"><option value="">all</option></select></label>
-    <label class="sel">team <select id="teamFilter"><option value="">all</option></select></label>
-    <label class="sel" title="Policy's verdict on how pressing each finding is. Ordered worst first, because the list is a scale and sorting it as text puts high above urgent.">urgency <select id="urgencyFilter"><option value="">all</option></select></label>
-    <label class="sel">signal <select id="signalFilter"><option value="">all</option></select></label>
-    <label class="sel">fix <select id="fixFilter"><option value="">all</option></select></label>
+    <!-- Multi-select, because the questions people ask are unions: "kev or exposed",
+         "urgent or high". A single-choice control forces those to be asked twice and
+         the two answers added up by hand. Selecting several within one filter means
+         ANY of them; the filters are still ANDed with each other. -->
+    <details class="sel ms" id="classFilter"><summary>class: all</summary><div class="ms-menu"></div></details>
+    <details class="sel ms" id="teamFilter"><summary>team: all</summary><div class="ms-menu"></div></details>
+    <details class="sel ms" id="urgencyFilter" title="Policy's verdict on how pressing each finding is. Ordered worst first, because the list is a scale and sorting it as text puts high above urgent."><summary>urgency: all</summary><div class="ms-menu"></div></details>
+    <details class="sel ms" id="signalFilter"><summary>signal: all</summary><div class="ms-menu"></div></details>
+    <details class="sel ms" id="fixFilter"><summary>fix: all</summary><div class="ms-menu"></div></details>
   </div>
   <div class="controls-row toggles">
     <label class="toggle" title="Actionable is the policy verdict: this warrants action. It is not the same as having a version to move to, which is the Fix column - an image already on its latest release can still be actionable, and needs a decision rather than a bump."><input type="checkbox" id="onlyActionable" checked> actionable only</label>

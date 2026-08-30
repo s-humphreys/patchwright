@@ -1,4 +1,5 @@
 import { signalsSort } from './badges.js';
+import { select } from './filters.js';
 import { FIX_RANK, PRI_RANK, SEVERITIES, actionCell, actionSort, cveColumns, fixCell, fixClass, fixPath, priorityClass, severityCell, sortState, sourceCell, upgradeTitle, urgencyCell } from './cells.js';
 import { S } from './state.js';
 import { $, UNKNOWN, countPct, esc, pct } from './util.js';
@@ -307,17 +308,24 @@ export function applyDrilldown(data, onApply) {
   const set = (id, value) => {
     const el = /** @type {any} */ ($(id));
     if (!el) return true;
-    if (el.tagName === "SELECT") {
+    if (el.classList?.contains("ms")) {
       // Clearing is always possible and is not a failure: a drilldown that does not
       // constrain team, say, wants that filter emptied rather than reported missing.
       if (!value) {
-        el.value = "";
+        select(id, []);
         return true;
       }
-      // A value with no matching option IS a failure worth reporting. Selecting
+      // A value with nothing behind it IS a failure worth reporting. Selecting
       // nothing would leave the whole queue showing as though the drilldown had
       // worked, which is the same lie as a filter that matches everything.
-      if (![...el.options].some((o) => o.value === value)) return false;
+      const known = Array.from(el.querySelectorAll("input[type=checkbox]"))
+        .map((b) => /** @type {any} */ (b).value);
+      if (!known.includes(value)) return false;
+      // Replaces rather than adds: a drilldown is "show me exactly this", and
+      // leaving a previous selection ticked would land somebody on a wider set than
+      // the number they clicked.
+      select(id, [value]);
+      return true;
     }
     el.value = value;
     return true;

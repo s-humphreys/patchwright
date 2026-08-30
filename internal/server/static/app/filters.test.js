@@ -10,13 +10,14 @@ import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM('<!doctype html><html><body>' +
   '<input type="search" id="search">' +
-  // Wrapped in labels like the real page: the inert styling is applied to the
-  // label, so a bare select would let that go untested.
-  '<label class="sel"><select id="classFilter"></select></label>' +
-  '<label class="sel"><select id="teamFilter"></select></label>' +
-  '<label class="sel"><select id="urgencyFilter"></select></label>' +
-  '<label class="sel"><select id="signalFilter"></select></label>' +
-  '<label class="sel"><select id="fixFilter"></select></label>' +
+  // The real markup: a details element per facet, holding a checkbox menu. The
+  // dimming and the "cannot open when inert" behaviour live on that element, so a
+  // simpler stand-in would leave both untested.
+  '<details class="sel ms" id="classFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="sel ms" id="teamFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="sel ms" id="urgencyFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="sel ms" id="signalFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="sel ms" id="fixFilter"><summary></summary><div class="ms-menu"></div></details>' +
   '<input type="checkbox" id="onlyActionable" checked>' +
   '<input type="checkbox" id="onlyFixable">' +
   '<input type="checkbox" id="showSuppressed">' +
@@ -35,7 +36,8 @@ globalThis.window = dom.window;
 globalThis.location = dom.window.location;
 globalThis.history = dom.window.history;
 
-const { apply, filterState, populate, FACETS, UNATTRIBUTED } = await import('./filters.js');
+const { apply, filterState, populate, select, selected, FACETS, UNATTRIBUTED } =
+  await import('./filters.js');
 const { applyOwnerFilters, renderCurrentView } = await import('./queue.js');
 const { show } = await import('./tabs.js');
 const { S } = await import('./state.js');
@@ -68,18 +70,29 @@ function setUp() {
   show('queue');
   S.queueRows = rows;
   S.ticketsByRepo = {};
-  for (const f of FACETS) document.querySelector(f.id).innerHTML = '';
+  for (const f of FACETS) {
+    document.querySelector(f.id).innerHTML = '<summary></summary><div class="ms-menu"></div>';
+  }
   document.querySelector('#search').value = '';
   document.querySelector('#onlyFixable').checked = false;
   document.querySelector('#groupRows').checked = false;
   applyOwnerFilters();
 }
 
+/** choose ticks one value, replacing whatever was selected. */
 const choose = (id, value) => {
-  const el = document.querySelector(id);
-  el.value = value;
+  select(id, value === '' ? [] : [value]);
   applyOwnerFilters();
 };
+
+/** chooseMany ticks several, which is the whole point of the control. */
+const chooseMany = (id, values) => {
+  select(id, values);
+  applyOwnerFilters();
+};
+
+const optionsOf = (id) => Array.from(
+  document.querySelectorAll(`${id} input[type=checkbox]`)).map((b) => b.value);
 const queueRowCount = () => document.querySelectorAll('#findings tbody tr').length;
 const cveRowCount = () => document.querySelectorAll('#cves tbody tr').length;
 const count = () => document.querySelector('#queueCount').textContent;
@@ -112,14 +125,16 @@ test('switching view keeps the filter, and the two views agree on the population
   show('queue');
   renderCurrentView();
   assert.equal(queueRowCount(), 1, 'the filter did not survive coming back');
-  assert.equal(document.querySelector('#urgencyFilter').value, 'urgent');
+  assert.deepEqual(selected('#urgencyFilter'), ['urgent']);
 });
 
 test('options are counted over the other filters, so a count says what picking it does', () => {
   setUp();
   // Unfiltered, both teams are offered with their totals.
-  const teamOpts = () => [...document.querySelector('#teamFilter').options]
-    .map((o) => `${o.value}:${o.textContent}`).join(' | ');
+  // value and count, the way the menu shows them.
+  const teamOpts = () => Array.from(document.querySelectorAll('#teamFilter .ms-opt'))
+    .map((l) => `${l.querySelector('input').value} (${l.querySelector('.ms-count').textContent})`)
+    .join(' | ');
   assert.match(teamOpts(), /orders \(2\)/);
   assert.match(teamOpts(), /payments \(2\)/);
 
@@ -132,7 +147,7 @@ test('options are counted over the other filters, so a count says what picking i
 test('a value that cannot return anything is not offered at all', () => {
   setUp();
   choose('#teamFilter', 'orders');
-  const urgencies = [...document.querySelector('#urgencyFilter').options].map((o) => o.value);
+  const urgencies = optionsOf('#urgencyFilter');
   // "low" belongs only to payments, so with orders selected it must be gone.
   assert.ok(!urgencies.includes('low'), `low should not be offered: ${urgencies}`);
   assert.ok(urgencies.includes('urgent'));
@@ -154,10 +169,11 @@ test('a selection that stops matching is kept and shown as zero, not silently dr
   S.queueRows = rows.filter((f) => f.priority !== 'low');
   applyOwnerFilters();
 
-  const urg = document.querySelector('#urgencyFilter');
-  assert.equal(urg.value, 'low', 'the selection was dropped behind the reader\'s back');
-  const label = [...urg.options].find((o) => o.value === 'low').textContent;
-  assert.match(label, /\(0\)/, 'a selection matching nothing should say so');
+  assert.deepEqual(selected('#urgencyFilter'), ['low'],
+    'the selection was dropped behind the reader\'s back');
+  const label = Array.from(document.querySelectorAll('#urgencyFilter .ms-opt'))
+    .find((l) => l.querySelector('input').value === 'low').textContent;
+  assert.match(label, /0/, 'a selection matching nothing should say so');
   assert.equal(queueRowCount(), 0, 'and the table has to agree with the filter');
 });
 
@@ -186,7 +202,7 @@ test('grouping by service groups only what survived the filter', () => {
 });
 
 test('apply can ignore one filter, which is what makes faceting possible', () => {
-  const st = { class: 'platform', team: 'orders', q: '', fixable: false };
+  const st = { class: ['platform'], team: ['orders'], q: '', fixable: false };
   // With both applied, nothing matches: orders is engineering.
   assert.equal(apply(rows, st, null).length, 0);
   // Ignoring team, the class still narrows.
@@ -199,7 +215,7 @@ test('unattributed findings are selectable, since an unowned finding is a thing 
   setUp();
   S.queueRows = [...rows, finding({ team: '', cve: 'CVE-E' })];
   applyOwnerFilters();
-  const teams = [...document.querySelector('#teamFilter').options].map((o) => o.value);
+  const teams = optionsOf('#teamFilter');
   assert.ok(teams.includes(UNATTRIBUTED), `no unattributed option: ${teams}`);
   choose('#teamFilter', UNATTRIBUTED);
   assert.equal(queueRowCount(), 1);
@@ -213,7 +229,7 @@ test('filterState reads what the controls say, nothing more', () => {
   const st = filterState();
   assert.equal(st.q, 'orders', 'the search term should be trimmed and lowered once');
   assert.equal(st.fixable, true);
-  assert.equal(st.signal, 'kev');
+  assert.deepEqual(st.signal, ['kev']);
 });
 
 test('populate leaves the dropdowns alone when there is nothing to show', () => {
@@ -239,8 +255,8 @@ test('a deep link filters the view it names', async () => {
   show('cves');
   applyOwnerFilters();
 
-  assert.equal(document.querySelector('#teamFilter').value, 'payments');
-  assert.equal(document.querySelector('#urgencyFilter').value, 'low');
+  assert.deepEqual(selected('#teamFilter'), ['payments']);
+  assert.deepEqual(selected('#urgencyFilter'), ['low']);
   assert.equal(cveRowCount(), 1, 'the link should arrive filtered, not showing the estate');
 });
 
@@ -318,13 +334,12 @@ test('a filter with nothing behind it is disabled rather than left looking opera
   S.queueRows = [finding({ team: 'orders', cve: 'CVE-A' })];
   applyOwnerFilters();
   const signal = document.querySelector('#signalFilter');
-  assert.equal(signal.disabled, true, 'no finding here carries any signal');
-  assert.equal(signal.closest('label').classList.contains('inert'), true);
+  assert.equal(signal.classList.contains('inert'), true, 'no finding here carries any signal');
 
   // And it comes back the moment there is something to choose.
   S.queueRows = [finding({ team: 'orders', cve: 'CVE-A', signals: ['kev'] })];
   applyOwnerFilters();
-  assert.equal(document.querySelector('#signalFilter').disabled, false);
+  assert.equal(document.querySelector('#signalFilter').classList.contains('inert'), false);
 });
 
 test('a filter is never disabled while a value is selected', () => {
@@ -333,7 +348,65 @@ test('a filter is never disabled while a value is selected', () => {
   choose('#urgencyFilter', 'low');
   S.queueRows = rows.filter((f) => f.priority !== 'low');
   applyOwnerFilters();
-  const urg = document.querySelector('#urgencyFilter');
-  assert.equal(urg.value, 'low');
-  assert.equal(urg.disabled, false, 'a selected filter must stay clearable');
+  assert.deepEqual(selected('#urgencyFilter'), ['low']);
+  assert.equal(document.querySelector('#urgencyFilter').classList.contains('inert'), false,
+    'a selected filter must stay clearable');
+});
+
+test('selecting several values in one filter means ANY of them', () => {
+  // The questions people ask are unions - "kev or exposed", "urgent or high" - and a
+  // single-choice control makes those two questions whose answers are added up by
+  // hand.
+  setUp();
+  S.queueRows = [
+    finding({ team: 'a', cve: 'CVE-1', signals: ['kev'] }),
+    finding({ team: 'b', cve: 'CVE-2', signals: ['exposed'] }),
+    finding({ team: 'c', cve: 'CVE-3', signals: ['in-flight'] }),
+  ];
+  applyOwnerFilters();
+
+  chooseMany('#signalFilter', ['kev']);
+  assert.equal(queueRowCount(), 1);
+
+  chooseMany('#signalFilter', ['kev', 'exposed']);
+  assert.equal(queueRowCount(), 2, 'both selected signals should be included');
+
+  chooseMany('#signalFilter', []);
+  assert.equal(queueRowCount(), 3, 'clearing the selection restores everything');
+});
+
+test('filters are still ANDed with each other', () => {
+  // Union within a facet, intersection across them. "kev or exposed, owned by a" is
+  // the sentence, and it has one answer.
+  setUp();
+  S.queueRows = [
+    finding({ team: 'a', cve: 'CVE-1', signals: ['kev'] }),
+    finding({ team: 'b', cve: 'CVE-2', signals: ['exposed'] }),
+  ];
+  applyOwnerFilters();
+  chooseMany('#signalFilter', ['kev', 'exposed']);
+  chooseMany('#teamFilter', ['a']);
+  assert.equal(queueRowCount(), 1);
+});
+
+test('a multi-select survives a link', async () => {
+  // "signal=kev,exposed" is the sentence somebody wants to send.
+  const { readURL, writeURL } = await import('./urlstate.js');
+  setUp();
+  S.queueRows = [
+    finding({ team: 'a', cve: 'CVE-1', signals: ['kev'] }),
+    finding({ team: 'b', cve: 'CVE-2', signals: ['exposed'] }),
+  ];
+  applyOwnerFilters();
+  chooseMany('#signalFilter', ['kev', 'exposed']);
+  writeURL();
+  // Menu order, not click order: signals have a fixed rank, so the same selection
+  // always produces the same link rather than one per order of clicking.
+  const signal = new URLSearchParams(location.search).get('signal');
+  assert.deepEqual(signal.split(',').sort(), ['exposed', 'kev']);
+
+  chooseMany('#signalFilter', []);
+  readURL(new URLSearchParams('signal=kev,exposed'));
+  applyOwnerFilters();
+  assert.deepEqual(selected('#signalFilter').sort(), ['exposed', 'kev']);
 });

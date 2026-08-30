@@ -1,3 +1,4 @@
+import { select, selected } from './filters.js';
 import { $ } from './util.js';
 
 // Filter state in the URL, so a view can be shared.
@@ -14,14 +15,16 @@ import { $ } from './util.js';
 /**
  * Controls that make up a shareable view, mapped to their query parameter. Checkboxes
  * are stored only when they differ from their default, so a plain link stays short.
- * @type {{id: string, param: string, kind: 'value'|'check', dflt?: boolean}[]}
+ * Facets hold several values at once and travel as a comma-separated list, so
+ * "signal=kev,exposed" is a link somebody can send.
+ * @type {{id: string, param: string, kind: 'value'|'check'|'facet', dflt?: boolean}[]}
  */
 const CONTROLS = [
-  { id: '#classFilter', param: 'class', kind: 'value' },
-  { id: '#teamFilter', param: 'team', kind: 'value' },
-  { id: '#fixFilter', param: 'fix', kind: 'value' },
-  { id: '#signalFilter', param: 'signal', kind: 'value' },
-  { id: '#urgencyFilter', param: 'urgency', kind: 'value' },
+  { id: '#classFilter', param: 'class', kind: 'facet' },
+  { id: '#teamFilter', param: 'team', kind: 'facet' },
+  { id: '#fixFilter', param: 'fix', kind: 'facet' },
+  { id: '#signalFilter', param: 'signal', kind: 'facet' },
+  { id: '#urgencyFilter', param: 'urgency', kind: 'facet' },
   { id: '#search', param: 'q', kind: 'value' },
   { id: '#onlyFixable', param: 'fixable', kind: 'check', dflt: false },
   { id: '#onlyActionable', param: 'actionable', kind: 'check', dflt: true },
@@ -51,6 +54,12 @@ export function writeURL() {
   for (const c of CONTROLS) {
     const el = /** @type {HTMLInputElement} */ ($(c.id));
     if (!el) continue;
+    if (c.kind === 'facet') {
+      const chosen = selected(c.id);
+      if (chosen.length) params.set(c.param, chosen.join(','));
+      else params.delete(c.param);
+      continue;
+    }
     if (c.kind === 'check') {
       if (el.checked !== c.dflt) params.set(c.param, String(el.checked));
       else params.delete(c.param);
@@ -85,10 +94,17 @@ export function readURL(params = initialQuery()) {
       changed = true;
       continue;
     }
-    if (el.tagName === 'SELECT') {
-      const sel = /** @type {HTMLSelectElement} */ (/** @type {unknown} */ (el));
-      const known = Array.from(sel.options).some((o) => o.value === raw);
-      if (!known) continue;
+    if (c.kind === 'facet') {
+      // Only the values that exist today. A link naming a team that has gone away
+      // should open showing the rest of what it asked for, not nothing - and a
+      // filter matching nothing looks identical to an empty queue.
+      const known = new Set(Array.from(el.querySelectorAll("input[type=checkbox]"))
+        .map((b) => /** @type {any} */ (b).value));
+      const want = (raw || "").split(",").map((v) => v.trim()).filter((v) => known.has(v));
+      if (!want.length) continue;
+      select(c.id, want);
+      changed = true;
+      continue;
     }
     el.value = raw;
     changed = true;

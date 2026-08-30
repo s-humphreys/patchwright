@@ -9,9 +9,11 @@ import { JSDOM } from 'jsdom';
 const dom = new JSDOM('<!doctype html><html><body>' +
   '<table id="breakdown"><thead><tr></tr></thead><tbody></tbody></table>' +
   '<input type="search" id="search">' +
-  '<select id="classFilter"></select><select id="teamFilter"></select>' +
-  '<select id="urgencyFilter"></select><select id="signalFilter"></select>' +
-  '<select id="fixFilter"></select>' +
+  '<details class="ms" id="classFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="ms" id="teamFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="ms" id="urgencyFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="ms" id="signalFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="ms" id="fixFilter"><summary></summary><div class="ms-menu"></div></details>' +
   '<input type="checkbox" id="onlyActionable" checked>' +
   '<input type="checkbox" id="onlyFixable">' +
   '<input type="checkbox" id="showSuppressed">' +
@@ -59,15 +61,17 @@ test('drilling in applies filters the reader can see', () => {
   // Not a private query: the selects show why the queue looks like this, so somebody
   // landing on 3 rows out of 500 can tell what was applied and adjust it.
   const sig = document.querySelector('#signalFilter');
-  sig.innerHTML = '<option value=""></option><option value="kev">kev</option>';
+  sig.querySelector('.ms-menu').innerHTML =
+    '<label class="ms-opt"><input type="checkbox" value="kev"></label>';
   const team = document.querySelector('#teamFilter');
-  team.innerHTML = '<option value=""></option><option value="orders">orders</option>';
+  team.querySelector('.ms-menu').innerHTML =
+    '<label class="ms-opt"><input type="checkbox" value="orders"></label>';
 
   let applied = 0;
   const missed = applyDrilldown({ team: 'orders', signal: 'kev' }, () => { applied++; });
   assert.equal(missed.length, 0);
-  assert.equal(sig.value, 'kev');
-  assert.equal(team.value, 'orders');
+  assert.equal(sig.querySelector('input[value=kev]').checked, true);
+  assert.equal(team.querySelector('input[value=orders]').checked, true);
   assert.equal(applied, 1, 'the queue must be re-filtered, not just the controls set');
 });
 
@@ -80,19 +84,20 @@ test('drilling in agrees with what the counts were drawn from', () => {
   sup.checked = true;
   act.checked = true;
   const urg = document.querySelector('#urgencyFilter');
-  urg.innerHTML = '<option value=""></option><option value="urgent">urgent</option>';
+  urg.querySelector('.ms-menu').innerHTML =
+    '<label class="ms-opt"><input type="checkbox" value="urgent"></label>';
 
   applyDrilldown({ team: '', urgency: 'urgent' }, null);
   assert.equal(sup.checked, false, 'suppressed findings are not in the counts');
   assert.equal(act.checked, false, 'the count includes findings policy did not mark actionable');
-  assert.equal(urg.value, 'urgent');
+  assert.equal(urg.querySelector('input[value=urgent]').checked, true);
 });
 
 test('a filter value that does not exist is reported, not silently ignored', () => {
   // Selecting nothing would show the whole queue as though the drilldown had worked,
   // which is the same failure as a filter that silently matches everything.
   const sig = document.querySelector('#signalFilter');
-  sig.innerHTML = '<option value=""></option>'; // kev not present in this data
+  sig.querySelector('.ms-menu').innerHTML = ''; // kev not present in this data
   const missed = applyDrilldown({ signal: 'kev' }, null);
   assert.ok(missed.includes('signal'), `expected signal to be reported as missed, got ${missed}`);
 });
@@ -119,11 +124,12 @@ test('the urgency filter narrows the queue and orders worst first', async () => 
   S.queueRows = [f('urgent'), f('high'), f('high'), f('low')];
   populateOwnerFilters(S.queueRows);
 
-  const opts = [...document.querySelector('#urgencyFilter').options].map((o) => o.value);
-  assert.equal(opts[0], '', 'the first option is "any"');
-  assert.deepEqual(opts.slice(1), ['urgent', 'high', 'low'], 'options must run worst first');
-  const labels = [...document.querySelector('#urgencyFilter').options].map((o) => o.textContent);
-  assert.match(labels[2], /high \(2\)/, 'each option carries its count');
+  const opts = Array.from(document.querySelectorAll('#urgencyFilter input[type=checkbox]'))
+    .map((b) => b.value);
+  assert.deepEqual(opts, ['urgent', 'high', 'low'], 'options must run worst first');
+  const high = Array.from(document.querySelectorAll('#urgencyFilter .ms-opt'))
+    .find((l) => l.querySelector('input').value === 'high');
+  assert.equal(high.querySelector('.ms-count').textContent, '2', 'each option carries its count');
 });
 
 test('KEV is a share of the estate, not of the row', async () => {
