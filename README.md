@@ -118,11 +118,10 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
   pull requests, and a second thing computing versions would be two answers to one
   question. What is missing is knowing which repositories it covers, which is a read
   rather than an automation.
-- **Next** Persistence. Every assessment is a snapshot, so nothing the tool says is
-  about movement: it cannot report time to remediate, whether a queue is shrinking,
-  or whether a change actually helped. That needs storage, which the design has so
-  far deliberately avoided — a decision worth making explicitly rather than by
-  accident.
+- **Next** [Remembering what changed](docs/design/persistence.md). Every assessment
+  is a snapshot, so nothing the tool says is about movement: it cannot report time to
+  remediate, whether a queue is shrinking, or whether a change actually helped. The
+  first phase needs no storage at all.
 
 ## Licence
 
