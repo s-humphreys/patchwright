@@ -38,6 +38,17 @@ so they stay in sync. Callers pass a dict:
     - "--live-option=contexts={{ join "," .root.Values.reconcile.remote.contexts }}"
     {{- end }}
     {{- end }}
+    {{- with .root.Values.reconcile.exposure }}
+    {{- if .publicHostnames }}
+    - "--live-option=publicHostnames={{ join "," .publicHostnames }}"
+    {{- end }}
+    {{- if .internalHostnames }}
+    - "--live-option=internalHostnames={{ join "," .internalHostnames }}"
+    {{- end }}
+    {{- if .internalGateways }}
+    - "--live-option=internalGateways={{ join "," .internalGateways }}"
+    {{- end }}
+    {{- end }}
     {{- end }}
     {{- if .remediation }}
     - "--remediation"
