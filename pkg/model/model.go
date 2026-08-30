@@ -323,6 +323,13 @@ type AssessedImage struct {
 	// would fix. Nil means the differential did not run for this image, which is
 	// not the same as it finding nothing.
 	BaseDiff *BaseDiff
+
+	// ImageBuilt is when the image was built, per its own config. Zero when it was
+	// not read or the image records none - never "built at the epoch".
+	//
+	// It is the difference between "you ignored this" and "this has not shipped
+	// since March", which are different conversations to have with a team.
+	ImageBuilt time.Time
 }
 
 // AffectedPackage is a package carrying a CVE, and the version that fixes it.
@@ -542,6 +549,9 @@ type Finding struct {
 	// BaseDiff is what scanning this image's base established. Nil when the
 	// differential did not run.
 	BaseDiff *BaseDiff
+	// ImageBuilt is when the image was built, per its own config. Zero when unread
+	// or unstated.
+	ImageBuilt time.Time
 
 	Actionable bool
 	Suppressed bool

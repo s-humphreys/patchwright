@@ -10,15 +10,16 @@ import (
 type countingInspector struct {
 	calls  map[string]int
 	labels map[string]string
+	built  time.Time
 	err    error
 }
 
-func (c *countingInspector) Labels(_ context.Context, ref string) (map[string]string, error) {
+func (c *countingInspector) Config(_ context.Context, ref string) (ImageConfig, error) {
 	if c.calls == nil {
 		c.calls = map[string]int{}
 	}
 	c.calls[ref]++
-	return c.labels, c.err
+	return ImageConfig{Labels: c.labels, Built: c.built}, c.err
 }
 func (c *countingInspector) Digest(context.Context, string) (string, error) { return "", nil }
 
@@ -26,7 +27,7 @@ func TestCachingInspectorReadsEachReferenceOnce(t *testing.T) {
 	inner := &countingInspector{labels: map[string]string{"a": "b"}}
 	c := NewCachingInspector(inner)
 	for i := 0; i < 5; i++ {
-		if _, err := c.Labels(context.Background(), "reg/app:1"); err != nil {
+		if _, err := c.Config(context.Background(), "reg/app:1"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,7 +42,7 @@ func TestCachingInspectorCachesFailures(t *testing.T) {
 	inner := &countingInspector{err: errors.New("unauthorized")}
 	c := NewCachingInspector(inner)
 	for i := 0; i < 3; i++ {
-		if _, err := c.Labels(context.Background(), "reg/app:1"); err == nil {
+		if _, err := c.Config(context.Background(), "reg/app:1"); err == nil {
 			t.Fatal("expected the error to be returned")
 		}
 	}
@@ -55,11 +56,11 @@ func TestCachingInspectorExpires(t *testing.T) {
 	inner := &countingInspector{labels: map[string]string{"a": "b"}}
 	c := NewCachingInspector(inner)
 	c.TTL = time.Nanosecond
-	if _, err := c.Labels(context.Background(), "reg/app:1"); err != nil {
+	if _, err := c.Config(context.Background(), "reg/app:1"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Millisecond)
-	if _, err := c.Labels(context.Background(), "reg/app:1"); err != nil {
+	if _, err := c.Config(context.Background(), "reg/app:1"); err != nil {
 		t.Fatal(err)
 	}
 	if inner.calls["reg/app:1"] != 2 {

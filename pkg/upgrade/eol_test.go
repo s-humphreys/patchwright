@@ -55,8 +55,8 @@ type eolInspector struct {
 	labels map[string]string
 }
 
-func (s eolInspector) Labels(context.Context, string) (map[string]string, error) {
-	return s.labels, nil
+func (s eolInspector) Config(context.Context, string) (ImageConfig, error) {
+	return ImageConfig{Labels: s.labels}, nil
 }
 
 // Digest never changes, which is exactly what a dead line looks like: the tag is

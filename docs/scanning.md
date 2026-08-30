@@ -195,6 +195,27 @@ the estate**, not on this image. For "how long have we known about this" that is
 right; for "how long has this image been exposed" it can be earlier than the truth if
 the image adopted the CVE later.
 
+## How old is the image
+
+First-party images carry a build date, read from the same image config the base
+resolver already reads - so it costs no extra registry calls. The detail panel
+shows it as "Image built 187 days ago".
+
+It is there because most of a queue is not neglect. An image drifts because nothing
+has rebuilt it, and the base it was built on has moved on since, so a finding is
+usually less "you ignored this" than "this has not shipped since March". Those are
+different conversations to have with a team, and no severity count tells them apart:
+four hundred CVEs on an image built last week is a base image problem, and the same
+count on one built a year ago is a release cadence problem.
+
+Third-party images are not read. A vendor's build date is the vendor's business, and
+reading it would mean a config blob per image for a fact nobody here can act on.
+
+An image that records no date reports "not stated" rather than a date. Some builders
+omit the field and some deliberately zero it for reproducibility, and treating that
+as a timestamp would date them all to 1970 and sort them to the top of anything
+ordered oldest-first.
+
 ## Turning scanning off in one environment
 
 `scan.disabled: true` in a config file turns scanning off even when `--vuln-source` is

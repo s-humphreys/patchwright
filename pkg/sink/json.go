@@ -78,6 +78,11 @@ type FindingView struct {
 	// count the base accounts for, and what upgrading it would clear. Absent when
 	// the differential did not run, which is not the same as it finding nothing.
 	BaseDiff *BaseDiffView `json:"base_diff,omitempty"`
+	// ImageBuilt is when the image was built, per its own config, and
+	// ImageAgeDays how long ago that is. Absent when unread or unstated - never
+	// zero, which would read as "built at the epoch".
+	ImageBuilt   *time.Time `json:"image_built,omitempty"`
+	ImageAgeDays *int       `json:"image_age_days,omitempty"`
 	// InFlightChecked distinguishes "no pull request found" from "we never looked".
 	// Always emitted: false is the meaningful value.
 	InFlightChecked bool `json:"in_flight_checked"`
@@ -304,6 +309,16 @@ func ToFindingView(f model.Finding) FindingView {
 			Packages:         toPackageViews(v.Packages),
 		})
 	}
+	// Zero means the image records no build date, or it was never read. Reporting
+	// that as an age would date every unread image to 1970 and put it at the top of
+	// any "oldest first" ordering.
+	var imageBuilt *time.Time
+	var imageAgeDays *int
+	if !f.ImageBuilt.IsZero() {
+		t := f.ImageBuilt
+		days := int(time.Since(t).Hours() / 24)
+		imageBuilt, imageAgeDays = &t, &days
+	}
 	var baseDiff *BaseDiffView
 	if d := f.BaseDiff; d != nil {
 		baseDiff = &BaseDiffView{
@@ -388,6 +403,8 @@ func ToFindingView(f model.Finding) FindingView {
 		Upgrade:            upgrade,
 		InFlight:           inflight,
 		BaseDiff:           baseDiff,
+		ImageBuilt:         imageBuilt,
+		ImageAgeDays:       imageAgeDays,
 		InFlightChecked:    f.InFlightChecked,
 		InFlightReason:     f.InFlightReason,
 		Dimensions:         f.Dimensions,

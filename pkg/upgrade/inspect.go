@@ -23,21 +23,29 @@ type craneInspector struct{}
 // NewRegistryInspector returns an inspector backed by the registry.
 func NewRegistryInspector() ImageInspector { return craneInspector{} }
 
-func (craneInspector) Labels(ctx context.Context, ref string) (map[string]string, error) {
+func (craneInspector) Config(ctx context.Context, ref string) (ImageConfig, error) {
 	cfg, err := crane.Config(ref, crane.WithContext(ctx), crane.WithAuthFromKeychain(registryauth.Keychain()))
 	if err != nil {
-		return nil, fmt.Errorf("read image config for %s: %w", ref, err)
+		return ImageConfig{}, fmt.Errorf("read image config for %s: %w", ref, err)
 	}
 	// crane.Config returns the raw config JSON; decode only what is needed.
 	var parsed struct {
-		Config struct {
+		Created string `json:"created"`
+		Config  struct {
 			Labels map[string]string `json:"Labels"`
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(cfg, &parsed); err != nil {
-		return nil, fmt.Errorf("decode image config for %s: %w", ref, err)
+		return ImageConfig{}, fmt.Errorf("decode image config for %s: %w", ref, err)
 	}
-	return parsed.Config.Labels, nil
+	out := ImageConfig{Labels: parsed.Config.Labels}
+	// An unparseable or absent timestamp leaves Built zero rather than failing the
+	// read: the labels are what remediation needs, and losing them over a
+	// decorative field would cost an upgrade recommendation.
+	if t, err := time.Parse(time.RFC3339, parsed.Created); err == nil && !t.IsZero() {
+		out.Built = t
+	}
+	return out, nil
 }
 
 func (craneInspector) Digest(ctx context.Context, ref string) (string, error) {
@@ -83,9 +91,9 @@ type CachingInspector struct {
 }
 
 type labelEntry struct {
-	labels map[string]string
-	err    error
-	at     time.Time
+	cfg ImageConfig
+	err error
+	at  time.Time
 }
 
 // defaultInspectTTL comfortably covers one assessment (the slowest observed pass over
@@ -104,26 +112,26 @@ func (c *CachingInspector) ttl() time.Duration {
 	return defaultInspectTTL
 }
 
-// Labels returns the cached labels for a reference, reading through on a miss or an
-// expired entry.
+// Config returns the cached image config for a reference, reading through on a miss
+// or an expired entry.
 //
 // Failures are cached too, and for the same reason the successes are: an unreadable
 // image is unreadable for both callers, and retrying it per stage doubles the wait
 // for an answer that will not change within a run.
-func (c *CachingInspector) Labels(ctx context.Context, ref string) (map[string]string, error) {
+func (c *CachingInspector) Config(ctx context.Context, ref string) (ImageConfig, error) {
 	c.mu.Lock()
 	e, ok := c.entries[ref]
 	fresh := ok && time.Since(e.at) < c.ttl()
 	c.mu.Unlock()
 	if fresh {
-		return e.labels, e.err
+		return e.cfg, e.err
 	}
 
-	labels, err := c.Inner.Labels(ctx, ref)
+	cfg, err := c.Inner.Config(ctx, ref)
 	c.mu.Lock()
-	c.entries[ref] = labelEntry{labels: labels, err: err, at: time.Now()}
+	c.entries[ref] = labelEntry{cfg: cfg, err: err, at: time.Now()}
 	c.mu.Unlock()
-	return labels, err
+	return cfg, err
 }
 
 // Digest passes straight through: see the type comment.

@@ -643,6 +643,23 @@ components:
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
         base_diff: { $ref: "#/components/schemas/BaseDiff" }
+        image_built:
+          type: string
+          format: date-time
+          description: |
+            When the image was built, per its own config.
+
+            Absent when the image records none, or when it was not read - only
+            first-party images are, since a vendor's build date is the vendor's
+            business and nobody here can act on it. Absent is never zero: an unread
+            image dated to the epoch would sort to the top of any "oldest first"
+            ordering.
+        image_age_days:
+          type: integer
+          description: |
+            How long ago that was. Most of a queue is not neglect - an image drifts
+            because nothing rebuilt it - so this separates "you ignored this" from
+            "this has not shipped since March", which are different conversations.
         in_flight: { $ref: "#/components/schemas/InFlight" }
         in_flight_reason:
           type: string

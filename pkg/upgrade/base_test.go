@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -19,6 +20,7 @@ import (
 // a flaky test rather than a broken double.
 type fakeRegistry struct {
 	labels  map[string]map[string]string
+	built   map[string]time.Time
 	digests map[string]string
 	tags    map[string][]string
 	err     error
@@ -35,18 +37,18 @@ func (f *fakeRegistry) askedFor() []string {
 	return append([]string(nil), f.asked...)
 }
 
-func (f *fakeRegistry) Labels(_ context.Context, ref string) (map[string]string, error) {
+func (f *fakeRegistry) Config(_ context.Context, ref string) (ImageConfig, error) {
 	f.mu.Lock()
 	f.asked = append(f.asked, ref)
 	f.mu.Unlock()
 	if f.err != nil {
-		return nil, f.err
+		return ImageConfig{}, f.err
 	}
 	l, ok := f.labels[ref]
 	if !ok {
-		return nil, errors.New("not found: " + ref)
+		return ImageConfig{}, errors.New("not found: " + ref)
 	}
-	return l, nil
+	return ImageConfig{Labels: l, Built: f.built[ref]}, nil
 }
 
 func (f *fakeRegistry) Digest(_ context.Context, ref string) (string, error) {

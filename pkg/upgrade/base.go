@@ -36,11 +36,25 @@ import (
 // Nothing here knows about any particular registry or naming convention. What counts
 // as first-party, which labels to read and how far to follow a chain are all config.
 
+// ImageConfig is what an image records about itself, read in one pass.
+//
+// Labels and the build time come back together because they come from the same
+// config blob. Two methods would mean two registry reads for one object, and on an
+// estate of several hundred first-party images that is a second full pass for a
+// field that was already on the wire.
+type ImageConfig struct {
+	Labels map[string]string
+	// Built is when the image was created, per its config. Zero when the image
+	// records none, which some builders omit and some deliberately zero for
+	// reproducibility - so zero means "not stated", never "built at the epoch".
+	Built time.Time
+}
+
 // ImageInspector reads what an image says about itself. Implemented against a
 // registry; a fake in tests.
 type ImageInspector interface {
-	// Labels returns the image config labels for a reference.
-	Labels(ctx context.Context, ref string) (map[string]string, error)
+	// Config returns what the image records about itself.
+	Config(ctx context.Context, ref string) (ImageConfig, error)
 	// Digest returns the digest a reference currently resolves to, for comparing a
 	// floating tag against the digest an image was built from.
 	Digest(ctx context.Context, ref string) (string, error)
@@ -240,10 +254,11 @@ func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache
 			"base image chain deeper than %d hops", r.Cfg.Base.EffectiveMaxDepth()))}, nil
 	}
 
-	labels, err := r.Inspector.Labels(ctx, ref)
+	cfg, err := r.Inspector.Config(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
+	labels := cfg.Labels
 	baseRef := firstLabel(labels, r.Cfg.Base.EffectiveRefLabels())
 	if baseRef == "" {
 		// The image does not say what it was built from. The fix is a build-system

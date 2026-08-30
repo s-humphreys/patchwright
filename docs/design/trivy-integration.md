@@ -1,9 +1,11 @@
 # Design: Trivy / per-CVE fix availability
 
-Status: **core implemented** — `VulnSource` + image-level `ImageScanner` (post
-dedupe) + a `trivy` source are wired through the pipeline, CLI
-(`--vuln-source trivy`), and sinks (`FIXCRIT` / `fixable_critical`). Remaining:
-digest cache, Trivy server mode, and a Rapid7-API vuln source (see "Phasing").
+Status: **shipped.** `VulnSource` + image-level `ImageScanner` (post dedupe) + a
+`trivy` source are wired through the pipeline, CLI (`--vuln-source trivy`), and
+sinks (`FIXCRIT` / `fixable_critical`). The Rapid7-API vuln source it lists as
+remaining also shipped, and Trivy now has a second job this document does not
+cover: scanning BASE images to establish what a rebuild would clear, which caches
+per digest for the life of the process. Remaining: Trivy server mode.
 
 ## Check before replacing this with a provider-native vuln source
 
