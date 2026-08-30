@@ -12,6 +12,20 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "namespaces"]
     verbs: ["get", "list"]
+  {{- if .Values.reconcile.exposure.enabled }}
+  # Internet exposure: read what sits in front of a workload, so "reachable from
+  # outside" is measured rather than taken from the scan provider. Read-only, and
+  # scoped to routing objects - no secrets, no writes.
+  #
+  # Without these the exposure read fails, which is logged and skipped rather than
+  # fatal: the provider's own value stands and nothing else is affected.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list"]
+  {{- end }}
   {{- if .Values.reconcile.remediation }}
   # Remediation (upgrade detection): read workloads to map images to their Flux
   # HelmRelease, and read Flux HelmReleases/HelmRepositories to find the chart.

@@ -223,6 +223,37 @@ reconcile:
     # Nothing in it is secret and nothing in it expires. Each cluster still needs a
     # ClusterRoleBinding for that identity's object ID — see deploy/rbac.
     authMode: ""              # "" or "azure"
+
+  # Measure whether a workload is reachable from the internet, instead of trusting
+  # the scan provider's own field for it.
+  #
+  # Worth turning on wherever an urgency rule mentions exposure. A provider that
+  # reports the same value for every workload makes such a rule look configured and
+  # do nothing, and because the value is PRESENT it reads as a measurement rather
+  # than as an absence.
+  #
+  # Reads Services and Gateway API HTTPRoutes. Adds no write access. A failure is
+  # logged and skipped rather than fatal, so a role that has not caught up costs the
+  # exposure data and nothing else.
+  exposure:
+    enabled: false
+    # Which DNS suffixes reach the internet, and which do not. Most specific wins,
+    # so "example.com" can be public while "internal.example.com" beneath it is not.
+    #
+    # This is usually the only thing in a cluster that can tell a route fronted by a
+    # public load balancer from an identical one that is not: a gateway may have a
+    # proxy in front of it that Kubernetes knows nothing about, and the hostname is
+    # what distinguishes them.
+    #
+    # Leave both empty and every routed service counts as exposed, which
+    # over-reports. That is the safe direction to be wrong in, but it is a poor
+    # substitute for stating the domains.
+    publicHostnames: []       # e.g. [example.com]
+    internalHostnames: []     # e.g. [internal.example.com, cluster.local]
+    # Gateways that do not reach the internet, used only when no public hostnames
+    # are set. Coarser than hostnames; prefer hostnames where they exist.
+    internalGateways: []      # e.g. ["gateway-system/private"]
+
   # Detect available upgrades for how images are deployed (a newer Helm chart
   # for Flux HelmReleases, a newer image tag for manifest/Kustomize workloads).
   # Adds read access to workloads + Flux CRDs.
