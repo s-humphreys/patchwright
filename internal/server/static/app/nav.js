@@ -50,6 +50,11 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined"
 
       this.button = /** @type {HTMLButtonElement} */ (this.querySelector("#refresh"));
       this.button.addEventListener("click", () => this.refresh());
+      // An assessment is a property of the SERVER, not of this tab. Somebody else
+      // clicking refresh, or the hourly schedule firing, has to put every open page
+      // into the same state - otherwise two people watch the same run and only one
+      // of them is told it is happening, and the other can start a second.
+      this.beat();
     }
 
     disconnectedCallback() {
@@ -59,10 +64,66 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined"
     }
 
     stop() {
-      if (this.poll) clearInterval(this.poll);
-      this.poll = null;
+      if (this.timer) clearInterval(this.timer);
+      this.timer = null;
       if (this.controller) this.controller.abort();
       this.controller = null;
+    }
+
+    /**
+     * beat polls the server for whether an assessment is running.
+     *
+     * Two speeds. Idle it asks every fifteen seconds, which is cheap - the endpoint
+     * serves a cached snapshot - and is what makes somebody else's run show up here
+     * without a page reload. While one is running it asks every two seconds, because
+     * that is when the answer is about to change and people are watching.
+     */
+    beat(fast = false) {
+      const every = fast ? 2000 : 15000;
+      if (this.timer && this.rate === every) return;
+      this.stop();
+      this.rate = every;
+      this.check();
+      this.timer = setInterval(() => this.check(), every);
+    }
+
+    async check() {
+      if (typeof fetch !== "function") return;
+      this.controller = new AbortController();
+      try {
+        const res = await fetch("/api/v1/summary", { signal: this.controller.signal });
+        this.observe((await res.json()).assessment);
+      } catch (err) {
+        if (/** @type {any} */ (err)?.name === "AbortError") return;
+        // A failed poll is not a finished assessment. Leaving the state alone is
+        // the honest response: re-enabling on a network blip would invite a second
+        // run against a server already doing one.
+      }
+    }
+
+    /**
+     * observe applies an assessment status from anywhere - this element's own poll,
+     * or a page that has just fetched the summary for its own reasons.
+     *
+     * Exported so the queue's existing sixty-second reload does not need a second
+     * request to tell the header what it already knows.
+     */
+    observe(a) {
+      const isRunning = !!a?.running;
+      const was = this.wasRunning === true;
+      this.wasRunning = isRunning;
+      this.running(isRunning, isRunning ? elapsed(a) : "");
+      if (isRunning) {
+        this.dispatchEvent(new CustomEvent("pw:assessing", { bubbles: true, detail: a }));
+        this.beat(true);
+        return;
+      }
+      this.beat(false);
+      // Only when it has actually just finished. Firing on every idle poll would
+      // reload every page every fifteen seconds.
+      if (was) {
+        this.dispatchEvent(new CustomEvent("pw:assessed", { bubbles: true, detail: a }));
+      }
     }
 
     /**
@@ -98,40 +159,12 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined"
         this.running(false);
         return;
       }
-      this.watch();
+      // Optimistic: the POST has been accepted, so go straight to the running
+      // state rather than waiting up to two seconds to be told.
+      this.wasRunning = true;
+      this.beat(true);
     }
 
-    /**
-     * watch polls until the server stops reporting a run in progress.
-     *
-     * Each poll carries an AbortController so a page being torn down, or a second
-     * watch starting, cannot leave a request in flight that resolves later and
-     * re-enables a button that should still be disabled.
-     */
-    watch() {
-      this.stop();
-      this.poll = setInterval(async () => {
-        this.controller = new AbortController();
-        try {
-          const res = await fetch("/api/v1/summary", { signal: this.controller.signal });
-          const s = await res.json();
-          const a = s.assessment;
-          if (a?.running) {
-            this.running(true, elapsed(a));
-            this.dispatchEvent(new CustomEvent("pw:assessing", { bubbles: true, detail: a }));
-            return;
-          }
-          this.stop();
-          this.running(false);
-          // The page owns what to reload; the header owns knowing when.
-          this.dispatchEvent(new CustomEvent("pw:assessed", { bubbles: true, detail: a }));
-        } catch (err) {
-          if (/** @type {any} */ (err)?.name === "AbortError") return;
-          this.stop();
-          this.running(false);
-        }
-      }, 2000);
-    }
   }
 
   customElements.define("pw-nav", PatchwrightNav);

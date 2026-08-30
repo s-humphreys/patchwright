@@ -15,9 +15,9 @@ export async function showStatus() {
     const a = s.assessment;
     const { renderFreshness } = await import('./panels.js');
     renderFreshness(a);
-    // An assessment already in progress when the page loads must disable the
-    // control too, not only one this tab started.
-    if (a?.running) nav()?.watch();
+    // Hand it to the header rather than duplicating the decision: it owns whether
+    // the control is disabled and how often to poll.
+    nav()?.observe(a);
   } catch {
     el.textContent = "";
   }

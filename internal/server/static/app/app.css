@@ -28,17 +28,27 @@
   .meta { color: var(--muted); font-size: 0.82rem; }
   /* One panel for every data gap. Quiet by default: a page that opens with three
      paragraphs of caveats buries the queue it exists to show. */
-  .gaps { margin: 0.9rem 0; }
   .gaps-quiet {
     padding: 0.6rem 0.9rem; border: 1px solid var(--line); border-radius: 6px;
     background: var(--card);
   }
-  .gaps-title { display: flex; align-items: baseline; gap: 0.2rem; margin-bottom: 0.35rem; }
-  .gap { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem; margin: 0.2rem 0; }
+  /* One grid for the whole panel, not one per row.
+     Each gap used to be its own grid, so the second column began wherever that row's
+     count happened to end: "7 of 651" pushed its headline and everything nested under
+     it further right than "15" did, and nothing lined up down the panel. `display:
+     contents` puts every row into the SAME two columns, so the counts share a width
+     and the prose and lists beneath them share a left edge. */
+  .gaps { margin: 0.9rem 0; display: grid; grid-template-columns: auto 1fr; column-gap: 0.5rem; row-gap: 0.2rem; }
+  .gaps-title { grid-column: 1 / -1; display: flex; align-items: baseline;
+    gap: 0.2rem; margin-bottom: 0.35rem; }
+  .gap { display: contents; }
   .gap-count { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
   /* Severe gaps change what the queue means; the rest merely trim it. */
   .gap-severe .gap-count { color: var(--urgent); }
   .gap-detail { grid-column: 2; margin: 0.25rem 0 0.5rem; opacity: 0.85; font-size: 0.86rem; }
+  /* The nested list hangs off the prose above it, so one indent step and no more. */
+  .gap-detail .reasons { margin-top: 0.4rem; }
+  .gap-detail .reasons ul { padding-left: 1.1rem; }
   .reasons { margin-top: 0.6rem; }
   .reasons-head { font-weight: 600; }
   .reasons ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }

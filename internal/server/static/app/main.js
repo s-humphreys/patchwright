@@ -1,5 +1,6 @@
 import { initialQuery, readURL } from './urlstate.js';
 import { initConfig } from './config.js';
+import { nav } from './nav.js';
 import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup } from './cves.js';
@@ -19,6 +20,9 @@ export async function loadAll() {
       get("/api/v1/summary"), get("/api/v1/owners"),
     ]);
     renderFreshness(summary.assessment);
+    // The header already polls, but this reload has fresher data in hand; feeding it
+    // in avoids a redundant request and a second of disagreement between the two.
+    nav()?.observe(summary.assessment);
     if (!hasAssessment(summary.assessment)) {
       // Show nothing rather than zeros: an empty dashboard is honest, a dashboard
       // of zeros is a claim.
