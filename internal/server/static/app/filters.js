@@ -61,13 +61,39 @@ export const FACETS = [
       ["direct", "managed", "none", "unknown", "?"].indexOf(b) },
 ];
 
+/**
+ * selected reads the values ticked in one facet.
+ *
+ * Facets are multi-select because the questions people ask are unions - "kev or
+ * exposed", "urgent or high" - and a single-choice control makes those two
+ * questions whose answers have to be added up by hand.
+ *
+ * @returns {string[]} the chosen values, empty meaning no filter.
+ */
+export function selected(id) {
+  const el = $(id);
+  if (!el) return [];
+  return Array.from(el.querySelectorAll("input[type=checkbox]"))
+    .filter((b) => /** @type {any} */ (b).checked)
+    .map((b) => /** @type {any} */ (b).value);
+}
+
+/** select ticks exactly these values, for restoring a link. */
+export function select(id, values) {
+  const el = $(id);
+  if (!el) return;
+  const want = new Set(values || []);
+  for (const b of Array.from(el.querySelectorAll("input[type=checkbox]"))) {
+    /** @type {any} */ (b).checked = want.has(/** @type {any} */ (b).value);
+  }
+}
+
 /** filterState reads every control into one object. */
 export function filterState() {
   /** @type {any} */
   const st = { q: ($("#search")?.value || "").trim().toLowerCase(), fixable: false };
   for (const f of FACETS) {
-    const el = /** @type {any} */ ($(f.id));
-    st[f.name] = el ? el.value : "";
+    st[f.name] = selected(f.id);
   }
   const fixable = /** @type {any} */ ($("#onlyFixable"));
   st.fixable = !!(fixable && fixable.checked);
@@ -100,8 +126,11 @@ export function matches(f, st, except) {
   for (const facet of FACETS) {
     if (facet.name === except) continue;
     const want = st[facet.name];
-    if (!want) continue;
-    if (!facet.values(f).includes(want)) return false;
+    // Several values within one facet mean ANY of them. Across facets it is still
+    // AND: "kev or exposed, owned by orders" is the sentence people say.
+    if (!want || !want.length) continue;
+    const have = facet.values(f);
+    if (!want.some((w) => have.includes(w))) return false;
   }
   if (except !== "fix" && st.fixable && !["direct", "managed"].includes(fixPath(f))) {
     return false;
@@ -124,8 +153,11 @@ export function apply(rows, st, except) {
  */
 export function populate(rows, st) {
   for (const facet of FACETS) {
-    const sel = /** @type {any} */ ($(facet.id));
-    if (!sel) continue;
+    const el = $(facet.id);
+    if (!el) continue;
+    const menu = el.querySelector(".ms-menu");
+    if (!menu) continue;
+
     const available = apply(rows, st, facet.name);
     const counts = new Map();
     for (const f of available) {
@@ -135,33 +167,73 @@ export function populate(rows, st) {
     if (facet.order === "count") keys.sort((a, b) => counts.get(b) - counts.get(a));
     else keys.sort(facet.order);
 
-    const chosen = st[facet.name];
-    // The selection has to remain selectable even at zero, or the browser silently
-    // resets it and the URL and the table stop agreeing.
-    if (chosen && !counts.has(chosen)) {
-      keys.push(chosen);
-      counts.set(chosen, 0);
+    const chosen = st[facet.name] || [];
+    // A chosen value that no longer matches anything stays on the list at zero
+    // rather than vanishing: dropping somebody's filter changes what they are
+    // looking at without telling them, and an empty table under a visible "(0)" is
+    // the honest version.
+    for (const c of chosen) {
+      if (!counts.has(c)) {
+        keys.push(c);
+        counts.set(c, 0);
+      }
     }
-    const text = (v) => (facet.label ? facet.label(v) : v);
-    sel.innerHTML = [`<option value="">${esc(facet.allLabel)} (${available.length})</option>`]
-      .concat(keys.map((k) =>
-        `<option value="${esc(k)}">${esc(text(k))} (${counts.get(k)})</option>`))
-      .join("");
-    sel.value = chosen;
 
-    // A control offering only "all" cannot change anything, so it is disabled and
-    // dimmed rather than left looking operable. Every dropdown here looks
-    // identical whether or not it has options behind it, and a reader who picks one
-    // and sees nothing happen reasonably concludes the filters are broken.
-    //
-    // A selection is always in `keys` by this point - it is pushed above at zero
-    // when it no longer matches - so this cannot strand a filter the reader can
-    // see the effect of but not clear.
+    const text = (v) => (facet.label ? facet.label(v) : v);
+    menu.innerHTML = keys.map((k) => `<label class="ms-opt">
+      <input type="checkbox" value="${esc(k)}"${chosen.includes(k) ? " checked" : ""}>
+      <span>${esc(text(k))}</span><span class="ms-count">${counts.get(k)}</span>
+    </label>`).join("") || `<div class="ms-empty">nothing to filter by</div>`;
+
+    // The summary is the only part visible when the menu is shut, so it has to say
+    // what is selected. "class: all" and "class: 3 selected" are both answers; a
+    // control that looks identical whether or not it is filtering is not.
+    const summary = el.querySelector("summary");
+    if (summary) {
+      const label = facet.allLabel.replace(/^(all|any) /, "").replace(/e?s$/, "");
+      summary.textContent = chosen.length === 0
+        ? `${facet.name}: all (${available.length})`
+        : chosen.length === 1
+          ? `${facet.name}: ${text(chosen[0])}`
+          : `${facet.name}: ${chosen.length} selected`;
+      summary.title = chosen.length ? chosen.map(text).join(", ") : `Filter by ${label}`;
+    }
+
+    // A facet with nothing behind it cannot change anything, so it is dimmed and
+    // cannot be opened. They all look identical otherwise, and a reader who opens
+    // one to find it empty reasonably concludes the filters are broken.
     const inert = keys.length === 0;
-    sel.disabled = inert;
-    sel.closest("label")?.classList.toggle("inert", inert);
-    sel.title = inert
-      ? "Nothing in the current view differs by this, so it would not change anything."
-      : "";
+    el.classList.toggle("inert", inert);
+    if (inert) /** @type {any} */ (el).open = false;
+    el.toggleAttribute("data-inert", inert);
   }
+}
+
+/**
+ * wireFacets makes the dropdowns behave: ticking a box filters, and clicking away
+ * closes the menu.
+ *
+ * Called once. `onChange` is the page's filter-and-render, so this module does not
+ * need to know what a view is.
+ */
+export function wireFacets(onChange) {
+  for (const facet of FACETS) {
+    const el = $(facet.id);
+    if (!el) continue;
+    el.addEventListener("change", (e) => {
+      if (/** @type {any} */ (e.target)?.type === "checkbox") onChange();
+    });
+    // An inert facet must not open, and a details element opens on its own.
+    el.addEventListener("toggle", () => {
+      if (el.hasAttribute("data-inert")) /** @type {any} */ (el).open = false;
+    });
+  }
+  document.addEventListener("click", (e) => {
+    for (const facet of FACETS) {
+      const el = $(facet.id);
+      if (el && /** @type {any} */ (el).open && !el.contains(/** @type {any} */ (e.target))) {
+        /** @type {any} */ (el).open = false;
+      }
+    }
+  });
 }

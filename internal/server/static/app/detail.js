@@ -416,6 +416,27 @@ export function initDetail() {
   });
 }
 
+/**
+ * cveLinks points at the record itself.
+ *
+ * Everything else on this panel is what this tool measured - which images, whose
+ * team, what fixes it. None of that says what the CVE actually IS, and the reader
+ * who needs that has been copying the id into a search bar. The links are built
+ * from the id rather than taken from the provider so they are present whatever the
+ * provider chose to send.
+ */
+function cveLinks(id) {
+  const cve = String(id || "").toUpperCase();
+  if (!/^CVE-\d{4}-\d{4,}$/.test(cve)) return "";
+  const at = (href, label) =>
+    `<a href="${esc(href)}" target="_blank" rel="noreferrer noopener">${esc(label)}</a>`;
+  return [
+    at(`https://www.cve.org/CVERecord?id=${cve}`, "CVE record"),
+    at(`https://nvd.nist.gov/vuln/detail/${cve}`, "NVD"),
+    at(`https://www.first.org/epss/`, "EPSS"),
+  ].join(" · ");
+}
+
 /** openCVEDetail shows one CVE and every image carrying it. */
 export function openCVEDetail(g) {
   const repaint = reopeningSame("cve", g.id);
@@ -450,6 +471,7 @@ export function openCVEDetail(g) {
           : unknown("?", "No exploit source ran, so exploitation pressure is unknown."))}
         ${row("Risk score", g.risk ? String(Math.round(g.risk)) : unknown("-", "The scan provider scored this CVE for none of these images."))}
         ${row("Known exploited", g.kev ? badge(SIGNAL_BADGES.kev, "kev") : '<span class="muted">not in CISA KEV</span>')}
+        ${row("References", cveLinks(g.id), "The authoritative record and the usual enrichment sources. Everything else on this page is what WE measured; these are what the CVE itself says.")}
       </dl></section>
       <section><h4>Scope</h4><dl>
         ${row("Images affected", String(g.images.length))}

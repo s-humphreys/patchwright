@@ -11,10 +11,12 @@ import { JSDOM } from 'jsdom';
 
 const url = 'http://x/?q=topno&fixable=true&service=storefront&team=data-platform';
 const dom = new JSDOM(`<!doctype html><html><body>
-  <select id="classFilter"><option value="">all</option></select>
-  <select id="teamFilter"><option value="">all</option><option value="data-platform">data-platform</option></select>
-  <select id="fixFilter"><option value="">all</option></select>
-  <select id="signalFilter"><option value="">all</option></select>
+  <details class="ms" id="classFilter"><summary></summary><div class="ms-menu"></div></details>
+  <details class="ms" id="teamFilter"><summary></summary><div class="ms-menu">
+    <label class="ms-opt"><input type="checkbox" value="data-platform"><span>data-platform</span></label>
+  </div></details>
+  <details class="ms" id="fixFilter"><summary></summary><div class="ms-menu"></div></details>
+  <details class="ms" id="signalFilter"><summary></summary><div class="ms-menu"></div></details>
   <input id="search">
   <input type="checkbox" id="onlyFixable">
   <input type="checkbox" id="onlyActionable" checked>
@@ -47,7 +49,7 @@ test('filters from the link are applied, not discarded', () => {
   assert.equal(changed, true);
   assert.equal(document.querySelector('#search').value, 'topno');
   assert.equal(document.querySelector('#onlyFixable').checked, true);
-  assert.equal(document.querySelector('#teamFilter').value, 'data-platform');
+  assert.equal(document.querySelector('#teamFilter input[value=data-platform]').checked, true);
 });
 
 test('writeURL preserves parameters that belong to something else', () => {

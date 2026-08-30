@@ -19,3 +19,12 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "namespaces"]
     verbs: ["get", "list"]
+  # Internet exposure: what sits in front of a workload. Only needed when
+  # reconcile.exposure is enabled; harmless to grant either way, since neither can
+  # write and neither exposes anything a pod listing does not.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list"]
