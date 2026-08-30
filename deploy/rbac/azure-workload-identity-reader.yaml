@@ -5,7 +5,13 @@
 # for the identity it runs as, and the API server authenticates it as the AAD object ID
 # below. Authorisation is then ordinary Kubernetes RBAC, which is what this grants.
 #
-# Replace OBJECT_ID with the identity's principal — for an AKS workload identity that is
+# The placeholder is written as ${OBJECT_ID} so `envsubst` substitutes it. It was once
+# a bare OBJECT_ID, which envsubst leaves alone: applying the result bound the role to
+# a user literally called "OBJECT_ID" and every cluster refused the real identity on
+# the next run. If you render this by hand, CHECK THE RENDERED FILE before applying -
+# an empty or unsubstituted subject is a working binding replaced by a broken one.
+#
+# Substitute ${OBJECT_ID} with the identity's principal — for an AKS workload identity that is
 # the managed identity's object (principal) ID, not its client ID:
 #
 #   kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.principalId}'
@@ -72,4 +78,4 @@ subjects:
   # are different GUIDs for the same identity, and the wrong one authenticates as nobody.
   - apiGroup: rbac.authorization.k8s.io
     kind: User
-    name: OBJECT_ID
+    name: ${OBJECT_ID}
