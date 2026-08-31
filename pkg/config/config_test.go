@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // A rule that silently does not fire is worse than no rule: nobody is looking for it,
 // and the report presents the unconstrained answer with the same confidence as a
@@ -63,6 +66,30 @@ func TestCanonicalisationKeepsWildcardRulesWorking(t *testing.T) {
 	for _, name := range []string{"docker.io/bitnami/redis", "bitnami/redis"} {
 		if s, _, _, _ := hub.For(name); s != "patch" {
 			t.Errorf("%s: got %q, want patch", name, s)
+		}
+	}
+}
+
+func TestEffectiveMaxAgeBoundsStalenessByDefault(t *testing.T) {
+	// Zero is handed to basescan, which reads it as its own default. What must NOT
+	// happen is an unset value meaning "never expire": that was the bug.
+	if got := (BaseDiffConfig{}).EffectiveMaxAge(); got != 0 {
+		t.Errorf("unset maxAge = %v, want 0 so basescan applies its default", got)
+	}
+	if got := (BaseDiffConfig{MaxAge: "6h"}).EffectiveMaxAge(); got != 6*time.Hour {
+		t.Errorf("maxAge 6h = %v", got)
+	}
+	// Explicitly off, for a one-shot command whose process outlives nothing.
+	for _, off := range []string{"never", "NEVER", " off ", "0"} {
+		if got := (BaseDiffConfig{MaxAge: off}).EffectiveMaxAge(); got >= 0 {
+			t.Errorf("maxAge %q = %v, want negative (never expire)", off, got)
+		}
+	}
+	// A typo takes the default rather than the old never-expire behaviour: the wrong
+	// response to an unparseable bound is to stop bounding anything.
+	for _, bad := range []string{"twelve hours", "12", "-3h", "abc"} {
+		if got := (BaseDiffConfig{MaxAge: bad}).EffectiveMaxAge(); got != 0 {
+			t.Errorf("maxAge %q = %v, want 0 (the default), not never", bad, got)
 		}
 	}
 }

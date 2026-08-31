@@ -5,7 +5,8 @@ Status: **shipped.** `VulnSource` + image-level `ImageScanner` (post dedupe) + a
 sinks (`FIXCRIT` / `fixable_critical`). The Rapid7-API vuln source it lists as
 remaining also shipped, and Trivy now has a second job this document does not
 cover: scanning BASE images to establish what a rebuild would clear, which caches
-per digest for the life of the process. Remaining: Trivy server mode.
+per digest, expiring after a configurable window (12h by default). Remaining: Trivy
+server mode.
 
 ## Check before replacing this with a provider-native vuln source
 

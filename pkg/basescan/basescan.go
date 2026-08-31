@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // Package is one package a scan found, the ecosystem it belongs to, and the
@@ -86,11 +87,40 @@ type Resolver struct {
 	// network and disk bound rather than CPU bound.
 	Concurrency int
 
+	// MaxAge bounds how long a scan is reused before the base is scanned again.
+	//
+	// It exists because a cache that never expires does not merely go stale, it
+	// misattributes. An image's own CVEs are re-read every assessment; its base's
+	// were not, and a CVE absent from the base scan is reported as coming from the
+	// APPLICATION. So every CVE published against a base package after the process
+	// started was blamed on the team that builds the image, for as long as the
+	// process lived - which on a long-running server is weeks.
+	//
+	// Zero means DefaultMaxAge rather than "forever": the safe reading of an unset
+	// bound is the one that cannot quietly grow. A negative value disables expiry
+	// explicitly, for a one-shot command where the process outlives nothing.
+	MaxAge time.Duration
+
+	// Now is the clock, for tests.
+	Now func() time.Time
+
 	mu      sync.Mutex
 	entries map[string]*entry
 	sem     chan struct{}
 	semOnce sync.Once
+	// rescans counts entries replaced because they had expired, so a run can report
+	// re-scanning as distinct from scanning something new.
+	rescans int
 }
+
+// DefaultMaxAge is how long a base scan is reused when nothing says otherwise.
+//
+// Twelve hours is a compromise between two real costs. Shorter re-scans the estate's
+// bases more often than the vulnerability data underneath them actually changes -
+// Trivy's database updates daily - and each sweep of them measured 1m44s on a real
+// estate. Longer widens the window in which a newly-published base CVE is attributed
+// to the wrong team.
+const DefaultMaxAge = 12 * time.Hour
 
 // entry is one reference's scan, shared by every caller that asks for it.
 //
@@ -102,6 +132,10 @@ type entry struct {
 	once sync.Once
 	res  *Result
 	err  error
+	// at is when the scan finished, written and read under the resolver's mutex.
+	// Zero means still in flight, which is NOT expired - a caller must wait for it
+	// rather than starting a second scan of the same reference.
+	at time.Time
 }
 
 // Scan returns the scan of ref, running it at most once per reference.
@@ -113,16 +147,7 @@ func (r *Resolver) Scan(ctx context.Context, ref string) (*Result, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("basescan: empty reference")
 	}
-	r.mu.Lock()
-	if r.entries == nil {
-		r.entries = map[string]*entry{}
-	}
-	e, ok := r.entries[ref]
-	if !ok {
-		e = &entry{}
-		r.entries[ref] = e
-	}
-	r.mu.Unlock()
+	e := r.entryFor(ref)
 
 	e.once.Do(func() {
 		r.semOnce.Do(func() {
@@ -144,8 +169,65 @@ func (r *Resolver) Scan(ctx context.Context, ref string) (*Result, error) {
 		if e.err != nil {
 			slog.WarnContext(ctx, "base image scan failed", "ref", ref, "error", e.err)
 		}
+		// Stamped under the lock, because entryFor reads it from other goroutines.
+		// Stamped even on failure: a broken base must not be retried per image.
+		r.mu.Lock()
+		e.at = r.now()
+		r.mu.Unlock()
 	})
 	return e.res, e.err
+}
+
+// entryFor returns the cache entry for ref, replacing one that has aged out.
+//
+// A scan still in flight is never replaced, whatever its age says: two callers asking
+// for the same base at once must share one scan, which is the entire economy of this
+// type.
+func (r *Resolver) entryFor(ref string) *entry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.entries == nil {
+		r.entries = map[string]*entry{}
+	}
+	e := r.entries[ref]
+	if e != nil && r.expired(e) {
+		// Replaced rather than reset: another goroutine may still hold the old pointer,
+		// and it should finish reading the answer it already has.
+		e = nil
+		r.rescans++
+	}
+	if e == nil {
+		e = &entry{}
+		r.entries[ref] = e
+	}
+	return e
+}
+
+// expired reports whether an entry has outlived MaxAge. Callers hold the mutex.
+func (r *Resolver) expired(e *entry) bool {
+	max := r.MaxAge
+	if max == 0 {
+		max = DefaultMaxAge
+	}
+	if max < 0 || e.at.IsZero() {
+		return false
+	}
+	return r.now().Sub(e.at) >= max
+}
+
+func (r *Resolver) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
+}
+
+// Rescanned reports how many cached scans were discarded as too old, so a run can say
+// what it re-read rather than leaving a re-scan looking like new work.
+func (r *Resolver) Rescanned() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rescans
 }
 
 // Scanned reports how many distinct references have been scanned, for logging the
