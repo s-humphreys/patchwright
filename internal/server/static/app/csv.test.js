@@ -84,3 +84,35 @@ test('an unscanned finding still exports, with its CVE columns empty', async () 
   assert.ok(file);
   assert.equal(file.body.split('\r\n').length, 2);
 });
+
+// The CVE export needs per-CVE detail, and the queue does not load it. An export that
+// wrote a header and no rows would be worse than a pause: the reader takes a file as
+// an answer.
+test('a CVE export waits for the detail rather than writing an empty file', async () => {
+  const { S } = await import('./state.js');
+  const { resetVulns } = await import('./vulns.js');
+  S.assessedAt = '2026-08-31T09:00:00Z';
+  resetVulns();
+
+  const row = {
+    image: 'reg/app:1.0.0', repository: 'app', owner: { team: 'orders' }, scanned: true,
+    counts: { critical: 1 }, provider_assessed: true, signals: [], vuln_count: 1,
+  };
+  S.queueRows = [row];
+
+  let served = false;
+  globalThis.fetch = async () => {
+    served = true;
+    return {
+      ok: true,
+      json: async () => ({ findings: [{ image: 'reg/app:1.0.0',
+        vulns: [{ id: 'CVE-2026-9', severity: 'critical', cvss: 9.1, kev: true, fix_available: true }] }] }),
+    };
+  };
+
+  const file = await exportRows('cves', [row]);
+  assert.ok(served, 'the export fetched the detail it needed');
+  assert.ok(file, 'and produced a file rather than reporting nothing to export');
+  assert.match(file.body, /CVE-2026-9/);
+  assert.match(file.body.split('\r\n')[0], /^cve,severity/);
+});

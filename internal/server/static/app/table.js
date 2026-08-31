@@ -81,7 +81,7 @@ export function renderTable(id, columns, rows) {
   // Rows in the findings table are openable: they carry the image so a click can find
   // the finding again, and a tabindex so the keyboard reaches them.
   const openable = id === "findings" || id === "cves";
-  document.querySelector(`#${id} tbody`).innerHTML = data.map((row) => (openable
+  const rowHTML = (row) => (openable
     ? `<tr class="openable" tabindex="0" ${id === "cves"
         ? `data-cve="${esc(row.id)}" aria-label="Show scope of ${esc(row.id)}"`
         // A work item carries its key, so a click opens what the row actually IS rather
@@ -95,7 +95,84 @@ export function renderTable(id, columns, rows) {
                    c.cls ? c.cls(row) : ""].filter(Boolean).join(" ");
       const title = c.title ? ` title="${esc(c.title(row))}"` : "";
       return `<td${cls ? ` class="${cls}"` : ""}${title}>${c.get(row)}</td>`;
-    }).join("") + "</tr>").join("");
+    }).join("") + "</tr>";
+
+  fill(id, data, rowHTML);
+}
+
+// FIRST_CHUNK is how many rows are drawn before the reader gets control back, and
+// CHUNK how many are appended per frame after that.
+//
+// The CVE view is why this exists. Filtered to nothing in particular it is ten
+// thousand rows, and building them in one string measured about a second - paid again
+// on every keystroke in the search box, so typing a service name cost several seconds
+// of frozen page. A screen holds a few dozen rows; the rest can arrive while the
+// reader is reading the ones they can already see.
+const FIRST_CHUNK = 60;
+const CHUNK = 500;
+
+// pending is the in-progress fill per table, so a new render supersedes the old one
+// rather than interleaving rows from two different filter states.
+/** @type {Map<string, number>} */
+const pending = new Map();
+let generation = 0;
+
+/**
+ * fill draws the rows in chunks, cancelling whatever the last render was still doing.
+ *
+ * Nothing is truncated: every row is drawn, just not all in one frame. Capping the
+ * table would have been simpler and wrong - a reader who filters to four hundred CVEs
+ * and scrolls expects four hundred, and "showing the first two hundred" is the kind of
+ * quiet omission this page exists to avoid.
+ * @param {string} id
+ * @param {any[]} data
+ * @param {(row: any) => string} rowHTML
+ */
+function fill(id, data, rowHTML) {
+  const tbody = document.querySelector(`#${id} tbody`);
+  if (!tbody) return;
+  const mine = ++generation;
+  pending.set(id, mine);
+
+  tbody.innerHTML = data.slice(0, FIRST_CHUNK).map(rowHTML).join("");
+  if (data.length <= FIRST_CHUNK) {
+    pending.delete(id);
+    return;
+  }
+
+  let next = FIRST_CHUNK;
+  const step = () => {
+    // A later render has taken over: stop, rather than appending this render's rows
+    // underneath the new one's.
+    if (pending.get(id) !== mine) return;
+    const slice = data.slice(next, next + CHUNK);
+    tbody.insertAdjacentHTML("beforeend", slice.map(rowHTML).join(""));
+    next += slice.length;
+    if (next < data.length) {
+      schedule(step);
+      return;
+    }
+    pending.delete(id);
+  };
+  schedule(step);
+}
+
+// schedule defers to the next frame where there is one, and to a timer otherwise -
+// which is what a background tab gets, and what a test environment has.
+function schedule(fn) {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => fn());
+    return;
+  }
+  setTimeout(fn, 0);
+}
+
+/**
+ * rendering reports whether a table is still filling, so a caller that reads the DOM
+ * knows it is not yet the whole answer.
+ */
+export function rendering(id) {
+  return pending.has(id);
 }
 
 // pct renders a share, and says "-" rather than "0%" when the denominator is zero:

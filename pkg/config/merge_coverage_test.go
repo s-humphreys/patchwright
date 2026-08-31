@@ -31,6 +31,7 @@ remediation:
     binary: /usr/local/bin/trivy
     timeout: 9m
     concurrency: 6
+    maxAge: 8h
   upgrade:
     strategy: patch
     rules:

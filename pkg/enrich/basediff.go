@@ -65,8 +65,12 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 	}
 	wg.Wait()
 
+	// Re-scans reported separately from scans: a run that re-read forty bases because
+	// their scans had aged out has done different work from one that found forty new
+	// ones, and a single count reads the same for both.
 	slog.InfoContext(ctx, "base differential complete",
-		"base_images_scanned", e.Resolver.Scanned(), "images", len(images))
+		"base_images_scanned", e.Resolver.Scanned(),
+		"base_images_rescanned", e.Resolver.Rescanned(), "images", len(images))
 	return nil
 }
 

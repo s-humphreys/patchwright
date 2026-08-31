@@ -41,6 +41,21 @@ type FindingView struct {
 	WorkloadCount   int      `json:"workload_count"`
 	FixableCritical int      `json:"fixable_critical,omitempty"`
 	KnownExploited  bool     `json:"known_exploited,omitempty"`
+	// VulnCount, TopEPSS, TopEPSSPercentile and TopRiskScore are the whole-image
+	// facts a caller would otherwise derive by walking vulns.
+	//
+	// They exist so vulns can be LEFT OUT. On a real estate the per-CVE arrays are
+	// 97% of this payload - 208,697 CVEs against 612 findings, 41MB against 1.3MB -
+	// and a client listing the queue needs the worst score per image rather than
+	// every score. Absent them, omitting vulns would silently change what a list
+	// can say; present, `vulns=false` costs a caller nothing it was showing.
+	//
+	// The worst rather than an average: one CVE at 0.93 makes an image urgent
+	// however many quiet ones sit beside it.
+	VulnCount         int     `json:"vuln_count,omitempty"`
+	TopEPSS           float64 `json:"top_epss,omitempty"`
+	TopEPSSPercentile float64 `json:"top_epss_percentile,omitempty"`
+	TopRiskScore      float64 `json:"top_risk_score,omitempty"`
 	// ProviderAssessed is false when the scan provider never assessed the image,
 	// making Counts zero through ignorance rather than health. Consumers MUST
 	// check this before treating zero counts as a clean result.
@@ -286,9 +301,19 @@ func (n NDJSON) Emit(w io.Writer, findings []model.Finding) error {
 func ToFindingView(f model.Finding) FindingView {
 	vulns := make([]VulnView, 0, len(f.Vulns))
 	knownExploited := false
+	var topEPSS, topPercentile, topRisk float64
 	for _, v := range f.Vulns {
 		if v.KEV {
 			knownExploited = true
+		}
+		if v.EPSS > topEPSS {
+			// Score and percentile taken together from the same CVE: the worst score is
+			// the one whose percentile a reader wants beside it, and maxing them
+			// separately would pair a score with another CVE's ranking.
+			topEPSS, topPercentile = v.EPSS, v.EPSSPercentile
+		}
+		if v.RiskScore > topRisk {
+			topRisk = v.RiskScore
 		}
 		vulns = append(vulns, VulnView{
 			ID:             v.ID,
@@ -391,6 +416,10 @@ func ToFindingView(f model.Finding) FindingView {
 		WorkloadCount:      len(f.Occurrences),
 		FixableCritical:    fixableCriticals(f),
 		KnownExploited:     knownExploited,
+		VulnCount:          len(vulns),
+		TopEPSS:            topEPSS,
+		TopEPSSPercentile:  topPercentile,
+		TopRiskScore:       topRisk,
 		ProviderAssessed:   f.ProviderAssessed(),
 		AssessmentIssues:   f.AssessmentIssues(),
 		Scanned:            f.Scanned,

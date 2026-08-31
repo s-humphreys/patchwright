@@ -4,6 +4,7 @@ import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, u
 import { cveGroup } from './cves.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
+import { detailFailed, ensureDetail } from './vulns.js';
 
 // The detail panel: everything about one finding, on demand.
 //
@@ -73,6 +74,20 @@ function vulnTable(f) {
     return `<p class="muted">This image was not scanned, so there is no per-CVE detail.
       The counts above come from the scan provider; fix availability, EPSS and KEV are
       unknown rather than absent.</p>`;
+  }
+  // The queue is loaded without per-CVE detail, so a panel opened before it arrives
+  // has to say it is waiting. Falling through would print "Scanned, and no CVEs were
+  // found" over an image carrying four hundred of them - the worst sentence on the
+  // page.
+  //
+  // Decided from THIS finding rather than from whether the loader has run: absent and
+  // empty are different values, and a finding that already carries its CVEs has
+  // nothing to wait for.
+  if (f.vulns === undefined) {
+    return detailFailed(f.image)
+      ? `<p class="unknown">Per-CVE detail could not be loaded: ${esc(S.vulnError)}.
+         This image has ${f.vuln_count ?? "an unknown number of"} CVEs.</p>`
+      : `<p class="muted">Loading ${f.vuln_count ? f.vuln_count + " " : ""}CVEs\u2026</p>`;
   }
   const vulns = (f.vulns || []).slice().sort((a, b) =>
     (b.kev ? 1 : 0) - (a.kev ? 1 : 0) || (b.epss || 0) - (a.epss || 0) || (b.cvss || 0) - (a.cvss || 0));
@@ -282,6 +297,14 @@ function settle(el, repaint, scrollTop) {
 }
 
 export function openDetail(f) {
+  // Per-CVE detail is not on the page until something asks for it. Repaint when it
+  // lands, and only if this panel is still the one open: reopening a panel the reader
+  // has since navigated away from would yank them back.
+  // One image's CVEs, not the estate's: a panel is a few kilobytes where the whole
+  // set is megabytes, and most readers open a panel long before they open the CVE view.
+  ensureDetail([f], () => {
+    if (shownImage() === f.image && !shownGroup()) openDetail(f);
+  });
   const repaint = reopeningSame("finding", f.image);
   const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = f;
@@ -528,6 +551,10 @@ export function initCVEDetail(lookup) {
 
 /** openGroupDetail shows one work item: the shared change, and every tag it covers. */
 export function openGroupDetail(g) {
+  // Every deployment in the item, which is typically two or three tags of one service.
+  ensureDetail(g.findings || [], () => {
+    if (shownGroup() === g.key) openGroupDetail(g);
+  });
   const repaint = reopeningSame("group", g.key);
   const keepScroll = repaint ? scrollOf($("#detail")) : 0;
   shown = { image: g.image, group: g.key };

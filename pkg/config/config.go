@@ -395,6 +395,16 @@ type BaseDiffConfig struct {
 	// Concurrency bounds simultaneous base scans. Each one pulls an image, so this
 	// is a limit on the registry as much as on this process.
 	Concurrency int `yaml:"concurrency"`
+	// MaxAge is how long a base scan may be reused before the base is read again, as
+	// a duration ("12h", "30m"). Empty takes the default.
+	//
+	// It is a correctness setting more than a performance one. A base scan that is
+	// never re-read does not merely age: because a CVE absent from the base scan is
+	// attributed to the APPLICATION, every CVE published against a base package after
+	// the scan is blamed on the team that builds the image. This bounds that window.
+	//
+	// "never" disables expiry, for a one-shot command whose process outlives nothing.
+	MaxAge string `yaml:"maxAge"`
 }
 
 // On reports whether base scanning was asked for.
@@ -408,6 +418,26 @@ func (b BaseDiffConfig) EffectiveConcurrency() int {
 		return b.Concurrency
 	}
 	return 8
+}
+
+// EffectiveMaxAge is the configured window, or basescan's default. A negative
+// duration means never expire, which is what "never" parses to.
+//
+// An unparseable value takes the default rather than failing the run: this bounds
+// staleness, and the wrong response to a typo in it is to keep the old behaviour of
+// never expiring at all.
+func (b BaseDiffConfig) EffectiveMaxAge() time.Duration {
+	switch strings.ToLower(strings.TrimSpace(b.MaxAge)) {
+	case "":
+		return 0 // basescan reads zero as its own default
+	case "never", "off", "0":
+		return -1
+	}
+	d, err := time.ParseDuration(b.MaxAge)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 type BaseImageConfig struct {
@@ -1063,6 +1093,9 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Remediation.BaseDiff.Concurrency != 0 {
 			cfg.Remediation.BaseDiff.Concurrency = part.Remediation.BaseDiff.Concurrency
+		}
+		if part.Remediation.BaseDiff.MaxAge != "" {
+			cfg.Remediation.BaseDiff.MaxAge = part.Remediation.BaseDiff.MaxAge
 		}
 		if part.Remediation.InFlight.Provider != "" {
 			cfg.Remediation.InFlight = part.Remediation.InFlight

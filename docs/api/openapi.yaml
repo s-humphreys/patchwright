@@ -128,6 +128,16 @@ paths:
           description: "`false` lists the coverage gap: findings nobody has data for."
         - { name: remediation_checked, in: query, schema: { type: boolean } }
         - { name: upgrade_resolved, in: query, schema: { type: boolean } }
+        - name: vulns
+          in: query
+          schema: { type: boolean, default: true }
+          description: >-
+            `false` omits the per-CVE arrays. They are 97% of a real payload - on one
+            estate 41MB against 1.3MB, 92KB compressed - so a caller listing the queue
+            should pass it and read `vuln_count`, `top_epss`, `top_epss_percentile`,
+            `top_risk_score` and `known_exploited` instead. Fetch
+            `/api/v1/finding?image=` for one image's CVEs, or `/api/v1/cves` for the
+            estate aggregated by CVE.
       responses:
         "200":
           description: Matching findings
@@ -661,6 +671,27 @@ components:
           type: integer
           description: Critical CVEs with a fix available. Needs a vuln source.
         known_exploited: { type: boolean }
+        vuln_count:
+          type: integer
+          description: >-
+            CVEs on this image. Present so a caller can pass `vulns=false` and still
+            know the size of the problem; absent means none are listed, which for an
+            unscanned image means unknown rather than none - read `scanned`.
+        top_epss:
+          type: number
+          description: >-
+            Highest EPSS across this image's CVEs: one CVE at 0.93 makes the image
+            urgent however many quiet ones sit beside it.
+        top_epss_percentile:
+          type: number
+          description: >-
+            The percentile of that same CVE, not the highest percentile on the image -
+            pairing a score with another CVE's ranking would describe neither.
+        top_risk_score:
+          type: number
+          description: >-
+            Highest provider risk score across this image's CVEs, on the provider's own
+            scale. Not comparable with EPSS, which is a probability.
         provider_assessed:
           type: boolean
           description: False means the provider never assessed this image.

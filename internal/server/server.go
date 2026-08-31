@@ -20,6 +20,7 @@ import (
 	"github.com/s-humphreys/patchwright/internal/version"
 	"github.com/s-humphreys/patchwright/pkg/analytics"
 	"github.com/s-humphreys/patchwright/pkg/config"
+	"github.com/s-humphreys/patchwright/pkg/group"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -72,6 +73,51 @@ type snapshot struct {
 	// sources is what the run was configured to do, so a consumer can tell an
 	// absent signal from an absent finding.
 	sources model.Sources
+
+	// items and cves are the two aggregations the API serves, computed once per
+	// assessment on first request rather than on every one.
+	//
+	// Measured at the size of a real estate, the CVE rollup was 44ms of CPU and 32MB
+	// of allocation per request - for an answer that cannot change while this snapshot
+	// is the current one. Two viewers with a page open and an MCP client polling made
+	// that the most expensive thing the process did between assessments.
+	//
+	// Lazy rather than computed at refresh: an estate whose readers never open the CVE
+	// view should not pay for it every hour, and the first reader who does pays once.
+	viewsOnce sync.Once
+	defViews  []sink.FindingView
+	itemsOnce sync.Once
+	items     []group.Item
+	cvesOnce  sync.Once
+	cves      []group.CVE
+}
+
+// defaultItems and defaultCVEs are the aggregations over the DEFAULT population -
+// everything the API returns when no filter is given. A filtered request is not served
+// from these; see servableFromCache.
+func (s *snapshot) defaultItems() []group.Item {
+	s.itemsOnce.Do(func() { s.items = group.Items(s.defaultViews()) })
+	return s.items
+}
+
+func (s *snapshot) defaultCVEs() []group.CVE {
+	s.cvesOnce.Do(func() { s.cves = group.CVEs(s.defaultViews(), false) })
+	return s.cves
+}
+
+// defaultViews is filterViews with nothing set: suppressed findings hidden, which is
+// the API's default and therefore the population the caches describe.
+func (s *snapshot) defaultViews() []sink.FindingView {
+	s.viewsOnce.Do(func() {
+		out := make([]sink.FindingView, 0, len(s.views))
+		for _, v := range s.views {
+			if !v.Suppressed {
+				out = append(out, v)
+			}
+		}
+		s.defViews = out
+	})
+	return s.defViews
 }
 
 // ticketRef is the client-facing shape of an open ticket.

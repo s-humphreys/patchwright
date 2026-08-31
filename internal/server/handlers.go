@@ -118,7 +118,12 @@ func (s *Server) Handler() http.Handler {
 	// Authentication wraps everything, including the page: the page is a data view,
 	// so leaving it open while gating the API would protect nothing. /metrics and the
 	// probes are exempt; see openPaths.
-	return s.authorize(mux)
+	//
+	// Compression is outermost so it covers the sign-in pages too, and revalidation
+	// sits inside authentication: a 304 must not be served to a caller who has not
+	// authenticated, or the presence of a cached copy would leak that the resource
+	// exists.
+	return compress(s.authorize(s.revalidate(mux)))
 }
 
 func (s *Server) meta() assessmentMeta {
@@ -161,7 +166,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	views := []sink.FindingView{}
 	if snap != nil {
-		views = filterViews(snap.views, r)
+		views = withoutVulns(filterViews(snap.views, r), r)
 	}
 	var tickets map[string][]ticketRef
 	if snap != nil && snap.tickets != nil {
@@ -263,6 +268,31 @@ func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
 
 // filterViews applies the query-parameter filters. By default suppressed
 // findings are excluded unless ?suppressed=true.
+// withoutVulns drops the per-CVE arrays when the caller asks, leaving the whole-image
+// aggregates that stand in for them.
+//
+// This is the difference between a page that loads and one that does not. The arrays
+// are 97% of a real payload - 41MB against 1.3MB, and 92KB once compressed - and a
+// caller listing the queue wants the worst score per image, not all 208,697 scores.
+// vuln_count, top_epss, top_epss_percentile, top_risk_score and known_exploited carry
+// everything a list column shows.
+//
+// Opt-in, because dropping data by default would break every existing consumer
+// silently, which is the one way of being fast that is not worth it.
+func withoutVulns(views []sink.FindingView, r *http.Request) []sink.FindingView {
+	if want, ok := boolParam(r.URL.Query().Get("vulns")); !ok || want {
+		return views
+	}
+	out := make([]sink.FindingView, len(views))
+	for i, v := range views {
+		// A copy per finding: the cached snapshot is shared with every other reader and
+		// with the next request, so nothing here may mutate it.
+		v.Vulns = nil
+		out[i] = v
+	}
+	return out
+}
+
 func filterViews(views []sink.FindingView, r *http.Request) []sink.FindingView {
 	q := r.URL.Query()
 	ownerClass := q.Get("owner_class")
@@ -371,7 +401,11 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	items := []group.Item{}
 	if snap != nil {
-		items = group.Items(filterViews(snap.views, r))
+		if servableFromCache(r) {
+			items = snap.defaultItems()
+		} else {
+			items = group.Items(filterViews(snap.views, r))
+		}
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta `json:"assessment"`
@@ -431,9 +465,16 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	cves := []group.CVE{}
 	scanned, total := 0, 0
 	if snap != nil {
-		views := filterViews(snap.views, r)
+		// The CVE-level filters below narrow the aggregated ROWS, so they do not stop
+		// the aggregation being reused; a filter on the FINDINGS does.
+		var views []sink.FindingView
+		if servableFromCache(r, cveRowParams...) {
+			views, cves = snap.defaultViews(), snap.defaultCVEs()
+		} else {
+			views = filterViews(snap.views, r)
+			cves = group.CVEs(views, false)
+		}
 		total = len(views)
-		cves = group.CVEs(views, false)
 		if len(cves) > 0 {
 			scanned = cves[0].ScannedImages
 		} else {
@@ -495,6 +536,30 @@ func (s *Server) handleCVE(w http.ResponseWriter, r *http.Request) {
 
 // filterCVEs applies the list filters a security consumer wants: what is exploited,
 // what is severe, and what is widespread enough to be worth a campaign.
+// cveRowParams are the filters that apply to aggregated CVE rows rather than to the
+// findings they were aggregated from. A request using only these can still be served
+// from the cached rollup, because narrowing rows afterwards gives the same answer.
+var cveRowParams = []string{"severity", "kev", "fixable", "min_images", "min_services"}
+
+// servableFromCache reports whether a request asks for the default population.
+//
+// Deliberately a whitelist of what may appear, not a blacklist of filters. Adding a
+// new filter parameter therefore makes requests using it MISS the cache and be
+// computed properly, which is the safe direction: the failure mode of forgetting to
+// update this is a slower request, never a wrong one.
+func servableFromCache(r *http.Request, allowed ...string) bool {
+	ok := map[string]bool{"vulns": true}
+	for _, name := range allowed {
+		ok[name] = true
+	}
+	for name := range r.URL.Query() {
+		if !ok[name] {
+			return false
+		}
+	}
+	return true
+}
+
 func filterCVEs(cves []group.CVE, r *http.Request) []group.CVE {
 	q := r.URL.Query()
 	severity := q.Get("severity")

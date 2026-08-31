@@ -150,6 +150,10 @@ func newAssessor(in assessInputs) (*assessor, error) {
 					Resolver: &basescan.Resolver{
 						Scanner:     &basescan.TrivyScanner{Binary: bd.Binary, Timeout: bd.Timeout},
 						Concurrency: bd.EffectiveConcurrency(),
+						// Bounded, because the server holds this resolver for the life of
+						// the process and an unexpiring base scan misattributes new CVEs
+						// to the application. See basescan.Resolver.MaxAge.
+						MaxAge: bd.EffectiveMaxAge(),
 					},
 				}))
 			}

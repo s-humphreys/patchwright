@@ -156,7 +156,14 @@ export function upgradeTitle(f) {
 // request" — absence of a badge asserts nothing, which is why exposure has its own
 // three-valued cell in the hover rather than a missing globe standing for "safe".
 
+// The whole-image worst of a per-CVE score.
+//
+// Read from the aggregate the API sends alongside the CVEs, falling back to the CVEs
+// themselves. The queue is loaded WITHOUT them - they are 97% of the payload - so a
+// column that could only compute this by walking vulns would render "-" for the whole
+// estate until somebody opened a panel.
 export function maxRisk(f) {
+  if (f.top_risk_score != null) return f.top_risk_score;
   let top = 0;
   for (const v of f.vulns || []) {
     if ((v.risk_score || 0) > top) top = v.risk_score;
@@ -227,9 +234,11 @@ export function ticketSort(f) {
   return refs.length ? refs[0].key : "";
 }
 
-export const isScanned = (f) => f.scanned || (f.vulns || []).length > 0;
+export const isScanned = (f) => f.scanned || (f.vuln_count || 0) > 0 || (f.vulns || []).length > 0;
 export const fixcrit = (f) => (isScanned(f) ? f.fixable_critical ?? 0 : "-");
-export const maxEPSS = (f) => (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0);
+export const maxEPSS = (f) => (f.top_epss != null
+  ? f.top_epss
+  : (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0));
 
 // epssPercent renders an exploit-prediction score as what it actually is: a probability.
 //

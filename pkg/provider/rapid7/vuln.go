@@ -37,12 +37,32 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return &vulnSource{api: p}, nil
+		return &vulnSource{api: p, concurrency: opts.Int("concurrency")}, nil
 	})
+}
+
+// ScanConcurrency reports how many per-image requests may be in flight.
+//
+// Higher than the scanner's default, because a scan here is one HTTP request rather
+// than an image pull: 768 images at four in flight measured 2m19s, almost all of it
+// waiting on the platform. Sixteen is the default rather than something larger because
+// the far side is somebody else's rate limit, and the client already retries a 429 -
+// the aim is to stop leaving the connection idle, not to find the limit.
+//
+// Overridable with `--vuln-option concurrency=N`, for a tenant whose limits are
+// tighter or more generous than this guess.
+func (v *vulnSource) ScanConcurrency() int {
+	if v.concurrency > 0 {
+		return v.concurrency
+	}
+	return 16
 }
 
 type vulnSource struct {
 	api *apiProvider
+	// concurrency is how many per-image requests may be in flight, from the
+	// "concurrency" option.
+	concurrency int
 
 	// resources maps image reference to a resource that runs it, built once on first
 	// use. The mapping is the only reason a second sweep is needed, and it is the

@@ -54,6 +54,16 @@ first-found dates, and the fixed version per CVE.
 It supplies neither EPSS nor CISA KEV, because the API carries neither. Run
 `--exploit-source public` alongside for those.
 
+Per-image requests run 16 at a time, because a "scan" here is one HTTP request rather
+than an image pull - at the scanner's cautious default of four, 768 images measured
+2m19s of a ten-minute assessment, almost all of it waiting. `--vuln-option
+concurrency=N` tunes it for a tenant whose rate limits are tighter or more generous.
+
+`--age-source rapid7` and `--exploit-source rapid7` read the same endpoint, and it is
+now swept once per assessment and shared: separately, each sweep was about two minutes
+of that same run. The sweep is scoped to the run, so a later assessment fetches fresh
+data rather than reusing intelligence from the last one.
+
 The endpoint is keyed by resource rather than image, so the source maps each image to a
 resource running it, preferring one the platform actually assessed — an unassessed
 resource reports no CVEs, which would read as a clean image. An image no resource runs
@@ -87,9 +97,28 @@ first time somebody checks.
 
 Only BASE images are scanned, not the estate: on a real deployment that was about
 110 distinct base tags against several thousand images, shared by everything built
-on them and cached per digest for the life of the process. The cost is fixed in the
-number of bases. The first run after a restart is the expensive one; every run
-after it reuses the cache.
+on them and cached per digest. The cost is fixed in the number of bases. The first
+run after a restart is the expensive one - 1m44s on that estate - and every run
+after it reuses the cache until it expires.
+
+```yaml
+remediation:
+  baseDiff:
+    maxAge: 12h   # default; "never" to disable
+```
+
+That expiry is a correctness setting more than a performance one, and it is worth
+understanding before changing it. A CVE **absent from the base scan is attributed to
+the application**, which is the whole point of the subtraction. An image's own CVEs
+are re-read every assessment, so if its base's scan is never re-read, every CVE
+published against a base package afterwards is blamed on the team that builds the
+image - for as long as the process lives, which on a server is weeks. The window
+bounds how long that can be wrong for; twelve hours sits just above the daily cadence
+of Trivy's own database updates.
+
+`base_images_rescanned` in the run log counts scans discarded as too old, reported
+apart from `base_images_scanned` because re-reading forty bases is different work from
+finding forty new ones.
 
 The base is identified by digest wherever the build recorded one, because a tag can
 have moved since and scanning where it points now would credit the base's

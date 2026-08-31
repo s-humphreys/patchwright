@@ -63,9 +63,34 @@ type ImageScanner struct {
 	Skip func(model.AssessedImage) bool
 }
 
-// NewImageScanner builds an ImageScanner from a source.
+// NewImageScanner builds an ImageScanner from a source, at whatever concurrency that
+// source says is safe for it.
+//
+// One default for every source was wrong, and measurably so. Four at a time suits
+// Trivy, where each "scan" pulls an image and works through its filesystem - more of
+// those compete for disk and memory, and on one estate a shared disk cache deadlocked
+// under concurrency. It badly suits an API source, where a scan is a single HTTP
+// request: 768 images at four in flight took 2m19s of a ten-minute assessment, mostly
+// waiting.
 func NewImageScanner(src VulnSource) ImageScanner {
-	return ImageScanner{Source: src, Concurrency: 4}
+	conc := defaultScanConcurrency
+	if p, ok := src.(Paralleliser); ok {
+		if n := p.ScanConcurrency(); n > 0 {
+			conc = n
+		}
+	}
+	return ImageScanner{Source: src, Concurrency: conc}
+}
+
+// defaultScanConcurrency is what a source that says nothing gets: the cautious value,
+// because a source that has not thought about it is more likely to be pulling images
+// than making requests.
+const defaultScanConcurrency = 4
+
+// Paralleliser is an optional VulnSource capability stating how many scans of it may
+// run at once. A source knows what it is doing per image; the scanner does not.
+type Paralleliser interface {
+	ScanConcurrency() int
 }
 
 // Preparer is an optional VulnSource capability for one-time setup before the

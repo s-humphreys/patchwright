@@ -7,6 +7,7 @@ import { renderFreshness } from './panels.js';
 import { S } from './state.js';
 import { FINDING_COLUMNS, renderTable } from './table.js';
 import { $, get } from './util.js';
+import { ensureVulns, resetVulns } from './vulns.js';
 
 export function renderFindings(rows) {
   // Grouped by default: one row per piece of work rather than per deployment. Both
@@ -41,9 +42,19 @@ export async function loadFindings() {
   const params = new URLSearchParams();
   if ($("#onlyActionable").checked) params.set("actionable", "true");
   if ($("#showSuppressed").checked) params.set("suppressed", "true");
+  // Without the per-CVE arrays, which are 97% of this payload and none of what the
+  // queue draws. The CVE view and the detail panels load them on demand; see vulns.js.
+  params.set("vulns", "false");
   const d = await get("/api/v1/findings?" + params);
   S.queueRows = d.findings || [];
   S.ticketsByRepo = d.tickets;
+  const stamp = d.assessment?.generated_at || null;
+  if (stamp !== S.assessedAt) {
+    // A different assessment: the CVEs loaded for the last one describe findings that
+    // may no longer exist, and merging them into these would date the answer silently.
+    S.assessedAt = stamp;
+    resetVulns();
+  }
   applyOwnerFilters();
   renderFreshness(d.assessment);
 }
@@ -70,6 +81,19 @@ export function applyOwnerFilters() {
  */
 export function renderCurrentView() {
   if (currentView() === "cves") {
+    // The CVE view is the one thing on this page that genuinely needs every CVE, so
+    // it is what triggers the load. Until it lands the table says so rather than
+    // rendering an empty estate.
+    const state = ensureVulns(() => renderCurrentView());
+    if (state !== "ready") {
+      // An empty table would read as an estate with no CVEs, which is the one thing
+      // this page exists not to say.
+      $("#queueCount").textContent = state === "failed"
+        ? `CVE detail could not be loaded: ${S.vulnError}`
+        : "loading CVE detail\u2026";
+      $("#cves tbody").innerHTML = "";
+      return;
+    }
     // The filter state goes in too: narrowing the FINDINGS is not enough here.
     // Picking the kev signal narrowed the queue to findings carrying a
     // known-exploited CVE and then listed every CVE on them, so a reader who asked
