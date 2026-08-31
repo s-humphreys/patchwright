@@ -39,7 +39,7 @@ func register(s *sdk.Server, src Source) {
 	type noArgs struct{}
 
 	type serviceArgs struct {
-		Service string `json:"service" jsonschema:"the service or image repository, e.g. 'topnotch' or 'myregistry.io/apps/topnotch'"`
+		Service string `json:"service" jsonschema:"the service or image repository, e.g. 'storefront' or 'myregistry.io/apps/storefront'"`
 	}
 	type queueArgs struct {
 		Team     string `json:"team,omitempty" jsonschema:"only items owned by this team"`
@@ -89,6 +89,31 @@ func register(s *sdk.Server, src Source) {
 			return textResult(msg), nil, nil
 		}
 		return result(r)
+	})
+
+	sdk.AddTool(s, &sdk.Tool{
+		Name: "fix_plan",
+		Description: "What to DO about one service, for somebody holding a ticket for it: the " +
+			"change to make, what not to do and why, what the change achieves, and which of the " +
+			"remaining vulnerabilities were never that team's to fix. Use this for \"how do I fix " +
+			"X\", \"what do I need to do about X\", or a ticket naming a service. service_report " +
+			"is the same data as a report; this is the same data as an instruction.",
+	}, func(ctx context.Context, req *sdk.CallToolRequest, args serviceArgs) (*sdk.CallToolResult, any, error) {
+		a := src()
+		if !a.ready() {
+			return textResult(errNoAssessment), nil, nil
+		}
+		p, ok := fixPlan(a, args.Service)
+		if !ok {
+			msg := fmt.Sprintf("No service matching %q is in this assessment, so there is nothing "+
+				"to plan. That means it was not in the scan input or is not deployed, NOT that it "+
+				"is free of vulnerabilities. ", args.Service)
+			if near := matchService(a, args.Service); len(near) > 0 {
+				msg += "Closest names: " + strings.Join(near, ", ") + "."
+			}
+			return textResult(msg), nil, nil
+		}
+		return result(p)
 	})
 
 	sdk.AddTool(s, &sdk.Tool{

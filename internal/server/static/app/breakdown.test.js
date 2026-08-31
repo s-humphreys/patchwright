@@ -138,7 +138,7 @@ test('KEV is a share of the estate, not of the row', async () => {
   // tenth of the estate's problem.
   renderBreakdown([
     owner({ team: 'ics', total: 100, actionable: 90, known_exploited: 7 }),
-    owner({ team: 'data-platform', total: 13, actionable: 12, known_exploited: 12 }),
+    owner({ team: 'insights', total: 13, actionable: 12, known_exploited: 12 }),
   ]);
   const cols = breakdownColumns().map((c) => c.label);
   const kev = cols.indexOf('KEV');
@@ -149,7 +149,7 @@ test('KEV is a share of the estate, not of the row', async () => {
   // 7 and 12 of 19 across the table.
   const cells = rows.map(text).join(' | ');
   assert.match(cells, /37%/, `expected ics at 37%, got: ${cells}`);
-  assert.match(cells, /63%/, `expected data-platform at 63%, got: ${cells}`);
+  assert.match(cells, /63%/, `expected insights at 63%, got: ${cells}`);
   // The denominator is not in the cell text any more, so it has to be somewhere a
   // reader can find it: the hover, and the column's own help. Without either, a
   // percentage beside row-relative ones is indistinguishable from them.

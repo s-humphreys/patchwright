@@ -30,7 +30,7 @@ func ts(s string) time.Time {
 // first one's numbers.
 func fixture() Assessment {
 	base := sink.FindingView{
-		Image: "reg.example/apps/topnotch:1.4.0", Repository: "apps/topnotch",
+		Image: "reg.example/apps/storefront:1.4.0", Repository: "apps/storefront",
 		Tag: "1.4.0", Owner: sink.OwnerView{Team: "payments", Class: "product"},
 		Priority: "urgent", Exposure: "public", Scanned: true, ProviderAssessed: true,
 		Counts:     map[string]int{"critical": 3, "high": 5},
@@ -64,7 +64,7 @@ func fixture() Assessment {
 		},
 	}
 	unassessed := sink.FindingView{
-		Image: "reg.example/apps/topnotch:1.5.0-rc1", Repository: "apps/topnotch",
+		Image: "reg.example/apps/storefront:1.5.0-rc1", Repository: "apps/storefront",
 		Tag: "1.5.0-rc1", Owner: sink.OwnerView{Team: "payments", Class: "product"},
 		Priority: "medium", Exposure: "unknown",
 		Counts:  map[string]int{},
@@ -84,23 +84,23 @@ func fixture() Assessment {
 			Wins: []analytics.Win{{
 				FromRef: "mcr/dotnet/aspnet:9.0", ToRef: "mcr/dotnet/aspnet:10.0",
 				Clears: 6, Introduces: 1, KEVCleared: 1,
-				Services: []analytics.ServiceCount{{Service: "apps/topnotch", Team: "payments"}},
+				Services: []analytics.ServiceCount{{Service: "apps/storefront", Team: "payments"}},
 			}},
 			Issues: []analytics.Issue{{
 				Key: "stale-fix", Title: "Fixes available and untouched", Count: 1,
 				Why:      "A fix has existed for over a month and nothing has moved.",
-				Services: []analytics.ServiceCount{{Service: "apps/topnotch", Team: "payments"}},
+				Services: []analytics.ServiceCount{{Service: "apps/storefront", Team: "payments"}},
 			}},
 		},
 	}
 }
 
 func TestServiceReportSplitsTheRemainderByWhoOwnsIt(t *testing.T) {
-	r, ok := serviceReport(fixture(), "topnotch")
+	r, ok := serviceReport(fixture(), "storefront")
 	if !ok {
 		t.Fatal("no report for a service that is present")
 	}
-	if r.Service != "apps/topnotch" || r.Team != "payments" {
+	if r.Service != "apps/storefront" || r.Team != "payments" {
 		t.Fatalf("wrong service identity: %+v", r)
 	}
 	if len(r.Deployments) != 2 {
@@ -128,7 +128,7 @@ func TestServiceReportSplitsTheRemainderByWhoOwnsIt(t *testing.T) {
 // The whole point of the caveats: an unassessed deployment must not vanish into the
 // assessed one's numbers.
 func TestServiceReportStatesPartialCoverage(t *testing.T) {
-	r, _ := serviceReport(fixture(), "apps/topnotch")
+	r, _ := serviceReport(fixture(), "apps/storefront")
 	if r.Vulnerabilities.ScannedOf != [2]int{1, 2} {
 		t.Errorf("want 1 of 2 scanned, got %v", r.Vulnerabilities.ScannedOf)
 	}
@@ -163,7 +163,7 @@ func TestSuppressedIsExcludedFromCountsAndStated(t *testing.T) {
 
 	// The service view keeps them, because somebody asking about a service wants all
 	// of it - a hidden deployment is how a suppression rule outlives its reason.
-	r, ok := serviceReport(a, "topnotch")
+	r, ok := serviceReport(a, "storefront")
 	if !ok || len(r.Deployments) != 2 {
 		t.Fatalf("want both deployments on the service answer, got %d", len(r.Deployments))
 	}
@@ -383,7 +383,7 @@ func TestUnassessedReasonsAreCountedWorstFirst(t *testing.T) {
 // Every tool carries freshness, including the configuration. A service answer that
 // omitted it would be the one most likely to be read in isolation.
 func TestServiceReportCarriesFreshnessAndConfiguration(t *testing.T) {
-	r, _ := serviceReport(fixture(), "topnotch")
+	r, _ := serviceReport(fixture(), "storefront")
 	if r.Freshness.AssessedAt == "" || r.Freshness.Version == "" {
 		t.Errorf("want freshness on a service answer: %+v", r.Freshness)
 	}
@@ -426,7 +426,7 @@ func TestToolsAnswerOverStreamableHTTP(t *testing.T) {
 	}
 
 	res, err := session.CallTool(ctx, &sdk.CallToolParams{
-		Name: "service_report", Arguments: map[string]any{"service": "topnotch"},
+		Name: "service_report", Arguments: map[string]any{"service": "storefront"},
 	})
 	if err != nil {
 		t.Fatalf("call: %v", err)
@@ -495,7 +495,7 @@ func TestAnUpgradeWithNothingToMoveToIsNotReportedAsAMove(t *testing.T) {
 		t.Errorf("want the state named, got %q", q.Items[0].Upgrade)
 	}
 
-	r, ok := serviceReport(a, "topnotch")
+	r, ok := serviceReport(a, "storefront")
 	if !ok {
 		t.Fatal("want a report")
 	}
@@ -545,7 +545,7 @@ func TestUpgradeStatesAreKeptApart(t *testing.T) {
 
 // The arithmetic has to close. This is the guard the tool needed and did not have.
 //
-// Reported live: topnotch, deployed at three tags of one build, was told it had 6,746
+// Reported live: storefront, deployed at three tags of one build, was told it had 6,746
 // vulnerabilities and that upgrading would clear 17,571 of them. Every per-deployment
 // count was being summed while the CVE total was deduped, so the same CVEs were counted
 // once per tag. A team cannot act on a number that is impossible on its face, and the
@@ -556,12 +556,12 @@ func TestTheCountsReconcileAcrossDeployments(t *testing.T) {
 	first := a.Findings[0]
 	for _, tag := range []string{"1.4.1", "1.4.2"} {
 		copy := first
-		copy.Image = "reg.example/apps/topnotch:" + tag
+		copy.Image = "reg.example/apps/storefront:" + tag
 		copy.Tag = tag
 		a.Findings = append(a.Findings, copy)
 	}
 
-	r, ok := serviceReport(a, "topnotch")
+	r, ok := serviceReport(a, "storefront")
 	if !ok {
 		t.Fatal("want a report")
 	}
@@ -612,7 +612,7 @@ func TestTheEstateRebuildFigureIsComparableWithTheTotal(t *testing.T) {
 	first := a.Findings[0]
 	for _, tag := range []string{"1.4.1", "1.4.2"} {
 		copy := first
-		copy.Image = "reg.example/apps/topnotch:" + tag
+		copy.Image = "reg.example/apps/storefront:" + tag
 		copy.Tag = tag
 		a.Findings = append(a.Findings, copy)
 	}
@@ -651,7 +651,7 @@ func TestTheTopEPSSPercentileBelongsToTheTopScore(t *testing.T) {
 		{ID: "CVE-A", EPSS: 0.90, EPSSPercentile: 0.97, Origin: "base", OriginDetermined: true},
 		{ID: "CVE-B", EPSS: 0.20, EPSSPercentile: 0.99, Origin: "base", OriginDetermined: true},
 	}
-	r, _ := serviceReport(a, "topnotch")
+	r, _ := serviceReport(a, "storefront")
 	if r.Vulnerabilities.TopEPSS != 0.90 {
 		t.Errorf("top_epss = %v, want the highest score", r.Vulnerabilities.TopEPSS)
 	}
@@ -810,13 +810,13 @@ func TestPartlyMeasuredServicesStillReconcile(t *testing.T) {
 	// A second deployment with its OWN extra CVE and no differential: the base it was
 	// built on is gone from the registry.
 	extra := a.Findings[0]
-	extra.Image = "reg.example/apps/topnotch:preview"
+	extra.Image = "reg.example/apps/storefront:preview"
 	extra.Tag = "preview"
 	extra.BaseDiff = nil
 	extra.Vulns = append([]sink.VulnView{{ID: "CVE-2026-99", Severity: "high"}}, extra.Vulns...)
 	a.Findings = append(a.Findings, extra)
 
-	r, ok := serviceReport(a, "topnotch")
+	r, ok := serviceReport(a, "storefront")
 	if !ok {
 		t.Fatal("want a report")
 	}

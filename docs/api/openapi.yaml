@@ -472,7 +472,8 @@ paths:
       summary: Model Context Protocol endpoint (JSON-RPC over Streamable HTTP)
       description: |
         Read-only MCP tools answering from the same cached assessment the API serves:
-        `estate_summary`, `service_report`, `worst_first`, `team_report`, `explain_cve`.
+        `fix_plan`, `estate_summary`, `service_report`, `worst_first`, `team_report`,
+        `explain_cve`, `list_facets`.
 
         Not a REST endpoint. The body is JSON-RPC 2.0 as defined by the MCP
         Streamable HTTP transport, and it is documented here only so the route is
@@ -719,6 +720,16 @@ components:
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
         base_diff: { $ref: "#/components/schemas/BaseDiff" }
+        build_repo:
+          type: string
+          description: >-
+            The source repository that built this image, from the labels named by
+            `remediation.base.repoLabels`. Absent means the image records none - so
+            nothing can point at the code that produced it, which is a real answer rather
+            than a gap. The keys are configuration because they belong to the CI system:
+            the OCI standard key names a project's source, while a CI system usually
+            writes the repository that ran the build, and only the second answers "would
+            a pull request here rebuild this image".
         image_built:
           type: string
           format: date-time

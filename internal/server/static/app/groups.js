@@ -14,7 +14,7 @@ import { UNKNOWN, esc } from './util.js';
 // and a ticket are the same unit. Two things the estate forces:
 //
 //   - The team is part of the key. Two repositories here are shared between teams
-//     (ledger across cpe and fdx), and merging those would produce a row belonging
+//     (ledger across payments and orders), and merging those would produce a row belonging
 //     to nobody and break the team filter.
 //   - Findings inside a group disagree. 159 of 181 multi-finding groups hold different
 //     verdicts, because the same image is urgent in production and medium in

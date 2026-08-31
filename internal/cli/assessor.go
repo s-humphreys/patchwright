@@ -167,7 +167,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 
 		// How long since each first-party image was built. Reads the same cached
 		// image config the base resolver just read, so it adds no registry calls.
-		popts = append(popts, pipeline.WithImageAgeEnricher(&upgrade.ImageAgeEnricher{
+		popts = append(popts, pipeline.WithImageFactsEnricher(&upgrade.ImageFactsEnricher{
 			Cfg: cfg.Remediation, Inspector: inspector,
 		}))
 

@@ -176,11 +176,11 @@ remediation:
     rules:
       # Held for one team, whose packages are genuinely not ready.
       - name: docker.io/python
-        when: "owner['team'] == 'data-science'"
+        when: "owner['team'] == 'research'"
         strategy: patch
         ceiling: "3.12"
         until: 2026-12-31
-        reason: cdt's underlying packages are not 3.14 ready
+        reason: the analytics toolkit's dependencies are not 3.14 ready
       # Everyone else on the same base is unconstrained, and moves when they choose to.
 ```
 
@@ -195,7 +195,7 @@ Available in a scope:
 | `labels` | resource and namespace labels |
 
 `dimensions` and `labels` are **lists**, because one image usually runs in several places:
-`"'cdt' in dimensions['namespace']"` matches if any deployment of that image is in `cdt`.
+`"'analytics' in dimensions['namespace']"` matches if any deployment of that image is in `analytics`.
 Values are collected across every deployment and sorted, so the decision does not depend
 on which deployment the resolver happened to reach first.
 
@@ -208,7 +208,7 @@ First match wins, as before, so a specific rule goes above a general one:
 
 ```yaml
       - name: docker.io/python
-        when: "owner['team'] == 'data-science'"
+        when: "owner['team'] == 'research'"
         ceiling: "3.12"
       - name: docker.io/python          # everyone else
         ceiling: "3.13"

@@ -28,7 +28,7 @@ type Pipeline struct {
 	age         *enrich.AgeEnricher         // optional: CVE first-seen enrichment after scan
 	remediation *enrich.RemediationEnricher // optional: deployment upgrade detection
 	baseDiff    *enrich.BaseDiffEnricher    // optional: base-image attribution, after remediation
-	imageAge    ImageEnricher               // optional: when each image was built
+	imageFacts  ImageEnricher               // optional: when each image was built
 	inFlight    ImageEnricher               // optional: open pull requests applying those upgrades
 
 	// failures are the enrichments that could not run. An enrichment is not the
@@ -59,10 +59,10 @@ func WithAgeEnricher(a *enrich.AgeEnricher) Option {
 	return func(p *Pipeline) { p.age = a }
 }
 
-// WithImageAgeEnricher records when each image was built, which is what separates
+// WithImageFactsEnricher records when each image was built, which is what separates
 // "you ignored this" from "this has not shipped since March".
-func WithImageAgeEnricher(e ImageEnricher) Option {
-	return func(p *Pipeline) { p.imageAge = e }
+func WithImageFactsEnricher(e ImageEnricher) Option {
+	return func(p *Pipeline) { p.imageFacts = e }
 }
 
 // WithBaseDiffEnricher enables base-image attribution: which of an image's CVEs
@@ -173,9 +173,9 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 			return nil, err
 		}
 	}
-	if p.imageAge != nil {
+	if p.imageFacts != nil {
 		// Never fatal: a build date explains a finding rather than deciding it.
-		if err := p.imageAge.EnrichImages(ctx, images); err != nil {
+		if err := p.imageFacts.EnrichImages(ctx, images); err != nil {
 			p.recordFailure(ctx, "image-age", err)
 		}
 	}
@@ -260,6 +260,7 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				InFlightReason:     ai.InFlightReason,
 				BaseDiff:           ai.BaseDiff,
 				ImageBuilt:         ai.ImageBuilt,
+				BuildRepo:          ai.BuildRepo,
 			})
 		}
 	}

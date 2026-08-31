@@ -96,8 +96,12 @@ type FindingView struct {
 	// ImageBuilt is when the image was built, per its own config, and
 	// ImageAgeDays how long ago that is. Absent when unread or unstated - never
 	// zero, which would read as "built at the epoch".
-	ImageBuilt   *time.Time `json:"image_built,omitempty"`
-	ImageAgeDays *int       `json:"image_age_days,omitempty"`
+	ImageBuilt *time.Time `json:"image_built,omitempty"`
+	// BuildRepo is the source repository that built this image, from the labels named by
+	// remediation.base.repoLabels. Absent means the image records none - so nothing can
+	// point at the code that produced it, which is a real answer rather than a gap.
+	BuildRepo    string `json:"build_repo,omitempty"`
+	ImageAgeDays *int   `json:"image_age_days,omitempty"`
 	// InFlightChecked distinguishes "no pull request found" from "we never looked".
 	// Always emitted: false is the meaningful value.
 	InFlightChecked bool `json:"in_flight_checked"`
@@ -433,6 +437,7 @@ func ToFindingView(f model.Finding) FindingView {
 		InFlight:           inflight,
 		BaseDiff:           baseDiff,
 		ImageBuilt:         imageBuilt,
+		BuildRepo:          f.BuildRepo,
 		ImageAgeDays:       imageAgeDays,
 		InFlightChecked:    f.InFlightChecked,
 		InFlightReason:     f.InFlightReason,

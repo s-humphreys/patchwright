@@ -2,7 +2,7 @@
 
 `patchwright serve` also speaks the [Model Context Protocol](https://modelcontextprotocol.io)
 at `/mcp`, so an LLM client can ask the questions people already ask - *what does the
-payments team need to fix?*, *what would rebuilding topnotch's base actually clear?* -
+payments team need to fix?*, *what would rebuilding storefront's base actually clear?* -
 and get them answered from the assessment rather than from a screenshot somebody
 pasted.
 
@@ -19,6 +19,7 @@ enough to matter.
 
 | Tool | Answers |
 |---|---|
+| `fix_plan` | **What to DO about one service.** For somebody holding a ticket: the change, what not to do and why, what it achieves, and which of the remainder was never their team's |
 | `estate_summary` | The headline: size of the problem, how much of it rebuilds would clear, the biggest wins, and what nobody is acting on |
 | `service_report` | Everything about one service: deployments, image age, the upgrade it needs, and exactly what that upgrade clears, leaves and introduces |
 | `worst_first` | The work queue, worst first, filterable by team, priority and exposure |
@@ -26,11 +27,69 @@ enough to matter.
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
 | `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
 
+`fix_plan` is the one an engineer reaches for. It carries the same data as
+`service_report`, shaped as an instruction rather than a dataset - which is the whole
+difference, because a report hands over clears, leaves, introduces, a remainder split and a
+policy rule, and leaves somebody to work out which of it they are supposed to act on.
+
+```
+storefront - insights
+why      urgent, internet-facing, 10 known-exploited CVEs, 6,746 vulnerabilities
+         across 3 deployments (rule: exploited-fixable-critical)
+
+do       change the base image this is built on
+         from  docker.io/python@sha256:3966b818...
+         to    docker.io/python:3.12.14      (a version change, not a rebuild)
+         yours: yes, across Development US, PreProduction US, Production US
+         repository: https://dev.example/org/proj/_git/storefront
+
+do not   go to 3.14.7, the newest available. Policy holds this line at 3.12:
+         "the analytics toolkit's dependencies are not 3.14 ready (data team, Aug 2026)"
+
+result   clears 5,857 of 6,746, including all 10 known-exploited
+         introduces 296
+         880 not yours: still in the new base, upstream's to fix
+             linux-libc-dev (518), binutils (57), libbinutils (57) ...
+         9 still yours
+         verify: afterwards expect about 1,185 rather than 6,746, with 10 of
+                 10 known-exploited gone. A remainder is expected.
+         known_exploited: CVE-2025-48384 (cleared), CVE-2026-31431 (cleared) ...
+
+also     reporting-tools takes the same move
+
+unknown  which repository holds the build that sets this
+         whether anybody has started
+```
+
+Three parts of that are there because of how the answer gets used. The **reason** behind a
+ceiling, because "there is a 3.14, why am I being told 3.12" is the first thing anybody
+asks and the answer was written by a colleague who knew. Whether the change is **yours**,
+because 26 findings on one estate are owned by a chart or an operator and editing the build
+would do nothing. And **what was never yours**, because a ticket closed with 880
+vulnerabilities left on the service gets reopened unless somebody can say why those 880 are
+an upstream wait.
+
+Three of those exist because the reader may be a coding agent rather than a person.
+**`repository`** is where the change goes, read from the image's own labels - patchwright
+reads images, not the code that produced them, so the build has to say. The keys are
+configuration, `remediation.base.repoLabels`, because they belong to the CI system: the
+OCI standard `org.opencontainers.image.source` names a project's source, while a CI system
+usually writes the repository that ran the build, and only the second answers "would a
+pull request here rebuild this image". **`verify`** is what the service should look like
+afterwards, so an expected remainder is not read as the change having failed.
+**`known_exploited`** names each exploited CVE and whether this change clears it - the
+list a pull request description wants, including the ones that survive, because a ticket
+that mentions only the wins leaves somebody believing the service is clean of them.
+
+`unknown` is not filler either. Where the image records no repository label there is
+nothing to point at, and the plan says which configuration would supply one rather than
+leaving an agent to guess.
+
 `service_report` is the deep one. Asked about a service it returns the split that
 turns a number into a conversation:
 
 ```
-apps/topnotch - payments - urgent in prod, internet-facing
+apps/storefront - payments - urgent in prod, internet-facing
   3 deployments, newest image built 187 days ago
   10 CVEs, 1 known-exploited
 
@@ -56,7 +115,7 @@ payload.
 can be read against each other: on a service, `clears` + `still_in_base` +
 `from_application` + `unattributed` is the total. That is not free - a service deployed
 at three tags of one build carries the same CVEs three times, and summing each
-deployment's own count told topnotch it had 6,746 vulnerabilities of which an upgrade
+deployment's own count told storefront it had 6,746 vulnerabilities of which an upgrade
 would clear 17,571. A team cannot act on a number that is impossible on its face.
 
 The two exceptions name their unit rather than hiding it. A rebuild win reports

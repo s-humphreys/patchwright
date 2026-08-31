@@ -77,7 +77,7 @@ func TestConfigResolvesStrategyAndCeilingPerImage(t *testing.T) {
 		Strategy: "latest",
 		Rules: []config.UpgradeRule{
 			{Name: "docker.io/python", Strategy: "patch", Ceiling: "3.12",
-				Until: "2099-01-01", Reason: "cdt dependencies are not 3.14 ready"},
+				Until: "2099-01-01", Reason: "the analytics toolkit is not 3.14 ready"},
 			{Name: "acr.io/dotnet/*", Strategy: "minor"},
 		},
 	}

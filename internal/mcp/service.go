@@ -31,6 +31,10 @@ type ServiceReport struct {
 	// taken from the scan provider.
 	Exposure string `json:"exposure"`
 
+	// BuildRepo is the source repository that built the image, from the labels named by
+	// remediation.base.repoLabels. Absent means the image records none.
+	BuildRepo string `json:"build_repo,omitempty"`
+
 	Deployments []Deployment `json:"deployments"`
 	// ImageAgeDays is how long ago the newest deployed image was built. An old one
 	// means this has not shipped, which is a different conversation from a team
@@ -97,6 +101,31 @@ type UpgradeAdvice struct {
 	Rule   string `json:"rule,omitempty"`
 	// Support is the maintenance status of the line this sits on.
 	Support string `json:"support,omitempty"`
+	// Strategy is how far policy allowed the move to go: patch, minor, latest.
+	Strategy string `json:"strategy,omitempty"`
+	// Ceiling is the version prefix policy will not pass, and CeilingReason why - written
+	// by whoever set it. It is the answer to "there is a newer version, why am I being
+	// told this one", and without it a reader either guesses or ignores the policy.
+	Ceiling       string `json:"ceiling,omitempty"`
+	CeilingReason string `json:"ceiling_reason,omitempty"`
+	// CeilingExpired marks a ceiling whose end date has passed, so it no longer applies.
+	CeilingExpired bool `json:"ceiling_expired,omitempty"`
+	// Yours is true when the team that builds the image applies this themselves. False
+	// means a chart or an operator owns the tag, and AppliedIn says which - bumping the
+	// Dockerfile would do nothing.
+	Yours     bool   `json:"yours"`
+	AppliedIn string `json:"applied_in,omitempty"`
+	// OutOfTrack marks a move that leaves the current line because that line is no longer
+	// maintained: a migration to plan, not a bump to take.
+	OutOfTrack bool `json:"out_of_track,omitempty"`
+	// ClearsKnownExploited and LeavesKnownExploited split the exploited CVEs by whether
+	// this move deals with them. The first is what justifies the work; the second is what
+	// still needs a decision afterwards.
+	ClearsKnownExploited int `json:"clears_known_exploited"`
+	LeavesKnownExploited int `json:"leaves_known_exploited"`
+	// Exploited names them. A count tells somebody how much; the identifiers are what
+	// goes in a pull request description and what is re-checked when it lands.
+	Exploited []ExploitedCVE `json:"exploited,omitempty"`
 	// State says which kind of answer this is, because four of them are not moves:
 	// "upgrade" has a version to go to, "latest" is already on the newest available,
 	// "held" is a newer version policy declined, "unresolved" is a lookup that could
@@ -175,7 +204,7 @@ const maxRemainderPackages = 8
 // serviceReport builds the report for one service, or false when nothing matches.
 //
 // Matching is on the repository, and deliberately forgiving: somebody asking about
-// "topnotch" means the service, not "the image whose full reference I typed".
+// "storefront" means the service, not "the image whose full reference I typed".
 func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	var mine []sink.FindingView
@@ -221,6 +250,12 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 		}
 	}
 	out.Freshness = freshness(a)
+	for _, f := range mine {
+		if f.BuildRepo != "" {
+			out.BuildRepo = f.BuildRepo
+			break
+		}
+	}
 	out.Vulnerabilities = summariseVulns(mine, lead)
 	out.Upgrade = upgradeAdvice(mine, lead)
 	out.InProgress = inProgress(lead)
@@ -288,6 +323,17 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	if u.Available {
 		out.To = u.Latest
 	}
+	out.Strategy, out.Ceiling, out.CeilingReason = u.Strategy, u.Ceiling, u.CeilingReason
+	out.CeilingExpired, out.OutOfTrack = u.CeilingExpired, u.OutOfTrack
+	out.Yours = u.Actionable
+	if !u.Actionable {
+		// Managed names the mechanism, Manager the thing running it. Either is more use
+		// than "not actionable", which reads as "nothing to do".
+		out.AppliedIn = u.Managed
+		if u.Manager != "" {
+			out.AppliedIn = strings.TrimSpace(u.Managed + " " + u.Manager)
+		}
+	}
 	if u.Support != nil && u.Support.Known {
 		if u.Support.Supported {
 			out.Support = fmt.Sprintf("%s %s maintained until %s", u.Support.Product, u.Support.Cycle, u.Support.EOL)
@@ -300,7 +346,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	//
 	// Summing each deployment's own counts was wrong, and wrong in the way that matters
 	// most: a service deployed at three tags of one build carries the same CVEs three
-	// times, so topnotch was reported as clearing 17,571 of its 6,746 vulnerabilities. A
+	// times, so storefront was reported as clearing 17,571 of its 6,746 vulnerabilities. A
 	// team cannot act on that - the arithmetic is visibly impossible, and the number they
 	// would put in a ticket is three times the truth.
 	//
@@ -343,9 +389,17 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 				out.Remainder.Unattributed++
 			case cve.FixedByUpgrade:
 				out.Clears++
+				if cve.KEV {
+					out.ClearsKnownExploited++
+					out.Exploited = append(out.Exploited, exploited(cve, true))
+				}
 			case cve.Origin == "base":
 				out.Leaves++
 				out.Remainder.StillInBase++
+				if cve.KEV {
+					out.LeavesKnownExploited++
+					out.Exploited = append(out.Exploited, exploited(cve, false))
+				}
 				for _, pkg := range cve.Packages {
 					key := pkg.Ecosystem + "/" + pkg.Name
 					if pkgs[key] == nil {
@@ -391,6 +445,15 @@ func upgradeState(u *sink.UpgradeView) string {
 		return "held"
 	default:
 		return "latest"
+	}
+}
+
+// exploited records one known-exploited CVE and whether this move deals with it.
+func exploited(v sink.VulnView, cleared bool) ExploitedCVE {
+	return ExploitedCVE{
+		ID: v.ID, ClearedByThis: cleared, Severity: v.Severity,
+		FixedVersion: v.FixedVersion,
+		Reference:    "https://www.cve.org/CVERecord?id=" + v.ID,
 	}
 }
 

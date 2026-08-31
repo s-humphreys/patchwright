@@ -684,7 +684,8 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 	// unless the total is there, and somebody scoping the work would stop at ten.
 	if len(services) > len(out.Services) {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
-			"%d services carry this; the %d worst-named are listed. Use worst_first to page through them.",
+			"%d services carry this; the %d listed are the first alphabetically, not the worst. "+
+				"Use worst_first to rank them.",
 			len(services), len(out.Services)))
 	}
 	if len(exposed) > len(out.ExposedServices) {
