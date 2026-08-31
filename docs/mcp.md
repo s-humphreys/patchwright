@@ -27,6 +27,18 @@ enough to matter.
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
 | `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
 
+**A service answers to any name that identifies it.** The bare repository
+(`storefront`), the path (`apps/storefront`), the registry-qualified form
+(`reg.example/apps/storefront`), or a full reference with its tag or digest still
+attached, as pasted out of a ticket. The qualified form matters most: it is what
+`estate_summary` prints, and a name one tool hands out that another will not accept is
+a dead end an agent reads as "no such service", one step from "nothing to do here".
+
+An exact identity always beats the forgiving match on a trailing path segment, so
+asking for `agent` returns the service called `agent` rather than every image whose
+path happens to end that way. Where a name genuinely covers more than one image, the
+report says so and names them, instead of quietly reporting three products as one.
+
 `fix_plan` is the one an engineer reaches for. It carries the same data as
 `service_report`, shaped as an instruction rather than a dataset - which is the whole
 difference, because a report hands over clears, leaves, introduces, a remainder split and a

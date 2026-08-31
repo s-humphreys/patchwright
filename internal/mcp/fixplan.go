@@ -43,6 +43,15 @@ type FixPlan struct {
 	// AlsoTakes are other services on the same move: doing them together tests the base
 	// once rather than once each.
 	AlsoTakes []string `json:"also_takes,omitempty"`
+	// Exploited names the known-exploited CVEs the service carries when there is no
+	// change to make, and so no Result to carry them.
+	//
+	// Mitigate, isolate or accept is decided one CVE at a time. A decide branch that
+	// reports "2 known-exploited" and no identifiers hands somebody a number to worry
+	// about rather than a decision they can take, and this is the branch where nothing
+	// else names them - a service already on its newest base has no differential to
+	// list what an upgrade would clear.
+	Exploited []ExploitedCVE `json:"known_exploited,omitempty"`
 	// Unknown is what this plan cannot tell you, named rather than left as a silence.
 	Unknown []string `json:"unknown,omitempty"`
 }
@@ -132,6 +141,7 @@ func fixPlan(a Assessment, name string) (FixPlan, bool) {
 			p.Decide = append(p.Decide, "No upgrade was looked for, so what would fix this is unknown "+
 				"rather than nothing. Remediation lookup has to run first.")
 			p.Unknown = append(p.Unknown, "whether an upgrade exists")
+			p.Exploited = r.knownExploited
 			return p, true
 		}
 	}
@@ -162,6 +172,9 @@ func fixPlan(a Assessment, name string) (FixPlan, bool) {
 	p.DoNot = doNots(u)
 	if u.Measured {
 		p.Result = fixResult(r, u)
+	}
+	if p.Result == nil {
+		p.Exploited = r.knownExploited
 	}
 	p.AlsoTakes = alsoTakes(a, r, u)
 	p.Unknown = append(p.Unknown, unknowns(r, u)...)

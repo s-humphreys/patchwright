@@ -947,3 +947,116 @@ func TestFixPlanNamesWhatIsStillTheTeams(t *testing.T) {
 		t.Fatalf("want all 3 named, got %d", len(p.Result.StillYoursCVEs))
 	}
 }
+
+// The name every other tool prints must be a name this one accepts. estate_summary
+// reports a service as registry/repository, and that exact string used to resolve to
+// nothing - a round trip an agent reads as "no such service", one step from "clean".
+func TestServiceLookupAcceptsTheNamesOtherToolsPrint(t *testing.T) {
+	for _, name := range []string{
+		"apps/storefront",
+		"reg.example/apps/storefront",
+		"reg.example/apps/storefront:1.4.0",
+		"storefront",
+		"REG.EXAMPLE/Apps/Storefront",
+	} {
+		r, ok := serviceReport(fixture(), name)
+		if !ok {
+			t.Errorf("%q resolved to nothing", name)
+			continue
+		}
+		if r.Service != "apps/storefront" {
+			t.Errorf("%q resolved to %q", name, r.Service)
+		}
+	}
+}
+
+// A digest reference names the same service as the tag it was pulled by.
+func TestRefWithoutTagLeavesARegistryPortAlone(t *testing.T) {
+	cases := map[string]string{
+		"reg.example/apps/storefront:1.4.0":    "reg.example/apps/storefront",
+		"reg.example/apps/storefront@sha256:a": "reg.example/apps/storefront",
+		"localhost:5000/apps/storefront":       "localhost:5000/apps/storefront",
+		"localhost:5000/apps/storefront:1.0":   "localhost:5000/apps/storefront",
+		"storefront":                           "storefront",
+	}
+	for in, want := range cases {
+		if got := refWithoutTag(in); got != want {
+			t.Errorf("refWithoutTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// An exact identity must not drag in every image whose path ends in the same word.
+// Three unrelated products answered to "agent" and were reported as one service, under
+// one team, with one upgrade.
+func TestExactMatchWinsOverTheForgivingSuffix(t *testing.T) {
+	exact := sink.FindingView{
+		Image: "registry.example.com/agent:7.1", Registry: "registry.example.com",
+		Repository: "agent", Tag: "7.1", Owner: sink.OwnerView{Team: "insights"},
+		Counts: map[string]int{}, Scanned: true,
+	}
+	elsewhere := sink.FindingView{
+		Image: "mcr.example/oss/kubernetes/network-proxy/agent:v0.3", Registry: "mcr.example",
+		Repository: "oss/kubernetes/network-proxy/agent", Tag: "v0.3",
+		Owner: sink.OwnerView{Team: "payments"}, Counts: map[string]int{}, Scanned: true,
+	}
+	a := Assessment{
+		GeneratedAt: ts("2026-08-30T09:00:00Z"), Version: "v2.1.0",
+		Findings: []sink.FindingView{exact, elsewhere},
+	}
+	r, ok := serviceReport(a, "agent")
+	if !ok {
+		t.Fatal("no report for a service that is present")
+	}
+	if len(r.Deployments) != 1 || r.Team != "insights" {
+		t.Fatalf("want only the exact match, got %d deployments for team %q",
+			len(r.Deployments), r.Team)
+	}
+	// The other one is still reachable, by the name that identifies it.
+	other, ok := serviceReport(a, "mcr.example/oss/kubernetes/network-proxy/agent")
+	if !ok || other.Team != "payments" {
+		t.Fatalf("the suffix match must stay reachable by its own name: %v %+v", ok, other.Team)
+	}
+}
+
+// A decision is taken one CVE at a time, so the branch with no change to make is the
+// one that most needs them named - and the one where no differential names them.
+func TestDecideBranchNamesTheExploitedCVEs(t *testing.T) {
+	f := sink.FindingView{
+		Image: "reg.example/apps/batch:1.0", Registry: "reg.example", Repository: "apps/batch",
+		Tag: "1.0", Owner: sink.OwnerView{Team: "insights"}, Priority: "urgent",
+		Scanned: true, ProviderAssessed: true, Counts: map[string]int{"critical": 2},
+		Upgrade: &sink.UpgradeView{
+			Kind: "base", Name: "python", Current: "3.12-bookworm", Resolved: true,
+		},
+		Vulns: []sink.VulnView{
+			{ID: "CVE-2026-77", Severity: "critical", KEV: true, FixedVersion: "1.1.1"},
+			{ID: "CVE-2026-12", Severity: "high", KEV: true},
+			{ID: "CVE-2026-90", Severity: "low"},
+		},
+	}
+	p, ok := fixPlan(Assessment{
+		GeneratedAt: ts("2026-08-30T09:00:00Z"), Version: "v2.1.0",
+		Findings: []sink.FindingView{f},
+	}, "apps/batch")
+	if !ok {
+		t.Fatal("no plan for a service that is present")
+	}
+	if p.Result != nil {
+		t.Fatalf("a service with nothing to move to has no result: %+v", p.Result)
+	}
+	if len(p.Exploited) != 2 {
+		t.Fatalf("want both exploited CVEs named, got %+v", p.Exploited)
+	}
+	if p.Exploited[0].ID != "CVE-2026-77" {
+		t.Errorf("want the worst first, got %q", p.Exploited[0].ID)
+	}
+	if p.Exploited[0].FixedVersion != "1.1.1" {
+		t.Errorf("want the version to move to, got %q", p.Exploited[0].FixedVersion)
+	}
+	for _, e := range p.Exploited {
+		if e.ClearedByThis {
+			t.Errorf("nothing is cleared by a plan with no change: %+v", e)
+		}
+	}
+}

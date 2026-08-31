@@ -48,6 +48,11 @@ type ServiceReport struct {
 	// Caveats are the things this answer cannot support. Present in the payload so
 	// they survive being summarised.
 	Caveats []string `json:"caveats,omitempty"`
+
+	// knownExploited is every exploited CVE on this service, whether or not a base
+	// differential measured it. Carried for fix_plan rather than rendered here, where
+	// upgrade.exploited already answers the question in the context of the change.
+	knownExploited []ExploitedCVE
 }
 
 // Deployment is one running tag of the service.
@@ -235,12 +240,17 @@ const maxApplicationCVEs = 20
 // Matching is on the repository, and deliberately forgiving: somebody asking about
 // "storefront" means the service, not "the image whose full reference I typed".
 func serviceReport(a Assessment, name string) (ServiceReport, bool) {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = refWithoutTag(strings.ToLower(strings.TrimSpace(name)))
+	// Exact identities first, and only then the forgiving suffix. Taking both at once
+	// merged every image whose path happens to end in the same word - three unrelated
+	// products answered to "agent", reported under one team with one upgrade - and the
+	// merge was invisible in the answer.
 	var mine []sink.FindingView
-	for _, f := range a.Findings {
-		if strings.ToLower(f.Repository) == name || strings.ToLower(f.Image) == name ||
-			strings.HasSuffix(strings.ToLower(f.Repository), "/"+name) {
-			mine = append(mine, f)
+	for want := matchExact; want >= matchSuffix && len(mine) == 0; want-- {
+		for _, f := range a.Findings {
+			if serviceMatch(f, name) == want {
+				mine = append(mine, f)
+			}
 		}
 	}
 	if len(mine) == 0 {
@@ -288,8 +298,103 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	out.Vulnerabilities = summariseVulns(mine, lead)
 	out.Upgrade = upgradeAdvice(mine, lead)
 	out.InProgress = inProgress(lead)
+	out.knownExploited = exploitedAmong(mine)
 	out.Caveats = caveats(a, out)
+	if spans := qualifiedNames(mine); len(spans) > 1 {
+		out.Caveats = append(out.Caveats, fmt.Sprintf(
+			"This name matches %d distinct images, reported together: %s. Ask by the "+
+				"registry-qualified name to separate them.", len(spans), strings.Join(spans, ", ")))
+	}
 	return out, true
+}
+
+// Match strength, worst to best. Ordered so serviceReport can walk down from the
+// strongest and stop at the first that answers.
+const (
+	matchNone = iota
+	matchSuffix
+	matchExact
+)
+
+// serviceMatch reports how well one finding answers a name.
+//
+// Identity is checked registry-qualified as well as bare, because that is the form the
+// other tools print: estate_summary names a service registry/repository, and a name
+// this server hands out that the same server will not accept is a dead end - which an
+// agent reads as "no such service", one step from "nothing to do here".
+func serviceMatch(f sink.FindingView, name string) int {
+	repo := strings.ToLower(f.Repository)
+	qualified := repo
+	if f.Registry != "" {
+		qualified = strings.ToLower(f.Registry) + "/" + repo
+	}
+	switch name {
+	case repo, qualified, refWithoutTag(strings.ToLower(f.Image)):
+		return matchExact
+	}
+	if strings.HasSuffix(repo, "/"+name) {
+		return matchSuffix
+	}
+	return matchNone
+}
+
+// refWithoutTag strips a :tag or @digest, so an image reference pasted out of a report
+// or a ticket resolves to the service it names.
+func refWithoutTag(ref string) string {
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	// A colon before the last slash is a registry port, not a tag.
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		ref = ref[:i]
+	}
+	return ref
+}
+
+// qualifiedNames lists the distinct registry-qualified images a match covers.
+func qualifiedNames(fs []sink.FindingView) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fs {
+		q := f.Repository
+		if f.Registry != "" {
+			q = f.Registry + "/" + f.Repository
+		}
+		if !seen[q] {
+			seen[q] = true
+			out = append(out, q)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// exploitedAmong lists the service's known-exploited CVEs, worst first and deduped.
+//
+// Independent of the base differential: a service with no upgrade to take still needs
+// these named, and that is exactly the case where nothing else names them.
+func exploitedAmong(fs []sink.FindingView) []ExploitedCVE {
+	seen := map[string]bool{}
+	var out []ExploitedCVE
+	for _, f := range fs {
+		for _, v := range f.Vulns {
+			if !v.KEV || seen[v.ID] {
+				continue
+			}
+			seen[v.ID] = true
+			out = append(out, exploited(v, v.FixedByUpgrade))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if severityRank[out[i].Severity] != severityRank[out[j].Severity] {
+			return severityRank[out[i].Severity] > severityRank[out[j].Severity]
+		}
+		return out[i].ID < out[j].ID
+	})
+	if len(out) > maxNamed {
+		out = out[:maxNamed]
+	}
+	return out
 }
 
 func summariseVulns(mine []sink.FindingView, lead group.Item) VulnSummary {
