@@ -202,9 +202,11 @@ jobs:
           done
           echo "refs=${digests# }" >> "$GITHUB_OUTPUT"
 
-      - name: Sign the charts
+      # Pinned exactly, because this action publishes no moving major tag: v4.1.2 exists
+      # and a bare v4 does not, which is what failed the first release.
+      - name: Install cosign
         if: steps.semantic.outputs.new_release_published == 'true'
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Cosign keyless signature
         if: steps.semantic.outputs.new_release_published == 'true'
