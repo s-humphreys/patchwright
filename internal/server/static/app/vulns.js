@@ -75,6 +75,18 @@ export function ensureVulns(then) {
 }
 
 /**
+ * awaitVulns is ensureVulns for a caller that can wait: an export, rather than a
+ * render. Resolves to the settled state.
+ * @returns {Promise<'ready'|'failed'>}
+ */
+export function awaitVulns() {
+  return new Promise((resolve) => {
+    const state = ensureVulns(() => resolve(vulnState() === "ready" ? "ready" : "failed"));
+    if (state === "ready" || state === "failed") resolve(state);
+  });
+}
+
+/**
  * retryVulns clears a failure so the next ensureVulns tries again. For a reader who
  * asks, never automatically.
  */

@@ -86,6 +86,16 @@ export async function exportRows(view, rows) {
   if (view === "cves") {
     const { groupByCVE } = await import('./cves.js');
     const { filterState } = await import('./filters.js');
+    // Wait for the per-CVE detail rather than exporting without it. The queue does not
+    // load it, and an export that quietly wrote a header and no rows would be worse
+    // than a pause: the reader would take it as an answer.
+    //
+    // Judged on the rows being exported rather than on whether the loader has run, so
+    // a caller holding findings that already carry their CVEs never waits.
+    if (rows.some((f) => f.vulns === undefined)) {
+      const { awaitVulns } = await import('./vulns.js');
+      if (await awaitVulns() !== "ready") return null;
+    }
     const { groups } = groupByCVE(rows, filterState());
     if (!groups.length) return null;
     return {

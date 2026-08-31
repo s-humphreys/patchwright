@@ -278,6 +278,32 @@ Nulls are meaningful throughout. `median_age_days` is null when nothing is dated
 which is not zero - "no age source ran" and "everything was found today" are
 different states and only one of them is good news.
 
+## Size, and what a client should ask for
+
+The per-CVE arrays dominate a real payload. On one estate `/api/v1/findings` was 41MB
+of JSON: 612 findings carrying 208,697 CVEs between them, and 97% of the bytes were
+those CVEs.
+
+So a client listing findings should pass **`vulns=false`** and read the whole-image
+aggregates instead - `vuln_count`, `top_epss`, `top_epss_percentile`, `top_risk_score`
+and `known_exploited`. That is 1.3MB uncompressed and 95KB compressed, which is what
+the status page now loads. Fetch detail only where it is needed:
+
+| Question | Endpoint |
+|---|---|
+| The queue, a list, a dashboard | `/api/v1/findings?vulns=false` |
+| One image's CVEs | `/api/v1/finding?image=<ref>` |
+| The estate aggregated by CVE | `/api/v1/cves` |
+
+Responses are gzipped when the client offers it, which is another 16-20x on this shape
+of JSON, and every read carries an **ETag**. An assessment is immutable once cached, so
+a poll for unchanged data is a 304 with no body: send `If-None-Match` and a client can
+poll the meta as often as it likes for almost nothing. The validator changes when the
+assessment does, so a client cannot be served stale data by holding a copy.
+
+`vulns=false` is opt-in. Dropping data by default would have broken every existing
+consumer silently.
+
 ## Getting the queue out of the page
 
 The status page filters are multi-select and travel in the URL, so a narrowed view
