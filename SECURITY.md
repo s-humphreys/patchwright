@@ -222,7 +222,16 @@ to their first clause and capped in number.
   get a green build would hide our own problems too. They remain visible in CI output
   and Renovate bumps the bundled version. If you would rather not ship a scanner at
   all, run with `--vuln-source` unset, or point it at a Trivy you provide.
-- release builds publish an SBOM alongside the image
+- release builds publish an SBOM and build provenance alongside the image
+- the Helm charts ship as OCI artefacts beside it, versioned with it, and are **signed
+  with cosign keylessly** - the signature is bound to the release workflow's identity,
+  so there is no signing key to hold, rotate or lose. A cluster can require it:
+  `OCIRepository.spec.verify` with `matchOIDCIdentity` refuses a chart this repository's
+  workflow did not produce.
+
+  This is stricter than what it replaces. The charts were consumed from a git tag, and
+  a tag can be moved by anyone with write access to the repository; a digest cannot, and
+  a signature cannot be forged by them.
 
 ## Reporting a vulnerability
 

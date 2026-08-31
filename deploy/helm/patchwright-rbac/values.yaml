@@ -1,0 +1,64 @@
+# Read-only access for patchwright in a cluster it READS but does not run in.
+#
+# patchwright deploys to one cluster and reconciles against many. This chart is the
+# grant in each of the others: a ClusterRole that can list what an assessment needs,
+# and a binding to whichever identity your kubeconfig context authenticates as.
+#
+# It replaces two hand-applied YAML files, and specifically the `envsubst` step they
+# needed. That step once shipped a bare `OBJECT_ID` placeholder, which envsubst leaves
+# alone: applying the result bound the role to a user literally called "OBJECT_ID", and
+# every cluster refused the real identity on the next run. Here the subject is a
+# required value, so an unsubstituted or empty one fails to render rather than
+# replacing a working binding with a broken one.
+
+# The subject the ClusterRole is bound to. Its name is REQUIRED.
+subject:
+  # User, Group or ServiceAccount.
+  #
+  # With authMode=azure the kubeconfig carries no credentials: patchwright presents an
+  # AAD token and the API server authenticates it as a User named for the identity's
+  # OBJECT (principal) ID - not its client ID, which is a different GUID for the same
+  # identity and authenticates as nobody.
+  #
+  #   kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.principalId}'
+  kind: User
+  name: ""
+  # ServiceAccount only.
+  namespace: ""
+
+# Create the ServiceAccount as well, for token-based access: generate a token for it and
+# add it as a context in the kubeconfig Secret patchwright reads.
+serviceAccount:
+  create: false
+  name: patchwright-reader
+  namespace: kube-system
+
+rbac:
+  # Names of the ClusterRole and ClusterRoleBinding.
+  name: patchwright-reader
+
+  # Pods and namespaces are always granted: liveness and ownership attribution cannot
+  # work without them. The rest is opt-out, matched to the features that need it.
+
+  # What sits in front of a workload, for internet exposure. Grant it when
+  # reconcile.exposure is on. Harmless either way: neither can write, and neither
+  # exposes anything a pod listing does not.
+  exposure: true
+
+  # Workloads and Flux resources, so an image deployed by a chart or an operator can be
+  # traced to the resource that sets its version - which is the difference between
+  # "upgrade this" and "upgrade this, here".
+  remediation: true
+
+  # API groups whose custom resources may be read with `get`, for operator-deployed
+  # images whose version lives in the owning resource.
+  #
+  # Name your operators' groups explicitly. "*" is refused: `get` on every resource
+  # includes Secrets in every namespace, and while `get` cannot enumerate them it does
+  # read any whose name is known. That is not a grant to make in a production cluster
+  # for a reporting refinement.
+  customResourceGroups: []
+
+# Labels and annotations added to everything this chart creates.
+commonLabels: {}
+commonAnnotations: {}
