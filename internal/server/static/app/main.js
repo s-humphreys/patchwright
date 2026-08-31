@@ -88,6 +88,26 @@ export async function loadAll() {
   }
 }
 
+/**
+ * debounce collapses a burst of calls into the last one.
+ *
+ * Trailing rather than leading: the reader's last keystroke is the query they meant,
+ * and filtering on the first character of it is work thrown away.
+ * @param {() => void} fn
+ * @param {number} ms
+ */
+function debounce(fn, ms) {
+  /** @type {any} */
+  let timer = null;
+  return () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn();
+    }, ms);
+  };
+}
+
 // init wires every listener and starts the poll. Nothing runs at import time, so a
 // module can be imported by a test without a page to attach to.
 export function init() {
@@ -115,7 +135,11 @@ export function init() {
   // rest, which is what faceting means.
   wireFacets(applyOwnerFilters);
   $("#onlyFixable").addEventListener("change", applyOwnerFilters);
-  $("#search").addEventListener("input", applyOwnerFilters);
+  // Debounced, because every keystroke re-filters the estate, rebuilds the facets and
+  // redraws the table. On the CVE view that measured about a second per character, so
+  // typing a service name froze the page for as long as it took to type it. 120ms is
+  // below the point a reader notices a delay and above the gap between keystrokes.
+  $("#search").addEventListener("input", debounce(applyOwnerFilters, 120));
   // The header owns the refresh control and knows when an assessment finishes;
   // this page owns what to reload when it does. Wiring it the other way round put
   // polling logic in three page scripts and let two of them drift.
@@ -124,7 +148,11 @@ export function init() {
 
   initCSV();
   loadAll();
-  setInterval(loadAll, 60000);
+  // No blind reload on a timer. The header polls the assessment meta every fifteen
+  // seconds - a small, revalidated response - and fires pw:assessed when the timestamp
+  // changes, which is both sooner than sixty seconds and enormously cheaper: the old
+  // interval re-fetched and re-rendered the whole estate whether or not anything had
+  // happened, which on a real estate was the single most expensive thing this page did.
 }
 
 init();

@@ -112,6 +112,13 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined"
       const isRunning = !!a?.running;
       const was = this.wasRunning === true;
       this.wasRunning = isRunning;
+      // A changed timestamp is new data whether or not this page watched the run that
+      // produced it. Without this, only a page that saw a run start and finish knew to
+      // reload, so a run by another replica - or one already under way when the page
+      // opened - was invisible until something else reloaded blindly.
+      const stamp = a?.generated_at;
+      const changed = !!stamp && !!this.lastStamp && stamp !== this.lastStamp;
+      if (stamp) this.lastStamp = stamp;
       this.running(isRunning, isRunning ? elapsed(a) : "");
       if (isRunning) {
         this.dispatchEvent(new CustomEvent("pw:assessing", { bubbles: true, detail: a }));
@@ -119,9 +126,9 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined"
         return;
       }
       this.beat(false);
-      // Only when it has actually just finished. Firing on every idle poll would
-      // reload every page every fifteen seconds.
-      if (was) {
+      // Only when there is something new. Firing on every idle poll would reload
+      // every page every fifteen seconds.
+      if (was || changed) {
         this.dispatchEvent(new CustomEvent("pw:assessed", { bubbles: true, detail: a }));
       }
     }

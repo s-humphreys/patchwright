@@ -139,3 +139,51 @@ test('a failed poll leaves the state alone rather than re-enabling', async () =>
     'a failed poll is not a finished assessment');
   el.stop();
 });
+
+// Reload when there is new data, and only then.
+//
+// The page used to reload everything every sixty seconds whether or not anything had
+// changed, which on a real estate was the most expensive thing it did. Removing that
+// only works if this element notices new data on its own.
+test('a changed assessment timestamp asks the page to reload', () => {
+  const el = document.createElement('pw-nav');
+  document.body.append(el);
+  /** @type {any} */ (el).connectedCallback?.();
+  let reloads = 0;
+  el.addEventListener('pw:assessed', () => reloads++);
+
+  const nav = /** @type {any} */ (el);
+  // First sighting: the page has just loaded this data itself, so there is nothing to
+  // reload for.
+  nav.observe({ running: false, generated_at: '2026-08-31T09:00:00Z' });
+  assert.equal(reloads, 0, 'the first poll is not news');
+
+  // Same assessment, polled again. Firing here would reload every page every fifteen
+  // seconds.
+  nav.observe({ running: false, generated_at: '2026-08-31T09:00:00Z' });
+  assert.equal(reloads, 0, 'an unchanged timestamp is not news either');
+
+  // A new one - produced by this replica or another, watched or not.
+  nav.observe({ running: false, generated_at: '2026-08-31T10:00:00Z' });
+  assert.equal(reloads, 1);
+
+  nav.stop?.();
+  el.remove();
+});
+
+test('a run this page watched still triggers a reload', () => {
+  const el = document.createElement('pw-nav');
+  document.body.append(el);
+  /** @type {any} */ (el).connectedCallback?.();
+  let reloads = 0;
+  el.addEventListener('pw:assessed', () => reloads++);
+
+  const nav = /** @type {any} */ (el);
+  nav.observe({ running: true, started_at: '2026-08-31T09:00:00Z' });
+  assert.equal(reloads, 0, 'nothing to reload while it is still running');
+  nav.observe({ running: false, generated_at: '2026-08-31T09:05:00Z' });
+  assert.equal(reloads, 1, 'a finished run is news even on the first timestamp seen');
+
+  nav.stop?.();
+  el.remove();
+});
