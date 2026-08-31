@@ -311,6 +311,13 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	seen := map[string]bool{}
 	pkgs := map[string]map[string]bool{}
 	pkgMeta := map[string]PackageCount{}
+	// Two passes, because coverage can be partial. A base whose recorded digest or tag
+	// has been deleted from the registry cannot be scanned - on this estate fifteen
+	// services have some deployments measured and some not - and a CVE seen only on an
+	// unmeasured deployment belongs in no origin bucket. Classifying from the measured
+	// deployments alone would leave it out of the split while the total still counted it,
+	// so the four numbers would stop adding up. The second pass puts it where it belongs:
+	// unattributed, which is what "nothing established its origin" means.
 	for _, f := range mine {
 		d := f.BaseDiff
 		if d == nil || !d.Determined {
@@ -355,6 +362,16 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	if !out.Measured {
 		out.Remainder = nil
 		return out
+	}
+	// Everything the measured deployments did not account for.
+	for _, f := range mine {
+		for _, cve := range f.Vulns {
+			if seen[cve.ID] {
+				continue
+			}
+			seen[cve.ID] = true
+			out.Remainder.Unattributed++
+		}
 	}
 	out.Remainder.Packages = topPackages(pkgs, pkgMeta)
 	out.Move = moveKind(out.From, out.To)
@@ -449,6 +466,13 @@ func caveats(a Assessment, r ServiceReport) []string {
 	// Only worth saying when the differential was enabled: when it was not, the
 	// configuration caveat above has already said why, and repeating it as a
 	// property of this service points at the wrong thing.
+	if r.Upgrade != nil && r.Upgrade.Measured && r.Upgrade.DeploymentsMeasured < len(r.Deployments) {
+		out = append(out, fmt.Sprintf(
+			"A base differential ran for %d of %d deployments. The rest usually means the base "+
+				"image recorded in the build has since been deleted from its registry, so nothing "+
+				"can establish where their CVEs came from; those are counted as unattributed.",
+			r.Upgrade.DeploymentsMeasured, len(r.Deployments)))
+	}
 	if a.Sources.BaseDiff && r.Upgrade != nil && !r.Upgrade.Measured {
 		out = append(out, "The base differential is enabled but did not measure this service, so what an "+
 			"upgrade would clear is unknown rather than nothing - its base could not be resolved or scanned.")

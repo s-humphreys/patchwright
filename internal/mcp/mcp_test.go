@@ -796,3 +796,54 @@ func TestEveryAnswerReconcilesOnARealisticEstate(t *testing.T) {
 		}
 	}
 }
+
+// Partial coverage, which the live pod produces daily: a base image whose recorded digest
+// or tag has been deleted from its registry cannot be scanned, so a service can have some
+// deployments measured and some not. Fifteen services on the real estate are in that
+// state.
+//
+// The CVEs of an unmeasured deployment must still be accounted for. Classifying only from
+// the measured ones left them out of the split while the total counted them, so the four
+// numbers stopped adding up - visible to a team as arithmetic that does not work.
+func TestPartlyMeasuredServicesStillReconcile(t *testing.T) {
+	a := fixture()
+	// A second deployment with its OWN extra CVE and no differential: the base it was
+	// built on is gone from the registry.
+	extra := a.Findings[0]
+	extra.Image = "reg.example/apps/topnotch:preview"
+	extra.Tag = "preview"
+	extra.BaseDiff = nil
+	extra.Vulns = append([]sink.VulnView{{ID: "CVE-2026-99", Severity: "high"}}, extra.Vulns...)
+	a.Findings = append(a.Findings, extra)
+
+	r, ok := serviceReport(a, "topnotch")
+	if !ok {
+		t.Fatal("want a report")
+	}
+	u, v := r.Upgrade, r.Vulnerabilities
+	if !u.Measured {
+		t.Fatal("one deployment was measured, so the differential is partial rather than absent")
+	}
+	if u.DeploymentsMeasured != 1 {
+		t.Errorf("deployments_measured = %d, want 1 of %d", u.DeploymentsMeasured, len(r.Deployments))
+	}
+	if v.Total != 7 {
+		t.Errorf("total = %d, want 7: the six shared CVEs plus the preview's own", v.Total)
+	}
+
+	sum := u.Clears + u.Remainder.StillInBase + u.Remainder.FromApplication + u.Remainder.Unattributed
+	if sum != v.Total {
+		t.Errorf("clears(%d)+base(%d)+app(%d)+unattributed(%d) = %d, want the total %d",
+			u.Clears, u.Remainder.StillInBase, u.Remainder.FromApplication,
+			u.Remainder.Unattributed, sum, v.Total)
+	}
+	// The extra CVE has no established origin, so that is where it must sit: 1 already
+	// undetermined in the fixture, plus this one.
+	if u.Remainder.Unattributed != 2 {
+		t.Errorf("unattributed = %d, want 2", u.Remainder.Unattributed)
+	}
+	// And the reader is told the coverage is partial rather than left to infer it.
+	if !strings.Contains(strings.Join(r.Caveats, " "), "differential ran for 1 of 3 deployments") {
+		t.Errorf("want the partial coverage stated: %v", r.Caveats)
+	}
+}
