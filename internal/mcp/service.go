@@ -97,6 +97,28 @@ type UpgradeAdvice struct {
 	Rule   string `json:"rule,omitempty"`
 	// Support is the maintenance status of the line this sits on.
 	Support string `json:"support,omitempty"`
+	// Strategy is how far policy allowed the move to go: patch, minor, latest.
+	Strategy string `json:"strategy,omitempty"`
+	// Ceiling is the version prefix policy will not pass, and CeilingReason why - written
+	// by whoever set it. It is the answer to "there is a newer version, why am I being
+	// told this one", and without it a reader either guesses or ignores the policy.
+	Ceiling       string `json:"ceiling,omitempty"`
+	CeilingReason string `json:"ceiling_reason,omitempty"`
+	// CeilingExpired marks a ceiling whose end date has passed, so it no longer applies.
+	CeilingExpired bool `json:"ceiling_expired,omitempty"`
+	// Yours is true when the team that builds the image applies this themselves. False
+	// means a chart or an operator owns the tag, and AppliedIn says which - bumping the
+	// Dockerfile would do nothing.
+	Yours     bool   `json:"yours"`
+	AppliedIn string `json:"applied_in,omitempty"`
+	// OutOfTrack marks a move that leaves the current line because that line is no longer
+	// maintained: a migration to plan, not a bump to take.
+	OutOfTrack bool `json:"out_of_track,omitempty"`
+	// ClearsKnownExploited and LeavesKnownExploited split the exploited CVEs by whether
+	// this move deals with them. The first is what justifies the work; the second is what
+	// still needs a decision afterwards.
+	ClearsKnownExploited int `json:"clears_known_exploited"`
+	LeavesKnownExploited int `json:"leaves_known_exploited"`
 	// State says which kind of answer this is, because four of them are not moves:
 	// "upgrade" has a version to go to, "latest" is already on the newest available,
 	// "held" is a newer version policy declined, "unresolved" is a lookup that could
@@ -288,6 +310,17 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	if u.Available {
 		out.To = u.Latest
 	}
+	out.Strategy, out.Ceiling, out.CeilingReason = u.Strategy, u.Ceiling, u.CeilingReason
+	out.CeilingExpired, out.OutOfTrack = u.CeilingExpired, u.OutOfTrack
+	out.Yours = u.Actionable
+	if !u.Actionable {
+		// Managed names the mechanism, Manager the thing running it. Either is more use
+		// than "not actionable", which reads as "nothing to do".
+		out.AppliedIn = u.Managed
+		if u.Manager != "" {
+			out.AppliedIn = strings.TrimSpace(u.Managed + " " + u.Manager)
+		}
+	}
 	if u.Support != nil && u.Support.Known {
 		if u.Support.Supported {
 			out.Support = fmt.Sprintf("%s %s maintained until %s", u.Support.Product, u.Support.Cycle, u.Support.EOL)
@@ -343,9 +376,15 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 				out.Remainder.Unattributed++
 			case cve.FixedByUpgrade:
 				out.Clears++
+				if cve.KEV {
+					out.ClearsKnownExploited++
+				}
 			case cve.Origin == "base":
 				out.Leaves++
 				out.Remainder.StillInBase++
+				if cve.KEV {
+					out.LeavesKnownExploited++
+				}
 				for _, pkg := range cve.Packages {
 					key := pkg.Ecosystem + "/" + pkg.Name
 					if pkgs[key] == nil {

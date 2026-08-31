@@ -472,7 +472,8 @@ paths:
       summary: Model Context Protocol endpoint (JSON-RPC over Streamable HTTP)
       description: |
         Read-only MCP tools answering from the same cached assessment the API serves:
-        `estate_summary`, `service_report`, `worst_first`, `team_report`, `explain_cve`.
+        `fix_plan`, `estate_summary`, `service_report`, `worst_first`, `team_report`,
+        `explain_cve`, `list_facets`.
 
         Not a REST endpoint. The body is JSON-RPC 2.0 as defined by the MCP
         Streamable HTTP transport, and it is documented here only so the route is

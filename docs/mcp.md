@@ -19,12 +19,55 @@ enough to matter.
 
 | Tool | Answers |
 |---|---|
+| `fix_plan` | **What to DO about one service.** For somebody holding a ticket: the change, what not to do and why, what it achieves, and which of the remainder was never their team's |
 | `estate_summary` | The headline: size of the problem, how much of it rebuilds would clear, the biggest wins, and what nobody is acting on |
 | `service_report` | Everything about one service: deployments, image age, the upgrade it needs, and exactly what that upgrade clears, leaves and introduces |
 | `worst_first` | The work queue, worst first, filterable by team, priority and exposure |
 | `team_report` | One team's whole position, including what is already in flight and what is merely open and stale |
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
 | `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
+
+`fix_plan` is the one an engineer reaches for. It carries the same data as
+`service_report`, shaped as an instruction rather than a dataset - which is the whole
+difference, because a report hands over clears, leaves, introduces, a remainder split and a
+policy rule, and leaves somebody to work out which of it they are supposed to act on.
+
+```
+topnotch - data-platform
+why      urgent, internet-facing, 10 known-exploited CVEs, 6,746 vulnerabilities
+         across 3 deployments (rule: exploited-fixable-critical)
+
+do       change the base image this is built on
+         from  docker.io/python@sha256:3966b818...
+         to    docker.io/python:3.12.14      (a version change, not a rebuild)
+         yours: yes, across Development US, PreProduction US, Production US
+
+do not   go to 3.14.7, the newest available. Policy holds this line at 3.12:
+         "cdt's underlying packages are not 3.14 ready (data-engineering, Aug 2026)"
+
+result   clears 5,857 of 6,746, including all 10 known-exploited
+         introduces 296
+         880 not yours: still in the new base, upstream's to fix
+             linux-libc-dev (518), binutils (57), libbinutils (57) ...
+         9 still yours
+
+also     data-mcp-tools takes the same move
+
+unknown  which repository holds the build that sets this
+         whether anybody has started
+```
+
+Three parts of that are there because of how the answer gets used. The **reason** behind a
+ceiling, because "there is a 3.14, why am I being told 3.12" is the first thing anybody
+asks and the answer was written by a colleague who knew. Whether the change is **yours**,
+because 26 findings on one estate are owned by a chart or an operator and editing the build
+would do nothing. And **what was never yours**, because a ticket closed with 880
+vulnerabilities left on the service gets reopened unless somebody can say why those 880 are
+an upstream wait.
+
+`unknown` is not filler. Patchwright reads images, not the code that produced them, so it
+knows the base image to change and not where the Dockerfile lives - and saying so beats a
+plan that looks complete.
 
 `service_report` is the deep one. Asked about a service it returns the split that
 turns a number into a conversation:
