@@ -69,11 +69,23 @@ var severityRank = map[string]int{"critical": 4, "high": 3, "medium": 2, "low": 
 // Only scanned findings carry per-CVE detail, so the count of what was aggregated over
 // travels with every row rather than being left for the caller to assume.
 func CVEs(findings []sink.FindingView, withAffected bool) []CVE {
+	return aggregate(findings, withAffected, "")
+}
+
+// aggregate is the rollup behind both CVEs and FindCVE.
+//
+// `only` narrows it to one CVE id. That exists for a measured reason: answering "tell
+// me about CVE-2026-1234" used to build the entire estate's rollup with every affected
+// image and then pick one row out of it - 120ms and 117MB of allocation, per request,
+// to produce a few kilobytes. Narrowing first makes it a single pass and a few
+// allocations, and it is the same code, so the one-CVE answer cannot drift from the
+// row in the list.
+func aggregate(findings []sink.FindingView, withAffected bool, only string) []CVE {
 	scanned, total := 0, len(findings)
-	byID := map[string]*CVE{}
-	teams := map[string]*set{}
-	services := map[string]*set{}
-	fixedVersions := map[string]*set{}
+	// One map, and the sets hang off the row rather than living in three parallel maps
+	// keyed by the same id. That was three hash lookups and three map writes per
+	// occurrence - 208,697 times on a real estate.
+	byID := make(map[string]*cveAccumulator, expectedCVEs(findings, only))
 
 	for _, f := range findings {
 		if !f.Scanned {
@@ -81,11 +93,13 @@ func CVEs(findings []sink.FindingView, withAffected bool) []CVE {
 		}
 		scanned++
 		for _, v := range f.Vulns {
+			if only != "" && !strings.EqualFold(v.ID, only) {
+				continue
+			}
 			c := byID[v.ID]
 			if c == nil {
-				c = &CVE{ID: v.ID, Severity: v.Severity}
+				c = &cveAccumulator{CVE: CVE{ID: v.ID, Severity: v.Severity}}
 				byID[v.ID] = c
-				teams[v.ID], services[v.ID], fixedVersions[v.ID] = &set{}, &set{}, &set{}
 			}
 			// The worst rating reported anywhere: the same CVE is rated differently
 			// by distro, and the urgent rating is the one that matters.
@@ -106,9 +120,9 @@ func CVEs(findings []sink.FindingView, withAffected bool) []CVE {
 			if v.FixAvailable {
 				c.Fixable++
 			}
-			teams[v.ID].add(f.Owner.Team)
-			services[v.ID].add(f.Owner.Team + "|" + f.Repository)
-			fixedVersions[v.ID].add(v.FixedVersion)
+			c.teams.add(f.Owner.Team)
+			c.services.add(f.Owner.Team + "|" + f.Repository)
+			c.fixedVersions.add(v.FixedVersion)
 			if withAffected {
 				c.Affected = append(c.Affected, Affected{
 					Image: f.Image, Repository: f.Repository, Team: f.Owner.Team,
@@ -120,13 +134,13 @@ func CVEs(findings []sink.FindingView, withAffected bool) []CVE {
 	}
 
 	out := make([]CVE, 0, len(byID))
-	for id, c := range byID {
-		c.Teams = teams[id].sorted()
-		c.Services = len(services[id].m)
-		c.FixedVersions = fixedVersions[id].sorted()
+	for _, c := range byID {
+		c.Teams = c.teams.sorted()
+		c.Services = len(c.services.m)
+		c.FixedVersions = c.fixedVersions.sorted()
 		c.ScannedImages, c.TotalImages = scanned, total
 		sort.Slice(c.Affected, func(i, j int) bool { return c.Affected[i].Image < c.Affected[j].Image })
-		out = append(out, *c)
+		out = append(out, c.CVE)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
@@ -169,12 +183,45 @@ func fixPath(f sink.FindingView) string {
 // carries it. Nil is not "no such CVE": an unscanned estate carries no CVEs here at
 // all, which is why ScannedImages travels with the answer.
 func FindCVE(findings []sink.FindingView, id string) *CVE {
-	want := strings.ToUpper(strings.TrimSpace(id))
-	for _, c := range CVEs(findings, true) {
-		if strings.ToUpper(c.ID) == want {
-			out := c
-			return &out
-		}
+	want := strings.TrimSpace(id)
+	if want == "" {
+		return nil
 	}
-	return nil
+	rows := aggregate(findings, true, want)
+	if len(rows) == 0 {
+		return nil
+	}
+	// At most one row: the aggregation is keyed by id and only that id was collected.
+	return &rows[0]
+}
+
+// cveAccumulator is a row being built, with the sets it needs while building.
+//
+// The sets are here rather than in maps keyed by CVE id so that adding a team costs
+// one pointer dereference instead of a hash lookup. On a real estate that is 208,697
+// occurrences times three maps.
+type cveAccumulator struct {
+	CVE
+	teams         set
+	services      set
+	fixedVersions set
+}
+
+// expectedCVEs sizes the map so it does not rehash its way up from nothing.
+//
+// A guess, deliberately rough: on the estate this was measured against, 208,697
+// occurrences were about 10,000 distinct CVEs, so a twentieth of the occurrence count
+// is a reasonable starting capacity. Narrowed to one id, one entry is all it needs.
+func expectedCVEs(findings []sink.FindingView, only string) int {
+	if only != "" {
+		return 1
+	}
+	var occurrences int
+	for _, f := range findings {
+		occurrences += len(f.Vulns)
+	}
+	if n := occurrences / 20; n > 0 {
+		return n
+	}
+	return len(findings)
 }

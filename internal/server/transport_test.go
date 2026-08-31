@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/s-humphreys/patchwright/pkg/group"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -414,5 +415,146 @@ func TestAggregatesComeFromTheWorstCVE(t *testing.T) {
 	}
 	if v.TopRiskScore != 300 {
 		t.Errorf("top_risk_score = %v, want 300", v.TopRiskScore)
+	}
+}
+
+// Aggregation caching.
+//
+// The rollups derive from a snapshot that cannot change while it is the current one,
+// and on a real estate the CVE one measured 44ms of CPU and 32MB of allocation per
+// request. These pin the two things caching must not break: a filtered request must
+// never be answered from the unfiltered cache, and the cache must not outlive its
+// assessment.
+
+func aggregatingServer(t *testing.T) *Server {
+	t.Helper()
+	s := New(nil)
+	scanned := func(image, team string, suppressed bool, cve string) sink.FindingView {
+		return sink.FindingView{
+			Image: image, Repository: image, Scanned: true, ProviderAssessed: true,
+			Suppressed: suppressed, Owner: sink.OwnerView{Team: team},
+			Vulns: []sink.VulnView{{ID: cve, Severity: "critical"}},
+		}
+	}
+	s.latest = &snapshot{
+		generatedAt: time.Now(),
+		views: []sink.FindingView{
+			scanned("app-a", "payments", false, "CVE-2026-1"),
+			scanned("app-b", "orders", false, "CVE-2026-2"),
+			scanned("app-c", "orders", true, "CVE-2026-3"),
+		},
+	}
+	return s
+}
+
+func TestTheCachedRollupExcludesSuppressedLikeTheDefaultQuery(t *testing.T) {
+	s := aggregatingServer(t)
+	// The API hides suppressed findings unless asked, so the cache has to describe
+	// that same population or an unfiltered request would gain a row.
+	if got := len(s.latest.defaultViews()); got != 2 {
+		t.Fatalf("default population = %d findings, want 2 (suppressed hidden)", got)
+	}
+	if got := len(s.latest.defaultCVEs()); got != 2 {
+		t.Errorf("cached rollup = %d CVEs, want 2", got)
+	}
+	for _, c := range s.latest.defaultCVEs() {
+		if c.ID == "CVE-2026-3" {
+			t.Error("a suppressed finding's CVE leaked into the default rollup")
+		}
+	}
+}
+
+func TestTheCacheIsComputedOnceAndReused(t *testing.T) {
+	s := aggregatingServer(t)
+	first := s.latest.defaultCVEs()
+	second := s.latest.defaultCVEs()
+	if &first[0] != &second[0] {
+		t.Error("want the same slice back, not a fresh aggregation")
+	}
+	if items := s.latest.defaultItems(); &items[0] != &s.latest.defaultItems()[0] {
+		t.Error("items were aggregated twice")
+	}
+}
+
+// The failure that would matter: answering a filtered request from the unfiltered
+// rollup. Every row would be right and the SET would be wrong, which is the hardest
+// kind of bug to notice on a dashboard.
+func TestAFilteredRequestIsNeverServedFromTheCache(t *testing.T) {
+	for _, query := range []string{
+		"?team=payments", "?suppressed=true", "?actionable=true", "?priority=urgent",
+		// A parameter this code has never heard of. Unknown must mean "compute it",
+		// so that adding a filter later cannot silently serve the wrong population.
+		"?some_future_filter=x",
+	} {
+		if servableFromCache(httptest.NewRequest(http.MethodGet, "/api/v1/cves"+query, nil), cveRowParams...) {
+			t.Errorf("%s would have been served from the unfiltered cache", query)
+		}
+	}
+}
+
+// CVE-level filters narrow the aggregated rows, so they can be applied after the
+// cached rollup and still give the same answer.
+func TestRowLevelCVEFiltersStillUseTheCache(t *testing.T) {
+	for _, query := range []string{"", "?severity=critical", "?kev=true", "?min_images=3",
+		"?fixable=false", "?min_services=2", "?vulns=false"} {
+		if !servableFromCache(httptest.NewRequest(http.MethodGet, "/api/v1/cves"+query, nil), cveRowParams...) {
+			t.Errorf("%s should be answerable from the cached rollup", query)
+		}
+	}
+}
+
+// The items endpoint has no row-level filters, so anything at all makes it compute.
+func TestItemsOnlyCachesTheBareRequest(t *testing.T) {
+	if !servableFromCache(httptest.NewRequest(http.MethodGet, "/api/v1/items", nil)) {
+		t.Error("the bare request should use the cache")
+	}
+	if servableFromCache(httptest.NewRequest(http.MethodGet, "/api/v1/items?severity=critical", nil)) {
+		t.Error("severity is a row filter for CVEs, not for items: it must not hit the items cache")
+	}
+}
+
+// A new assessment brings a new snapshot, and the caches live on the snapshot - so
+// there is nothing to invalidate. This asserts that structure rather than trusting it.
+func TestANewAssessmentGetsFreshAggregations(t *testing.T) {
+	s := aggregatingServer(t)
+	before := s.latest.defaultCVEs()
+	if len(before) != 2 {
+		t.Fatalf("want 2 CVEs, got %d", len(before))
+	}
+	s.latest = &snapshot{
+		generatedAt: time.Now(),
+		views: []sink.FindingView{{
+			Image: "app-z", Repository: "app-z", Scanned: true, ProviderAssessed: true,
+			Vulns: []sink.VulnView{{ID: "CVE-2026-9", Severity: "high"}},
+		}},
+	}
+	after := s.latest.defaultCVEs()
+	if len(after) != 1 || after[0].ID != "CVE-2026-9" {
+		t.Errorf("the new assessment was answered from the old rollup: %+v", after)
+	}
+}
+
+// One CVE used to be answered by building the whole estate's rollup with every
+// affected image and picking one row out of it: 120ms and 117MB of allocation for a
+// few kilobytes of answer.
+func TestOneCVEIsAggregatedOnItsOwn(t *testing.T) {
+	s := aggregatingServer(t)
+	rec := httptest.NewRecorder()
+	s.handleCVE(rec, httptest.NewRequest(http.MethodGet, "/api/v1/cve?id=cve-2026-2", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		CVE group.CVE `json:"cve"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.CVE.ID != "CVE-2026-2" {
+		t.Errorf("wrong CVE: %+v", got.CVE)
+	}
+	// Still carries what it was aggregated over, and still lists the affected images.
+	if got.CVE.ScannedImages != 2 || got.CVE.Images != 1 || len(got.CVE.Affected) != 1 {
+		t.Errorf("the narrowed aggregation lost detail: %+v", got.CVE)
 	}
 }

@@ -401,7 +401,11 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	items := []group.Item{}
 	if snap != nil {
-		items = group.Items(filterViews(snap.views, r))
+		if servableFromCache(r) {
+			items = snap.defaultItems()
+		} else {
+			items = group.Items(filterViews(snap.views, r))
+		}
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Assessment assessmentMeta `json:"assessment"`
@@ -461,9 +465,16 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	cves := []group.CVE{}
 	scanned, total := 0, 0
 	if snap != nil {
-		views := filterViews(snap.views, r)
+		// The CVE-level filters below narrow the aggregated ROWS, so they do not stop
+		// the aggregation being reused; a filter on the FINDINGS does.
+		var views []sink.FindingView
+		if servableFromCache(r, cveRowParams...) {
+			views, cves = snap.defaultViews(), snap.defaultCVEs()
+		} else {
+			views = filterViews(snap.views, r)
+			cves = group.CVEs(views, false)
+		}
 		total = len(views)
-		cves = group.CVEs(views, false)
 		if len(cves) > 0 {
 			scanned = cves[0].ScannedImages
 		} else {
@@ -525,6 +536,30 @@ func (s *Server) handleCVE(w http.ResponseWriter, r *http.Request) {
 
 // filterCVEs applies the list filters a security consumer wants: what is exploited,
 // what is severe, and what is widespread enough to be worth a campaign.
+// cveRowParams are the filters that apply to aggregated CVE rows rather than to the
+// findings they were aggregated from. A request using only these can still be served
+// from the cached rollup, because narrowing rows afterwards gives the same answer.
+var cveRowParams = []string{"severity", "kev", "fixable", "min_images", "min_services"}
+
+// servableFromCache reports whether a request asks for the default population.
+//
+// Deliberately a whitelist of what may appear, not a blacklist of filters. Adding a
+// new filter parameter therefore makes requests using it MISS the cache and be
+// computed properly, which is the safe direction: the failure mode of forgetting to
+// update this is a slower request, never a wrong one.
+func servableFromCache(r *http.Request, allowed ...string) bool {
+	ok := map[string]bool{"vulns": true}
+	for _, name := range allowed {
+		ok[name] = true
+	}
+	for name := range r.URL.Query() {
+		if !ok[name] {
+			return false
+		}
+	}
+	return true
+}
+
 func filterCVEs(cves []group.CVE, r *http.Request) []group.CVE {
 	q := r.URL.Query()
 	severity := q.Get("severity")
