@@ -120,6 +120,12 @@ func TestServiceReportSplitsTheRemainderByWhoOwnsIt(t *testing.T) {
 		u.Remainder.Packages[0].CVEs != 2 {
 		t.Errorf("want the surviving base CVEs' package with a distinct count: %+v", u.Remainder.Packages)
 	}
+	// The application remainder is the only part the team can patch itself, so it is
+	// named rather than counted. Reporting "1" and nothing else is what sent somebody
+	// looking for a package list that was never going to exist.
+	if len(u.Remainder.Application) != 1 || u.Remainder.Application[0].ID != "CVE-2026-3" {
+		t.Errorf("want the application remainder named: %+v", u.Remainder.Application)
+	}
 	if u.Move != "version change to 10.0" {
 		t.Errorf("a version change must not read as a rebuild: %q", u.Move)
 	}
@@ -845,5 +851,99 @@ func TestPartlyMeasuredServicesStillReconcile(t *testing.T) {
 	// And the reader is told the coverage is partial rather than left to infer it.
 	if !strings.Contains(strings.Join(r.Caveats, " "), "differential ran for 1 of 3 deployments") {
 		t.Errorf("want the partial coverage stated: %v", r.Caveats)
+	}
+}
+
+// appFixture is one service whose build introduced more CVEs than the cap, to pin the
+// ordering and the cap together. Every CVE here is application-origin: the base
+// differential is not what is under test.
+func appFixture(n int) Assessment {
+	f := sink.FindingView{
+		Image: "reg.example/apps/ingest:2.0.0", Repository: "apps/ingest", Tag: "2.0.0",
+		Owner: sink.OwnerView{Team: "insights"}, Priority: "high", Scanned: true,
+		ProviderAssessed: true, Counts: map[string]int{"high": n},
+		Upgrade: &sink.UpgradeView{
+			Kind: "base", Name: "python", Current: "3.11", Latest: "3.12",
+			Available: true, Resolved: true, Actionable: true,
+		},
+		BaseDiff: &sink.BaseDiffView{
+			FromRef: "docker.io/python:3.11", ToRef: "docker.io/python:3.12",
+			Total: n, FromApp: n, Determined: true,
+		},
+	}
+	// Ascending severity as they are appended, so a report that echoed input order
+	// rather than ranking would be caught.
+	sev := []string{"low", "medium", "high", "critical"}
+	for i := 0; i < n; i++ {
+		f.Vulns = append(f.Vulns, sink.VulnView{
+			ID:       fmt.Sprintf("CVE-2026-9%03d", i),
+			Severity: sev[i%len(sev)], CVSS: float64(i % 10),
+			FixAvailable: i%2 == 0, FixedVersion: "9.9.9",
+			Origin: "app", OriginDetermined: true,
+		})
+	}
+	return Assessment{
+		GeneratedAt: ts("2026-08-30T09:00:00Z"), Version: "v2.1.0",
+		Findings: []sink.FindingView{f},
+	}
+}
+
+func TestApplicationRemainderIsRankedAndCapped(t *testing.T) {
+	total := maxApplicationCVEs + 7
+	r, ok := serviceReport(appFixture(total), "ingest")
+	if !ok {
+		t.Fatal("no report for a service that is present")
+	}
+	rem := r.Upgrade.Remainder
+	if rem.FromApplication != total {
+		t.Fatalf("the count must stay the true total, not the capped length: %d", rem.FromApplication)
+	}
+	if len(rem.Application) != maxApplicationCVEs {
+		t.Fatalf("want the list capped at %d, got %d", maxApplicationCVEs, len(rem.Application))
+	}
+	// Worst first: nothing below the top severity can appear before something at it.
+	for i := 1; i < len(rem.Application); i++ {
+		prev, cur := rem.Application[i-1], rem.Application[i]
+		if severityRank[cur.Severity] > severityRank[prev.Severity] {
+			t.Fatalf("out of order at %d: %s after %s", i, cur.Severity, prev.Severity)
+		}
+	}
+	if rem.Application[0].Severity != "critical" {
+		t.Errorf("want the worst first, got %q", rem.Application[0].Severity)
+	}
+}
+
+func TestApplicationRemainderCarriesWhatAFixNeeds(t *testing.T) {
+	r, _ := serviceReport(appFixture(4), "ingest")
+	var fixable *ApplicationCVE
+	for i, v := range r.Upgrade.Remainder.Application {
+		if v.FixAvailable {
+			fixable = &r.Upgrade.Remainder.Application[i]
+			break
+		}
+	}
+	if fixable == nil {
+		t.Fatal("the fixture has fixable application CVEs; none survived into the report")
+	}
+	if fixable.FixedVersion != "9.9.9" {
+		t.Errorf("want the version to move to, got %q", fixable.FixedVersion)
+	}
+	if fixable.Reference != "https://www.cve.org/CVERecord?id="+fixable.ID {
+		t.Errorf("want a reference to follow, got %q", fixable.Reference)
+	}
+}
+
+// The count and the list must agree, or a caller reading one and acting on the other
+// works from a remainder that does not exist.
+func TestFixPlanNamesWhatIsStillTheTeams(t *testing.T) {
+	p, ok := fixPlan(appFixture(3), "ingest")
+	if !ok {
+		t.Fatal("no plan for a service that is present")
+	}
+	if p.Result.StillYours != 3 {
+		t.Fatalf("want 3 still the team's, got %d", p.Result.StillYours)
+	}
+	if len(p.Result.StillYoursCVEs) != 3 {
+		t.Fatalf("want all 3 named, got %d", len(p.Result.StillYoursCVEs))
 	}
 }

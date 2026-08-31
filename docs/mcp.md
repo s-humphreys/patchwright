@@ -50,7 +50,9 @@ result   clears 5,857 of 6,746, including all 10 known-exploited
          introduces 296
          880 not yours: still in the new base, upstream's to fix
              linux-libc-dev (518), binutils (57), libbinutils (57) ...
-         9 still yours
+         9 still yours: introduced by the build, so fixable in the repository
+             CVE-2026-4171 (critical, fix 2.31.1), CVE-2026-3980 (high, fix 1.4.2),
+             CVE-2026-2255 (high, no fix published) ...
          verify: afterwards expect about 1,185 rather than 6,746, with 10 of
                  10 known-exploited gone. A remainder is expected.
          known_exploited: CVE-2025-48384 (cleared), CVE-2026-31431 (cleared) ...
@@ -100,6 +102,7 @@ apps/storefront - payments - urgent in prod, internet-facing
     2 still in the new base   - upstream's, no action available here
     2 from the application    - installed by the build, the team's
     remainder concentrated in: zlib (2)
+    the application's own:    CVE-2026-3 (high), CVE-2026-7 (medium, fix 4.0.1)
 ```
 
 Two rules hold across every tool, and both exist because prose loses what a table
@@ -117,6 +120,13 @@ can be read against each other: on a service, `clears` + `still_in_base` +
 at three tags of one build carries the same CVEs three times, and summing each
 deployment's own count told storefront it had 6,746 vulnerabilities of which an upgrade
 would clear 17,571. A team cannot act on a number that is impossible on its face.
+
+**A remainder is named on both sides.** The base remainder is broken down by package,
+because at that size the question is which upstream package is holding the line. The
+application remainder is listed CVE by CVE with its fix version, because that half is
+the only part the team can patch in its own repository, and a bare count there is a
+task nobody can start. Neither side is a package list *and* a CVE list: nothing scans
+the application layer, so those CVEs have identifiers but no package name.
 
 The two exceptions name their unit rather than hiding it. A rebuild win reports
 `clears_cve_occurrences`, because a CVE on sixty images is sixty fixes and that is what

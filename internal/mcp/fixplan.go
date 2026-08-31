@@ -89,6 +89,10 @@ type FixResult struct {
 	Packages    []string `json:"remaining_packages,omitempty"`
 	// StillYours is what the change does not cover and the team does own.
 	StillYours int `json:"still_yours"`
+	// StillYoursCVEs names them. A count alone tells an engineer there is more to do and
+	// an agent nothing it can act on; these are the CVEs to chase in the build itself,
+	// once the base change has taken the rest away.
+	StillYoursCVEs []ApplicationCVE `json:"still_yours_cves,omitempty"`
 	// Verify is what to expect afterwards, in one sentence. An agent that does not know
 	// the remainder is expected reads it as the change having failed.
 	Verify string `json:"verify,omitempty"`
@@ -274,6 +278,7 @@ func fixResult(r ServiceReport, u *UpgradeAdvice) *FixResult {
 	if u.Remainder != nil {
 		out.NotYours = u.Remainder.StillInBase
 		out.StillYours = u.Remainder.FromApplication
+		out.StillYoursCVEs = u.Remainder.Application
 		if out.NotYours > 0 {
 			out.NotYoursWhy = "still present in the new base image, so upstream's to fix rather " +
 				"than this team's - an upstream wait, not neglect"

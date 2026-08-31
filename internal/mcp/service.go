@@ -166,6 +166,30 @@ type Remainder struct {
 	// Packages names what the base-image remainder is concentrated in, worst first.
 	// Absent for application CVEs, whose layer nothing scanned.
 	Packages []PackageCount `json:"packages,omitempty"`
+	// Application names the CVEs the build itself introduced, worst first.
+	//
+	// This is the only part of the remainder the team can patch in its own repository,
+	// and for a long time it was the only part reported as a bare number while the base
+	// remainder - the part nobody here can act on - was broken down by package. The
+	// classification already has each CVE in hand to decide it is application-origin, so
+	// the identifiers cost nothing to carry and turn the count into a task.
+	//
+	// Capped at maxApplicationCVEs; FromApplication is always the true total.
+	Application []ApplicationCVE `json:"application_cves,omitempty"`
+}
+
+// ApplicationCVE is one CVE the build introduced, with what a caller needs to act on
+// it. There is no package name - nothing scanned that layer - so the identifier is the
+// handle, and FixedVersion is what to move to where the provider published one.
+type ApplicationCVE struct {
+	ID           string  `json:"id"`
+	Severity     string  `json:"severity,omitempty"`
+	CVSS         float64 `json:"cvss,omitempty"`
+	EPSS         float64 `json:"epss,omitempty"`
+	KEV          bool    `json:"known_exploited,omitempty"`
+	FixAvailable bool    `json:"fix_available"`
+	FixedVersion string  `json:"fixed_version,omitempty"`
+	Reference    string  `json:"reference"`
 }
 
 // PackageCount is one package and how many of the remaining CVEs it accounts for.
@@ -200,6 +224,11 @@ func baseDiffsAmong(r ServiceReport) int {
 // maxRemainderPackages bounds the package breakdown. Past a handful it stops
 // answering "is this one stubborn package or a long tail" and becomes the tail.
 const maxRemainderPackages = 8
+
+// maxApplicationCVEs bounds the application remainder. Higher than the package cap
+// because these are individually actionable - each one is a thing to go and fix -
+// rather than a shape to recognise.
+const maxApplicationCVEs = 20
 
 // serviceReport builds the report for one service, or false when nothing matches.
 //
@@ -357,6 +386,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	seen := map[string]bool{}
 	pkgs := map[string]map[string]bool{}
 	pkgMeta := map[string]PackageCount{}
+	var app []ApplicationCVE
 	// Two passes, because coverage can be partial. A base whose recorded digest or tag
 	// has been deleted from the registry cannot be scanned - on this estate fifteen
 	// services have some deployments measured and some not - and a CVE seen only on an
@@ -410,6 +440,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 				}
 			default:
 				out.Remainder.FromApplication++
+				app = append(app, applicationCVE(cve))
 			}
 		}
 	}
@@ -428,6 +459,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 		}
 	}
 	out.Remainder.Packages = topPackages(pkgs, pkgMeta)
+	out.Remainder.Application = topApplicationCVEs(app)
 	out.Move = moveKind(out.From, out.To)
 	return out
 }
@@ -449,6 +481,39 @@ func upgradeState(u *sink.UpgradeView) string {
 }
 
 // exploited records one known-exploited CVE and whether this move deals with it.
+// applicationCVE carries one build-introduced CVE out of the classification.
+func applicationCVE(v sink.VulnView) ApplicationCVE {
+	return ApplicationCVE{
+		ID: v.ID, Severity: v.Severity, CVSS: v.CVSS, EPSS: v.EPSS, KEV: v.KEV,
+		FixAvailable: v.FixAvailable, FixedVersion: v.FixedVersion,
+		Reference: "https://www.cve.org/CVERecord?id=" + v.ID,
+	}
+}
+
+// topApplicationCVEs orders the build-introduced remainder worst first and caps it.
+//
+// Worst first rather than fixable first, to match every other list here: fix_available
+// is on each row for a caller that wants to start with what it can actually move.
+func topApplicationCVEs(in []ApplicationCVE) []ApplicationCVE {
+	sort.Slice(in, func(i, j int) bool {
+		a, b := in[i], in[j]
+		if severityRank[a.Severity] != severityRank[b.Severity] {
+			return severityRank[a.Severity] > severityRank[b.Severity]
+		}
+		if a.CVSS != b.CVSS {
+			return a.CVSS > b.CVSS
+		}
+		if a.EPSS != b.EPSS {
+			return a.EPSS > b.EPSS
+		}
+		return a.ID < b.ID
+	})
+	if len(in) > maxApplicationCVEs {
+		in = in[:maxApplicationCVEs]
+	}
+	return in
+}
+
 func exploited(v sink.VulnView, cleared bool) ExploitedCVE {
 	return ExploitedCVE{
 		ID: v.ID, ClearedByThis: cleared, Severity: v.Severity,
@@ -556,7 +621,8 @@ func caveats(a Assessment, r ServiceReport) []string {
 				"not by being clean.", suppressed, len(r.Deployments)))
 	}
 	if r.Upgrade != nil && r.Upgrade.Remainder != nil && r.Upgrade.Remainder.FromApplication > 0 {
-		out = append(out, "Application-introduced CVEs carry no package name: nothing scanned that layer.")
+		out = append(out, "Application-introduced CVEs carry no package name, because nothing "+
+			"scanned that layer. They are listed by identifier in remainder.application_cves.")
 	}
 	return out
 }
