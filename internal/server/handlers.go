@@ -118,7 +118,12 @@ func (s *Server) Handler() http.Handler {
 	// Authentication wraps everything, including the page: the page is a data view,
 	// so leaving it open while gating the API would protect nothing. /metrics and the
 	// probes are exempt; see openPaths.
-	return s.authorize(mux)
+	//
+	// Compression is outermost so it covers the sign-in pages too, and revalidation
+	// sits inside authentication: a 304 must not be served to a caller who has not
+	// authenticated, or the presence of a cached copy would leak that the resource
+	// exists.
+	return compress(s.authorize(s.revalidate(mux)))
 }
 
 func (s *Server) meta() assessmentMeta {
