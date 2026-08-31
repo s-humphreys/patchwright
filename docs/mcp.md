@@ -52,6 +52,18 @@ production" means something different against data from an hour ago and from a
 fortnight ago, and a model asked to summarise will drop that unless it is in the
 payload.
 
+**Every CVE count is distinct CVEs.** One unit throughout, so the numbers in an answer
+can be read against each other: on a service, `clears` + `still_in_base` +
+`from_application` + `unattributed` is the total. That is not free - a service deployed
+at three tags of one build carries the same CVEs three times, and summing each
+deployment's own count told topnotch it had 6,746 vulnerabilities of which an upgrade
+would clear 17,571. A team cannot act on a number that is impossible on its face.
+
+The two exceptions name their unit rather than hiding it. A rebuild win reports
+`clears_cve_occurrences`, because a CVE on sixty images is sixty fixes and that is what
+ranks the work. And `introduces` is the worst any single deployment reports, since what a
+candidate base ADDS is not in the image's CVEs to count.
+
 **Absence never renders as zero.** An unassessed image is not a clean image. Every
 answer states its coverage, and each carries a `caveats` list saying what it cannot
 support - because nobody re-reads a sentence a chatbot produced.

@@ -940,7 +940,14 @@ components:
         kind: { type: string, description: "e.g. image, chart" }
         name: { type: string }
         current: { type: string }
-        latest: { type: string }
+        latest:
+          type: string
+          description: >-
+            The version to move TO, set only when `available` is true. A source already on
+            the newest version it can see reports no `latest`: a consumer reading this
+            field without checking `available` would otherwise render a no-op move such as
+            "1.11.0 -> 1.11.0" and send somebody to raise a pull request that changes
+            nothing, when the real answer is that the fix is not a bump.
         available: { type: boolean }
         resolved:
           type: boolean

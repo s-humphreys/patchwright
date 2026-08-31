@@ -62,12 +62,18 @@ type Deployment struct {
 // VulnSummary counts what the service carries. Counts are absent rather than zero
 // where nothing was assessed.
 type VulnSummary struct {
-	Total    int `json:"total"`
-	Critical int `json:"critical"`
-	High     int `json:"high"`
-	// KnownExploited and EPSSHigh are the two that decide urgency.
+	// Total is distinct CVEs across the service's deployments.
+	Total int `json:"total"`
+	// Critical and High are the scan provider's own counts for the WORST single
+	// deployment, not distinct CVEs and not a sum - a different unit from everything
+	// else here, so the names say so.
+	Critical int `json:"critical_worst_deployment"`
+	High     int `json:"high_worst_deployment"`
+	// KnownExploited and EPSSHigh are the two that decide urgency, both DISTINCT CVEs.
+	// EPSSHigh counted deployments while KnownExploited counted CVEs, in adjacent
+	// fields with no way to tell them apart.
 	KnownExploited int     `json:"known_exploited"`
-	EPSSHigh       int     `json:"epss_high"`
+	EPSSHigh       int     `json:"epss_high_cves"`
 	TopEPSS        float64 `json:"top_epss,omitempty"`
 	TopPercentile  float64 `json:"top_epss_percentile,omitempty"`
 	// Assessed and Scanned say how much of the service these numbers describe.
@@ -91,14 +97,27 @@ type UpgradeAdvice struct {
 	Rule   string `json:"rule,omitempty"`
 	// Support is the maintenance status of the line this sits on.
 	Support string `json:"support,omitempty"`
+	// State says which kind of answer this is, because four of them are not moves:
+	// "upgrade" has a version to go to, "latest" is already on the newest available,
+	// "held" is a newer version policy declined, "unresolved" is a lookup that could
+	// not answer. Only the first is a pull request; the rest need a person.
+	State string `json:"state"`
 
 	// Measured is true when a base differential actually ran. Without it the counts
 	// below are absent rather than zero - "we did not check" and "it fixes nothing"
 	// are different answers.
-	Measured   bool `json:"measured"`
-	Clears     int  `json:"clears"`
-	Leaves     int  `json:"leaves"`
-	Introduces int  `json:"introduces"`
+	Measured bool `json:"measured"`
+	// DeploymentsMeasured is how many of the service's deployments a differential ran
+	// for, so a partial answer can be read as partial.
+	DeploymentsMeasured int `json:"deployments_measured"`
+	// Clears, Leaves and Introduces are DISTINCT CVEs, on the same footing as
+	// vulnerabilities.total, so the four numbers can be read against each other:
+	// clears + leaves + from_application + unattributed is the total.
+	Clears int `json:"clears"`
+	Leaves int `json:"leaves"`
+	// Introduces is the worst any single deployment reports, not a sum: it describes
+	// what the candidate base adds, which is not in the image's own CVEs to dedupe.
+	Introduces int `json:"introduces"`
 
 	// Remainder splits what is left after the upgrade by who can act on it.
 	Remainder *Remainder `json:"remainder,omitempty"`
@@ -214,31 +233,36 @@ func summariseVulns(mine []sink.FindingView, lead group.Item) VulnSummary {
 		Critical:   lead.Critical,
 		High:       lead.High,
 		AssessedOf: [2]int{lead.AssessedImages, lead.Deployments},
-		ScannedOf:  [2]int{lead.ScannedImages, lead.Deployments},
+	}
+	// Counted here rather than taken from the group, which reports the scanned FLAG:
+	// see hasCVEDetail. A deployment nothing assessed, marked scanned with no CVEs,
+	// would otherwise be counted as covered.
+	v.ScannedOf = [2]int{0, len(mine)}
+	for _, f := range mine {
+		if hasCVEDetail(f) {
+			v.ScannedOf[0]++
+		}
 	}
 	seen := map[string]bool{}
 	for _, f := range mine {
-		high := false
 		for _, cve := range f.Vulns {
-			if !seen[cve.ID] {
-				seen[cve.ID] = true
-				v.Total++
-				if cve.KEV {
-					v.KnownExploited++
-				}
+			if seen[cve.ID] {
+				continue
 			}
-			if cve.EPSS > v.TopEPSS {
-				v.TopEPSS = cve.EPSS
-			}
-			if cve.EPSSPercentile > v.TopPercentile {
-				v.TopPercentile = cve.EPSSPercentile
+			seen[cve.ID] = true
+			v.Total++
+			if cve.KEV {
+				v.KnownExploited++
 			}
 			if cve.EPSS >= epssUrgent {
-				high = true
+				v.EPSSHigh++
 			}
-		}
-		if high {
-			v.EPSSHigh++
+			// Score and percentile from the SAME CVE. Taking each as an independent
+			// maximum pairs the worst score with another CVE's ranking and describes a
+			// vulnerability that does not exist.
+			if cve.EPSS > v.TopEPSS {
+				v.TopEPSS, v.TopPercentile = cve.EPSS, cve.EPSSPercentile
+			}
 		}
 	}
 	return v
@@ -254,7 +278,15 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	}
 	u := lead.Upgrade
 	out := &UpgradeAdvice{
-		Kind: u.Kind, From: u.Current, To: u.Latest, Newest: u.Newest, Rule: u.Rule,
+		Kind: u.Kind, From: u.Current, Newest: u.Newest, Rule: u.Rule,
+		State: upgradeState(u),
+	}
+	// To is the version to move TO, so it is only set when there is one. A chart already
+	// on its newest version reports that version as Latest with Available false, and
+	// copying it here rendered "1.11.0 -> 1.11.0": an urgent row asking for a pull
+	// request that would change nothing, instead of saying the fix is not a bump.
+	if u.Available {
+		out.To = u.Latest
 	}
 	if u.Support != nil && u.Support.Known {
 		if u.Support.Supported {
@@ -264,10 +296,28 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 		}
 	}
 
-	// The differential, summed across the service's deployments. Each carries its
-	// own, and they agree by construction because grouping is by upgrade target.
-	var clears, leaves, introduces, base, app, unattributed int
-	pkgs := map[string]*PackageCount{}
+	// The differential, counted in DISTINCT CVEs across the service's deployments.
+	//
+	// Summing each deployment's own counts was wrong, and wrong in the way that matters
+	// most: a service deployed at three tags of one build carries the same CVEs three
+	// times, so topnotch was reported as clearing 17,571 of its 6,746 vulnerabilities. A
+	// team cannot act on that - the arithmetic is visibly impossible, and the number they
+	// would put in a ticket is three times the truth.
+	//
+	// Deduped, the same data closes exactly: 5,857 cleared plus 880 still in the base
+	// plus 9 from the application is 6,746, the total. Every CVE count in this report is
+	// therefore distinct CVEs on this service, one unit throughout.
+	out.Remainder = &Remainder{}
+	seen := map[string]bool{}
+	pkgs := map[string]map[string]bool{}
+	pkgMeta := map[string]PackageCount{}
+	// Two passes, because coverage can be partial. A base whose recorded digest or tag
+	// has been deleted from the registry cannot be scanned - on this estate fifteen
+	// services have some deployments measured and some not - and a CVE seen only on an
+	// unmeasured deployment belongs in no origin bucket. Classifying from the measured
+	// deployments alone would leave it out of the split while the total still counted it,
+	// so the four numbers would stop adding up. The second pass puts it where it belongs:
+	// unattributed, which is what "nothing established its origin" means.
 	for _, f := range mine {
 		d := f.BaseDiff
 		if d == nil || !d.Determined {
@@ -275,35 +325,73 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 		}
 		out.Measured = true
 		out.From, out.To = d.FromRef, d.ToRef
-		clears += d.Clears
-		leaves += d.Leaves
-		introduces += d.Introduces
-		app += d.FromApp
-		unattributed += d.Unknown
-		base += d.Leaves
+		out.DeploymentsMeasured++
+		// Introduces cannot come from the image's own CVEs: it is what the candidate base
+		// ADDS, which by definition is not there yet. So it is the worst any single
+		// deployment reports rather than a sum - identical where they share a base pair,
+		// which grouping by upgrade target makes the normal case.
+		if d.Introduces > out.Introduces {
+			out.Introduces = d.Introduces
+		}
 		for _, cve := range f.Vulns {
-			if cve.FixedByUpgrade || !cve.OriginDetermined || cve.Origin != "base" {
+			if seen[cve.ID] {
 				continue
 			}
-			for _, p := range cve.Packages {
-				key := p.Ecosystem + "/" + p.Name
-				if pkgs[key] == nil {
-					pkgs[key] = &PackageCount{Name: p.Name, Ecosystem: p.Ecosystem}
+			seen[cve.ID] = true
+			switch {
+			case !cve.OriginDetermined:
+				out.Remainder.Unattributed++
+			case cve.FixedByUpgrade:
+				out.Clears++
+			case cve.Origin == "base":
+				out.Leaves++
+				out.Remainder.StillInBase++
+				for _, pkg := range cve.Packages {
+					key := pkg.Ecosystem + "/" + pkg.Name
+					if pkgs[key] == nil {
+						pkgs[key] = map[string]bool{}
+						pkgMeta[key] = PackageCount{Name: pkg.Name, Ecosystem: pkg.Ecosystem}
+					}
+					pkgs[key][cve.ID] = true
 				}
-				pkgs[key].CVEs++
+			default:
+				out.Remainder.FromApplication++
 			}
 		}
 	}
 	if !out.Measured {
+		out.Remainder = nil
 		return out
 	}
-	out.Clears, out.Leaves, out.Introduces = clears, leaves, introduces
-	out.Move = moveKind(out.From, out.To)
-	out.Remainder = &Remainder{
-		StillInBase: base, FromApplication: app, Unattributed: unattributed,
-		Packages: topPackages(pkgs),
+	// Everything the measured deployments did not account for.
+	for _, f := range mine {
+		for _, cve := range f.Vulns {
+			if seen[cve.ID] {
+				continue
+			}
+			seen[cve.ID] = true
+			out.Remainder.Unattributed++
+		}
 	}
+	out.Remainder.Packages = topPackages(pkgs, pkgMeta)
+	out.Move = moveKind(out.From, out.To)
 	return out
+}
+
+// upgradeState names which of the four answers this is. Absent versions and no-op
+// versions are different states, and a consumer that cannot tell them apart reports a
+// decision as a bump.
+func upgradeState(u *sink.UpgradeView) string {
+	switch {
+	case !u.Resolved:
+		return "unresolved"
+	case u.Available && u.Latest != "":
+		return "upgrade"
+	case u.HeldBack:
+		return "held"
+	default:
+		return "latest"
+	}
 }
 
 // moveKind separates a rebuild from a version change. A base pinned to a floating
@@ -322,10 +410,19 @@ func moveKind(from, to string) string {
 	return ""
 }
 
-func topPackages(in map[string]*PackageCount) []PackageCount {
-	out := make([]PackageCount, 0, len(in))
-	for _, p := range in {
-		out = append(out, *p)
+// topPackages ranks the packages the remaining base CVEs sit in, worst first.
+//
+// A package's count is DISTINCT CVEs in that package. The counts across packages still
+// overlap, because one CVE can affect several packages built from the same source - the
+// binutils family accounts for seven of them, each reporting the same 171 - so they
+// cannot be summed. The report says so rather than leaving a reader to add them up and
+// get a number larger than the remainder they came from.
+func topPackages(sets map[string]map[string]bool, meta map[string]PackageCount) []PackageCount {
+	out := make([]PackageCount, 0, len(sets))
+	for key, ids := range sets {
+		p := meta[key]
+		p.CVEs = len(ids)
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CVEs != out[j].CVEs {
@@ -369,6 +466,13 @@ func caveats(a Assessment, r ServiceReport) []string {
 	// Only worth saying when the differential was enabled: when it was not, the
 	// configuration caveat above has already said why, and repeating it as a
 	// property of this service points at the wrong thing.
+	if r.Upgrade != nil && r.Upgrade.Measured && r.Upgrade.DeploymentsMeasured < len(r.Deployments) {
+		out = append(out, fmt.Sprintf(
+			"A base differential ran for %d of %d deployments. The rest usually means the base "+
+				"image recorded in the build has since been deleted from its registry, so nothing "+
+				"can establish where their CVEs came from; those are counted as unattributed.",
+			r.Upgrade.DeploymentsMeasured, len(r.Deployments)))
+	}
 	if a.Sources.BaseDiff && r.Upgrade != nil && !r.Upgrade.Measured {
 		out = append(out, "The base differential is enabled but did not measure this service, so what an "+
 			"upgrade would clear is unknown rather than nothing - its base could not be resolved or scanned.")

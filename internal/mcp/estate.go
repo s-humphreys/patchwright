@@ -42,8 +42,14 @@ type EstateSummary struct {
 	Vulnerabilities int `json:"vulnerabilities"`
 	KnownExploited  int `json:"known_exploited"`
 
-	// ClearedByRebuilds is how many of the CVEs a base rebuild would remove across
-	// the estate, measured rather than estimated. Absent when no differential ran.
+	// ClearedByRebuilds is how many DISTINCT CVEs a base rebuild would remove across the
+	// estate, on the same footing as Vulnerabilities so the two can be read against each
+	// other. Absent when no differential ran.
+	//
+	// It summed each deployment's own count before, which put 77,699 next to a
+	// vulnerability total of 10,198: the same CVE counted once per deployment carrying
+	// it, against a distinct count. Two numbers in adjacent fields, in different units,
+	// with nothing saying so - and the larger one impossible on its face.
 	ClearedByRebuilds *int `json:"cleared_by_rebuilds,omitempty"`
 
 	// UnassessedReasons is why the coverage gap exists, in the provider's own words,
@@ -63,8 +69,13 @@ type EstateSummary struct {
 // total is, because a small number can mean a healthy estate or an unexamined one.
 type Coverage struct {
 	Assessed int `json:"assessed_deployments"`
-	Scanned  int `json:"scanned_deployments"`
-	Total    int `json:"total_deployments"`
+	// Scanned is deployments that actually carry per-CVE detail, which is not the same as
+	// the scanned flag being set. On a real estate seven deployments the provider had
+	// never assessed came back marked scanned, four with no CVEs and no error - so
+	// counting the flag claimed per-CVE coverage over images nothing had looked at, and
+	// read as an estate that was clean rather than unexamined.
+	Scanned int `json:"scanned_deployments"`
+	Total   int `json:"total_deployments"`
 	// Exposure counts deployments with ANY exposure value, which is not the same as
 	// measured: where exposure_measured is false these come from the scan provider,
 	// whose field can be constant. Named "reported" for that reason.
@@ -72,10 +83,25 @@ type Coverage struct {
 	BaseDiffs int `json:"deployments_with_base_differential"`
 }
 
+// hasCVEDetail reports whether a deployment really carries per-CVE detail.
+//
+// The scanned flag alone is not enough. A vuln source asked about an image the platform
+// never assessed can return an empty list rather than an error, and the finding is then
+// marked scanned with no CVEs - indistinguishable from an image that was examined and
+// found clean, which is the one confusion this tool exists to prevent. An image the
+// provider DID assess counts even with no CVEs, because there the zero is a measurement.
+func hasCVEDetail(f sink.FindingView) bool {
+	return f.Scanned && (f.ProviderAssessed || len(f.Vulns) > 0)
+}
+
 // Win is one base upgrade and what it buys.
 type Win struct {
 	Upgrade string `json:"upgrade"`
-	Clears  int    `json:"clears"`
+	// Clears is CVE OCCURRENCES removed across every image on this base - the unit that
+	// ranks a rebuild, since a CVE on sixty images is sixty fixes. Deliberately NOT the
+	// same unit as the estate's cleared_by_rebuilds, which is distinct CVEs, so the name
+	// says which.
+	Clears int `json:"clears_cve_occurrences"`
 	// Introduces is reported beside Clears, always. An upgrade described only by
 	// what it fixes stops being trusted the first time somebody checks.
 	Introduces int `json:"introduces"`
@@ -87,12 +113,21 @@ type Win struct {
 
 // Issue is a class of problem nobody is acting on.
 type Issue struct {
-	What     string   `json:"what"`
-	Key      string   `json:"key"`
-	Count    int      `json:"count"`
-	Why      string   `json:"why,omitempty"`
-	Services []string `json:"services,omitempty"`
+	What string `json:"what"`
+	Key  string `json:"key"`
+	// Count is WORK ITEMS, not CVEs: one service and one upgrade is one item however
+	// many vulnerabilities sit behind it.
+	Count int    `json:"count"`
+	Why   string `json:"why,omitempty"`
+	// ServicesAffected is the total; Services is capped. A capped list beside a count
+	// invites reading the list as the whole set.
+	ServicesAffected int      `json:"services_affected"`
+	Services         []string `json:"services,omitempty"`
 }
+
+// severityRank orders the provider's severity words, so "the worst reported" is a
+// comparison rather than whichever string arrived last.
+var severityRank = map[string]int{"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 // maxNamed bounds the lists inside a summary. A summary that names two hundred
 // services is not a summary, and the per-service tools exist for the detail.
@@ -120,7 +155,7 @@ func estateSummary(a Assessment) EstateSummary {
 	services := map[string]bool{}
 	cves := map[string]bool{}
 	kev := map[string]bool{}
-	var cleared int
+	clearable := map[string]bool{}
 	var measured bool
 	for _, f := range a.Findings {
 		if f.Suppressed {
@@ -133,7 +168,7 @@ func estateSummary(a Assessment) EstateSummary {
 		if f.ProviderAssessed {
 			out.Coverage.Assessed++
 		}
-		if f.Scanned {
+		if hasCVEDetail(f) {
 			out.Coverage.Scanned++
 		}
 		if f.Exposure == "public" || f.Exposure == "internal" {
@@ -142,12 +177,14 @@ func estateSummary(a Assessment) EstateSummary {
 		if f.BaseDiff != nil && f.BaseDiff.Determined {
 			out.Coverage.BaseDiffs++
 			measured = true
-			cleared += f.BaseDiff.Clears
 		}
 		for _, v := range f.Vulns {
 			cves[v.ID] = true
 			if v.KEV {
 				kev[v.ID] = true
+			}
+			if v.FixedByUpgrade {
+				clearable[v.ID] = true
 			}
 		}
 	}
@@ -155,7 +192,8 @@ func estateSummary(a Assessment) EstateSummary {
 	out.Vulnerabilities = len(cves)
 	out.KnownExploited = len(kev)
 	if measured {
-		out.ClearedByRebuilds = &cleared
+		n := len(clearable)
+		out.ClearedByRebuilds = &n
 	}
 
 	for _, w := range a.Analytics.Wins {
@@ -167,11 +205,16 @@ func estateSummary(a Assessment) EstateSummary {
 			Introduces: w.Introduces, KEVCleared: w.KEVCleared,
 			Services: len(w.Services), Teams: teamsOf(w.Services),
 		})
+		// Clears here is CVE OCCURRENCES across every image on that base, which is the
+		// unit the analytics compute and the right one for ranking a rebuild - but it is
+		// not the estate's distinct-CVE total, and the two sit close enough together to
+		// be mistaken for each other.
 	}
 	for _, i := range a.Analytics.Issues {
 		out.Issues = append(out.Issues, Issue{
 			What: i.Title, Key: i.Key, Count: i.Count, Why: i.Why,
-			Services: namesOf(i.Services, maxNamed),
+			ServicesAffected: len(i.Services),
+			Services:         namesOf(i.Services, maxNamed),
 		})
 	}
 	out.UnassessedReasons = unassessedReasons(a.active())
@@ -229,7 +272,8 @@ type WorkItem struct {
 	High          int      `json:"high"`
 	Deployments   int      `json:"deployments"`
 	Upgrade       string   `json:"upgrade,omitempty"`
-	// Clears is what the upgrade would remove, when a differential measured it.
+	// Clears is how many DISTINCT CVEs the upgrade would remove, when a differential
+	// measured it.
 	Clears *int `json:"clears,omitempty"`
 	// InFlight is a pull request already open for this change.
 	InFlight string `json:"in_flight,omitempty"`
@@ -278,9 +322,7 @@ func worstFirst(a Assessment, team, priority, exposure string, limit int) WorstF
 			Signals: it.Signals, Critical: it.Critical, High: it.High,
 			Deployments: it.Deployments,
 		}
-		if it.Upgrade != nil && it.Upgrade.Latest != "" {
-			w.Upgrade = it.Upgrade.Current + " -> " + it.Upgrade.Latest
-		}
+		w.Upgrade = describeUpgrade(it.Upgrade)
 		if c, ok := clears[it.Key]; ok {
 			w.Clears = &c
 		}
@@ -305,7 +347,7 @@ func coverageOf(a Assessment) Coverage {
 		if f.ProviderAssessed {
 			c.Assessed++
 		}
-		if f.Scanned {
+		if hasCVEDetail(f) {
 			c.Scanned++
 		}
 		if f.Exposure == "public" || f.Exposure == "internal" {
@@ -316,6 +358,55 @@ func coverageOf(a Assessment) Coverage {
 		}
 	}
 	return c
+}
+
+// describeUpgrade says what the item needs, in the three states that are not a move.
+//
+// Gated on Available rather than on Latest being set, because they are not the same
+// thing: a chart already on its newest version reports that version as Latest with
+// Available false, and reading the field alone rendered "1.11.0 -> 1.11.0". A no-op
+// upgrade on an urgent row is worse than no advice - it sends somebody to raise a pull
+// request that changes nothing, and the real answer (this needs a decision, not a bump)
+// is the one it hides.
+func describeUpgrade(u *sink.UpgradeView) string {
+	switch {
+	case u == nil:
+		return ""
+	case !u.Resolved:
+		// Not "no upgrade": the lookup could not answer, which is a different thing and
+		// a different job to fix.
+		return "not established" + reasonSuffix(u.Reason)
+	case u.Available && u.Latest != "":
+		return u.Current + " -> " + u.Latest
+	case u.HeldBack:
+		// A newer version exists and policy declined it. Silence here would read as
+		// "already up to date", which is the opposite of a deliberate hold.
+		return "held at " + u.Current + " by policy" + heldSuffix(u)
+	default:
+		return "already on the newest available version (" + u.Current +
+			"), so this needs a decision rather than a bump"
+	}
+}
+
+func reasonSuffix(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return ": " + reason
+}
+
+func heldSuffix(u *sink.UpgradeView) string {
+	var parts []string
+	if u.Newest != "" {
+		parts = append(parts, "newest is "+u.Newest)
+	}
+	if u.Rule != "" {
+		parts = append(parts, "rule "+u.Rule)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 func describeFilters(team, priority, exposure string) string {
@@ -337,16 +428,24 @@ func clearsByItem(a Assessment) map[string]int {
 	}
 	out := map[string]int{}
 	for _, it := range a.items() {
-		var total int
+		clearable := map[string]bool{}
 		var any bool
 		for _, f := range byKey[it.Key] {
-			if f.BaseDiff != nil && f.BaseDiff.Determined {
-				any = true
-				total += f.BaseDiff.Clears
+			if f.BaseDiff == nil || !f.BaseDiff.Determined {
+				continue
+			}
+			any = true
+			// Distinct CVEs, not a sum of each deployment's count. An item is one service
+			// at however many tags, and they carry the same CVEs - so summing reported a
+			// multiple of the truth on the row a team acts from.
+			for _, v := range f.Vulns {
+				if v.FixedByUpgrade {
+					clearable[v.ID] = true
+				}
 			}
 		}
 		if any {
-			out[it.Key] = total
+			out[it.Key] = len(clearable)
 		}
 	}
 	return out
@@ -377,8 +476,8 @@ type TeamReport struct {
 	InProgress    int `json:"items_with_open_pull_request"`
 	StaleInFlight int `json:"items_with_stale_pull_request"`
 
-	// ClearedByRebuilds is what this team's rebuilds would remove, and Remaining
-	// what would survive them - the two halves of the conversation.
+	// ClearedByRebuilds is how many DISTINCT CVEs this team's rebuilds would remove,
+	// on the same footing as every other CVE count here.
 	ClearedByRebuilds *int `json:"cleared_by_rebuilds,omitempty"`
 
 	Top     []WorkItem `json:"top_items"`
@@ -401,7 +500,7 @@ func teamReport(a Assessment, team string) (TeamReport, []string, bool) {
 	out := TeamReport{Freshness: q.Freshness, Team: team, WorkItems: q.Total}
 
 	services := map[string]bool{}
-	var cleared int
+	clearable := map[string]bool{}
 	var measured bool
 	for _, it := range a.items() {
 		if !strings.EqualFold(it.Team, team) {
@@ -430,12 +529,20 @@ func teamReport(a Assessment, team string) (TeamReport, []string, bool) {
 		}
 		if f.BaseDiff != nil && f.BaseDiff.Determined {
 			measured = true
-			cleared += f.BaseDiff.Clears
+		}
+		// Distinct CVEs, not a sum of each deployment's count: a team running one service
+		// at three tags carries the same CVEs three times, and summing told them their
+		// rebuilds clear three times what they do.
+		for _, v := range f.Vulns {
+			if v.FixedByUpgrade {
+				clearable[v.ID] = true
+			}
 		}
 	}
 	out.Services = len(services)
 	if measured {
-		out.ClearedByRebuilds = &cleared
+		n := len(clearable)
+		out.ClearedByRebuilds = &n
 	}
 	if len(q.Items) > maxNamed {
 		out.Top = q.Items[:maxNamed]
@@ -488,9 +595,14 @@ type CVEReport struct {
 	KnownExploited bool    `json:"known_exploited"`
 	Reference      string  `json:"reference"`
 
-	Deployments int      `json:"deployments"`
-	Services    []string `json:"services"`
-	Teams       []string `json:"teams,omitempty"`
+	Deployments int `json:"deployments"`
+	// ServicesAffected, TeamsAffected and ExposedAffected are the TOTALS. The lists
+	// below are capped, and a capped list with no total reads as the whole set.
+	ServicesAffected int      `json:"services_affected"`
+	TeamsAffected    int      `json:"teams_affected"`
+	ExposedAffected  int      `json:"exposed_services_affected"`
+	Services         []string `json:"services"`
+	Teams            []string `json:"teams,omitempty"`
 	// ExposedServices are the affected services reachable from the internet.
 	ExposedServices []string `json:"exposed_services,omitempty"`
 
@@ -529,7 +641,16 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 			if f.Exposure == "public" {
 				exposed[f.Repository] = true
 			}
-			out.Severity, out.CVSS = v.Severity, v.CVSS
+			// The worst reported anywhere, not whichever occurrence was read last. The
+			// same CVE is rated differently by distro, and assigning on every match left
+			// the answer depending on iteration order - so the tool could call a
+			// critical "medium" because one image's packaging said so.
+			if severityRank[v.Severity] > severityRank[out.Severity] {
+				out.Severity = v.Severity
+			}
+			if v.CVSS > out.CVSS {
+				out.CVSS = v.CVSS
+			}
 			if v.EPSS > out.EPSS {
 				out.EPSS, out.EPSSPercentile = v.EPSS, v.EPSSPercentile
 			}
@@ -553,10 +674,24 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 	if !found {
 		return CVEReport{}, false
 	}
+	out.ServicesAffected, out.TeamsAffected = len(services), len(teams)
+	out.ExposedAffected = len(exposed)
 	out.Services = keys(services, maxNamed)
 	out.Teams = keys(teams, maxNamed)
 	out.ExposedServices = keys(exposed, maxNamed)
 	out.Packages = keys(pkgs, maxNamed)
+	// Capped lists say so. Ten names beside "64 deployments" reads as ten services
+	// unless the total is there, and somebody scoping the work would stop at ten.
+	if len(services) > len(out.Services) {
+		out.Caveats = append(out.Caveats, fmt.Sprintf(
+			"%d services carry this; the %d worst-named are listed. Use worst_first to page through them.",
+			len(services), len(out.Services)))
+	}
+	if len(exposed) > len(out.ExposedServices) {
+		out.Caveats = append(out.Caveats, fmt.Sprintf(
+			"%d of the affected services are internet-facing; %d are listed.",
+			len(exposed), len(out.ExposedServices)))
+	}
 
 	out.Caveats = append(out.Caveats, configCaveats(a, Coverage{
 		Scanned: out.Deployments, Total: out.Deployments,
