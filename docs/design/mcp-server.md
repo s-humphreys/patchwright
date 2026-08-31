@@ -1,15 +1,21 @@
 # Design: MCP server for patchwright
 
-Status: **shipped**, read-only. Five tools at `/mcp` in the `serve` process, behind
+Status: **shipped**, read-only. Seven tools at `/mcp` in the `serve` process, behind
 the same authentication as everything else. See [docs/mcp.md](../mcp.md) for what
 they answer; this note records why the shape is what it is.
 
-The tool list below is what was proposed. What shipped is fewer and deeper: the
-questions people ask are about a SERVICE or a TEAM, not about a finding, so
-`service_report` and `team_report` absorbed `explain_finding`, `list_findings`,
+The tool list below is what was PROPOSED, kept for the record. What shipped is
+deeper: the questions people ask are about a SERVICE or a TEAM, not about a finding,
+so `service_report` and `team_report` absorbed `explain_finding`, `list_findings`,
 `biggest_wins` and `not_addressed` rather than each being its own thin wrapper. Open
 question 2 was the reason - the original list was inferred from what the page shows
 rather than from anybody's questions.
+
+Two arrived later, from using it. `fix_plan` because a report and an instruction are
+not the same artefact: somebody holding a ticket wants the change to make and what
+NOT to do, not a dataset to interpret. `list_facets` because a filter guessed wrong
+returns an empty result, and an empty result reads as an empty queue - so the
+vocabulary had to be askable. See [docs/mcp.md](../mcp.md) for what shipped.
 
 ## Why
 
@@ -50,10 +56,11 @@ implementations behind a different transport.
 The practical consequence: no new Deployment, no new Secret, no second copy of the
 config, and a tool answer is as fresh as the page is - because it is the same object.
 
-## Tools
+## Tools, as proposed
 
-Read-only, and deliberately a thin mapping onto views that already exist, so there
-is no second definition of what a finding is.
+Superseded - see [docs/mcp.md](../mcp.md) for the seven that shipped. Read-only, and
+deliberately a thin mapping onto views that already exist, so there is no second
+definition of what a finding is.
 
 | Tool | Answers |
 |---|---|

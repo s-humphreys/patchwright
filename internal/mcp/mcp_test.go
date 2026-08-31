@@ -120,6 +120,12 @@ func TestServiceReportSplitsTheRemainderByWhoOwnsIt(t *testing.T) {
 		u.Remainder.Packages[0].CVEs != 2 {
 		t.Errorf("want the surviving base CVEs' package with a distinct count: %+v", u.Remainder.Packages)
 	}
+	// The application remainder is the only part the team can patch itself, so it is
+	// named rather than counted. Reporting "1" and nothing else is what sent somebody
+	// looking for a package list that was never going to exist.
+	if len(u.Remainder.Application) != 1 || u.Remainder.Application[0].ID != "CVE-2026-3" {
+		t.Errorf("want the application remainder named: %+v", u.Remainder.Application)
+	}
 	if u.Move != "version change to 10.0" {
 		t.Errorf("a version change must not read as a rebuild: %q", u.Move)
 	}
@@ -845,5 +851,212 @@ func TestPartlyMeasuredServicesStillReconcile(t *testing.T) {
 	// And the reader is told the coverage is partial rather than left to infer it.
 	if !strings.Contains(strings.Join(r.Caveats, " "), "differential ran for 1 of 3 deployments") {
 		t.Errorf("want the partial coverage stated: %v", r.Caveats)
+	}
+}
+
+// appFixture is one service whose build introduced more CVEs than the cap, to pin the
+// ordering and the cap together. Every CVE here is application-origin: the base
+// differential is not what is under test.
+func appFixture(n int) Assessment {
+	f := sink.FindingView{
+		Image: "reg.example/apps/ingest:2.0.0", Repository: "apps/ingest", Tag: "2.0.0",
+		Owner: sink.OwnerView{Team: "insights"}, Priority: "high", Scanned: true,
+		ProviderAssessed: true, Counts: map[string]int{"high": n},
+		Upgrade: &sink.UpgradeView{
+			Kind: "base", Name: "python", Current: "3.11", Latest: "3.12",
+			Available: true, Resolved: true, Actionable: true,
+		},
+		BaseDiff: &sink.BaseDiffView{
+			FromRef: "docker.io/python:3.11", ToRef: "docker.io/python:3.12",
+			Total: n, FromApp: n, Determined: true,
+		},
+	}
+	// Ascending severity as they are appended, so a report that echoed input order
+	// rather than ranking would be caught.
+	sev := []string{"low", "medium", "high", "critical"}
+	for i := 0; i < n; i++ {
+		f.Vulns = append(f.Vulns, sink.VulnView{
+			ID:       fmt.Sprintf("CVE-2026-9%03d", i),
+			Severity: sev[i%len(sev)], CVSS: float64(i % 10),
+			FixAvailable: i%2 == 0, FixedVersion: "9.9.9",
+			Origin: "app", OriginDetermined: true,
+		})
+	}
+	return Assessment{
+		GeneratedAt: ts("2026-08-30T09:00:00Z"), Version: "v2.1.0",
+		Findings: []sink.FindingView{f},
+	}
+}
+
+func TestApplicationRemainderIsRankedAndCapped(t *testing.T) {
+	total := maxApplicationCVEs + 7
+	r, ok := serviceReport(appFixture(total), "ingest")
+	if !ok {
+		t.Fatal("no report for a service that is present")
+	}
+	rem := r.Upgrade.Remainder
+	if rem.FromApplication != total {
+		t.Fatalf("the count must stay the true total, not the capped length: %d", rem.FromApplication)
+	}
+	if len(rem.Application) != maxApplicationCVEs {
+		t.Fatalf("want the list capped at %d, got %d", maxApplicationCVEs, len(rem.Application))
+	}
+	// Worst first: nothing below the top severity can appear before something at it.
+	for i := 1; i < len(rem.Application); i++ {
+		prev, cur := rem.Application[i-1], rem.Application[i]
+		if severityRank[cur.Severity] > severityRank[prev.Severity] {
+			t.Fatalf("out of order at %d: %s after %s", i, cur.Severity, prev.Severity)
+		}
+	}
+	if rem.Application[0].Severity != "critical" {
+		t.Errorf("want the worst first, got %q", rem.Application[0].Severity)
+	}
+}
+
+func TestApplicationRemainderCarriesWhatAFixNeeds(t *testing.T) {
+	r, _ := serviceReport(appFixture(4), "ingest")
+	var fixable *ApplicationCVE
+	for i, v := range r.Upgrade.Remainder.Application {
+		if v.FixAvailable {
+			fixable = &r.Upgrade.Remainder.Application[i]
+			break
+		}
+	}
+	if fixable == nil {
+		t.Fatal("the fixture has fixable application CVEs; none survived into the report")
+	}
+	if fixable.FixedVersion != "9.9.9" {
+		t.Errorf("want the version to move to, got %q", fixable.FixedVersion)
+	}
+	if fixable.Reference != "https://www.cve.org/CVERecord?id="+fixable.ID {
+		t.Errorf("want a reference to follow, got %q", fixable.Reference)
+	}
+}
+
+// The count and the list must agree, or a caller reading one and acting on the other
+// works from a remainder that does not exist.
+func TestFixPlanNamesWhatIsStillTheTeams(t *testing.T) {
+	p, ok := fixPlan(appFixture(3), "ingest")
+	if !ok {
+		t.Fatal("no plan for a service that is present")
+	}
+	if p.Result.StillYours != 3 {
+		t.Fatalf("want 3 still the team's, got %d", p.Result.StillYours)
+	}
+	if len(p.Result.StillYoursCVEs) != 3 {
+		t.Fatalf("want all 3 named, got %d", len(p.Result.StillYoursCVEs))
+	}
+}
+
+// The name every other tool prints must be a name this one accepts. estate_summary
+// reports a service as registry/repository, and that exact string used to resolve to
+// nothing - a round trip an agent reads as "no such service", one step from "clean".
+func TestServiceLookupAcceptsTheNamesOtherToolsPrint(t *testing.T) {
+	for _, name := range []string{
+		"apps/storefront",
+		"reg.example/apps/storefront",
+		"reg.example/apps/storefront:1.4.0",
+		"storefront",
+		"REG.EXAMPLE/Apps/Storefront",
+	} {
+		r, ok := serviceReport(fixture(), name)
+		if !ok {
+			t.Errorf("%q resolved to nothing", name)
+			continue
+		}
+		if r.Service != "apps/storefront" {
+			t.Errorf("%q resolved to %q", name, r.Service)
+		}
+	}
+}
+
+// A digest reference names the same service as the tag it was pulled by.
+func TestRefWithoutTagLeavesARegistryPortAlone(t *testing.T) {
+	cases := map[string]string{
+		"reg.example/apps/storefront:1.4.0":    "reg.example/apps/storefront",
+		"reg.example/apps/storefront@sha256:a": "reg.example/apps/storefront",
+		"localhost:5000/apps/storefront":       "localhost:5000/apps/storefront",
+		"localhost:5000/apps/storefront:1.0":   "localhost:5000/apps/storefront",
+		"storefront":                           "storefront",
+	}
+	for in, want := range cases {
+		if got := refWithoutTag(in); got != want {
+			t.Errorf("refWithoutTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// An exact identity must not drag in every image whose path ends in the same word.
+// Three unrelated products answered to "agent" and were reported as one service, under
+// one team, with one upgrade.
+func TestExactMatchWinsOverTheForgivingSuffix(t *testing.T) {
+	exact := sink.FindingView{
+		Image: "registry.example.com/agent:7.1", Registry: "registry.example.com",
+		Repository: "agent", Tag: "7.1", Owner: sink.OwnerView{Team: "insights"},
+		Counts: map[string]int{}, Scanned: true,
+	}
+	elsewhere := sink.FindingView{
+		Image: "mcr.example/oss/kubernetes/network-proxy/agent:v0.3", Registry: "mcr.example",
+		Repository: "oss/kubernetes/network-proxy/agent", Tag: "v0.3",
+		Owner: sink.OwnerView{Team: "payments"}, Counts: map[string]int{}, Scanned: true,
+	}
+	a := Assessment{
+		GeneratedAt: ts("2026-08-30T09:00:00Z"), Version: "v2.1.0",
+		Findings: []sink.FindingView{exact, elsewhere},
+	}
+	r, ok := serviceReport(a, "agent")
+	if !ok {
+		t.Fatal("no report for a service that is present")
+	}
+	if len(r.Deployments) != 1 || r.Team != "insights" {
+		t.Fatalf("want only the exact match, got %d deployments for team %q",
+			len(r.Deployments), r.Team)
+	}
+	// The other one is still reachable, by the name that identifies it.
+	other, ok := serviceReport(a, "mcr.example/oss/kubernetes/network-proxy/agent")
+	if !ok || other.Team != "payments" {
+		t.Fatalf("the suffix match must stay reachable by its own name: %v %+v", ok, other.Team)
+	}
+}
+
+// A decision is taken one CVE at a time, so the branch with no change to make is the
+// one that most needs them named - and the one where no differential names them.
+func TestDecideBranchNamesTheExploitedCVEs(t *testing.T) {
+	f := sink.FindingView{
+		Image: "reg.example/apps/batch:1.0", Registry: "reg.example", Repository: "apps/batch",
+		Tag: "1.0", Owner: sink.OwnerView{Team: "insights"}, Priority: "urgent",
+		Scanned: true, ProviderAssessed: true, Counts: map[string]int{"critical": 2},
+		Upgrade: &sink.UpgradeView{
+			Kind: "base", Name: "python", Current: "3.12-bookworm", Resolved: true,
+		},
+		Vulns: []sink.VulnView{
+			{ID: "CVE-2026-77", Severity: "critical", KEV: true, FixedVersion: "1.1.1"},
+			{ID: "CVE-2026-12", Severity: "high", KEV: true},
+			{ID: "CVE-2026-90", Severity: "low"},
+		},
+	}
+	p, ok := fixPlan(Assessment{
+		GeneratedAt: ts("2026-08-30T09:00:00Z"), Version: "v2.1.0",
+		Findings: []sink.FindingView{f},
+	}, "apps/batch")
+	if !ok {
+		t.Fatal("no plan for a service that is present")
+	}
+	if p.Result != nil {
+		t.Fatalf("a service with nothing to move to has no result: %+v", p.Result)
+	}
+	if len(p.Exploited) != 2 {
+		t.Fatalf("want both exploited CVEs named, got %+v", p.Exploited)
+	}
+	if p.Exploited[0].ID != "CVE-2026-77" {
+		t.Errorf("want the worst first, got %q", p.Exploited[0].ID)
+	}
+	if p.Exploited[0].FixedVersion != "1.1.1" {
+		t.Errorf("want the version to move to, got %q", p.Exploited[0].FixedVersion)
+	}
+	for _, e := range p.Exploited {
+		if e.ClearedByThis {
+			t.Errorf("nothing is cleared by a plan with no change: %+v", e)
+		}
 	}
 }

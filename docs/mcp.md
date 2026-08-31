@@ -27,6 +27,18 @@ enough to matter.
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
 | `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
 
+**A service answers to any name that identifies it.** The bare repository
+(`storefront`), the path (`apps/storefront`), the registry-qualified form
+(`reg.example/apps/storefront`), or a full reference with its tag or digest still
+attached, as pasted out of a ticket. The qualified form matters most: it is what
+`estate_summary` prints, and a name one tool hands out that another will not accept is
+a dead end an agent reads as "no such service", one step from "nothing to do here".
+
+An exact identity always beats the forgiving match on a trailing path segment, so
+asking for `agent` returns the service called `agent` rather than every image whose
+path happens to end that way. Where a name genuinely covers more than one image, the
+report says so and names them, instead of quietly reporting three products as one.
+
 `fix_plan` is the one an engineer reaches for. It carries the same data as
 `service_report`, shaped as an instruction rather than a dataset - which is the whole
 difference, because a report hands over clears, leaves, introduces, a remainder split and a
@@ -50,7 +62,9 @@ result   clears 5,857 of 6,746, including all 10 known-exploited
          introduces 296
          880 not yours: still in the new base, upstream's to fix
              linux-libc-dev (518), binutils (57), libbinutils (57) ...
-         9 still yours
+         9 still yours: introduced by the build, so fixable in the repository
+             CVE-2026-4171 (critical, fix 2.31.1), CVE-2026-3980 (high, fix 1.4.2),
+             CVE-2026-2255 (high, no fix published) ...
          verify: afterwards expect about 1,185 rather than 6,746, with 10 of
                  10 known-exploited gone. A remainder is expected.
          known_exploited: CVE-2025-48384 (cleared), CVE-2026-31431 (cleared) ...
@@ -85,6 +99,29 @@ that mentions only the wins leaves somebody believing the service is clean of th
 nothing to point at, and the plan says which configuration would supply one rather than
 leaving an agent to guess.
 
+Not every service has something to bump. Where one is already on the newest base its
+line can reach, there is no change to describe and no result to report, so the plan
+says what the situation needs instead - and names the CVEs the decision is about:
+
+```
+why      urgent, 2 known-exploited CVEs, 4,145 vulnerabilities across 1 deployment
+
+decide   Already on the newest version available (python3.12-bookworm), so this is
+         not a bump. The remaining CVEs need a decision: wait for upstream, rebuild
+         to pick up a moved tag, or accept and record why.
+
+known_exploited
+         CVE-2026-31431 (critical, fix 2.31.1)
+         CVE-2025-48384 (high, no fix published)
+
+unknown  whether anybody has started
+```
+
+This is the branch that most needs the identifiers and the one where nothing else
+supplies them: mitigate, isolate or accept is decided one CVE at a time, and a service
+with no upgrade to take has no differential to list what an upgrade would clear. It is
+not a rare path - on one estate three of a single team's eight items are in it.
+
 `service_report` is the deep one. Asked about a service it returns the split that
 turns a number into a conversation:
 
@@ -100,6 +137,7 @@ apps/storefront - payments - urgent in prod, internet-facing
     2 still in the new base   - upstream's, no action available here
     2 from the application    - installed by the build, the team's
     remainder concentrated in: zlib (2)
+    the application's own:    CVE-2026-3 (high), CVE-2026-7 (medium, fix 4.0.1)
 ```
 
 Two rules hold across every tool, and both exist because prose loses what a table
@@ -117,6 +155,13 @@ can be read against each other: on a service, `clears` + `still_in_base` +
 at three tags of one build carries the same CVEs three times, and summing each
 deployment's own count told storefront it had 6,746 vulnerabilities of which an upgrade
 would clear 17,571. A team cannot act on a number that is impossible on its face.
+
+**A remainder is named on both sides.** The base remainder is broken down by package,
+because at that size the question is which upstream package is holding the line. The
+application remainder is listed CVE by CVE with its fix version, because that half is
+the only part the team can patch in its own repository, and a bare count there is a
+task nobody can start. Neither side is a package list *and* a CVE list: nothing scans
+the application layer, so those CVEs have identifiers but no package name.
 
 The two exceptions name their unit rather than hiding it. A rebuild win reports
 `clears_cve_occurrences`, because a CVE on sixty images is sixty fixes and that is what

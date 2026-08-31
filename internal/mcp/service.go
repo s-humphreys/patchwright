@@ -48,6 +48,11 @@ type ServiceReport struct {
 	// Caveats are the things this answer cannot support. Present in the payload so
 	// they survive being summarised.
 	Caveats []string `json:"caveats,omitempty"`
+
+	// knownExploited is every exploited CVE on this service, whether or not a base
+	// differential measured it. Carried for fix_plan rather than rendered here, where
+	// upgrade.exploited already answers the question in the context of the change.
+	knownExploited []ExploitedCVE
 }
 
 // Deployment is one running tag of the service.
@@ -166,6 +171,30 @@ type Remainder struct {
 	// Packages names what the base-image remainder is concentrated in, worst first.
 	// Absent for application CVEs, whose layer nothing scanned.
 	Packages []PackageCount `json:"packages,omitempty"`
+	// Application names the CVEs the build itself introduced, worst first.
+	//
+	// This is the only part of the remainder the team can patch in its own repository,
+	// and for a long time it was the only part reported as a bare number while the base
+	// remainder - the part nobody here can act on - was broken down by package. The
+	// classification already has each CVE in hand to decide it is application-origin, so
+	// the identifiers cost nothing to carry and turn the count into a task.
+	//
+	// Capped at maxApplicationCVEs; FromApplication is always the true total.
+	Application []ApplicationCVE `json:"application_cves,omitempty"`
+}
+
+// ApplicationCVE is one CVE the build introduced, with what a caller needs to act on
+// it. There is no package name - nothing scanned that layer - so the identifier is the
+// handle, and FixedVersion is what to move to where the provider published one.
+type ApplicationCVE struct {
+	ID           string  `json:"id"`
+	Severity     string  `json:"severity,omitempty"`
+	CVSS         float64 `json:"cvss,omitempty"`
+	EPSS         float64 `json:"epss,omitempty"`
+	KEV          bool    `json:"known_exploited,omitempty"`
+	FixAvailable bool    `json:"fix_available"`
+	FixedVersion string  `json:"fixed_version,omitempty"`
+	Reference    string  `json:"reference"`
 }
 
 // PackageCount is one package and how many of the remaining CVEs it accounts for.
@@ -201,17 +230,27 @@ func baseDiffsAmong(r ServiceReport) int {
 // answering "is this one stubborn package or a long tail" and becomes the tail.
 const maxRemainderPackages = 8
 
+// maxApplicationCVEs bounds the application remainder. Higher than the package cap
+// because these are individually actionable - each one is a thing to go and fix -
+// rather than a shape to recognise.
+const maxApplicationCVEs = 20
+
 // serviceReport builds the report for one service, or false when nothing matches.
 //
 // Matching is on the repository, and deliberately forgiving: somebody asking about
 // "storefront" means the service, not "the image whose full reference I typed".
 func serviceReport(a Assessment, name string) (ServiceReport, bool) {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = refWithoutTag(strings.ToLower(strings.TrimSpace(name)))
+	// Exact identities first, and only then the forgiving suffix. Taking both at once
+	// merged every image whose path happens to end in the same word - three unrelated
+	// products answered to "agent", reported under one team with one upgrade - and the
+	// merge was invisible in the answer.
 	var mine []sink.FindingView
-	for _, f := range a.Findings {
-		if strings.ToLower(f.Repository) == name || strings.ToLower(f.Image) == name ||
-			strings.HasSuffix(strings.ToLower(f.Repository), "/"+name) {
-			mine = append(mine, f)
+	for want := matchExact; want >= matchSuffix && len(mine) == 0; want-- {
+		for _, f := range a.Findings {
+			if serviceMatch(f, name) == want {
+				mine = append(mine, f)
+			}
 		}
 	}
 	if len(mine) == 0 {
@@ -259,8 +298,103 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	out.Vulnerabilities = summariseVulns(mine, lead)
 	out.Upgrade = upgradeAdvice(mine, lead)
 	out.InProgress = inProgress(lead)
+	out.knownExploited = exploitedAmong(mine)
 	out.Caveats = caveats(a, out)
+	if spans := qualifiedNames(mine); len(spans) > 1 {
+		out.Caveats = append(out.Caveats, fmt.Sprintf(
+			"This name matches %d distinct images, reported together: %s. Ask by the "+
+				"registry-qualified name to separate them.", len(spans), strings.Join(spans, ", ")))
+	}
 	return out, true
+}
+
+// Match strength, worst to best. Ordered so serviceReport can walk down from the
+// strongest and stop at the first that answers.
+const (
+	matchNone = iota
+	matchSuffix
+	matchExact
+)
+
+// serviceMatch reports how well one finding answers a name.
+//
+// Identity is checked registry-qualified as well as bare, because that is the form the
+// other tools print: estate_summary names a service registry/repository, and a name
+// this server hands out that the same server will not accept is a dead end - which an
+// agent reads as "no such service", one step from "nothing to do here".
+func serviceMatch(f sink.FindingView, name string) int {
+	repo := strings.ToLower(f.Repository)
+	qualified := repo
+	if f.Registry != "" {
+		qualified = strings.ToLower(f.Registry) + "/" + repo
+	}
+	switch name {
+	case repo, qualified, refWithoutTag(strings.ToLower(f.Image)):
+		return matchExact
+	}
+	if strings.HasSuffix(repo, "/"+name) {
+		return matchSuffix
+	}
+	return matchNone
+}
+
+// refWithoutTag strips a :tag or @digest, so an image reference pasted out of a report
+// or a ticket resolves to the service it names.
+func refWithoutTag(ref string) string {
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	// A colon before the last slash is a registry port, not a tag.
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		ref = ref[:i]
+	}
+	return ref
+}
+
+// qualifiedNames lists the distinct registry-qualified images a match covers.
+func qualifiedNames(fs []sink.FindingView) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fs {
+		q := f.Repository
+		if f.Registry != "" {
+			q = f.Registry + "/" + f.Repository
+		}
+		if !seen[q] {
+			seen[q] = true
+			out = append(out, q)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// exploitedAmong lists the service's known-exploited CVEs, worst first and deduped.
+//
+// Independent of the base differential: a service with no upgrade to take still needs
+// these named, and that is exactly the case where nothing else names them.
+func exploitedAmong(fs []sink.FindingView) []ExploitedCVE {
+	seen := map[string]bool{}
+	var out []ExploitedCVE
+	for _, f := range fs {
+		for _, v := range f.Vulns {
+			if !v.KEV || seen[v.ID] {
+				continue
+			}
+			seen[v.ID] = true
+			out = append(out, exploited(v, v.FixedByUpgrade))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if severityRank[out[i].Severity] != severityRank[out[j].Severity] {
+			return severityRank[out[i].Severity] > severityRank[out[j].Severity]
+		}
+		return out[i].ID < out[j].ID
+	})
+	if len(out) > maxNamed {
+		out = out[:maxNamed]
+	}
+	return out
 }
 
 func summariseVulns(mine []sink.FindingView, lead group.Item) VulnSummary {
@@ -357,6 +491,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	seen := map[string]bool{}
 	pkgs := map[string]map[string]bool{}
 	pkgMeta := map[string]PackageCount{}
+	var app []ApplicationCVE
 	// Two passes, because coverage can be partial. A base whose recorded digest or tag
 	// has been deleted from the registry cannot be scanned - on this estate fifteen
 	// services have some deployments measured and some not - and a CVE seen only on an
@@ -410,6 +545,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 				}
 			default:
 				out.Remainder.FromApplication++
+				app = append(app, applicationCVE(cve))
 			}
 		}
 	}
@@ -428,6 +564,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 		}
 	}
 	out.Remainder.Packages = topPackages(pkgs, pkgMeta)
+	out.Remainder.Application = topApplicationCVEs(app)
 	out.Move = moveKind(out.From, out.To)
 	return out
 }
@@ -449,6 +586,39 @@ func upgradeState(u *sink.UpgradeView) string {
 }
 
 // exploited records one known-exploited CVE and whether this move deals with it.
+// applicationCVE carries one build-introduced CVE out of the classification.
+func applicationCVE(v sink.VulnView) ApplicationCVE {
+	return ApplicationCVE{
+		ID: v.ID, Severity: v.Severity, CVSS: v.CVSS, EPSS: v.EPSS, KEV: v.KEV,
+		FixAvailable: v.FixAvailable, FixedVersion: v.FixedVersion,
+		Reference: "https://www.cve.org/CVERecord?id=" + v.ID,
+	}
+}
+
+// topApplicationCVEs orders the build-introduced remainder worst first and caps it.
+//
+// Worst first rather than fixable first, to match every other list here: fix_available
+// is on each row for a caller that wants to start with what it can actually move.
+func topApplicationCVEs(in []ApplicationCVE) []ApplicationCVE {
+	sort.Slice(in, func(i, j int) bool {
+		a, b := in[i], in[j]
+		if severityRank[a.Severity] != severityRank[b.Severity] {
+			return severityRank[a.Severity] > severityRank[b.Severity]
+		}
+		if a.CVSS != b.CVSS {
+			return a.CVSS > b.CVSS
+		}
+		if a.EPSS != b.EPSS {
+			return a.EPSS > b.EPSS
+		}
+		return a.ID < b.ID
+	})
+	if len(in) > maxApplicationCVEs {
+		in = in[:maxApplicationCVEs]
+	}
+	return in
+}
+
 func exploited(v sink.VulnView, cleared bool) ExploitedCVE {
 	return ExploitedCVE{
 		ID: v.ID, ClearedByThis: cleared, Severity: v.Severity,
@@ -556,7 +726,8 @@ func caveats(a Assessment, r ServiceReport) []string {
 				"not by being clean.", suppressed, len(r.Deployments)))
 	}
 	if r.Upgrade != nil && r.Upgrade.Remainder != nil && r.Upgrade.Remainder.FromApplication > 0 {
-		out = append(out, "Application-introduced CVEs carry no package name: nothing scanned that layer.")
+		out = append(out, "Application-introduced CVEs carry no package name, because nothing "+
+			"scanned that layer. They are listed by identifier in remainder.application_cves.")
 	}
 	return out
 }

@@ -43,6 +43,15 @@ type FixPlan struct {
 	// AlsoTakes are other services on the same move: doing them together tests the base
 	// once rather than once each.
 	AlsoTakes []string `json:"also_takes,omitempty"`
+	// Exploited names the known-exploited CVEs the service carries when there is no
+	// change to make, and so no Result to carry them.
+	//
+	// Mitigate, isolate or accept is decided one CVE at a time. A decide branch that
+	// reports "2 known-exploited" and no identifiers hands somebody a number to worry
+	// about rather than a decision they can take, and this is the branch where nothing
+	// else names them - a service already on its newest base has no differential to
+	// list what an upgrade would clear.
+	Exploited []ExploitedCVE `json:"known_exploited,omitempty"`
 	// Unknown is what this plan cannot tell you, named rather than left as a silence.
 	Unknown []string `json:"unknown,omitempty"`
 }
@@ -89,6 +98,10 @@ type FixResult struct {
 	Packages    []string `json:"remaining_packages,omitempty"`
 	// StillYours is what the change does not cover and the team does own.
 	StillYours int `json:"still_yours"`
+	// StillYoursCVEs names them. A count alone tells an engineer there is more to do and
+	// an agent nothing it can act on; these are the CVEs to chase in the build itself,
+	// once the base change has taken the rest away.
+	StillYoursCVEs []ApplicationCVE `json:"still_yours_cves,omitempty"`
 	// Verify is what to expect afterwards, in one sentence. An agent that does not know
 	// the remainder is expected reads it as the change having failed.
 	Verify string `json:"verify,omitempty"`
@@ -128,6 +141,7 @@ func fixPlan(a Assessment, name string) (FixPlan, bool) {
 			p.Decide = append(p.Decide, "No upgrade was looked for, so what would fix this is unknown "+
 				"rather than nothing. Remediation lookup has to run first.")
 			p.Unknown = append(p.Unknown, "whether an upgrade exists")
+			p.Exploited = r.knownExploited
 			return p, true
 		}
 	}
@@ -158,6 +172,9 @@ func fixPlan(a Assessment, name string) (FixPlan, bool) {
 	p.DoNot = doNots(u)
 	if u.Measured {
 		p.Result = fixResult(r, u)
+	}
+	if p.Result == nil {
+		p.Exploited = r.knownExploited
 	}
 	p.AlsoTakes = alsoTakes(a, r, u)
 	p.Unknown = append(p.Unknown, unknowns(r, u)...)
@@ -274,6 +291,7 @@ func fixResult(r ServiceReport, u *UpgradeAdvice) *FixResult {
 	if u.Remainder != nil {
 		out.NotYours = u.Remainder.StillInBase
 		out.StillYours = u.Remainder.FromApplication
+		out.StillYoursCVEs = u.Remainder.Application
 		if out.NotYours > 0 {
 			out.NotYoursWhy = "still present in the new base image, so upstream's to fix rather " +
 				"than this team's - an upstream wait, not neglect"

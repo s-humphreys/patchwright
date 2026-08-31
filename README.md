@@ -112,8 +112,8 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
 - **Phase 6** ✅ [Remediation already in flight](docs/design/remediation-in-flight.md)
   so a fix sitting in an open PR is not ticketed again. ✅ Base-image differential
   and measured internet exposure. ✅ Analytics: what to fix first, and what nobody is
-  acting on. Remaining: an [MCP server](docs/design/mcp-server.md) for
-  natural-language queries.
+  acting on. ✅ An [MCP server](docs/mcp.md): read-only tools that answer about a
+  service, a team or a CVE in words, including what to DO about one service.
 
   Rolling fixes out is deliberately **not** here. An update bot already opens those
   pull requests, and a second thing computing versions would be two answers to one
