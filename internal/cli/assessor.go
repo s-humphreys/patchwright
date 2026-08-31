@@ -54,6 +54,10 @@ type assessor struct {
 	vulnSource    string
 	exploitSource string
 	ageSource     string
+
+	// sources is what this run was configured to do, reported so a consumer can tell
+	// a stage that found nothing from one that never ran.
+	sources model.Sources
 }
 
 // newAssessor loads config and constructs the provider, enrichers, and pipeline
@@ -69,6 +73,13 @@ func newAssessor(in assessInputs) (*assessor, error) {
 	cfg, err := config.Load(paths...)
 	if err != nil {
 		return nil, err
+	}
+
+	sources := model.Sources{
+		Provider: in.provider.name, VulnSource: in.vulnSource,
+		ExploitSource: in.exploitSource, AgeSource: in.ageSource,
+		LiveSource: in.liveSource, SupportSource: in.supportSource,
+		Remediation: in.remediation, ScanDisabled: cfg.Scan.Disabled,
 	}
 
 	var popts []pipeline.Option
@@ -88,6 +99,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		// keyed on exposure can never fire.
 		if es, ok := src.(enrich.ExposureSource); ok {
 			liveEnrichers = append(liveEnrichers, enrich.Exposure{Source: es, SourceName: src.Name()})
+			sources.Exposure = true
 		}
 		if ls, ok := src.(enrich.LabelSource); ok {
 			liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
@@ -132,6 +144,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 			// 3,664 of your 4,890". Only meaningful alongside base resolution: it
 			// needs the base references that produces.
 			if cfg.Remediation.BaseDiff.On() {
+				sources.BaseDiff = true
 				bd := cfg.Remediation.BaseDiff
 				popts = append(popts, pipeline.WithBaseDiffEnricher(&enrich.BaseDiffEnricher{
 					Resolver: &basescan.Resolver{
@@ -157,6 +170,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		// Remediation already under way, so an upgrade with an open pull request
 		// can be told apart from one nobody has started.
 		if cfg.Remediation.InFlight.Enabled() {
+			sources.InFlight = true
 			src, err := newPullRequestSource(cfg.Remediation.InFlight)
 			if err != nil {
 				return nil, err
@@ -218,6 +232,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		vulnSource:    in.vulnSource,
 		exploitSource: in.exploitSource,
 		ageSource:     in.ageSource,
+		sources:       sources,
 	}, nil
 }
 
@@ -259,6 +274,10 @@ func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 // server can state the gap rather than serving a queue whose missing signals look like
 // absent findings.
 func (a *assessor) Failures() []model.SourceFailure { return a.pipeline.Failures() }
+
+// Sources reports what this assessment was configured to do. See model.Sources for
+// why "not configured" has to be distinguishable from "found nothing".
+func (a *assessor) Sources() model.Sources { return a.sources }
 
 // warnStaleProviderData reports how old the provider's own assessment data is.
 //

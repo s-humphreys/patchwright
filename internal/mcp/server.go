@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -80,9 +81,12 @@ func register(s *sdk.Server, src Source) {
 		}
 		r, ok := serviceReport(a, args.Service)
 		if !ok {
-			return textResult(fmt.Sprintf(
-				"No service matching %q is in this assessment. That means it was not in the scan "+
-					"input or is not deployed, NOT that it is free of vulnerabilities.", args.Service)), nil, nil
+			msg := fmt.Sprintf("No service matching %q is in this assessment. That means it was not in "+
+				"the scan input or is not deployed, NOT that it is free of vulnerabilities. ", args.Service)
+			if near := matchService(a, args.Service); len(near) > 0 {
+				msg += "Closest names: " + strings.Join(near, ", ") + "."
+			}
+			return textResult(msg), nil, nil
 		}
 		return result(r)
 	})
@@ -110,13 +114,33 @@ func register(s *sdk.Server, src Source) {
 		if !a.ready() {
 			return textResult(errNoAssessment), nil, nil
 		}
-		r, ok := teamReport(a, args.Team)
+		r, candidates, ok := teamReport(a, args.Team)
 		if !ok {
-			return textResult(fmt.Sprintf(
-				"No work items are attributed to team %q. Ownership may not be attributed for "+
-					"these services rather than the team having nothing outstanding.", args.Team)), nil, nil
+			msg := fmt.Sprintf("No work is attributed to a team matching %q. ", args.Team)
+			if len(candidates) > 0 {
+				msg += "Teams in this assessment: " + strings.Join(candidates, ", ") +
+					". Call list_facets for the full vocabulary with counts."
+			} else {
+				msg += "No team is attributed anywhere in this assessment, so ownership is " +
+					"unresolved rather than this team having nothing outstanding."
+			}
+			return textResult(msg), nil, nil
 		}
 		return result(r)
+	})
+
+	sdk.AddTool(s, &sdk.Tool{
+		Name: "list_facets",
+		Description: "The vocabulary of this assessment: every team, owner class, priority, exposure " +
+			"and signal that actually appears, with counts. Call this before filtering or before " +
+			"reporting on a team whose exact name you are unsure of, rather than guessing a value " +
+			"and reading an empty result as an empty queue.",
+	}, func(ctx context.Context, req *sdk.CallToolRequest, _ noArgs) (*sdk.CallToolResult, any, error) {
+		a := src()
+		if !a.ready() {
+			return textResult(errNoAssessment), nil, nil
+		}
+		return result(facets(a))
 	})
 
 	sdk.AddTool(s, &sdk.Tool{

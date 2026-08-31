@@ -40,6 +40,15 @@ type FailureReporter interface {
 	Failures() []model.SourceFailure
 }
 
+// SourceReporter reports which optional stages the assessment was configured with.
+//
+// Optional like FailureReporter, and for a related reason: without it a stage that
+// never ran is indistinguishable from one that ran and found nothing, and the two
+// point at different people to go and fix something.
+type SourceReporter interface {
+	Sources() model.Sources
+}
+
 // TicketIndex reports the open tickets covering each image repository. It is
 // optional: without Jira configured the server simply has nothing to say about
 // tickets, rather than failing or pretending there are none.
@@ -60,6 +69,9 @@ type snapshot struct {
 	// beside the findings rather than inside them: a ticket is external state
 	// someone else can change, not a fact the assessment measured.
 	tickets map[string][]ticketRef
+	// sources is what the run was configured to do, so a consumer can tell an
+	// absent signal from an absent finding.
+	sources model.Sources
 }
 
 // ticketRef is the client-facing shape of an open ticket.
@@ -190,6 +202,9 @@ func (s *Server) Refresh(ctx context.Context) {
 		snap.views = buildViews(findings, s.includeSuppressed)
 		snap.summary = buildSummary(findings)
 		snap.summary.ExpiredSuppressions = s.expiredSuppressions()
+		if sr, ok := s.assessor.(SourceReporter); ok {
+			snap.sources = sr.Sources()
+		}
 		if fr, ok := s.assessor.(FailureReporter); ok {
 			for _, f := range fr.Failures() {
 				snap.summary.SourceFailures = append(snap.summary.SourceFailures,
@@ -281,6 +296,7 @@ func (s *Server) mcpHandler() http.Handler {
 			Version:     version.String(),
 			Findings:    snap.views,
 			Analytics:   snap.analytics,
+			Sources:     snap.sources,
 		}
 		if snap.summary.ProviderDataNewest != nil {
 			a.ProviderDataNewest = *snap.summary.ProviderDataNewest

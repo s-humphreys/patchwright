@@ -24,6 +24,7 @@ enough to matter.
 | `worst_first` | The work queue, worst first, filterable by team, priority and exposure |
 | `team_report` | One team's whole position, including what is already in flight and what is merely open and stale |
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
+| `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
 
 `service_report` is the deep one. Asked about a service it returns the split that
 turns a number into a conversation:
@@ -54,6 +55,61 @@ payload.
 **Absence never renders as zero.** An unassessed image is not a clean image. Every
 answer states its coverage, and each carries a `caveats` list saying what it cannot
 support - because nobody re-reads a sentence a chatbot produced.
+
+## Why an answer is empty
+
+Every answer carries `freshness.ran`: which sources the assessment was configured
+with, and whether upgrades, the base differential, pull-request matching and exposure
+were asked for at all.
+
+This exists because of a real failure. On the first session against a live estate, a
+model was told 0 of 817 deployments were scanned and advised finding out why the scan
+provider was assessing almost nothing. The numbers were right and the advice was
+wrong: the run had simply been started without `--vuln-source`. The payload could not
+say which stages had been asked to run, so a confident, actionable, incorrect
+diagnosis went out.
+
+The caveats now separate the three cases a bare zero collapses into:
+
+- **not asked for** - *"this run was started WITHOUT a vulnerability source, so every
+  CVE count here is zero by configuration, not by measurement"*, which points at the
+  command line
+- **asked for and produced nothing** - *"a vulnerability source was configured and yet
+  scanned none of the 817 deployments; that is a failure worth investigating"*, which
+  points at credentials or egress
+- **asked for and genuinely clean** - the ordinary case, stated with its coverage
+
+`estate_summary` also carries `unassessed_reasons`: the provider's own explanation for
+the coverage gap, counted, so it reads as *"412 need a registry credential"* rather
+than *"706 unassessed, cause unknown"*.
+
+## Names, and getting them wrong
+
+`list_facets` returns the team, class, priority, exposure and signal values that
+actually appear, with counts. It is there because a miss was not recoverable: asked
+about "the payments team", a model called `team_report`, got nothing back, and had to
+return to the human to ask what the team was called - when the assessment knew.
+
+Team and service names are also matched forgivingly. Exact match wins; failing that a
+single unambiguous substring match is accepted, so `payments` finds
+`payments-platform`. Two candidates resolve to neither, because answering for one of
+them would look authoritative while describing somebody else's queue - the tool hands
+back both instead. Every miss returns the real names alongside it.
+
+`unattributed_work_items` is reported separately, and is usually the reason a team
+looks empty: work with no owning team appears in no `team_report` at all.
+
+## Suppressed findings
+
+Excluded from every count, and stated in every answer that excludes them. A
+suppression is a decision that something is not work, not a claim that it is not
+vulnerable, and a rule that has quietly grown to cover a tenth of the estate is a
+finding of its own.
+
+`service_report` is the exception: it lists suppressed deployments with
+`suppressed: true` rather than hiding them, because somebody asking about a service
+wants all of it, and an invisible deployment is how a stale suppression outlives its
+reason.
 
 ## Connecting
 

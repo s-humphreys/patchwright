@@ -706,6 +706,39 @@ func (f Finding) Signals() []string {
 	return out
 }
 
+// Sources is which optional stages an assessment was CONFIGURED with.
+//
+// Separate from whether they produced anything, and the distinction is the whole
+// point. A run with no vuln source reports zero CVEs, and so does a run whose
+// scanner was refused by every registry; without this, the two are one number and a
+// reader blames the wrong thing. On the first real MCP session against this, a model
+// was told "0 of 817 scanned" and concluded the scan provider was broken, when the
+// run simply had no --vuln-source.
+//
+// Empty strings and false mean NOT CONFIGURED, which is why an absent value here can
+// safely be read as "we never asked" - the one absence in this codebase that is
+// unambiguous.
+type Sources struct {
+	Provider      string
+	VulnSource    string
+	ExploitSource string
+	AgeSource     string
+	LiveSource    string
+	SupportSource string
+
+	// Remediation is whether upgrades were looked for at all; BaseDiff whether base
+	// images were scanned to establish what an upgrade clears; InFlight whether open
+	// pull requests were matched; Exposure whether internet reachability was measured.
+	Remediation bool
+	BaseDiff    bool
+	InFlight    bool
+	Exposure    bool
+
+	// ScanDisabled records config turning scanning off despite a source being named,
+	// which otherwise looks exactly like no source at all.
+	ScanDisabled bool
+}
+
 // SourceFailure is an enrichment that could not run.
 //
 // An enrichment is not the assessment, so losing one does not lose the other — but the

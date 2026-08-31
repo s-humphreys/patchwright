@@ -23,6 +23,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/analytics"
 	"github.com/s-humphreys/patchwright/pkg/group"
+	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -43,6 +44,11 @@ type Assessment struct {
 
 	Findings  []sink.FindingView
 	Analytics analytics.AnalyticsView
+
+	// Sources is what the run was configured to do. Without it "0 scanned" reads as
+	// a broken scan provider when the truth is that no vuln source was named - which
+	// is exactly what a model concluded, confidently, on the first real session.
+	Sources model.Sources
 }
 
 // Source provides the current assessment. The server implements this over its
@@ -52,7 +58,25 @@ type Source func() Assessment
 // items groups the findings into work items - the unit a team owns and a ticket
 // covers - using the same code the API and the page use, so a tool answer and a
 // queue row cannot disagree about what a service owes.
-func (a Assessment) items() []group.Item { return group.Items(a.Findings) }
+//
+// Over ACTIVE findings only. Suppressed ones are policy decisions that this is not
+// work, and counting them here put a different total in front of the same reader as
+// the page: one answer said 721 unassessed deployments while the issue beside it
+// said 706, which is the sort of disagreement that costs a tool its credibility.
+func (a Assessment) items() []group.Item { return group.Items(a.active()) }
+
+// active is the findings that are somebody's work: everything policy has not
+// suppressed. Suppression is never silent - whatever counts these reports how many
+// were left out.
+func (a Assessment) active() []sink.FindingView {
+	out := make([]sink.FindingView, 0, len(a.Findings))
+	for _, f := range a.Findings {
+		if !f.Suppressed {
+			out = append(out, f)
+		}
+	}
+	return out
+}
 
 // ready reports whether there is anything to answer from.
 func (a Assessment) ready() bool { return !a.GeneratedAt.IsZero() }

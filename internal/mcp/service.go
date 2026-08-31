@@ -17,6 +17,8 @@ import (
 // them when somebody named the service is the same mistake as a queue row that opens
 // a single deployment. The service is what a team owns and rebuilds.
 type ServiceReport struct {
+	Freshness Freshness `json:"freshness"`
+
 	Service string `json:"service"`
 	Team    string `json:"team,omitempty"`
 	Class   string `json:"class,omitempty"`
@@ -51,6 +53,10 @@ type Deployment struct {
 	Namespaces []string `json:"namespaces,omitempty"`
 	Accounts   []string `json:"accounts,omitempty"`
 	Scanned    bool     `json:"scanned"`
+	// Suppressed marks a deployment policy has ruled out of the queue. Reported here
+	// rather than filtered out: somebody asking about a service wants all of it, and
+	// a hidden deployment is how a suppression rule outlives its reason.
+	Suppressed bool `json:"suppressed,omitempty"`
 }
 
 // VulnSummary counts what the service carries. Counts are absent rather than zero
@@ -135,6 +141,14 @@ type InProgress struct {
 	Exact bool `json:"exact"`
 }
 
+// baseDiffsAmong counts this service's deployments a differential actually measured.
+func baseDiffsAmong(r ServiceReport) int {
+	if r.Upgrade != nil && r.Upgrade.Measured {
+		return 1
+	}
+	return 0
+}
+
 // maxRemainderPackages bounds the package breakdown. Past a handful it stops
 // answering "is this one stubborn package or a long tail" and becomes the tail.
 const maxRemainderPackages = 8
@@ -156,7 +170,20 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 		return ServiceReport{}, false
 	}
 
-	items := group.Items(mine)
+	// Group over the active deployments for the verdict, since a suppressed one is
+	// not work - but fall back to everything when they are all suppressed, so the
+	// answer is "suppressed" rather than "no such service".
+	active := make([]sink.FindingView, 0, len(mine))
+	for _, f := range mine {
+		if !f.Suppressed {
+			active = append(active, f)
+		}
+	}
+	grouped := active
+	if len(grouped) == 0 {
+		grouped = mine
+	}
+	items := group.Items(grouped)
 	lead := items[0] // Items sorts worst first.
 
 	out := ServiceReport{
@@ -166,7 +193,7 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	}
 	for _, f := range mine {
 		out.Deployments = append(out.Deployments, Deployment{
-			Image: f.Image, Tag: f.Tag, Scanned: f.Scanned,
+			Image: f.Image, Tag: f.Tag, Scanned: f.Scanned, Suppressed: f.Suppressed,
 			Namespaces: f.Dimensions["namespace"], Accounts: f.Dimensions["account"],
 		})
 		if f.ImageAgeDays != nil && (out.ImageAgeDays == nil || *f.ImageAgeDays < *out.ImageAgeDays) {
@@ -174,10 +201,11 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 			out.ImageAgeDays = &d
 		}
 	}
+	out.Freshness = freshness(a)
 	out.Vulnerabilities = summariseVulns(mine, lead)
 	out.Upgrade = upgradeAdvice(mine, lead)
 	out.InProgress = inProgress(lead)
-	out.Caveats = caveats(out)
+	out.Caveats = caveats(a, out)
 	return out, true
 }
 
@@ -326,23 +354,39 @@ func inProgress(lead group.Item) *InProgress {
 
 // caveats states what this answer cannot support, so the limits survive being
 // summarised into prose.
-func caveats(r ServiceReport) []string {
-	var out []string
-	if r.Vulnerabilities.ScannedOf[0] < r.Vulnerabilities.ScannedOf[1] {
-		out = append(out, fmt.Sprintf(
-			"Only %d of %d deployments were scanned for per-CVE detail; the rest have unknown CVEs rather than none.",
-			r.Vulnerabilities.ScannedOf[0], r.Vulnerabilities.ScannedOf[1]))
-	}
+func caveats(a Assessment, r ServiceReport) []string {
+	// Configuration first, for the same reason as the estate summary: a signal
+	// nobody asked for is explained by the command line, not by this service.
+	out := configCaveats(a, Coverage{
+		Scanned: r.Vulnerabilities.ScannedOf[0], Total: r.Vulnerabilities.ScannedOf[1],
+		BaseDiffs: baseDiffsAmong(r),
+	})
 	if r.Vulnerabilities.AssessedOf[0] < r.Vulnerabilities.AssessedOf[1] {
 		out = append(out, fmt.Sprintf(
 			"The scan provider never assessed %d of %d deployments; their counts are absent data, not zero.",
 			r.Vulnerabilities.AssessedOf[1]-r.Vulnerabilities.AssessedOf[0], r.Vulnerabilities.AssessedOf[1]))
 	}
-	if r.Upgrade != nil && !r.Upgrade.Measured {
-		out = append(out, "No base differential ran for this service, so what an upgrade would clear is unknown rather than nothing.")
+	// Only worth saying when the differential was enabled: when it was not, the
+	// configuration caveat above has already said why, and repeating it as a
+	// property of this service points at the wrong thing.
+	if a.Sources.BaseDiff && r.Upgrade != nil && !r.Upgrade.Measured {
+		out = append(out, "The base differential is enabled but did not measure this service, so what an "+
+			"upgrade would clear is unknown rather than nothing - its base could not be resolved or scanned.")
 	}
-	if r.Exposure == "unknown" {
-		out = append(out, "Internet exposure was not established for this service.")
+	if a.Sources.Exposure && r.Exposure == "unknown" {
+		out = append(out, "Exposure was measured across the estate but nothing reported it for this service, "+
+			"so it is unknown rather than internal.")
+	}
+	var suppressed int
+	for _, d := range r.Deployments {
+		if d.Suppressed {
+			suppressed++
+		}
+	}
+	if suppressed > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d of %d deployments are suppressed by policy: excluded from the queue by a decision, "+
+				"not by being clean.", suppressed, len(r.Deployments)))
 	}
 	if r.Upgrade != nil && r.Upgrade.Remainder != nil && r.Upgrade.Remainder.FromApplication > 0 {
 		out = append(out, "Application-introduced CVEs carry no package name: nothing scanned that layer.")

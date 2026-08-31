@@ -16,6 +16,10 @@ type Freshness struct {
 	// ages independently of when the assessment ran.
 	ProviderDataAgeDays *int   `json:"provider_data_age_days,omitempty"`
 	Version             string `json:"patchwright_version,omitempty"`
+	// Ran is what this assessment was configured to do. Read it before reading any
+	// zero in the answer: a stage that was never asked to run explains a zero that
+	// would otherwise look like a measurement.
+	Ran Configuration `json:"ran"`
 }
 
 // EstateSummary is the headline: the size of the problem, how much of it a rebuild
@@ -26,6 +30,10 @@ type EstateSummary struct {
 	Services    int `json:"services"`
 	Deployments int `json:"deployments"`
 	WorkItems   int `json:"work_items"`
+	// Suppressed is deployments policy has ruled out of the queue, excluded from
+	// every count above. Reported rather than dropped: a suppression rule that has
+	// quietly grown to cover a tenth of the estate is a finding of its own.
+	Suppressed int `json:"suppressed_deployments"`
 
 	// Coverage says how much of the estate these numbers actually describe, which
 	// bounds every other figure here.
@@ -37,6 +45,10 @@ type EstateSummary struct {
 	// ClearedByRebuilds is how many of the CVEs a base rebuild would remove across
 	// the estate, measured rather than estimated. Absent when no differential ran.
 	ClearedByRebuilds *int `json:"cleared_by_rebuilds,omitempty"`
+
+	// UnassessedReasons is why the coverage gap exists, in the provider's own words,
+	// so it can be worked on rather than only counted.
+	UnassessedReasons []UnassessedReason `json:"unassessed_reasons,omitempty"`
 
 	// BiggestWins are the base upgrades worth doing first, and Issues the things
 	// nobody is acting on. Both come from the same analytics the page shows, so a
@@ -50,10 +62,13 @@ type EstateSummary struct {
 // Coverage is how much of the estate was actually looked at. Reported everywhere a
 // total is, because a small number can mean a healthy estate or an unexamined one.
 type Coverage struct {
-	Assessed  int `json:"assessed_deployments"`
-	Scanned   int `json:"scanned_deployments"`
-	Total     int `json:"total_deployments"`
-	Exposure  int `json:"deployments_with_known_exposure"`
+	Assessed int `json:"assessed_deployments"`
+	Scanned  int `json:"scanned_deployments"`
+	Total    int `json:"total_deployments"`
+	// Exposure counts deployments with ANY exposure value, which is not the same as
+	// measured: where exposure_measured is false these come from the scan provider,
+	// whose field can be constant. Named "reported" for that reason.
+	Exposure  int `json:"deployments_with_reported_exposure"`
 	BaseDiffs int `json:"deployments_with_base_differential"`
 }
 
@@ -84,7 +99,7 @@ type Issue struct {
 const maxNamed = 10
 
 func freshness(a Assessment) Freshness {
-	f := Freshness{Version: a.Version}
+	f := Freshness{Version: a.Version, Ran: configuration(a)}
 	if !a.GeneratedAt.IsZero() {
 		f.AssessedAt = a.GeneratedAt.UTC().Format("2006-01-02 15:04 MST")
 	}
@@ -108,6 +123,10 @@ func estateSummary(a Assessment) EstateSummary {
 	var cleared int
 	var measured bool
 	for _, f := range a.Findings {
+		if f.Suppressed {
+			out.Suppressed++
+			continue
+		}
 		services[f.Repository] = true
 		out.Deployments++
 		out.Coverage.Total++
@@ -155,30 +174,32 @@ func estateSummary(a Assessment) EstateSummary {
 			Services: namesOf(i.Services, maxNamed),
 		})
 	}
-	out.Caveats = estateCaveats(out)
+	out.UnassessedReasons = unassessedReasons(a.active())
+	out.Caveats = estateCaveats(a, out)
 	return out
 }
 
-func estateCaveats(s EstateSummary) []string {
-	var out []string
+// estateCaveats states what the summary cannot support. Configuration first: an
+// absent signal is explained by what was not asked for before it is described as a
+// gap, because the two send a reader to different places.
+func estateCaveats(a Assessment, s EstateSummary) []string {
+	out := configCaveats(a, s.Coverage)
 	if s.Coverage.Assessed < s.Coverage.Total {
-		out = append(out, fmt.Sprintf(
-			"%d of %d deployments were never assessed by the scan provider; their counts are unknown, not zero.",
-			s.Coverage.Total-s.Coverage.Assessed, s.Coverage.Total))
+		gap := fmt.Sprintf(
+			"The scan provider never assessed %d of %d deployments; their counts are unknown, not zero.",
+			s.Coverage.Total-s.Coverage.Assessed, s.Coverage.Total)
+		if len(s.UnassessedReasons) > 0 {
+			gap += " See unassessed_reasons for the provider's own explanation."
+		}
+		out = append(out, gap)
 	}
-	if s.Coverage.Scanned < s.Coverage.Total {
+	if s.Suppressed > 0 {
 		out = append(out, fmt.Sprintf(
-			"Per-CVE detail exists for %d of %d deployments, so the CVE and known-exploited totals are lower bounds.",
-			s.Coverage.Scanned, s.Coverage.Total))
+			"%d deployments are suppressed by policy and are excluded from every count here. "+
+				"Suppressed means somebody decided it is not work, not that it is not vulnerable.",
+			s.Suppressed))
 	}
-	if s.Coverage.Exposure < s.Coverage.Total {
-		out = append(out, fmt.Sprintf(
-			"Internet exposure is known for %d of %d deployments; the rest are unknown rather than internal.",
-			s.Coverage.Exposure, s.Coverage.Total))
-	}
-	if s.ClearedByRebuilds == nil {
-		out = append(out, "No base differential ran, so what rebuilding would clear is unmeasured.")
-	} else if s.Coverage.BaseDiffs < s.Coverage.Total {
+	if s.ClearedByRebuilds != nil && s.Coverage.BaseDiffs < s.Coverage.Total {
 		out = append(out, fmt.Sprintf(
 			"The rebuild figure covers the %d of %d deployments a base differential ran for.",
 			s.Coverage.BaseDiffs, s.Coverage.Total))
@@ -220,7 +241,21 @@ func worstFirst(a Assessment, team, priority, exposure string, limit int) WorstF
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	out := WorstFirst{Freshness: freshness(a), Filtered: describeFilters(team, priority, exposure)}
+	out := WorstFirst{Freshness: freshness(a)}
+	if team != "" {
+		if resolved, candidates := matchTeam(a.items(), team); resolved != "" {
+			team = resolved
+		} else {
+			// The filter stands and returns nothing, with the real names attached. The
+			// alternative - dropping the filter and returning the estate - would hand
+			// back rows the caller would report as this team's, which is worse than an
+			// empty answer they can correct.
+			out.Caveats = append(out.Caveats, "No team matches \""+team+
+				"\", so this list is empty for that reason rather than because the team has no work. "+
+				"Teams in this assessment: "+strings.Join(candidates, ", ")+".")
+		}
+	}
+	out.Filtered = describeFilters(team, priority, exposure)
 
 	clears := clearsByItem(a)
 	for _, it := range a.items() {
@@ -254,11 +289,33 @@ func worstFirst(a Assessment, team, priority, exposure string, limit int) WorstF
 		}
 		out.Items = append(out.Items, w)
 	}
+	out.Caveats = append(out.Caveats, configCaveats(a, coverageOf(a))...)
 	if out.Total > len(out.Items) {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
 			"%d items match; %d are shown, worst first.", out.Total, len(out.Items)))
 	}
 	return out
+}
+
+// coverageOf is the estate's coverage, computed once for the caveats that need it.
+func coverageOf(a Assessment) Coverage {
+	var c Coverage
+	for _, f := range a.active() {
+		c.Total++
+		if f.ProviderAssessed {
+			c.Assessed++
+		}
+		if f.Scanned {
+			c.Scanned++
+		}
+		if f.Exposure == "public" || f.Exposure == "internal" {
+			c.Exposure++
+		}
+		if f.BaseDiff != nil && f.BaseDiff.Determined {
+			c.BaseDiffs++
+		}
+	}
+	return c
 }
 
 func describeFilters(team, priority, exposure string) string {
@@ -275,7 +332,7 @@ func describeFilters(team, priority, exposure string) string {
 // group.Items keys them so the two cannot drift apart.
 func clearsByItem(a Assessment) map[string]int {
 	byKey := map[string][]sink.FindingView{}
-	for _, f := range a.Findings {
+	for _, f := range a.active() {
 		byKey[itemKeyOf(f)] = append(byKey[itemKeyOf(f)], f)
 	}
 	out := map[string]int{}
@@ -328,10 +385,18 @@ type TeamReport struct {
 	Caveats []string   `json:"caveats,omitempty"`
 }
 
-func teamReport(a Assessment, team string) (TeamReport, bool) {
+// teamReport resolves the team name first, so a near-miss becomes an answer rather
+// than a dead end. It returns the candidates it could not choose between when it
+// cannot resolve one.
+func teamReport(a Assessment, team string) (TeamReport, []string, bool) {
+	resolved, candidates := matchTeam(a.items(), team)
+	if resolved == "" {
+		return TeamReport{}, candidates, false
+	}
+	team = resolved
 	q := worstFirst(a, team, "", "", 100)
 	if q.Total == 0 {
-		return TeamReport{}, false
+		return TeamReport{}, candidates, false
 	}
 	out := TeamReport{Freshness: q.Freshness, Team: team, WorkItems: q.Total}
 
@@ -359,7 +424,7 @@ func teamReport(a Assessment, team string) (TeamReport, bool) {
 			}
 		}
 	}
-	for _, f := range a.Findings {
+	for _, f := range a.active() {
 		if !strings.EqualFold(f.Owner.Team, team) {
 			continue
 		}
@@ -377,12 +442,37 @@ func teamReport(a Assessment, team string) (TeamReport, bool) {
 	} else {
 		out.Top = q.Items
 	}
+	out.Caveats = append(out.Caveats, configCaveats(a, Coverage{
+		Scanned: coveredBy(a, team), Total: q.Total, BaseDiffs: measuredFor(a, team),
+	})...)
 	if out.StaleInFlight > 0 {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
 			"%d open pull requests are stale: opened long ago and never merged, so they are not progress.",
 			out.StaleInFlight))
 	}
-	return out, true
+	return out, nil, true
+}
+
+// coveredBy and measuredFor are this team's share of the two coverage questions, so
+// its caveats describe its own queue rather than the estate's.
+func coveredBy(a Assessment, team string) int {
+	var n int
+	for _, f := range a.active() {
+		if strings.EqualFold(f.Owner.Team, team) && f.Scanned {
+			n++
+		}
+	}
+	return n
+}
+
+func measuredFor(a Assessment, team string) int {
+	var n int
+	for _, f := range a.active() {
+		if strings.EqualFold(f.Owner.Team, team) && f.BaseDiff != nil && f.BaseDiff.Determined {
+			n++
+		}
+	}
+	return n
 }
 
 // CVEReport is one CVE across the estate: who has it, whether it is fixable, and
@@ -468,6 +558,10 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 	out.ExposedServices = keys(exposed, maxNamed)
 	out.Packages = keys(pkgs, maxNamed)
 
+	out.Caveats = append(out.Caveats, configCaveats(a, Coverage{
+		Scanned: out.Deployments, Total: out.Deployments,
+		BaseDiffs: out.ClearedByRebuild + out.StaysAfterRebuild,
+	})...)
 	if out.ClearedByRebuild+out.StaysAfterRebuild < out.Deployments {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
 			"A base differential covered %d of %d affected deployments; for the rest, whether a rebuild removes this is unknown.",

@@ -11,6 +11,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/s-humphreys/patchwright/pkg/analytics"
+	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -63,7 +64,12 @@ func fixture() Assessment {
 		GeneratedAt:        ts("2026-08-30T09:00:00Z"),
 		ProviderDataNewest: ts("2026-08-20T09:00:00Z"),
 		Version:            "v1.29.0",
-		Findings:           []sink.FindingView{base, unassessed},
+		Sources: model.Sources{
+			Provider: "rapid7", VulnSource: "trivy", ExploitSource: "public",
+			LiveSource: "kube", Remediation: true, BaseDiff: true, InFlight: true,
+			Exposure: true,
+		},
+		Findings: []sink.FindingView{base, unassessed},
 		Analytics: analytics.AnalyticsView{
 			Wins: []analytics.Win{{
 				FromRef: "mcr/dotnet/aspnet:9.0", ToRef: "mcr/dotnet/aspnet:10.0",
@@ -127,6 +133,34 @@ func TestServiceReportMissesCleanly(t *testing.T) {
 	}
 }
 
+// Suppressed findings must be out of the counts and IN the answer. Counting them
+// put 721 in a caveat beside 706 in an issue on the same payload, which is how a
+// tool stops being believed.
+func TestSuppressedIsExcludedFromCountsAndStated(t *testing.T) {
+	a := fixture()
+	a.Findings[1].Suppressed = true
+	s := estateSummary(a)
+	if s.Deployments != 1 || s.Suppressed != 1 {
+		t.Errorf("want one active and one suppressed, got %d / %d", s.Deployments, s.Suppressed)
+	}
+	if s.Coverage.Total != 1 {
+		t.Errorf("coverage must be over active deployments: %+v", s.Coverage)
+	}
+	if !strings.Contains(strings.Join(s.Caveats, " "), "suppressed by policy") {
+		t.Errorf("suppression must be stated: %v", s.Caveats)
+	}
+
+	// The service view keeps them, because somebody asking about a service wants all
+	// of it - a hidden deployment is how a suppression rule outlives its reason.
+	r, ok := serviceReport(a, "topnotch")
+	if !ok || len(r.Deployments) != 2 {
+		t.Fatalf("want both deployments on the service answer, got %d", len(r.Deployments))
+	}
+	if !r.Deployments[1].Suppressed {
+		t.Error("want the suppressed deployment marked")
+	}
+}
+
 func TestEstateSummaryCountsCVEsOnceAndReportsCoverage(t *testing.T) {
 	s := estateSummary(fixture())
 	if s.Vulnerabilities != 3 || s.KnownExploited != 1 {
@@ -169,8 +203,12 @@ func TestWorstFirstFiltersAndSaysSo(t *testing.T) {
 	if q.Items[0].Clears == nil || *q.Items[0].Clears != 6 {
 		t.Errorf("want the measured benefit on the row: %+v", q.Items[0])
 	}
-	if none := worstFirst(fixture(), "nobody", "", "", 10); none.Total != 0 {
+	none := worstFirst(fixture(), "nobody", "", "", 10)
+	if none.Total != 0 {
 		t.Errorf("want no items for an unknown team, got %d", none.Total)
+	}
+	if !strings.Contains(strings.Join(none.Caveats, " "), "payments") {
+		t.Errorf("an empty filtered list must name the real teams: %v", none.Caveats)
 	}
 }
 
@@ -199,15 +237,147 @@ func TestCVEReportSeparatesClearedFromSurviving(t *testing.T) {
 }
 
 func TestTeamReportCountsWhatTheTeamOwns(t *testing.T) {
-	r, ok := teamReport(fixture(), "PAYMENTS")
+	r, _, ok := teamReport(fixture(), "PAYMENTS")
 	if !ok {
 		t.Fatal("team lookup must be case-insensitive")
 	}
 	if r.Services != 1 || r.Urgent != 1 || r.Exposed != 1 {
 		t.Errorf("wrong team position: %+v", r)
 	}
-	if _, ok := teamReport(fixture(), "platform"); ok {
+	if _, _, ok := teamReport(fixture(), "platform"); ok {
 		t.Error("want a miss for a team owning nothing here")
+	}
+}
+
+// A miss has to be recoverable in one more call, not a dead end that sends the
+// caller back to the human to ask what the team is called.
+func TestTeamMissHandsBackTheRealNames(t *testing.T) {
+	_, candidates, ok := teamReport(fixture(), "platform")
+	if ok {
+		t.Fatal("want a miss")
+	}
+	if len(candidates) != 1 || candidates[0] != "payments" {
+		t.Errorf("want the actual team names back, got %v", candidates)
+	}
+}
+
+// "payments" should find "payments-platform": people say the short name.
+func TestTeamMatchesOnSubstringWhenUnambiguous(t *testing.T) {
+	a := fixture()
+	for i := range a.Findings {
+		a.Findings[i].Owner.Team = "payments-platform"
+	}
+	resolved, _ := matchTeam(a.items(), "payments")
+	if resolved != "payments-platform" {
+		t.Errorf("want the substring match, got %q", resolved)
+	}
+}
+
+// Two candidates must NOT resolve: answering for one of them would look
+// authoritative and describe somebody else's queue.
+func TestAmbiguousTeamRefusesToGuess(t *testing.T) {
+	a := fixture()
+	a.Findings[0].Owner.Team = "payments-uk"
+	a.Findings[1].Owner.Team = "payments-us"
+	resolved, candidates := matchTeam(a.items(), "payments")
+	if resolved != "" {
+		t.Errorf("want no resolution for an ambiguous name, got %q", resolved)
+	}
+	if len(candidates) != 2 {
+		t.Errorf("want both candidates offered, got %v", candidates)
+	}
+}
+
+func TestFacetsNameTheVocabulary(t *testing.T) {
+	f := facets(fixture())
+	if len(f.Teams) != 1 || f.Teams[0].Value != "payments" || f.Teams[0].Items != 1 {
+		t.Errorf("wrong teams: %+v", f.Teams)
+	}
+	// One work item, not two: both tags share an owner, service and upgrade target,
+	// so they are one piece of work carrying the worse of the two priorities.
+	if len(f.Priorities) != 1 || f.Priorities[0].Value != "urgent" {
+		t.Errorf("want the item's worst priority: %+v", f.Priorities)
+	}
+	if f.Unattributed != 0 {
+		t.Errorf("nothing here is unowned: %+v", f)
+	}
+}
+
+// The regression this exists for: a run with no vuln source must blame the command
+// line, not the scan provider. A model read "0 of 817 scanned" and advised finding
+// out why the provider was assessing nothing, when nothing had been asked to scan.
+func TestUnconfiguredStagesBlameTheConfigurationNotTheProvider(t *testing.T) {
+	a := fixture()
+	a.Sources = model.Sources{Provider: "rapid7"} // nothing else configured
+	for i := range a.Findings {
+		a.Findings[i].Scanned = false
+		a.Findings[i].BaseDiff = nil
+	}
+	s := estateSummary(a)
+
+	if s.Freshness.Ran.VulnSource != "none" || s.Freshness.Ran.BaseDifferential {
+		t.Errorf("configuration not reported: %+v", s.Freshness.Ran)
+	}
+	joined := strings.Join(s.Caveats, " ")
+	if !strings.Contains(joined, "--vuln-source") {
+		t.Errorf("want the missing flag named: %v", s.Caveats)
+	}
+	if !strings.Contains(joined, "not by measurement") {
+		t.Errorf("want zero explained as configuration: %v", s.Caveats)
+	}
+	if strings.Contains(joined, "worth investigating") {
+		t.Errorf("must not blame the provider for a stage nobody enabled: %v", s.Caveats)
+	}
+}
+
+// The opposite case, which needs the opposite advice: the stage WAS configured and
+// still produced nothing, so somebody should go and look.
+func TestConfiguredStagesThatProduceNothingAreAFault(t *testing.T) {
+	a := fixture()
+	a.Sources = model.Sources{Provider: "rapid7", VulnSource: "trivy", Remediation: true, BaseDiff: true}
+	for i := range a.Findings {
+		a.Findings[i].Scanned = false
+		a.Findings[i].BaseDiff = nil
+	}
+	joined := strings.Join(estateSummary(a).Caveats, " ")
+	if !strings.Contains(joined, "worth investigating") {
+		t.Errorf("want a configured-but-empty stage flagged as a fault: %q", joined)
+	}
+	if strings.Contains(joined, "--vuln-source") {
+		t.Errorf("must not tell somebody to set a flag they already set: %q", joined)
+	}
+}
+
+// scan.disabled looks identical to no source at all unless it is reported.
+func TestScanningDisabledInConfigSaysSo(t *testing.T) {
+	a := fixture()
+	a.Sources = model.Sources{VulnSource: "trivy", ScanDisabled: true}
+	joined := strings.Join(estateSummary(a).Caveats, " ")
+	if !strings.Contains(joined, "scan.disabled") {
+		t.Errorf("want the config setting named: %q", joined)
+	}
+}
+
+func TestUnassessedReasonsAreCountedWorstFirst(t *testing.T) {
+	a := fixture()
+	a.Findings[1].AssessmentIssues = []string{"no registry credential"}
+	a.Findings[0].ProviderAssessed = false
+	a.Findings[0].AssessmentIssues = []string{"no registry credential", "unsupported image type"}
+	got := unassessedReasons(a.Findings)
+	if len(got) != 2 || got[0].Reason != "no registry credential" || got[0].Deployments != 2 {
+		t.Errorf("want the commonest cause first with its count: %+v", got)
+	}
+}
+
+// Every tool carries freshness, including the configuration. A service answer that
+// omitted it would be the one most likely to be read in isolation.
+func TestServiceReportCarriesFreshnessAndConfiguration(t *testing.T) {
+	r, _ := serviceReport(fixture(), "topnotch")
+	if r.Freshness.AssessedAt == "" || r.Freshness.Version == "" {
+		t.Errorf("want freshness on a service answer: %+v", r.Freshness)
+	}
+	if r.Freshness.Ran.VulnSource == "" {
+		t.Error("want the configuration on a service answer")
 	}
 }
 
