@@ -2,8 +2,13 @@ apiVersion: v2
 name: patchwright
 description: Turn noisy container-vulnerability scanner output into an actionable, owner-attributed report, reconciled against live clusters.
 type: application
-version: 0.2.0
-appVersion: "0.1.0"
+# Stamped at release from the tag; see .github/workflows/release.yaml. The committed
+# values are deliberately a development version, so a chart installed straight from a
+# checkout cannot be mistaken for a released one - and so nothing has to remember to
+# bump them, which is how appVersion came to sit at 0.1.0 while the image was at v1.29
+# and every deployment had to pin image.tag by hand.
+version: 0.0.0-dev
+appVersion: "0.0.0-dev"
 keywords:
   - security
   - vulnerability

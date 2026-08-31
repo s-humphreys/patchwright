@@ -209,8 +209,9 @@ reconcile:
   # Read the local cluster via the pod's ServiceAccount (RBAC only).
   local: true
   # Read additional clusters via a kubeconfig Secret with read-only contexts.
-  # Apply deploy/rbac/readonly-clusterrole.yaml in each remote cluster and point
-  # that context's user at the bound identity.
+  # Install the patchwright-rbac chart in each remote cluster
+  # (oci://ghcr.io/s-humphreys/charts/patchwright-rbac) and point that context's user
+  # at the identity it binds.
   remote:
     kubeconfigSecret: ""      # Secret containing a "kubeconfig" key
     contexts: []              # context names to read, e.g. [aks-prod-uk, gke-analytics]

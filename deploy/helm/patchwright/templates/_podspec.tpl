@@ -10,7 +10,7 @@ so they stay in sync. Callers pass a dict:
 
 {{- define "patchwright.container" -}}
 - name: patchwright
-  image: "{{ .root.Values.image.repository }}:{{ .root.Values.image.tag | default .root.Chart.AppVersion }}"
+  image: {{ include "patchwright.image" .root | quote }}
   imagePullPolicy: {{ .root.Values.image.pullPolicy }}
   args:
     - {{ .command }}

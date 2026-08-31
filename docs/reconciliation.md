@@ -73,6 +73,13 @@ Ingresses are deliberately not read.
 ## RBAC
 
 `get`/`list` on `pods` and `namespaces`, plus `services` and Gateway API
-`httproutes` when exposure is enabled. For remote clusters, apply
-[`deploy/rbac/readonly-clusterrole.yaml`](../deploy/rbac/readonly-clusterrole.yaml)
-and bind it to the identity the kubeconfig authenticates as.
+`httproutes` when exposure is enabled. For remote clusters, install the
+`patchwright-rbac` chart and bind it to the identity the kubeconfig authenticates as:
+
+```sh
+helm install patchwright-rbac oci://ghcr.io/s-humphreys/charts/patchwright-rbac \
+  --kube-context aks-prod-uk --set subject.name=<the identity>
+```
+
+The subject is required and placeholder-shaped values are refused; see
+[deploying](deploying.md#multi-cluster).

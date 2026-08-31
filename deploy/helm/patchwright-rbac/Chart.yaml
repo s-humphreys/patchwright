@@ -1,0 +1,16 @@
+apiVersion: v2
+name: patchwright-rbac
+description: Read-only access for patchwright in the clusters it reconciles against, but does not run in.
+type: application
+# Stamped at release from the tag; see .github/workflows/release.yaml. The committed
+# values are deliberately a development version, so a chart installed straight from a
+# checkout cannot be mistaken for a released one.
+version: 0.0.0-dev
+appVersion: "0.0.0-dev"
+keywords:
+  - security
+  - rbac
+  - kubernetes
+home: https://github.com/s-humphreys/patchwright
+sources:
+  - https://github.com/s-humphreys/patchwright

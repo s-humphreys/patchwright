@@ -1,0 +1,55 @@
+{{- /*
+The read set is assembled from what each feature actually needs, rather than granted
+wholesale. Nothing here can write, and nothing here can read a Secret or a ConfigMap.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "patchwright-rbac.name" . }}
+  labels:
+    {{- include "patchwright-rbac.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  # Always: liveness reconciliation and ownership attribution from namespace labels.
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list"]
+  {{- if .Values.rbac.exposure }}
+  # Internet exposure: what sits in front of a workload.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list"]
+  {{- end }}
+  {{- if .Values.rbac.remediation }}
+  # Where an upgrade would be applied: the workload, or the chart or operator that owns
+  # its tag.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["helmreleases"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["helmrepositories", "gitrepositories", "ocirepositories"]
+    verbs: ["get", "list"]
+  {{- end }}
+  {{- with .Values.rbac.customResourceGroups }}
+  {{- if has "*" . }}
+  {{- fail "rbac.customResourceGroups contains \"*\", which grants get on every resource in the cluster - including Secrets in every namespace. Name your operators' API groups instead." }}
+  {{- end }}
+  # Operator-deployed images: the version lives in the owning custom resource, so the
+  # report can only name the change target by reading it.
+  - apiGroups:
+      {{- toYaml . | nindent 6 }}
+    resources: ["*"]
+    verbs: ["get"]
+  {{- end }}

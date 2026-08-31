@@ -1,9 +1,34 @@
 # Deploying
 
-A container ([`Dockerfile`](../Dockerfile)) and a Helm chart
-([`deploy/helm/patchwright`](../deploy/helm/patchwright)) that runs it as a
-Deployment serving the [API](api.md). All values:
-[`values.yaml`](../deploy/helm/patchwright/values.yaml).
+A container and two Helm charts, all published to GHCR and versioned together:
+
+| Artefact | What it is |
+|---|---|
+| `ghcr.io/s-humphreys/patchwright` | the image |
+| `oci://ghcr.io/s-humphreys/charts/patchwright` | runs it as a Deployment serving the [API](api.md) |
+| `oci://ghcr.io/s-humphreys/charts/patchwright-rbac` | read-only grant for each cluster it reads but does not run in |
+
+```sh
+helm install pw oci://ghcr.io/s-humphreys/charts/patchwright --version 2.0.0
+```
+
+One version across all three, stamped at release. The chart's `appVersion` IS the image
+tag, so there is no tag to pin and nothing to go stale - which is worth stating because
+the previous arrangement had three separate workarounds for exactly that (see
+[Consuming it with Flux](#consuming-it-with-flux)).
+
+The charts are signed with cosign, keylessly, so the signature is bound to the release
+workflow's identity rather than to a key somebody holds:
+
+```sh
+cosign verify oci://ghcr.io/s-humphreys/charts/patchwright:2.0.0 \
+  --certificate-identity-regexp '^https://github.com/s-humphreys/patchwright/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+All values: [`values.yaml`](../deploy/helm/patchwright/values.yaml). The charts are in
+the repository too ([`deploy/helm`](../deploy/helm)), where their versions read
+`0.0.0-dev`: a chart installed from a checkout is deliberately not a released one.
 
 ## Required inputs
 
@@ -44,9 +69,37 @@ no credentials to manage.
 ## Multi-cluster
 
 Read the local cluster via its ServiceAccount and remote clusters via a kubeconfig
-Secret. In each remote cluster apply
-[`deploy/rbac/readonly-clusterrole.yaml`](../deploy/rbac/readonly-clusterrole.yaml)
-and bind it to the identity the kubeconfig authenticates as.
+Secret. In each remote cluster install the `patchwright-rbac` chart, bound to the
+identity that cluster authenticates patchwright as:
+
+```sh
+helm install patchwright-rbac oci://ghcr.io/s-humphreys/charts/patchwright-rbac \
+  --kube-context aks-prod-uk \
+  --set subject.name=<the identity>
+```
+
+The subject is required, and the chart refuses anything that reads as a placeholder -
+an empty value, `${VAR}`, `<object-id>`, `changeme`, or a `User` named in
+SCREAMING_SNAKE_CASE. That last one is not hypothetical: the hand-applied file this
+replaces once carried a bare `OBJECT_ID`, which `envsubst` leaves untouched because it
+has no dollar sign. The binding it produced authenticated a user called "OBJECT_ID" in
+every cluster, and replaced the grant that had been working - so nothing looked missing
+until the next assessment failed everywhere at once.
+
+With `authMode=azure` the subject is the managed identity's **object (principal) ID**,
+not its client ID: different GUIDs for the same identity, and the wrong one
+authenticates as nobody.
+
+```sh
+kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.principalId}'
+```
+
+The read set follows the features in use - `rbac.exposure` adds services and
+httproutes, `rbac.remediation` adds workloads and Flux resources so an image deployed
+by a chart or operator can be traced to the resource that sets its version. For
+operator-owned custom resources, name their API groups in
+`rbac.customResourceGroups`; `*` is refused, because `get` on every resource includes
+Secrets in every namespace.
 
 ```sh
 helm install pw deploy/helm/patchwright \
@@ -211,16 +264,24 @@ rotate. The alternative, a ServiceAccount token per cluster, means minting a lon
 credential for every cluster and storing them together, which is the practice this tool
 exists to argue against.
 
-Each cluster then needs the reader role and a binding for the identity, from
-`deploy/rbac/azure-workload-identity-reader.yaml`. The subject is the identity's OBJECT
-id, not its client id: they are different GUIDs for the same identity, and the wrong one
-authenticates as nobody. Read it from the ManagedIdentity status:
+Each cluster then needs the reader role and a binding for the identity, from the
+`patchwright-rbac` chart. The subject is the identity's OBJECT id, not its client id:
+they are different GUIDs for the same identity, and the wrong one authenticates as
+nobody. Read it from the ManagedIdentity status:
 
 ```sh
 kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.principalId}'
 ```
 
-Substitute that for `OBJECT_ID` in the file, then apply it in each cluster.
+Pass it as `subject.name`, in each cluster:
+
+```sh
+helm install patchwright-rbac oci://ghcr.io/s-humphreys/charts/patchwright-rbac \
+  --kube-context <remote-cluster> --set subject.name="$PRINCIPAL_ID"
+```
+
+There is no file to substitute into any more, which is the point: the chart refuses a
+subject that still looks like a placeholder rather than applying it.
 
 The kubeconfig itself is cluster and context stanzas only, with an empty users list.
 
@@ -266,6 +327,103 @@ scan that caused it.
 If it does get OOM-killed, drop `remediation.baseDiff.concurrency` to 4 before
 lowering the limit. Halving the concurrency roughly doubles that phase, which is the
 slower outcome but not the one that loses data.
+
+## Consuming it with Flux
+
+An `OCIRepository` for the chart and a `HelmRelease` that references it:
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: patchwright
+  namespace: flux-system
+spec:
+  interval: 60m
+  url: oci://ghcr.io/s-humphreys/charts/patchwright
+  ref:
+    tag: 2.0.0
+  # The cluster refuses a chart this workflow did not sign. A git tag can be moved by
+  # anyone with write access to the repository; this cannot be forged by them.
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: "^https://token\\.actions\\.githubusercontent\\.com$"
+        subject: "^https://github\\.com/s-humphreys/patchwright/"
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: patchwright
+  namespace: flux-system
+spec:
+  targetNamespace: patchwright
+  interval: 60m
+  releaseName: patchwright
+  chartRef:
+    kind: OCIRepository
+    name: patchwright
+    namespace: flux-system
+  # A first assessment takes longer than every default; see below.
+  timeout: 45m
+```
+
+Needs helm-controller v1.1 or newer for `chartRef`.
+
+### Upgrading from 1.x
+
+Breaking, and deliberately so: 1.x had no chart artefact to upgrade *from*.
+
+1. **Swap the source.** Replace the `GitRepository` with the `OCIRepository` above, and
+   `spec.chart` with `spec.chartRef`. Same release name, so it is an in-place Helm
+   upgrade rather than a reinstall - the release history and the PersistentVolumeClaim
+   carry over.
+2. **Delete three workarounds** from the HelmRelease: `reconcileStrategy: Revision`, the
+   pinned `image.tag`, and the GitRepository's `ignore:` filter. Each existed only
+   because the chart had no meaningful version; leaving `image.tag` behind is harmless
+   but will pin you to an old image on the next chart bump.
+3. **Reinstall the remote-cluster RBAC** with the `patchwright-rbac` chart. The two YAML
+   files under `deploy/rbac` are gone; see
+   [`deploy/rbac/README.md`](../deploy/rbac/README.md). The ClusterRole keeps its name,
+   so installing the chart adopts the existing grant rather than creating a second one -
+   Helm will refuse until you either delete the old objects or annotate them for
+   adoption:
+
+   ```sh
+   for kind in clusterrole clusterrolebinding; do
+     kubectl --context <remote> annotate "$kind" patchwright-reader \
+       meta.helm.sh/release-name=patchwright-rbac \
+       meta.helm.sh/release-namespace=default --overwrite
+     kubectl --context <remote> label "$kind" patchwright-reader \
+       app.kubernetes.io/managed-by=Helm --overwrite
+   done
+   ```
+
+   Check the rendered rules against what the cluster has before applying. The Azure file
+   granted more than the readonly one, so whichever you applied last is what you
+   currently have.
+4. **Nothing changes about the image**, the values, or the config. Values that worked on
+   1.x work here.
+
+### What this replaces, and why
+
+The chart used to be consumed from git: a `GitRepository` pinned to a tag, with an
+`ignore` filter stripping everything that was not the chart. That needed three
+workarounds, all of them symptoms of a chart with no meaningful version:
+
+- **`reconcileStrategy: Revision`**, because the chart's own version never moved.
+  Advancing the GitRepository tag installed the OLD chart: the tag changed, `Chart.yaml`
+  still said `0.2.0`, and Flux reused its cached artefact - so a fix that had already
+  been released kept failing exactly as before.
+- **`image.tag` pinned by hand**, because `appVersion` sat at `0.1.0` while the image
+  was at `v1.29`, so the chart's own default pointed at a tag that did not exist.
+- **The `ignore` filter**, because the chart shared a repository with the source, the
+  tests and the docs.
+
+None of them are needed now. The chart version is the release version, so a new tag is
+a new artefact by definition; `appVersion` is the image tag; and the artefact contains
+only the chart. A digest can be pinned as well (`ref.digest`), which a mutable git tag
+could never offer.
 
 ## Rollouts take as long as an assessment
 

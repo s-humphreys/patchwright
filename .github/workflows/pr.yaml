@@ -56,7 +56,44 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
-      - run: helm lint deploy/helm/patchwright --set provider.input.secretName=ci
+      - run: helm lint deploy/helm/patchwright --set provider.input.secretName=ci --set image.tag=v0.0.0-ci
+      - run: helm lint deploy/helm/patchwright-rbac --set subject.name=3f2a9c1e-7b44-4d0e-9a11-8c6b2e5f0d33
+      # Lint parses; it does not prove the templates render. These do, and they assert
+      # the guards that exist to stop a broken grant reaching a cluster.
+      - name: Render the charts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # An explicit tag, because the committed chart is a development copy and
+          # deliberately refuses to default to an image that does not exist.
+          helm template deploy/helm/patchwright \
+            --set provider.input.secretName=ci --set image.tag=v0.0.0-ci > /dev/null
+
+          # And that refusal is itself worth asserting: it is what stops somebody
+          # installing from a checkout and getting ImagePullBackOff with no explanation.
+          if helm template deploy/helm/patchwright --set provider.input.secretName=ci > /dev/null 2>&1; then
+            echo 'the development chart rendered without an image tag, and must not have' >&2
+            exit 1
+          fi
+
+          rbac=deploy/helm/patchwright-rbac
+          helm template "$rbac" --set subject.name=3f2a9c1e-7b44-4d0e-9a11-8c6b2e5f0d33 > /dev/null
+
+          # Each of these must FAIL to render. The bare OBJECT_ID is the one that
+          # shipped: envsubst leaves a name with no dollar sign untouched, and the
+          # binding it produced authenticated a user called "OBJECT_ID" in every
+          # cluster while replacing the one that worked.
+          for bad in '' '${OBJECT_ID}' 'OBJECT_ID' '<object-id>' 'changeme'; do
+            if helm template "$rbac" --set "subject.name=$bad" > /dev/null 2>&1; then
+              echo "subject.name='$bad' rendered, and must not have" >&2
+              exit 1
+            fi
+          done
+          if helm template "$rbac" --set subject.name=abc \
+              --set 'rbac.customResourceGroups={*}' > /dev/null 2>&1; then
+            echo 'a wildcard API group rendered, and must not have' >&2
+            exit 1
+          fi
 
   integration:
     name: integration-kind

@@ -88,7 +88,7 @@ somebody acts on:
 | [MCP](docs/mcp.md) | Read-only tools an LLM client can ask about the estate |
 | [Authentication](docs/authentication.md) | Sign-in with OIDC, and tokens for scripts |
 | [Metrics](docs/metrics.md) | Prometheus metrics and what to alert on |
-| [Deploying](docs/deploying.md) | Helm chart, RBAC, registry credentials |
+| [Deploying](docs/deploying.md) | OCI charts, RBAC, registry credentials, Flux |
 | [Development](docs/development.md) | Build, test, run against your own data |
 | [Security](SECURITY.md) | What it touches, and what it deliberately cannot do |
 
