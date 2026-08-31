@@ -13,7 +13,12 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 
+	"net/http"
+
+	"github.com/s-humphreys/patchwright/internal/mcp"
 	"github.com/s-humphreys/patchwright/internal/metrics"
+	"github.com/s-humphreys/patchwright/internal/version"
+	"github.com/s-humphreys/patchwright/pkg/analytics"
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -35,6 +40,15 @@ type FailureReporter interface {
 	Failures() []model.SourceFailure
 }
 
+// SourceReporter reports which optional stages the assessment was configured with.
+//
+// Optional like FailureReporter, and for a related reason: without it a stage that
+// never ran is indistinguishable from one that ran and found nothing, and the two
+// point at different people to go and fix something.
+type SourceReporter interface {
+	Sources() model.Sources
+}
+
 // TicketIndex reports the open tickets covering each image repository. It is
 // optional: without Jira configured the server simply has nothing to say about
 // tickets, rather than failing or pretending there are none.
@@ -47,7 +61,7 @@ type snapshot struct {
 	views       []sink.FindingView
 	summary     summaryView
 	owners      []ownerStats
-	analytics   AnalyticsView
+	analytics   analytics.AnalyticsView
 	byImage     map[string]sink.FindingView
 	generatedAt time.Time
 	err         string
@@ -55,6 +69,9 @@ type snapshot struct {
 	// beside the findings rather than inside them: a ticket is external state
 	// someone else can change, not a fact the assessment measured.
 	tickets map[string][]ticketRef
+	// sources is what the run was configured to do, so a consumer can tell an
+	// absent signal from an absent finding.
+	sources model.Sources
 }
 
 // ticketRef is the client-facing shape of an open ticket.
@@ -185,6 +202,9 @@ func (s *Server) Refresh(ctx context.Context) {
 		snap.views = buildViews(findings, s.includeSuppressed)
 		snap.summary = buildSummary(findings)
 		snap.summary.ExpiredSuppressions = s.expiredSuppressions()
+		if sr, ok := s.assessor.(SourceReporter); ok {
+			snap.sources = sr.Sources()
+		}
 		if fr, ok := s.assessor.(FailureReporter); ok {
 			for _, f := range fr.Failures() {
 				snap.summary.SourceFailures = append(snap.summary.SourceFailures,
@@ -198,7 +218,7 @@ func (s *Server) Refresh(ctx context.Context) {
 		snap.owners = buildOwnerStats(findings, snap.tickets)
 		// Same findings and the same ticket index as the owner rollup, so the two
 		// pages cannot disagree about the same team.
-		snap.analytics = buildAnalytics(findings, snap.tickets, time.Now())
+		snap.analytics = analytics.Build(findings, ticketsForAnalytics(snap.tickets), time.Now())
 		// Published after the rollup so the owner series and the fleet totals come
 		// from the same assessment; scraping between the two would show them
 		// disagreeing.
@@ -260,4 +280,46 @@ func indexByImage(views []sink.FindingView) map[string]sink.FindingView {
 		m[v.Image] = v
 	}
 	return m
+}
+
+// mcpHandler serves the Model Context Protocol over the same cached assessment the
+// API and the page read. Answering from one is a map lookup, so there is nothing to
+// gain from a second process holding a second copy of the credentials.
+func (s *Server) mcpHandler() http.Handler {
+	return mcp.Handler("patchwright", version.String(), func() mcp.Assessment {
+		snap := s.snapshot()
+		if snap == nil || snap.views == nil {
+			return mcp.Assessment{}
+		}
+		a := mcp.Assessment{
+			GeneratedAt: snap.generatedAt,
+			Version:     version.String(),
+			Findings:    snap.views,
+			Analytics:   snap.analytics,
+			Sources:     snap.sources,
+		}
+		if snap.summary.ProviderDataNewest != nil {
+			a.ProviderDataNewest = *snap.summary.ProviderDataNewest
+		}
+		return a
+	})
+}
+
+// ticketsForAnalytics narrows the server's ticket index to what the analytics need.
+//
+// The analytics package defines its own minimal ticket rather than importing this
+// one, so that anything holding an assessment can compute them. This is the
+// translation, and it is deliberately lossy: the analytics only ever ask whether
+// somebody has picked a ticket up.
+func ticketsForAnalytics(in map[string][]ticketRef) map[string][]analytics.Ticket {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string][]analytics.Ticket, len(in))
+	for repo, refs := range in {
+		for _, r := range refs {
+			out[repo] = append(out[repo], analytics.Ticket{Key: r.Key, Category: r.Category})
+		}
+	}
+	return out
 }

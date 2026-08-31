@@ -142,6 +142,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          # Stamped into the binary so the running deployment can say which build it
+          # is, rather than everyone inferring it from the image tag they think is
+          # deployed.
+          build-args: |
+            VERSION=v${{ steps.semantic.outputs.new_release_version }}
           # Publish an SBOM and build provenance with the image. A security review
           # asks what is in the artefact; this answers it from the build rather than
           # from a claim in a document.

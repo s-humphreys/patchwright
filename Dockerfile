@@ -5,13 +5,20 @@
 # the CVEs it carries fixes for. A floating tag would let a build pick a vulnerable
 # toolchain without anything failing.
 FROM --platform=$BUILDPLATFORM golang:1.27.0 AS build
+
+# The release tag, stamped into the binary so a running deployment can say which
+# build it is. Unset produces a binary that reports "dev", which is correct for a
+# local build and obvious in the UI.
+ARG VERSION=
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/patchwright ./cmd/patchwright
+    go build -trimpath \
+      -ldflags="-s -w -X github.com/s-humphreys/patchwright/internal/version.Version=${VERSION}" \
+      -o /out/patchwright ./cmd/patchwright
 
 # Bundle the Trivy binary so in-cluster vulnerability scanning works out of the
 # box (Trivy is a static binary and runs on distroless).

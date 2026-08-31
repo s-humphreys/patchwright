@@ -1,7 +1,15 @@
 # Design: MCP server for patchwright
 
-Status: **proposed.** Rewritten after the API server shipped, which changes the
-answer to the deployment question this note originally got wrong.
+Status: **shipped**, read-only. Five tools at `/mcp` in the `serve` process, behind
+the same authentication as everything else. See [docs/mcp.md](../mcp.md) for what
+they answer; this note records why the shape is what it is.
+
+The tool list below is what was proposed. What shipped is fewer and deeper: the
+questions people ask are about a SERVICE or a TEAM, not about a finding, so
+`service_report` and `team_report` absorbed `explain_finding`, `list_findings`,
+`biggest_wins` and `not_addressed` rather than each being its own thin wrapper. Open
+question 2 was the reason - the original list was inferred from what the page shows
+rather than from anybody's questions.
 
 ## Why
 
@@ -132,6 +140,7 @@ enough by the time this is built.
    loop. Reads are cheap, but `refresh` is not, and the API has no limiting today.
    Whether that belongs here or in front of it is worth settling before a client
    discovers it.
-4. **Is `refresh` a tool at all?** It is the one expensive operation, and a
-   scheduled assessment already keeps the cache current. Leaving it out removes the
-   rate-limiting question entirely.
+4. ~~**Is `refresh` a tool at all?**~~ **Settled: no.** Leaving it out removed the
+   rate-limiting question in 3 with it - every remaining tool is a map lookup over
+   the cached assessment, so a client calling in a loop costs nothing worth
+   defending against.
