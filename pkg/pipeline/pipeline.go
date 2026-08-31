@@ -127,6 +127,12 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	// would be the same lie in the other direction.
 	p.failures = nil
 
+	// A memo for this run, so two stages that need the same expensive fetch pay for it
+	// once. The age and exploit sources both sweep the scan platform's whole
+	// vulnerability catalogue, which measured two minutes each of a ten-minute run.
+	// Scoped to the run, so nothing carries over into the next one.
+	ctx = enrich.WithRunCache(ctx)
+
 	if _, err := p.attributor.AttributeAll(occurrences); err != nil {
 		return nil, err
 	}

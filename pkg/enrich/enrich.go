@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -57,6 +58,20 @@ func (o Options) StringOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// Int returns the value for key as a non-negative integer, or 0 when it is absent or
+// unparseable.
+//
+// Unparseable reads as absent rather than as an error: an option is a tuning knob, and
+// a typo in one should leave the default in place rather than refuse to start an
+// assessment. Callers treat 0 as "not set".
+func (o Options) Int(key string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(o[key]))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // Factory constructs a LiveSource from Options.

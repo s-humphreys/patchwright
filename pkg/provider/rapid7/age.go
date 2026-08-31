@@ -2,7 +2,6 @@ package rapid7
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -38,29 +37,19 @@ type ageSource struct {
 
 func (a *ageSource) Name() string { return "rapid7" }
 
-// vulnRow is the subset of a CVE row this needs.
-type vulnRow struct {
-	CVEID      string `json:"cve_id"`
-	FirstFound string `json:"first_found"`
-	LastSeen   string `json:"last_seen"`
-}
-
 // FirstSeen sweeps the estate's CVEs and returns the times for the ids asked about.
 //
 // Ids the platform knows nothing about are omitted, not zeroed: a CVE Trivy found
 // and Rapid7 has never seen has an unknown age, and reporting it as the epoch would
 // make it the oldest thing in the queue.
 func (a *ageSource) FirstSeen(ctx context.Context, cveIDs []string) (map[string]time.Time, error) {
-	want := make(map[string]struct{}, len(cveIDs))
-	for _, id := range cveIDs {
-		want[strings.ToUpper(id)] = struct{}{}
-	}
+	want := wanted(cveIDs)
 
-	rows, err := sweep[vulnRow](ctx, a.api, func(page int) string {
-		return fmt.Sprintf("/v3/cvm/vulnerabilities?page=%d&page_size=%d", page, apiPageSize)
-	})
+	// One sweep per run, shared with the exploit source, which reads other fields of
+	// the same rows. See catalogue.go.
+	rows, err := catalogue(ctx, a.api)
 	if err != nil {
-		return nil, fmt.Errorf("rapid7 vulnerabilities: %w", err)
+		return nil, err
 	}
 	out := make(map[string]time.Time, len(cveIDs))
 	for _, row := range rows {

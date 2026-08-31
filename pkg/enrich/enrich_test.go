@@ -404,3 +404,44 @@ func TestExposureFailureLeavesEverythingAlone(t *testing.T) {
 		t.Error("a failed read must not assert anything about exposure")
 	}
 }
+
+// One concurrency for every source was measurably wrong: four at a time suits an image
+// pull and starves an API source, where a scan is one request rather than a download.
+type statedConcurrency struct {
+	enrich.VulnSource
+	n int
+}
+
+func (s statedConcurrency) ScanConcurrency() int { return s.n }
+
+func TestASourceStatesItsOwnConcurrency(t *testing.T) {
+	base := fakeVulnSource{}
+	// A source that says nothing keeps the cautious default, since a source that has
+	// not thought about it is more likely to be pulling images than making requests.
+	quiet := enrich.NewImageScanner(base).Concurrency
+	if quiet != 4 {
+		t.Errorf("a source that says nothing got %d, want 4", quiet)
+	}
+	if got := enrich.NewImageScanner(statedConcurrency{VulnSource: base, n: 16}).Concurrency; got != 16 {
+		t.Errorf("Concurrency = %d, want the source's own 16", got)
+	}
+	// Nonsense from a source gets the default rather than a stalled or unbounded scan.
+	for _, n := range []int{0, -3} {
+		if got := enrich.NewImageScanner(statedConcurrency{VulnSource: base, n: n}).Concurrency; got != quiet {
+			t.Errorf("a source stating %d got concurrency %d, want the default %d", n, got, quiet)
+		}
+	}
+}
+
+func TestOptionsIntTreatsNonsenseAsAbsent(t *testing.T) {
+	// A typo in a tuning knob should leave the default in place rather than refuse to
+	// start a twenty-five-minute assessment.
+	for _, in := range []string{"", "  ", "twelve", "-4", "4.5"} {
+		if got := (enrich.Options{"concurrency": in}).Int("concurrency"); got != 0 {
+			t.Errorf("Int(%q) = %d, want 0 so the caller keeps its default", in, got)
+		}
+	}
+	if got := (enrich.Options{"concurrency": " 12 "}).Int("concurrency"); got != 12 {
+		t.Errorf("Int = %d, want 12", got)
+	}
+}

@@ -381,7 +381,7 @@ func TestSweepFetchesPagesConcurrently(t *testing.T) {
 	defer srv.Close()
 
 	p := &apiProvider{baseURL: srv.URL, apiKey: "k", client: srv.Client()}
-	rows, err := sweep[exploitVulnRow](context.Background(), p, func(page int) string {
+	rows, err := sweep[catalogueRow](context.Background(), p, func(page int) string {
 		return fmt.Sprintf("/v3/cvm/vulnerabilities?page=%d&page_size=1", page)
 	})
 	if err != nil {
