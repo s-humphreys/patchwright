@@ -99,6 +99,29 @@ that mentions only the wins leaves somebody believing the service is clean of th
 nothing to point at, and the plan says which configuration would supply one rather than
 leaving an agent to guess.
 
+Not every service has something to bump. Where one is already on the newest base its
+line can reach, there is no change to describe and no result to report, so the plan
+says what the situation needs instead - and names the CVEs the decision is about:
+
+```
+why      urgent, 2 known-exploited CVEs, 4,145 vulnerabilities across 1 deployment
+
+decide   Already on the newest version available (python3.12-bookworm), so this is
+         not a bump. The remaining CVEs need a decision: wait for upstream, rebuild
+         to pick up a moved tag, or accept and record why.
+
+known_exploited
+         CVE-2026-31431 (critical, fix 2.31.1)
+         CVE-2025-48384 (high, no fix published)
+
+unknown  whether anybody has started
+```
+
+This is the branch that most needs the identifiers and the one where nothing else
+supplies them: mitigate, isolate or accept is decided one CVE at a time, and a service
+with no upgrade to take has no differential to list what an upgrade would clear. It is
+not a rare path - on one estate three of a single team's eight items are in it.
+
 `service_report` is the deep one. Asked about a service it returns the split that
 turns a number into a conversation:
 
