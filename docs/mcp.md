@@ -41,6 +41,7 @@ do       change the base image this is built on
          from  docker.io/python@sha256:3966b818...
          to    docker.io/python:3.12.14      (a version change, not a rebuild)
          yours: yes, across Development US, PreProduction US, Production US
+         repository: https://dev.example/org/proj/_git/storefront
 
 do not   go to 3.14.7, the newest available. Policy holds this line at 3.12:
          "the analytics toolkit's dependencies are not 3.14 ready (data team, Aug 2026)"
@@ -50,6 +51,9 @@ result   clears 5,857 of 6,746, including all 10 known-exploited
          880 not yours: still in the new base, upstream's to fix
              linux-libc-dev (518), binutils (57), libbinutils (57) ...
          9 still yours
+         verify: afterwards expect about 1,185 rather than 6,746, with 10 of
+                 10 known-exploited gone. A remainder is expected.
+         known_exploited: CVE-2025-48384 (cleared), CVE-2026-31431 (cleared) ...
 
 also     reporting-tools takes the same move
 
@@ -65,9 +69,21 @@ would do nothing. And **what was never yours**, because a ticket closed with 880
 vulnerabilities left on the service gets reopened unless somebody can say why those 880 are
 an upstream wait.
 
-`unknown` is not filler. Patchwright reads images, not the code that produced them, so it
-knows the base image to change and not where the Dockerfile lives - and saying so beats a
-plan that looks complete.
+Three of those exist because the reader may be a coding agent rather than a person.
+**`repository`** is where the change goes, read from the image's own labels - patchwright
+reads images, not the code that produced them, so the build has to say. The keys are
+configuration, `remediation.base.repoLabels`, because they belong to the CI system: the
+OCI standard `org.opencontainers.image.source` names a project's source, while a CI system
+usually writes the repository that ran the build, and only the second answers "would a
+pull request here rebuild this image". **`verify`** is what the service should look like
+afterwards, so an expected remainder is not read as the change having failed.
+**`known_exploited`** names each exploited CVE and whether this change clears it - the
+list a pull request description wants, including the ones that survive, because a ticket
+that mentions only the wins leaves somebody believing the service is clean of them.
+
+`unknown` is not filler either. Where the image records no repository label there is
+nothing to point at, and the plan says which configuration would supply one rather than
+leaving an agent to guess.
 
 `service_report` is the deep one. Asked about a service it returns the split that
 turns a number into a conversation:

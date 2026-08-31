@@ -60,6 +60,11 @@ type FixAction struct {
 	// AppliedIn names what owns the tag and editing the build would do nothing.
 	Yours     bool   `json:"yours"`
 	AppliedIn string `json:"applied_in,omitempty"`
+	// Repository is the source repository that built the image, from the labels named by
+	// remediation.base.repoLabels. This is what turns a plan into something a coding
+	// agent can act on: patchwright reads images, not the code that produced them, so
+	// without the label there is nothing to point at.
+	Repository string `json:"repository,omitempty"`
 	// Deployments is how many running deployments the change has to reach.
 	Deployments int      `json:"deployments"`
 	Where       []string `json:"where,omitempty"`
@@ -84,6 +89,24 @@ type FixResult struct {
 	Packages    []string `json:"remaining_packages,omitempty"`
 	// StillYours is what the change does not cover and the team does own.
 	StillYours int `json:"still_yours"`
+	// Verify is what to expect afterwards, in one sentence. An agent that does not know
+	// the remainder is expected reads it as the change having failed.
+	Verify string `json:"verify,omitempty"`
+	// KnownExploited names the exploited CVEs and whether this change deals with each.
+	// The list a pull request description wants, and the one to re-check when it lands.
+	KnownExploited []ExploitedCVE `json:"known_exploited,omitempty"`
+}
+
+// ExploitedCVE is one known-exploited vulnerability and this change's effect on it.
+type ExploitedCVE struct {
+	ID string `json:"id"`
+	// ClearedByThis is true when the change removes it. False means it survives, and the
+	// service still carries it afterwards - which is the half a ticket must not silently
+	// drop.
+	ClearedByThis bool   `json:"cleared_by_this"`
+	Severity      string `json:"severity,omitempty"`
+	FixedVersion  string `json:"fixed_version,omitempty"`
+	Reference     string `json:"reference"`
 }
 
 // fixPlan builds the plan for one service, or false when nothing matches.
@@ -113,7 +136,7 @@ func fixPlan(a Assessment, name string) (FixPlan, bool) {
 	case "upgrade":
 		p.Do = &FixAction{
 			Change: changeWords(u.Kind), From: u.From, To: u.To, Kind: u.Move,
-			Yours: u.Yours, AppliedIn: u.AppliedIn,
+			Yours: u.Yours, AppliedIn: u.AppliedIn, Repository: r.BuildRepo,
 			Deployments: len(r.Deployments), Where: places(r),
 		}
 		if r.InProgress != nil {
@@ -259,6 +282,16 @@ func fixResult(r ServiceReport, u *UpgradeAdvice) *FixResult {
 			out.Packages = append(out.Packages, fmt.Sprintf("%s (%d)", p.Name, p.CVEs))
 		}
 	}
+	out.KnownExploited = u.Exploited
+	// What to expect afterwards. Without it a remainder reads as the change not having
+	// worked, and somebody either reopens the ticket or goes looking for a second fix
+	// that does not exist.
+	out.Verify = fmt.Sprintf(
+		"After the change this service should report about %d vulnerabilities rather than %d, "+
+			"with %d of the %d known-exploited gone. A remainder is expected: %d stay because "+
+			"the new base still carries them.",
+		out.Of-out.Clears+out.Introduces, out.Of,
+		out.ClearsKnownExploited, out.ClearsKnownExploited+u.LeavesKnownExploited, out.NotYours)
 	return out
 }
 
@@ -305,9 +338,10 @@ func unknowns(r ServiceReport, u *UpgradeAdvice) []string {
 	var out []string
 	// The one an engineer asks first and patchwright cannot answer: it knows the base
 	// image to change and not where the build that sets it lives.
-	if u.State == "upgrade" && u.Yours {
-		out = append(out, "which repository holds the build that sets this - patchwright reads "+
-			"images, not the code that produced them")
+	if u.State == "upgrade" && u.Yours && r.BuildRepo == "" {
+		out = append(out, "which repository holds the build that sets this: the image records no "+
+			"repository label. Patchwright reads images, not the code that produced them, so the "+
+			"build has to say - see remediation.base.repoLabels for the keys it looks at")
 	}
 	if r.InProgress == nil {
 		out = append(out, "whether anybody has started: no open pull request was matched, and on "+

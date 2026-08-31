@@ -91,6 +91,13 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 		if img.Upgrade == nil || !img.Upgrade.Available {
 			continue // nothing to be in flight for
 		}
+		// The image facts stage has already read this label off the same cached config,
+		// so prefer what it found: one read, and one definition of where a build
+		// repository comes from.
+		if img.BuildRepo != "" {
+			repos[img.Image.Ref] = lastPathSegment(img.BuildRepo)
+			continue
+		}
 		wg.Add(1)
 		go func(ref string) {
 			defer wg.Done()

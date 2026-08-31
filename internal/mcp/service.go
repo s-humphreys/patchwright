@@ -31,6 +31,10 @@ type ServiceReport struct {
 	// taken from the scan provider.
 	Exposure string `json:"exposure"`
 
+	// BuildRepo is the source repository that built the image, from the labels named by
+	// remediation.base.repoLabels. Absent means the image records none.
+	BuildRepo string `json:"build_repo,omitempty"`
+
 	Deployments []Deployment `json:"deployments"`
 	// ImageAgeDays is how long ago the newest deployed image was built. An old one
 	// means this has not shipped, which is a different conversation from a team
@@ -119,6 +123,9 @@ type UpgradeAdvice struct {
 	// still needs a decision afterwards.
 	ClearsKnownExploited int `json:"clears_known_exploited"`
 	LeavesKnownExploited int `json:"leaves_known_exploited"`
+	// Exploited names them. A count tells somebody how much; the identifiers are what
+	// goes in a pull request description and what is re-checked when it lands.
+	Exploited []ExploitedCVE `json:"exploited,omitempty"`
 	// State says which kind of answer this is, because four of them are not moves:
 	// "upgrade" has a version to go to, "latest" is already on the newest available,
 	// "held" is a newer version policy declined, "unresolved" is a lookup that could
@@ -243,6 +250,12 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 		}
 	}
 	out.Freshness = freshness(a)
+	for _, f := range mine {
+		if f.BuildRepo != "" {
+			out.BuildRepo = f.BuildRepo
+			break
+		}
+	}
 	out.Vulnerabilities = summariseVulns(mine, lead)
 	out.Upgrade = upgradeAdvice(mine, lead)
 	out.InProgress = inProgress(lead)
@@ -378,12 +391,14 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 				out.Clears++
 				if cve.KEV {
 					out.ClearsKnownExploited++
+					out.Exploited = append(out.Exploited, exploited(cve, true))
 				}
 			case cve.Origin == "base":
 				out.Leaves++
 				out.Remainder.StillInBase++
 				if cve.KEV {
 					out.LeavesKnownExploited++
+					out.Exploited = append(out.Exploited, exploited(cve, false))
 				}
 				for _, pkg := range cve.Packages {
 					key := pkg.Ecosystem + "/" + pkg.Name
@@ -430,6 +445,15 @@ func upgradeState(u *sink.UpgradeView) string {
 		return "held"
 	default:
 		return "latest"
+	}
+}
+
+// exploited records one known-exploited CVE and whether this move deals with it.
+func exploited(v sink.VulnView, cleared bool) ExploitedCVE {
+	return ExploitedCVE{
+		ID: v.ID, ClearedByThis: cleared, Severity: v.Severity,
+		FixedVersion: v.FixedVersion,
+		Reference:    "https://www.cve.org/CVERecord?id=" + v.ID,
 	}
 }
 

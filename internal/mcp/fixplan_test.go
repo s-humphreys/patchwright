@@ -172,3 +172,83 @@ func TestAPlanForAnUnknownServiceMissesCleanly(t *testing.T) {
 		t.Error("want a miss rather than an empty plan, which would read as no work")
 	}
 }
+
+// What a coding agent needs beyond the change itself: where the code is, which CVEs to
+// name in the pull request, and what the service should look like afterwards so a
+// remainder is not read as the change having failed.
+func TestAPlanCarriesWhatAnAgentNeedsToAct(t *testing.T) {
+	a := fixture()
+	for i := range a.Findings {
+		a.Findings[i].BuildRepo = "https://dev.example/org/proj/_git/storefront"
+	}
+	p, ok := fixPlan(a, "storefront")
+	if !ok {
+		t.Fatal("want a plan")
+	}
+	if p.Do.Repository != "https://dev.example/org/proj/_git/storefront" {
+		t.Errorf("repository = %q, want the build repo the image records", p.Do.Repository)
+	}
+	// With the repo known, it is no longer an unknown.
+	if strings.Contains(strings.Join(p.Unknown, " "), "which repository") {
+		t.Errorf("repository is known, so it must not also be listed as unknown: %v", p.Unknown)
+	}
+
+	// The exploited CVEs, named, each with whether this change deals with it.
+	if len(p.Result.KnownExploited) != 1 {
+		t.Fatalf("want the exploited CVE named, got %+v", p.Result.KnownExploited)
+	}
+	kev := p.Result.KnownExploited[0]
+	if kev.ID != "CVE-2026-1" || !kev.ClearedByThis {
+		t.Errorf("wrong verdict on the exploited CVE: %+v", kev)
+	}
+	if !strings.HasSuffix(kev.Reference, "CVE-2026-1") {
+		t.Errorf("want a public reference: %q", kev.Reference)
+	}
+
+	// And what to expect afterwards, so the remainder is not mistaken for a failure.
+	if !strings.Contains(p.Result.Verify, "remainder is expected") {
+		t.Errorf("verify = %q, want it to say a remainder is expected", p.Result.Verify)
+	}
+}
+
+// No label, no repository - and the plan says which config would supply one rather than
+// leaving an agent to guess.
+func TestAPlanSaysWhyTheRepositoryIsMissing(t *testing.T) {
+	p, ok := fixPlan(fixture(), "storefront")
+	if !ok {
+		t.Fatal("want a plan")
+	}
+	if p.Do.Repository != "" {
+		t.Errorf("want no repository when the image records no label, got %q", p.Do.Repository)
+	}
+	joined := strings.Join(p.Unknown, " ")
+	if !strings.Contains(joined, "repoLabels") {
+		t.Errorf("want the config that would supply it named: %v", p.Unknown)
+	}
+}
+
+// An exploited CVE the change does NOT clear must be named too: a ticket that lists only
+// the wins leaves somebody believing the service is clean of them afterwards.
+func TestAPlanNamesTheExploitedCVEsItDoesNotClear(t *testing.T) {
+	a := fixture()
+	for i := range a.Findings {
+		for j := range a.Findings[i].Vulns {
+			if a.Findings[i].Vulns[j].ID == "CVE-2026-2" {
+				a.Findings[i].Vulns[j].KEV = true
+			}
+		}
+	}
+	p, _ := fixPlan(a, "storefront")
+	var cleared, stays int
+	for _, k := range p.Result.KnownExploited {
+		if k.ClearedByThis {
+			cleared++
+		} else {
+			stays++
+		}
+	}
+	if cleared != 1 || stays != 1 {
+		t.Errorf("want one cleared and one surviving, got %d and %d: %+v",
+			cleared, stays, p.Result.KnownExploited)
+	}
+}

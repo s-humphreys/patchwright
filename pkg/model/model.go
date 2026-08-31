@@ -324,6 +324,10 @@ type AssessedImage struct {
 	// not the same as it finding nothing.
 	BaseDiff *BaseDiff
 
+	// BuildRepo is the source repository that built this image, read from the labels
+	// named by remediation.base.repoLabels. Empty when the image records none, which is
+	// a real answer: nothing can point at the code that produced it.
+	BuildRepo string
 	// ImageBuilt is when the image was built, per its own config. Zero when it was
 	// not read or the image records none - never "built at the epoch".
 	//
@@ -549,6 +553,8 @@ type Finding struct {
 	// BaseDiff is what scanning this image's base established. Nil when the
 	// differential did not run.
 	BaseDiff *BaseDiff
+	// BuildRepo is the source repository that built this image, when it records one.
+	BuildRepo string
 	// ImageBuilt is when the image was built, per its own config. Zero when unread
 	// or unstated.
 	ImageBuilt time.Time

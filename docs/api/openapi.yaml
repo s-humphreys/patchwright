@@ -720,6 +720,16 @@ components:
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
         base_diff: { $ref: "#/components/schemas/BaseDiff" }
+        build_repo:
+          type: string
+          description: >-
+            The source repository that built this image, from the labels named by
+            `remediation.base.repoLabels`. Absent means the image records none - so
+            nothing can point at the code that produced it, which is a real answer rather
+            than a gap. The keys are configuration because they belong to the CI system:
+            the OCI standard key names a project's source, while a CI system usually
+            writes the repository that ran the build, and only the second answers "would
+            a pull request here rebuild this image".
         image_built:
           type: string
           format: date-time

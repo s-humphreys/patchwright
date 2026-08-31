@@ -44,7 +44,7 @@ func TestImageAgeRecordsWhenAFirstPartyImageWasBuilt(t *testing.T) {
 	}}
 	images := []model.AssessedImage{{Image: model.ParseImageRef("acr.example.com/api:1")}}
 
-	e := &ImageAgeEnricher{Cfg: ageCfg(), Inspector: insp}
+	e := &ImageFactsEnricher{Cfg: ageCfg(), Inspector: insp}
 	if err := e.EnrichImages(context.Background(), images); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestThirdPartyImagesAreNotRead(t *testing.T) {
 		{Image: model.ParseImageRef("docker.io/library/nginx:1")},
 		{Image: model.ParseImageRef("acr.example.com/api:1")},
 	}
-	e := &ImageAgeEnricher{Cfg: ageCfg(), Inspector: insp}
+	e := &ImageFactsEnricher{Cfg: ageCfg(), Inspector: insp}
 	if err := e.EnrichImages(context.Background(), images); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestAnImageWithNoBuildDateStaysZeroRatherThanEpoch(t *testing.T) {
 	// "oldest first" ordering.
 	insp := &ageInspector{cfg: map[string]ImageConfig{"acr.example.com/api:1": {}}}
 	images := []model.AssessedImage{{Image: model.ParseImageRef("acr.example.com/api:1")}}
-	e := &ImageAgeEnricher{Cfg: ageCfg(), Inspector: insp}
+	e := &ImageFactsEnricher{Cfg: ageCfg(), Inspector: insp}
 	if err := e.EnrichImages(context.Background(), images); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestAnUnreadableImageLosesOnlyItsDate(t *testing.T) {
 	// not cost the assessment.
 	insp := &ageInspector{err: errors.New("unauthorized")}
 	images := []model.AssessedImage{{Image: model.ParseImageRef("acr.example.com/api:1")}}
-	e := &ImageAgeEnricher{Cfg: ageCfg(), Inspector: insp}
+	e := &ImageFactsEnricher{Cfg: ageCfg(), Inspector: insp}
 	if err := e.EnrichImages(context.Background(), images); err != nil {
 		t.Errorf("an unreadable image must not fail the run: %v", err)
 	}
