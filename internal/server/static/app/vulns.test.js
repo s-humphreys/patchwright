@@ -24,16 +24,25 @@ const { openDetail, closeDetail } = await import('./detail.js');
 
 // Every fetch is stubbed: these are about the state machine, not the network.
 let calls = 0;
+/** @type {string[]} */
+let urls = [];
 /** @type {(url: string) => Promise<any>} */
 let responder = async () => ({ findings: [] });
 globalThis.fetch = async (url) => {
   calls++;
+  urls.push(String(url));
   const body = await responder(String(url));
   return { ok: true, json: async () => body };
 };
 
+// The two endpoints in play: the whole set for the CVE view, one image for a panel.
+const respondWith = (vulns) => async (url) => (url.includes("/api/v1/finding?image=")
+  ? { finding: { image: "reg/app:1.0.0", vulns } }
+  : { findings: [{ image: "reg/app:1.0.0", vulns }] });
+
 function setUp() {
   calls = 0;
+  urls = [];
   S.assessedAt = '2026-08-31T09:00:00Z';
   S.queueRows = [];
   S.vulnError = undefined;
@@ -57,7 +66,7 @@ test('detail is absent until something asks for it, then present', async () => {
   S.queueRows = [summaryRow()];
   assert.equal(vulnState(), 'absent', 'summary rows carry no CVEs');
 
-  responder = async () => ({ findings: [{ image: 'reg/app:1.0.0', vulns: [{ id: 'CVE-1' }] }] });
+  responder = respondWith([{ id: 'CVE-1' }]);
   let settled = 0;
   assert.equal(ensureVulns(() => settled++), 'loading');
   await new Promise((r) => setTimeout(r, 0));
@@ -73,7 +82,7 @@ test('detail merges into the existing row objects', async () => {
   setUp();
   const row = summaryRow();
   S.queueRows = [row];
-  responder = async () => ({ findings: [{ image: 'reg/app:1.0.0', vulns: [{ id: 'CVE-9' }] }] });
+  responder = respondWith([{ id: 'CVE-9' }]);
   ensureVulns();
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(row.vulns[0].id, 'CVE-9', 'the same object the queue and panel share');
@@ -82,7 +91,7 @@ test('detail merges into the existing row objects', async () => {
 test('one load serves every caller', async () => {
   setUp();
   S.queueRows = [summaryRow()];
-  responder = async () => ({ findings: [{ image: 'reg/app:1.0.0', vulns: [] }] });
+  responder = respondWith([]);
   let settled = 0;
   ensureVulns(() => settled++);
   ensureVulns(() => settled++);
@@ -135,7 +144,7 @@ test('the callback never runs before the caller returns', async () => {
 test('a new assessment invalidates loaded detail', async () => {
   setUp();
   S.queueRows = [summaryRow()];
-  responder = async () => ({ findings: [{ image: 'reg/app:1.0.0', vulns: [{ id: 'CVE-1' }] }] });
+  responder = respondWith([{ id: 'CVE-1' }]);
   ensureVulns();
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(vulnState(), 'ready');
@@ -189,12 +198,7 @@ test('an open panel fills in when detail arrives', async () => {
   setUp();
   const row = summaryRow();
   S.queueRows = [row];
-  responder = async () => ({
-    findings: [{
-      image: 'reg/app:1.0.0',
-      vulns: [{ id: 'CVE-7', severity: 'critical', cvss: 9.8, epss: 0.91, kev: true }],
-    }],
-  });
+  responder = respondWith([{ id: 'CVE-7', severity: 'critical', cvss: 9.8, epss: 0.91, kev: true }]);
 
   openDetail(row);
   assert.match(document.querySelector('#detail').textContent, /Loading/);
@@ -213,4 +217,70 @@ test('an unscanned image still says why it has no CVE detail', () => {
   const text = document.querySelector('#detail').textContent;
   assert.match(text, /was not scanned/);
   assert.doesNotMatch(text, /Loading/);
+});
+
+// A panel needs one image's CVEs. The estate's worth of them is 2.6MB compressed, and
+// most readers open a panel long before they open the CVE view.
+test('opening a panel fetches only that image', async () => {
+  setUp();
+  const row = summaryRow();
+  S.queueRows = [row, summaryRow({ image: 'reg/other:2.0.0' })];
+  responder = respondWith([{ id: 'CVE-3' }]);
+
+  openDetail(row);
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(calls, 1, 'one request, not the whole estate');
+  assert.match(urls[0], /\/api\/v1\/finding\?image=reg%2Fapp%3A1\.0\.0$/,
+    'the single-finding endpoint, with the reference encoded');
+  assert.deepEqual(row.vulns, [{ id: 'CVE-3' }]);
+  assert.equal(S.queueRows[1].vulns, undefined, 'the row nobody opened was left alone');
+});
+
+// Reopening the same panel must not re-fetch what is already there.
+test('a second open of the same panel costs nothing', async () => {
+  setUp();
+  const row = summaryRow();
+  S.queueRows = [row];
+  responder = respondWith([{ id: 'CVE-3' }]);
+  openDetail(row);
+  await new Promise((r) => setTimeout(r, 0));
+  const after = calls;
+  openDetail(row);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls, after, 'no request for detail already on the page');
+});
+
+// A work item is typically the same service at two or three tags, and the panel lists
+// all of them.
+test('opening a work item fetches every deployment in it, once', async () => {
+  setUp();
+  const rows = [summaryRow(), summaryRow({ image: 'reg/app:1.0.1' })];
+  S.queueRows = rows;
+  responder = async (url) => ({
+    finding: { image: decodeURIComponent(url.split('image=')[1]), vulns: [{ id: 'CVE-5' }] },
+  });
+
+  const { ensureDetail } = await import('./vulns.js');
+  let settled = 0;
+  assert.equal(ensureDetail(rows, () => settled++), false);
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(calls, 2, 'one request per deployment');
+  assert.equal(settled, 1, 'the caller is told once, when the last lands');
+  assert.ok(rows.every((r) => r.vulns.length === 1));
+  assert.equal(ensureDetail(rows), true, 'and now there is nothing to wait for');
+});
+
+// A scanned image with no CVEs must end up with an empty array, not stay undefined -
+// otherwise the panel says "loading" forever over an image that is genuinely clean.
+test('an image with no CVEs stops waiting', async () => {
+  setUp();
+  const row = summaryRow({ vuln_count: 0 });
+  S.queueRows = [row];
+  responder = respondWith([]);
+  openDetail(row);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(row.vulns, [], 'scanned and none found is an answer');
+  assert.match(document.querySelector('#detail').textContent, /no CVEs were found/);
 });

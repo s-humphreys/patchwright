@@ -4,7 +4,7 @@ import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, u
 import { cveGroup } from './cves.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
-import { ensureVulns } from './vulns.js';
+import { detailFailed, ensureDetail } from './vulns.js';
 
 // The detail panel: everything about one finding, on demand.
 //
@@ -84,7 +84,7 @@ function vulnTable(f) {
   // empty are different values, and a finding that already carries its CVEs has
   // nothing to wait for.
   if (f.vulns === undefined) {
-    return S.vulnError
+    return detailFailed(f.image)
       ? `<p class="unknown">Per-CVE detail could not be loaded: ${esc(S.vulnError)}.
          This image has ${f.vuln_count ?? "an unknown number of"} CVEs.</p>`
       : `<p class="muted">Loading ${f.vuln_count ? f.vuln_count + " " : ""}CVEs\u2026</p>`;
@@ -300,7 +300,9 @@ export function openDetail(f) {
   // Per-CVE detail is not on the page until something asks for it. Repaint when it
   // lands, and only if this panel is still the one open: reopening a panel the reader
   // has since navigated away from would yank them back.
-  ensureVulns(() => {
+  // One image's CVEs, not the estate's: a panel is a few kilobytes where the whole
+  // set is megabytes, and most readers open a panel long before they open the CVE view.
+  ensureDetail([f], () => {
     if (shownImage() === f.image && !shownGroup()) openDetail(f);
   });
   const repaint = reopeningSame("finding", f.image);
@@ -549,7 +551,8 @@ export function initCVEDetail(lookup) {
 
 /** openGroupDetail shows one work item: the shared change, and every tag it covers. */
 export function openGroupDetail(g) {
-  ensureVulns(() => {
+  // Every deployment in the item, which is typically two or three tags of one service.
+  ensureDetail(g.findings || [], () => {
     if (shownGroup() === g.key) openGroupDetail(g);
   });
   const repaint = reopeningSame("group", g.key);

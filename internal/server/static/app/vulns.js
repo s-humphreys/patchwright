@@ -87,7 +87,62 @@ export function retryVulns() {
 export function resetVulns() {
   attempt = null;
   waiting.length = 0;
+  perImage.clear();
   S.vulnError = undefined;
+}
+
+// Per-image detail, for a panel.
+//
+// A panel needs the CVEs of one image, and the estate's worth of them is 2.6MB
+// compressed. /api/v1/finding?image= answers in a few kilobytes, so opening a row does
+// not pay for the CVE view somebody may never look at.
+//
+// Tracked per image rather than through the single attempt above: these are
+// independent requests and one failing says nothing about the others.
+/** @type {Map<string, 'loading'|'failed'>} */
+const perImage = new Map();
+
+/**
+ * ensureDetail loads the CVEs for particular images and calls back when they land.
+ *
+ * @param {any[]} rows the findings whose detail is wanted, usually one
+ * @param {() => void} [then] run once, when the last of them settles
+ * @returns {boolean} true when every row already has its detail, so the caller can
+ *   render without showing a wait
+ */
+export function ensureDetail(rows, then) {
+  // Whatever put it there - a per-image fetch, or the whole set for the CVE view.
+  if (rows.every((r) => r.vulns !== undefined)) return true;
+  const wanted = rows.filter((r) => r && r.vulns === undefined && r.image &&
+    perImage.get(r.image) !== "loading" && perImage.get(r.image) !== "failed");
+  if (!wanted.length) {
+    // Either everything asked for is in flight or has failed; the in-flight ones will
+    // call back on their own.
+    return rows.every((r) => r.vulns !== undefined);
+  }
+  for (const row of wanted) perImage.set(row.image, "loading");
+  void Promise.all(wanted.map((row) => loadOne(row))).then(() => {
+    if (then) then();
+  });
+  return false;
+}
+
+async function loadOne(row) {
+  try {
+    const d = await get("/api/v1/finding?image=" + encodeURIComponent(row.image));
+    // Assigned even when empty: an array is "scanned, none found", which is a
+    // different answer from the undefined this replaces.
+    row.vulns = d.finding?.vulns || [];
+    perImage.delete(row.image);
+  } catch (e) {
+    perImage.set(row.image, "failed");
+    S.vulnError = e.message;
+  }
+}
+
+/** detailFailed reports whether this image's own detail could not be loaded. */
+export function detailFailed(image) {
+  return perImage.get(image) === "failed";
 }
 
 async function fetchVulns(stamp) {
