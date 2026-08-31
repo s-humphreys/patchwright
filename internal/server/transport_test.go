@@ -3,12 +3,16 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/s-humphreys/patchwright/pkg/model"
+	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
 func gzipped(t *testing.T, body []byte) string {
@@ -295,5 +299,120 @@ func TestRevalidationSitsBehindAuthentication(t *testing.T) {
 	}
 	if rec.Header().Get("ETag") != "" {
 		t.Error("an unauthenticated caller must not be handed a validator")
+	}
+}
+
+// The payload projection.
+//
+// These pin the property the page depends on: with vulns dropped, everything a list
+// column shows is still in the answer. Losing that quietly would trade a slow page
+// for a wrong one.
+
+func projectionServer(t *testing.T) *Server {
+	t.Helper()
+	s := New(nil)
+	full := sink.FindingView{
+		Image: "reg/app:1.0.0", Repository: "app", Scanned: true, ProviderAssessed: true,
+		KnownExploited: true, VulnCount: 2, TopEPSS: 0.91, TopEPSSPercentile: 0.99,
+		TopRiskScore: 812,
+		Vulns: []sink.VulnView{
+			{ID: "CVE-2026-1", EPSS: 0.91, EPSSPercentile: 0.99, RiskScore: 812, KEV: true},
+			{ID: "CVE-2026-2", EPSS: 0.02},
+		},
+	}
+	s.latest = &snapshot{
+		generatedAt: time.Now(), views: []sink.FindingView{full},
+		byImage: map[string]sink.FindingView{full.Image: full},
+	}
+	return s
+}
+
+func TestVulnsFalseKeepsEveryFactTheQueueShows(t *testing.T) {
+	s := projectionServer(t)
+	rec := httptest.NewRecorder()
+	s.handleFindings(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings?vulns=false", nil))
+
+	var got struct {
+		Findings []sink.FindingView `json:"findings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Findings) != 1 {
+		t.Fatalf("want one finding, got %d", len(got.Findings))
+	}
+	f := got.Findings[0]
+	if len(f.Vulns) != 0 {
+		t.Error("vulns=false must drop the per-CVE arrays")
+	}
+	// Everything the queue's columns and filters read.
+	if f.VulnCount != 2 || f.TopEPSS != 0.91 || f.TopEPSSPercentile != 0.99 ||
+		f.TopRiskScore != 812 || !f.KnownExploited || !f.Scanned {
+		t.Errorf("an aggregate the page renders was lost: %+v", f)
+	}
+}
+
+func TestVulnsAreIncludedByDefault(t *testing.T) {
+	s := projectionServer(t)
+	for _, query := range []string{"", "?vulns=true"} {
+		rec := httptest.NewRecorder()
+		s.handleFindings(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings"+query, nil))
+		var got struct {
+			Findings []sink.FindingView `json:"findings"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		if len(got.Findings) != 1 || len(got.Findings[0].Vulns) != 2 {
+			t.Errorf("query %q dropped vulns; the default must stay compatible", query)
+		}
+	}
+}
+
+// The projection copies. Mutating the cache would serve every later reader, and every
+// other endpoint, a finding with its CVEs silently removed.
+func TestTheProjectionDoesNotMutateTheCache(t *testing.T) {
+	s := projectionServer(t)
+	rec := httptest.NewRecorder()
+	s.handleFindings(rec, httptest.NewRequest(http.MethodGet, "/api/v1/findings?vulns=false", nil))
+
+	if n := len(s.latest.views[0].Vulns); n != 2 {
+		t.Fatalf("the cached snapshot lost its vulns: %d left", n)
+	}
+	after := httptest.NewRecorder()
+	s.handleFindings(after, httptest.NewRequest(http.MethodGet, "/api/v1/findings", nil))
+	var got struct {
+		Findings []sink.FindingView `json:"findings"`
+	}
+	_ = json.Unmarshal(after.Body.Bytes(), &got)
+	if len(got.Findings[0].Vulns) != 2 {
+		t.Error("a later unfiltered read came back without vulns")
+	}
+}
+
+// The aggregates have to be computed from the model, not trusted from a fixture: this
+// is what the page falls back on when vulns are absent.
+func TestAggregatesComeFromTheWorstCVE(t *testing.T) {
+	f := model.Finding{
+		Image: model.Image{Ref: "reg/app:1.0.0"},
+		Vulns: []model.Vulnerability{
+			{ID: "CVE-1", EPSS: 0.10, EPSSPercentile: 0.50, RiskScore: 100},
+			{ID: "CVE-2", EPSS: 0.90, EPSSPercentile: 0.97, RiskScore: 300},
+			{ID: "CVE-3", EPSS: 0.20, EPSSPercentile: 0.99, RiskScore: 200},
+		},
+	}
+	v := sink.ToFindingView(f)
+	if v.VulnCount != 3 {
+		t.Errorf("vuln_count = %d, want 3", v.VulnCount)
+	}
+	if v.TopEPSS != 0.90 {
+		t.Errorf("top_epss = %v, want the highest score", v.TopEPSS)
+	}
+	// The percentile of the worst-scoring CVE, not the highest percentile present:
+	// 0.99 belongs to a CVE scoring 0.20, and reporting the pair as one CVE's
+	// numbers would describe a vulnerability that does not exist.
+	if v.TopEPSSPercentile != 0.97 {
+		t.Errorf("top_epss_percentile = %v, want 0.97 (the worst score's own percentile)", v.TopEPSSPercentile)
+	}
+	if v.TopRiskScore != 300 {
+		t.Errorf("top_risk_score = %v, want 300", v.TopRiskScore)
 	}
 }

@@ -1,3 +1,4 @@
+import { maxEPSS } from './cells.js';
 import { S } from './state.js';
 import { current as currentView } from './tabs.js';
 
@@ -42,9 +43,12 @@ const FINDING_COLUMNS = [
   ["high", (f) => f.counts?.high || 0],
   ["medium", (f) => f.counts?.medium || 0],
   ["low", (f) => f.counts?.low || 0],
-  ["kev", (f) => (f.vulns || []).some((v) => v.kev)],
-  ["max_epss", (f) => (f.vulns || []).reduce((m, v) => Math.max(m, v.epss || 0), 0) || ""],
-  ["max_epss_percentile", (f) => (f.vulns || []).reduce((m, v) => Math.max(m, v.epss_percentile || 0), 0) || ""],
+  // From the aggregates the API sends, so an export is complete whether or not the
+  // per-CVE arrays have been loaded - the queue does not load them.
+  ["kev", (f) => (f.known_exploited ?? (f.vulns || []).some((v) => v.kev))],
+  ["max_epss", (f) => maxEPSS(f) || ""],
+  ["max_epss_percentile", (f) => (f.top_epss_percentile
+    ?? (f.vulns || []).reduce((m, v) => Math.max(m, v.epss_percentile || 0), 0)) || ""],
   ["oldest_cve_days", (f) => f.oldest_cve_days],
   ["upgrade_kind", (f) => f.upgrade?.kind],
   ["upgrade_current", (f) => f.upgrade?.current],

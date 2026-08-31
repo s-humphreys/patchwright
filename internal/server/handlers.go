@@ -166,7 +166,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 	snap := s.snapshot()
 	views := []sink.FindingView{}
 	if snap != nil {
-		views = filterViews(snap.views, r)
+		views = withoutVulns(filterViews(snap.views, r), r)
 	}
 	var tickets map[string][]ticketRef
 	if snap != nil && snap.tickets != nil {
@@ -268,6 +268,31 @@ func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
 
 // filterViews applies the query-parameter filters. By default suppressed
 // findings are excluded unless ?suppressed=true.
+// withoutVulns drops the per-CVE arrays when the caller asks, leaving the whole-image
+// aggregates that stand in for them.
+//
+// This is the difference between a page that loads and one that does not. The arrays
+// are 97% of a real payload - 41MB against 1.3MB, and 92KB once compressed - and a
+// caller listing the queue wants the worst score per image, not all 208,697 scores.
+// vuln_count, top_epss, top_epss_percentile, top_risk_score and known_exploited carry
+// everything a list column shows.
+//
+// Opt-in, because dropping data by default would break every existing consumer
+// silently, which is the one way of being fast that is not worth it.
+func withoutVulns(views []sink.FindingView, r *http.Request) []sink.FindingView {
+	if want, ok := boolParam(r.URL.Query().Get("vulns")); !ok || want {
+		return views
+	}
+	out := make([]sink.FindingView, len(views))
+	for i, v := range views {
+		// A copy per finding: the cached snapshot is shared with every other reader and
+		// with the next request, so nothing here may mutate it.
+		v.Vulns = nil
+		out[i] = v
+	}
+	return out
+}
+
 func filterViews(views []sink.FindingView, r *http.Request) []sink.FindingView {
 	q := r.URL.Query()
 	ownerClass := q.Get("owner_class")

@@ -17,6 +17,13 @@ export const S = {
   // configured, which is NOT the same as "no ticket exists" and must not render as
   // if it were.
   ticketsByRepo: undefined,
+  // When the loaded findings were assessed. Per-CVE detail is loaded separately and
+  // has to be able to say which assessment it belongs to, or a refresh would leave
+  // last hour's CVEs merged into this hour's findings.
+  assessedAt: null,
+  // Why per-CVE detail could not be loaded, when it could not. Rendered rather than
+  // swallowed: an empty CVE table and a failed fetch look identical otherwise.
+  vulnError: undefined,
   lastOwners: null,
   gapsExpanded: false,
   severityExpanded: false,
