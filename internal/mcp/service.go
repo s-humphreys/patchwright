@@ -91,6 +91,11 @@ type UpgradeAdvice struct {
 	Rule   string `json:"rule,omitempty"`
 	// Support is the maintenance status of the line this sits on.
 	Support string `json:"support,omitempty"`
+	// State says which kind of answer this is, because four of them are not moves:
+	// "upgrade" has a version to go to, "latest" is already on the newest available,
+	// "held" is a newer version policy declined, "unresolved" is a lookup that could
+	// not answer. Only the first is a pull request; the rest need a person.
+	State string `json:"state"`
 
 	// Measured is true when a base differential actually ran. Without it the counts
 	// below are absent rather than zero - "we did not check" and "it fixes nothing"
@@ -254,7 +259,15 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	}
 	u := lead.Upgrade
 	out := &UpgradeAdvice{
-		Kind: u.Kind, From: u.Current, To: u.Latest, Newest: u.Newest, Rule: u.Rule,
+		Kind: u.Kind, From: u.Current, Newest: u.Newest, Rule: u.Rule,
+		State: upgradeState(u),
+	}
+	// To is the version to move TO, so it is only set when there is one. A chart already
+	// on its newest version reports that version as Latest with Available false, and
+	// copying it here rendered "1.11.0 -> 1.11.0": an urgent row asking for a pull
+	// request that would change nothing, instead of saying the fix is not a bump.
+	if u.Available {
+		out.To = u.Latest
 	}
 	if u.Support != nil && u.Support.Known {
 		if u.Support.Supported {
@@ -304,6 +317,22 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 		Packages: topPackages(pkgs),
 	}
 	return out
+}
+
+// upgradeState names which of the four answers this is. Absent versions and no-op
+// versions are different states, and a consumer that cannot tell them apart reports a
+// decision as a bump.
+func upgradeState(u *sink.UpgradeView) string {
+	switch {
+	case !u.Resolved:
+		return "unresolved"
+	case u.Available && u.Latest != "":
+		return "upgrade"
+	case u.HeldBack:
+		return "held"
+	default:
+		return "latest"
+	}
 }
 
 // moveKind separates a rebuild from a version change. A base pinned to a floating

@@ -99,3 +99,32 @@ func TestCheckChartNotFound(t *testing.T) {
 		t.Error("expected error for a chart not in the index")
 	}
 }
+
+// A chart already on its newest version must not report that version as something to
+// move to. It once did, and a consumer reading Latest without Available rendered
+// "1.11.0 -> 1.11.0" on an urgent row: a bump that changes nothing, shown instead of
+// the real answer, which is that the fix is not a bump.
+func TestAChartOnItsNewestVersionOffersNothingToMoveTo(t *testing.T) {
+	srv := serveIndex(t)
+	defer srv.Close()
+
+	up, err := NewHelmChecker().Check(context.Background(),
+		ChartRef{RepoURL: srv.URL, Name: "podinfo", Version: "6.7.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.Available {
+		t.Error("6.7.1 is the newest stable, so no upgrade is available")
+	}
+	if up.Latest != "" {
+		t.Errorf("Latest = %q, want empty: there is no version to move to", up.Latest)
+	}
+	if up.Current != "6.7.1" {
+		t.Errorf("Current = %q, want the version in use", up.Current)
+	}
+	// Resolved distinguishes this from a lookup that failed: the versions WERE read,
+	// and the answer is that this one is the newest.
+	if !up.Resolved {
+		t.Error("the versions were obtained, so this is a finding rather than a failure")
+	}
+}

@@ -75,8 +75,16 @@ func (c *HelmChecker) Check(ctx context.Context, ref ChartRef) (model.Upgrade, e
 	if latest == nil {
 		return up, nil
 	}
-	up.Latest = latest.Original()
 	up.Available = curErr == nil && latest.GreaterThan(current)
+	// Latest is the version to move TO, so it is only set when there is one. Setting it
+	// to the newest version regardless meant a chart already on its newest reported
+	// Current and Latest as the same string, and a consumer reading the field alone
+	// rendered "1.11.0 -> 1.11.0" on an urgent row - a pull request that changes nothing,
+	// in place of the real answer that this needs a decision. The base resolver has
+	// always worked this way; this brings the two into line.
+	if up.Available {
+		up.Latest = latest.Original()
+	}
 	up.Actionable = up.Available // a chart bump is directly actionable
 	return up, nil
 }

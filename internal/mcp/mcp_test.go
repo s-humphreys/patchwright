@@ -457,3 +457,77 @@ func TestToolsRefuseToAnswerBeforeTheFirstAssessment(t *testing.T) {
 		t.Errorf("want an explicit not-ready answer, got %q", text)
 	}
 }
+
+// The no-op upgrade, reported live: wiremock/wiremock came back "urgent" with
+// "1.11.0 -> 1.11.0". A chart already on its newest version reports that version as
+// Latest with Available false, and reading Latest alone rendered a move. An urgent row
+// asking for a pull request that changes nothing is worse than no advice, because the
+// real answer - this needs a decision, not a bump - is what it hides.
+func TestAnUpgradeWithNothingToMoveToIsNotReportedAsAMove(t *testing.T) {
+	a := fixture()
+	for i := range a.Findings {
+		a.Findings[i].Upgrade = &sink.UpgradeView{
+			Kind: "chart", Name: "wiremock", Current: "1.11.0", Latest: "1.11.0",
+			Resolved: true, Available: false,
+		}
+		a.Findings[i].BaseDiff = nil
+	}
+
+	q := worstFirst(a, "", "", "", 10)
+	if len(q.Items) == 0 {
+		t.Fatal("want the item")
+	}
+	if strings.Contains(q.Items[0].Upgrade, "1.11.0 -> 1.11.0") {
+		t.Errorf("a no-op move was reported: %q", q.Items[0].Upgrade)
+	}
+	if !strings.Contains(q.Items[0].Upgrade, "newest available") {
+		t.Errorf("want the state named, got %q", q.Items[0].Upgrade)
+	}
+
+	r, ok := serviceReport(a, "topnotch")
+	if !ok {
+		t.Fatal("want a report")
+	}
+	if r.Upgrade.To != "" {
+		t.Errorf("To = %q, want empty: there is no version to move to", r.Upgrade.To)
+	}
+	if r.Upgrade.State != "latest" {
+		t.Errorf("State = %q, want \"latest\"", r.Upgrade.State)
+	}
+}
+
+// The other three states have to be distinguishable from each other, since only one of
+// them is a pull request.
+func TestUpgradeStatesAreKeptApart(t *testing.T) {
+	cases := []struct {
+		name  string
+		up    *sink.UpgradeView
+		state string
+		says  string
+	}{
+		{"a real upgrade", &sink.UpgradeView{
+			Current: "9.0", Latest: "10.0", Resolved: true, Available: true},
+			"upgrade", "9.0 -> 10.0"},
+		{"held back by policy", &sink.UpgradeView{
+			Current: "3.12.14", Newest: "3.14.7", Rule: "python-ceiling",
+			Resolved: true, HeldBack: true},
+			"held", "held at 3.12.14 by policy"},
+		{"the lookup could not answer", &sink.UpgradeView{
+			Current: "1.0.0", Resolved: false, Reason: "could not list tags"},
+			"unresolved", "not established: could not list tags"},
+		{"already newest", &sink.UpgradeView{
+			Current: "1.11.0", Latest: "1.11.0", Resolved: true},
+			"latest", "already on the newest available version"},
+	}
+	for _, c := range cases {
+		if got := upgradeState(c.up); got != c.state {
+			t.Errorf("%s: state = %q, want %q", c.name, got, c.state)
+		}
+		if got := describeUpgrade(c.up); !strings.Contains(got, c.says) {
+			t.Errorf("%s: described as %q, want it to mention %q", c.name, got, c.says)
+		}
+	}
+	if describeUpgrade(nil) != "" {
+		t.Error("no upgrade at all must describe as nothing, not as a state")
+	}
+}

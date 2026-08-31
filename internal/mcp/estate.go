@@ -278,9 +278,7 @@ func worstFirst(a Assessment, team, priority, exposure string, limit int) WorstF
 			Signals: it.Signals, Critical: it.Critical, High: it.High,
 			Deployments: it.Deployments,
 		}
-		if it.Upgrade != nil && it.Upgrade.Latest != "" {
-			w.Upgrade = it.Upgrade.Current + " -> " + it.Upgrade.Latest
-		}
+		w.Upgrade = describeUpgrade(it.Upgrade)
 		if c, ok := clears[it.Key]; ok {
 			w.Clears = &c
 		}
@@ -316,6 +314,55 @@ func coverageOf(a Assessment) Coverage {
 		}
 	}
 	return c
+}
+
+// describeUpgrade says what the item needs, in the three states that are not a move.
+//
+// Gated on Available rather than on Latest being set, because they are not the same
+// thing: a chart already on its newest version reports that version as Latest with
+// Available false, and reading the field alone rendered "1.11.0 -> 1.11.0". A no-op
+// upgrade on an urgent row is worse than no advice - it sends somebody to raise a pull
+// request that changes nothing, and the real answer (this needs a decision, not a bump)
+// is the one it hides.
+func describeUpgrade(u *sink.UpgradeView) string {
+	switch {
+	case u == nil:
+		return ""
+	case !u.Resolved:
+		// Not "no upgrade": the lookup could not answer, which is a different thing and
+		// a different job to fix.
+		return "not established" + reasonSuffix(u.Reason)
+	case u.Available && u.Latest != "":
+		return u.Current + " -> " + u.Latest
+	case u.HeldBack:
+		// A newer version exists and policy declined it. Silence here would read as
+		// "already up to date", which is the opposite of a deliberate hold.
+		return "held at " + u.Current + " by policy" + heldSuffix(u)
+	default:
+		return "already on the newest available version (" + u.Current +
+			"), so this needs a decision rather than a bump"
+	}
+}
+
+func reasonSuffix(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return ": " + reason
+}
+
+func heldSuffix(u *sink.UpgradeView) string {
+	var parts []string
+	if u.Newest != "" {
+		parts = append(parts, "newest is "+u.Newest)
+	}
+	if u.Rule != "" {
+		parts = append(parts, "rule "+u.Rule)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 func describeFilters(team, priority, exposure string) string {
