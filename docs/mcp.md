@@ -2,7 +2,7 @@
 
 `patchwright serve` also speaks the [Model Context Protocol](https://modelcontextprotocol.io)
 at `/mcp`, so an LLM client can ask the questions people already ask - *what does the
-payments team need to fix?*, *what would rebuilding topnotch's base actually clear?* -
+payments team need to fix?*, *what would rebuilding storefront's base actually clear?* -
 and get them answered from the assessment rather than from a screenshot somebody
 pasted.
 
@@ -33,7 +33,7 @@ difference, because a report hands over clears, leaves, introduces, a remainder 
 policy rule, and leaves somebody to work out which of it they are supposed to act on.
 
 ```
-topnotch - data-platform
+storefront - insights
 why      urgent, internet-facing, 10 known-exploited CVEs, 6,746 vulnerabilities
          across 3 deployments (rule: exploited-fixable-critical)
 
@@ -43,7 +43,7 @@ do       change the base image this is built on
          yours: yes, across Development US, PreProduction US, Production US
 
 do not   go to 3.14.7, the newest available. Policy holds this line at 3.12:
-         "cdt's underlying packages are not 3.14 ready (data-engineering, Aug 2026)"
+         "the analytics toolkit's dependencies are not 3.14 ready (data team, Aug 2026)"
 
 result   clears 5,857 of 6,746, including all 10 known-exploited
          introduces 296
@@ -51,7 +51,7 @@ result   clears 5,857 of 6,746, including all 10 known-exploited
              linux-libc-dev (518), binutils (57), libbinutils (57) ...
          9 still yours
 
-also     data-mcp-tools takes the same move
+also     reporting-tools takes the same move
 
 unknown  which repository holds the build that sets this
          whether anybody has started
@@ -73,7 +73,7 @@ plan that looks complete.
 turns a number into a conversation:
 
 ```
-apps/topnotch - payments - urgent in prod, internet-facing
+apps/storefront - payments - urgent in prod, internet-facing
   3 deployments, newest image built 187 days ago
   10 CVEs, 1 known-exploited
 
@@ -99,7 +99,7 @@ payload.
 can be read against each other: on a service, `clears` + `still_in_base` +
 `from_application` + `unattributed` is the total. That is not free - a service deployed
 at three tags of one build carries the same CVEs three times, and summing each
-deployment's own count told topnotch it had 6,746 vulnerabilities of which an upgrade
+deployment's own count told storefront it had 6,746 vulnerabilities of which an upgrade
 would clear 17,571. A team cannot act on a number that is impossible on its face.
 
 The two exceptions name their unit rather than hiding it. A rebuild win reports

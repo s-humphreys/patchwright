@@ -39,7 +39,7 @@ func register(s *sdk.Server, src Source) {
 	type noArgs struct{}
 
 	type serviceArgs struct {
-		Service string `json:"service" jsonschema:"the service or image repository, e.g. 'topnotch' or 'myregistry.io/apps/topnotch'"`
+		Service string `json:"service" jsonschema:"the service or image repository, e.g. 'storefront' or 'myregistry.io/apps/storefront'"`
 	}
 	type queueArgs struct {
 		Team     string `json:"team,omitempty" jsonschema:"only items owned by this team"`

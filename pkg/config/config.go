@@ -190,7 +190,7 @@ type UpgradeRule struct {
 	//
 	//   rules:
 	//     - name: docker.io/python
-	//       when: "owner['team'] == 'data-science'"
+	//       when: "owner['team'] == 'research'"
 	//       strategy: patch
 	//       ceiling: "3.12"
 	//

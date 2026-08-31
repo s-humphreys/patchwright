@@ -14,11 +14,11 @@ import (
 func TestAPlanSaysWhatToChangeAndWhatItAchieves(t *testing.T) {
 	a := fixture()
 	a.Findings[0].Upgrade.Ceiling = "3.12"
-	a.Findings[0].Upgrade.CeilingReason = "cdt is not 3.14 ready (data-engineering, Aug 2026)"
+	a.Findings[0].Upgrade.CeilingReason = "the analytics toolkit is not 3.14 ready (data team, Aug 2026)"
 	a.Findings[0].Upgrade.Newest = "3.14.7"
 	a.Findings[0].Upgrade.Actionable = true
 
-	p, ok := fixPlan(a, "topnotch")
+	p, ok := fixPlan(a, "storefront")
 	if !ok {
 		t.Fatal("want a plan")
 	}
@@ -41,7 +41,7 @@ func TestAPlanSaysWhatToChangeAndWhatItAchieves(t *testing.T) {
 	// The constraint, with the reason a human wrote. Without it the answer looks wrong to
 	// anybody who can see there is a 3.14.
 	joined := strings.Join(p.DoNot, " ")
-	if !strings.Contains(joined, "3.14.7") || !strings.Contains(joined, "cdt is not 3.14 ready") {
+	if !strings.Contains(joined, "3.14.7") || !strings.Contains(joined, "the analytics toolkit is not 3.14 ready") {
 		t.Errorf("want the ceiling and its reason: %v", p.DoNot)
 	}
 
@@ -81,7 +81,7 @@ func TestAPlanWithNothingToUpgradeAsksForADecision(t *testing.T) {
 			Resolved: true, Available: false,
 		}
 	}
-	p, ok := fixPlan(a, "topnotch")
+	p, ok := fixPlan(a, "storefront")
 	if !ok {
 		t.Fatal("want a plan")
 	}
@@ -102,7 +102,7 @@ func TestAPlanSaysWhenTheChangeIsNotYours(t *testing.T) {
 		u.Actionable, u.Managed, u.Manager = false, "helm chart", "flux"
 		a.Findings[i].Upgrade = &u
 	}
-	p, _ := fixPlan(a, "topnotch")
+	p, _ := fixPlan(a, "storefront")
 	if p.Do == nil {
 		t.Fatal("there is still a change, it is just applied elsewhere")
 	}
@@ -128,7 +128,7 @@ func TestAPlanCallsAMigrationAMigration(t *testing.T) {
 		}
 		a.Findings[i].Upgrade = &u
 	}
-	p, _ := fixPlan(a, "topnotch")
+	p, _ := fixPlan(a, "storefront")
 	joined := strings.Join(p.DoNot, " ")
 	if !strings.Contains(joined, "migration to plan") {
 		t.Errorf("want it called a migration: %v", p.DoNot)
@@ -156,7 +156,7 @@ func TestAPlanSurfacesWorkAlreadyOpen(t *testing.T) {
 		a.Findings[0].InFlightChecked = true
 		a.Findings[1].InFlight = &fl
 		a.Findings[1].InFlightChecked = true
-		p, _ := fixPlan(a, "topnotch")
+		p, _ := fixPlan(a, "storefront")
 		if p.Do == nil || !strings.Contains(p.Do.InProgress, c.says) {
 			got := ""
 			if p.Do != nil {

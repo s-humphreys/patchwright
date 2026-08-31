@@ -197,7 +197,7 @@ const maxRemainderPackages = 8
 // serviceReport builds the report for one service, or false when nothing matches.
 //
 // Matching is on the repository, and deliberately forgiving: somebody asking about
-// "topnotch" means the service, not "the image whose full reference I typed".
+// "storefront" means the service, not "the image whose full reference I typed".
 func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	var mine []sink.FindingView
@@ -333,7 +333,7 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	//
 	// Summing each deployment's own counts was wrong, and wrong in the way that matters
 	// most: a service deployed at three tags of one build carries the same CVEs three
-	// times, so topnotch was reported as clearing 17,571 of its 6,746 vulnerabilities. A
+	// times, so storefront was reported as clearing 17,571 of its 6,746 vulnerabilities. A
 	// team cannot act on that - the arithmetic is visibly impossible, and the number they
 	// would put in a ticket is three times the truth.
 	//

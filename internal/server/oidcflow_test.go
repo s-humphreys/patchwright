@@ -239,7 +239,7 @@ func TestAnIDTokenMintedForAnotherAttemptIsRefused(t *testing.T) {
 
 func TestGroupRestrictionsAreEnforcedAgainstARealToken(t *testing.T) {
 	p := newFakeProvider(t)
-	p.groups = []string{"data-platform"}
+	p.groups = []string{"insights"}
 	_, app := signInServer(t, p, OIDCConfig{AllowedGroups: []string{"platform-engineering"}})
 
 	c := browser(t)

@@ -67,10 +67,10 @@ func upgradeFor(t *testing.T, r *BaseResolver, imgs ...model.AssessedImage) map[
 }
 
 func TestAScopedCeilingHoldsOnlyTheServiceItIsAbout(t *testing.T) {
-	r := pythonResolver(t, pythonCeiling("owner['team'] == 'data-science'"))
+	r := pythonResolver(t, pythonCeiling("owner['team'] == 'research'"))
 	got := upgradeFor(t, r,
-		service("task-daemon", "data-science", "cdt"),
-		service("storefront", "data-platform", "shop"),
+		service("task-daemon", "research", "analytics"),
+		service("storefront", "insights", "shop"),
 	)
 
 	held := got["example.azurecr.io/task-daemon:1.0.0"]
@@ -95,14 +95,14 @@ func TestAScopeCanNameANamespaceOrLabelRatherThanATeam(t *testing.T) {
 	// Ownership is not always the right axis: the constraint may belong to one
 	// deployment of a service, and the namespace is what somebody can point at.
 	for _, when := range []string{
-		"'cdt' in dimensions['namespace']",
-		"'data-science' in labels['team']",
+		"'analytics' in dimensions['namespace']",
+		"'research' in labels['team']",
 		"image['repository'] == 'task-daemon'",
 	} {
 		r := pythonResolver(t, pythonCeiling(when))
 		got := upgradeFor(t, r,
-			service("task-daemon", "data-science", "cdt"),
-			service("storefront", "data-platform", "shop"),
+			service("task-daemon", "research", "analytics"),
+			service("storefront", "insights", "shop"),
 		)
 		if v := got["example.azurecr.io/task-daemon:1.0.0"].Latest; v != "3.12.14" {
 			t.Errorf("when=%q: scoped image got %q, want 3.12.14", when, v)
@@ -118,8 +118,8 @@ func TestAnUnscopedRuleStillAppliesEverywhere(t *testing.T) {
 	// which is what every rule written before this feature meant.
 	r := pythonResolver(t, pythonCeiling(""))
 	got := upgradeFor(t, r,
-		service("task-daemon", "data-science", "cdt"),
-		service("storefront", "data-platform", "shop"),
+		service("task-daemon", "research", "analytics"),
+		service("storefront", "insights", "shop"),
 	)
 	for ref, up := range got {
 		if up.Latest != "3.12.14" {
@@ -146,7 +146,7 @@ func TestAScopeThatCannotBeDecidedDoesNotApplyTheCeiling(t *testing.T) {
 	// Applying somebody else's ceiling on a maybe is worse than applying none: the
 	// report would show a restraint with a reason belonging to another service.
 	r := pythonResolver(t, pythonCeiling("dimensions['nosuchkey'][0] == 'x'"))
-	got := upgradeFor(t, r, service("storefront", "data-platform", "shop"))
+	got := upgradeFor(t, r, service("storefront", "insights", "shop"))
 	up := got["example.azurecr.io/storefront:1.0.0"]
 	if up.Ceiling != "" {
 		t.Errorf("ceiling = %q, want none when the scope could not be decided", up.Ceiling)
@@ -163,7 +163,7 @@ func TestTheFirstMatchingScopedRuleWins(t *testing.T) {
 		Upgrade: config.UpgradeConfig{
 			Strategy: "latest",
 			Rules: []config.UpgradeRule{
-				{Name: "docker.io/python", When: "owner['team'] == 'data-science'",
+				{Name: "docker.io/python", When: "owner['team'] == 'research'",
 					Strategy: "patch", Ceiling: "3.12", Until: "2099-12-31", Reason: "not ready"},
 				{Name: "docker.io/python", Strategy: "minor", Ceiling: "3.13", Until: "2099-12-31",
 					Reason: "estate default"},
@@ -172,8 +172,8 @@ func TestTheFirstMatchingScopedRuleWins(t *testing.T) {
 	}
 	r := pythonResolver(t, cfg)
 	got := upgradeFor(t, r,
-		service("task-daemon", "data-science", "cdt"),
-		service("storefront", "data-platform", "shop"),
+		service("task-daemon", "research", "analytics"),
+		service("storefront", "insights", "shop"),
 	)
 	if v := got["example.azurecr.io/task-daemon:1.0.0"].Latest; v != "3.12.14" {
 		t.Errorf("specific rule: got %q, want 3.12.14", v)
@@ -187,12 +187,12 @@ func TestAScopeSeesEveryDeploymentOfTheImage(t *testing.T) {
 	// One image typically runs in several namespaces. A rule naming one of them must
 	// match regardless of which deployment the resolver started from, or the decision
 	// would depend on provider ordering.
-	img := service("task-daemon", "data-science", "cdt")
+	img := service("task-daemon", "research", "analytics")
 	img.Occurrences = append(img.Occurrences, model.Occurrence{
-		Owner:    model.Owner{Class: "engineering", Team: "data-science"},
-		Resource: model.Resource{Dimensions: map[string]string{"namespace": "cdt-jobs"}},
+		Owner:    model.Owner{Class: "engineering", Team: "research"},
+		Resource: model.Resource{Dimensions: map[string]string{"namespace": "analytics-jobs"}},
 	})
-	r := pythonResolver(t, pythonCeiling("'cdt-jobs' in dimensions['namespace']"))
+	r := pythonResolver(t, pythonCeiling("'analytics-jobs' in dimensions['namespace']"))
 	got := upgradeFor(t, r, img)
 	if v := got["example.azurecr.io/task-daemon:1.0.0"].Latest; v != "3.12.14" {
 		t.Errorf("got %q, want 3.12.14: the second deployment's namespace must be visible", v)
@@ -230,7 +230,7 @@ func TestACeilingIsNotSteppedPastEvenWhenTheLineIsDead(t *testing.T) {
 		Support: eolSupport{product: pythonDead()},
 		Now:     func() time.Time { return day("2026-08-27") },
 	}
-	got := upgradeFor(t, r, service("legacy-etl", "data-platform", "etl"))
+	got := upgradeFor(t, r, service("legacy-etl", "insights", "etl"))
 	up := got["example.azurecr.io/legacy-etl:1.0.0"]
 
 	if up.OutOfTrack {

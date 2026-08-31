@@ -9,11 +9,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-const url = 'http://x/?q=topno&fixable=true&service=storefront&team=data-platform';
+const url = 'http://x/?q=topno&fixable=true&service=storefront&team=insights';
 const dom = new JSDOM(`<!doctype html><html><body>
   <details class="ms" id="classFilter"><summary></summary><div class="ms-menu"></div></details>
   <details class="ms" id="teamFilter"><summary></summary><div class="ms-menu">
-    <label class="ms-opt"><input type="checkbox" value="data-platform"><span>data-platform</span></label>
+    <label class="ms-opt"><input type="checkbox" value="insights"><span>insights</span></label>
   </div></details>
   <details class="ms" id="fixFilter"><summary></summary><div class="ms-menu"></div></details>
   <details class="ms" id="signalFilter"><summary></summary><div class="ms-menu"></div></details>
@@ -40,7 +40,7 @@ test('the arriving link is remembered even after the page rewrites the URL', () 
   // written since.
   const arrived = initialQuery();
   assert.equal(arrived.get('service'), 'storefront');
-  assert.equal(arrived.get('team'), 'data-platform');
+  assert.equal(arrived.get('team'), 'insights');
   assert.equal(arrived.get('q'), 'topno');
 });
 
@@ -49,7 +49,7 @@ test('filters from the link are applied, not discarded', () => {
   assert.equal(changed, true);
   assert.equal(document.querySelector('#search').value, 'topno');
   assert.equal(document.querySelector('#onlyFixable').checked, true);
-  assert.equal(document.querySelector('#teamFilter input[value=data-platform]').checked, true);
+  assert.equal(document.querySelector('#teamFilter input[value=insights]').checked, true);
 });
 
 test('writeURL preserves parameters that belong to something else', () => {

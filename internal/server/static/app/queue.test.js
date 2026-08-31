@@ -208,7 +208,7 @@ test('held back reads as a decision, not as up to date', async () => {
   const html = fixCell(finding({
     upgrade: {
       kind: 'base', name: 'docker.io/python', current: '3.12.14', newest: '3.14.7',
-      ceiling: '3.12', ceiling_reason: 'cdt dependencies are not 3.14 ready',
+      ceiling: '3.12', ceiling_reason: 'analytics dependencies are not 3.14 ready',
       held_back: true, available: false, resolved: true,
     },
   }));

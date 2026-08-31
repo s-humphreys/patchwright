@@ -29,7 +29,7 @@ const python = {
 function deployment(repo, tag, account, over = {}) {
   return {
     image: `acr.io/${repo}:${tag}`, repository: repo, tag, registry: 'acr.io',
-    owner: { class: 'engineering', team: 'data-platform', rule: 'by-label' },
+    owner: { class: 'engineering', team: 'insights', rule: 'by-label' },
     counts: { critical: 10, high: 20 }, provider_assessed: true, scanned: true,
     exploit_checked: true, remediation_checked: true, in_flight_checked: true,
     exposure: 'internal', signals: [], vulns: [], workload_count: 1,
@@ -67,7 +67,7 @@ test('one repository owned by two teams never merges', () => {
     deployment('ledger', '2', 'Production EU', { owner: { class: 'engineering', team: 'payments' } }),
   ]);
   assert.equal(groups.length, 2);
-  assert.deepEqual(groups.map((g) => g.owner.team).sort(), ['data-platform', 'payments']);
+  assert.deepEqual(groups.map((g) => g.owner.team).sort(), ['insights', 'payments']);
 });
 
 test('the row reports the worst verdict AND where it came from', () => {
@@ -138,7 +138,7 @@ test('the service cell names the tag count and the team', () => {
   const html = GROUP_COLUMNS[2].get(g);
   assert.match(html, /storefront/);
   assert.match(html, /2 tags/);
-  assert.match(html, /data-platform/);
+  assert.match(html, /insights/);
 });
 
 test('the group panel lists every deployment and can drill into one', () => {
@@ -172,7 +172,7 @@ test('a ticket link opens the work item it names', async () => {
   ];
   S.queueRows = findings;
   const groups = groupFindings(findings);
-  dom.reconfigure({ url: 'http://x/?service=storefront&team=data-platform' });
+  dom.reconfigure({ url: 'http://x/?service=storefront&team=insights' });
   globalThis.location = dom.window.location;
   const missed = openFromURL(groups, null);
   assert.equal(missed, '', 'the link should have opened something');
@@ -185,7 +185,7 @@ test('a link naming something gone says so instead of opening the nearest thing'
   // worse than showing them nothing.
   const { openFromURL } = await import('./detail.js');
   S.queueRows = [];
-  dom.reconfigure({ url: 'http://x/?service=deleted-service&team=data-platform' });
+  dom.reconfigure({ url: 'http://x/?service=deleted-service&team=insights' });
   globalThis.location = dom.window.location;
   const missed = openFromURL(groupFindings([]), null);
   assert.match(missed, /deleted-service/);
@@ -265,9 +265,9 @@ test('a grouped row opens the work item, not one of its images', () => {
   // The assertion is the ROUND TRIP, not the format. Anything that survives writing
   // to the DOM and reading it back is fine; anything that does not is this bug again.
   const groups = groupFindings([
-    deployment('topnotch', '1', 'Production EU'),
-    deployment('topnotch', '2', 'Production EU'),
-    deployment('topnotch', '3', 'Production EU'),
+    deployment('storefront', '1', 'Production EU'),
+    deployment('storefront', '2', 'Production EU'),
+    deployment('storefront', '3', 'Production EU'),
   ]);
   assert.equal(groups.length, 1, 'three tags of one service are one work item');
 
