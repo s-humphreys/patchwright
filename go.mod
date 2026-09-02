@@ -6,7 +6,7 @@ go 1.26.0
 // (crypto/x509, mime, net/textproto, crypto/tls). Without it a build picks whatever
 // 1.26.x is to hand, which can silently be a vulnerable toolchain: govulncheck
 // reports four affected paths on 1.26.3.
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
 	cel.dev/cel-go v0.32.0
