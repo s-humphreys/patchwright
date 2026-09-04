@@ -81,6 +81,16 @@ type Coverage struct {
 	// whose field can be constant. Named "reported" for that reason.
 	Exposure  int `json:"deployments_with_reported_exposure"`
 	BaseDiffs int `json:"deployments_with_base_differential"`
+	// FallbackScanned is deployments the provider never assessed whose counts a
+	// fallback scanner supplied instead, and Uncovered the unassessed ones nothing
+	// has data for.
+	//
+	// Assessed deliberately does NOT include the fallback ones. A model asking how
+	// much of the estate the scan provider covers must get the provider's answer;
+	// folding a compensating scanner into it would report the gap as closed while
+	// the provider carries on not looking.
+	FallbackScanned int `json:"deployments_scanned_by_fallback,omitempty"`
+	Uncovered       int `json:"uncovered_deployments,omitempty"`
 }
 
 // hasCVEDetail reports whether a deployment really carries per-CVE detail.
@@ -167,6 +177,10 @@ func estateSummary(a Assessment) EstateSummary {
 		out.Coverage.Total++
 		if f.ProviderAssessed {
 			out.Coverage.Assessed++
+		} else if f.FallbackScanned {
+			out.Coverage.FallbackScanned++
+		} else {
+			out.Coverage.Uncovered++
 		}
 		if hasCVEDetail(f) {
 			out.Coverage.Scanned++
@@ -231,6 +245,15 @@ func estateCaveats(a Assessment, s EstateSummary) []string {
 		gap := fmt.Sprintf(
 			"The scan provider never assessed %d of %d deployments; their counts are unknown, not zero.",
 			s.Coverage.Total-s.Coverage.Assessed, s.Coverage.Total)
+		if s.Coverage.FallbackScanned > 0 {
+			// Said in the caveat rather than left in the coverage numbers. A model
+			// reading "6 unassessed" and a model reading "6 unassessed, 5 recovered
+			// from another scanner" should reach different conclusions, and the
+			// second must not present those counts as the provider's own.
+			gap += fmt.Sprintf(
+				" A fallback scanner supplied counts for %d of them, from a different vendor feed:"+
+					" those severities are not directly comparable with the rest.", s.Coverage.FallbackScanned)
+		}
 		if len(s.UnassessedReasons) > 0 {
 			gap += " See unassessed_reasons for the provider's own explanation."
 		}

@@ -69,6 +69,68 @@ resource running it, preferring one the platform actually assessed — an unasse
 resource reports no CVEs, which would read as a clean image. An image no resource runs
 is an error rather than an empty result, for the same reason.
 
+## When the provider never assessed an image
+
+An image the scan provider never assessed reports `?`, not `0`, everywhere it
+appears. That is the right answer, and it stays the right answer — but it is a poor
+one to leave standing when something else could have looked.
+
+`--fallback-vuln-source trivy` scans **only** those images:
+
+```sh
+patchwright assess --provider rapid7 --mode api -c config/ \
+  --vuln-source rapid7 --fallback-vuln-source trivy
+```
+
+It is a second source rather than a mode of `--vuln-source` because the two are
+often the same product. Where Rapid7 supplies both the inventory and the per-CVE
+detail, asking it again about an image it never assessed returns the same nothing.
+Trivy pulls the image itself, so it can answer where the platform could not.
+
+What it deliberately does not do:
+
+- It never touches an image the provider assessed. Those already have counts from
+  the feed the rest of the report is drawn from.
+- It obeys the same `scan.skipOwnerClasses` and `scan.skipRegistries` as the primary
+  scanner. An image somebody ruled out of scanning is not one to scan because a
+  different source is asking.
+
+Together those bound it to the residual gap — six images out of 649 on the estate
+this was built for, not a scan of the fleet. Failures are per-image and never fatal,
+including all of them failing: these are the images the provider could not read
+either, so a bad credential failing every one of them is the expected shape rather
+than a broken install.
+
+### Reading the numbers it produces
+
+Severity is not a shared scale. The provider's "critical" and Trivy's "critical"
+come from different vendor feeds, so a count from one is not directly comparable
+with a count from the other. Everything downstream says which is which:
+
+| Surface | How it shows |
+|---|---|
+| Report table | `12~` in CRIT/HIGH, explained in the legend |
+| Status page | The same `~`, plus a `fallback` badge on the row |
+| JSON / API | `counts_source`, `fallback_scanned`, `fallback_source`, `fallback_error` |
+| Signals | `fallback-scan`, alongside `unassessed` rather than instead of it |
+
+`provider_assessed` stays **false** on these findings, and
+`patchwright_findings_by_state{state="provider_unassessed"}` keeps counting them. A
+fallback working is not the provider working, and a coverage alert that goes quiet
+because something compensated for it is one that never fires again when the provider
+degrades further. The new series split that number rather than shrinking it:
+
+- `fallback_scanned` — recovered by the fallback
+- `uncovered` — the fallback failed, or was never asked. This is what "unassessed"
+  meant before the fallback existed, and it is the residual worth its own threshold
+- `patchwright_findings_fallback_failed_by_reason{reason}` — why, usually the same
+  registry credential the provider failed on
+
+Credentials come from the same keychain the rest of the tool pulls with (Azure
+workload identity, GKE workload identity, IRSA, or a mounted docker config) and are
+handed to Trivy in an isolated config of their own, so it cannot fall back to the
+ambient docker config and its credential helpers.
+
 ## What a base rebuild would fix
 
 A newer base image being available is not the same as knowing what moving to it

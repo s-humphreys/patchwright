@@ -18,7 +18,7 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `GET /api/v1/findings` | Findings, filterable by `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved` |
 | `GET /api/v1/finding?image=<ref>` | One image's finding |
 | `GET /api/v1/owners` | Per-team triage: where the fix goes, how much is ticketed, and how much of it is the sharp end (`urgent`, `known_exploited`, `exposed`, `end_of_life`) |
-| `GET /api/v1/summary` | Fleet headline, coverage counts, and `unassessed_reasons` |
+| `GET /api/v1/summary` | Fleet headline, coverage counts, `unassessed_reasons` and `fallback_failures` |
 | `GET /api/v1/analytics` | What to fix first: base upgrades ranked by what they clear, the classes of problem nobody is acting on, and per-owner responsiveness |
 | `GET /api/v1/config` | The ownership and policy rules as parsed at startup |
 | `POST /api/v1/assessments` | Trigger a refresh |
@@ -134,7 +134,7 @@ was assessed.
 ## Signals
 
 Each finding carries a `signals` list — `exposed`, `kev`, `in-flight`, `stale-fix`,
-`unassessed`, `suppressed` — and the queue renders it as one column of badges rather
+`unassessed`, `fallback-scan`, `suppressed` — and the queue renders it as one column of badges rather
 than a column per attribute. The same set is available to rules, so a signal can change
 the ordering instead of only being readable.
 

@@ -106,6 +106,13 @@ export function dataGaps(s) {
 
   if (s.provider_unassessed > 0 && total > 0) {
     const share = s.provider_unassessed / total;
+    // Stated whether or not a fallback covered them. The fallback compensating is not
+    // the provider working, and a coverage gap that stops being reported the moment
+    // something else papers over it is a gap nobody ever fixes.
+    const recovered = s.fallback_scanned
+      ? ` The fallback scanner supplied counts for ${s.fallback_scanned} of them, marked with a
+         "~" in the report and from a different vendor feed than the rest of the column.`
+      : "";
     gaps.push({
       // Proportion decides the alarm: most of an estate unassessed is a different
       // problem from a handful of unsupported registries.
@@ -115,8 +122,25 @@ export function dataGaps(s) {
       detail: `Their severity counts are absent data rather than zero, so they cannot match a
         count-based rule.${s.actionable_unassessed
           ? ` ${s.actionable_unassessed} of the ${s.actionable} actionable findings are on images the
-             provider never assessed, found by a vulnerability scanner alone.` : ""}
+             provider never assessed, found by a vulnerability scanner alone.` : ""}${recovered}
         ${reasonList(s.unassessed_reasons)}`,
+    });
+  }
+
+  // The residual, reported apart from the gap above. "6 unassessed" and "6 unassessed,
+  // 5 of them recovered" call for different amounts of alarm, and the one number cannot
+  // say which. Only when a fallback ran at all: without one, uncovered is just
+  // provider_unassessed said twice.
+  if (s.uncovered > 0 && (s.fallback_scanned || s.fallback_failed)) {
+    gaps.push({
+      severe: false,
+      count: `${s.uncovered} of ${s.provider_unassessed}`,
+      headline: "unassessed findings the fallback scanner could not cover either, so nothing has any data for them",
+      detail: `${s.fallback_failed
+        ? `The fallback was asked about ${s.fallback_failed} and could not read them — usually the
+           same registry credential the provider failed on.`
+        : "The fallback was never asked about them: scan policy skips these images."}
+        ${reasonList(s.fallback_failures)}`,
     });
   }
 

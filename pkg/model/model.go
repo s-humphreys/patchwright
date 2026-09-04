@@ -292,6 +292,32 @@ type AssessedImage struct {
 	Scanned   bool
 	ScanError string
 
+	// Fallback* record a scan run ONLY because the scan provider never assessed
+	// this image, so that a coverage gap is answered with something rather than
+	// with nothing.
+	//
+	// Deliberately separate from Scanned/ScanError, which describe the vuln source
+	// configured for the whole estate. Folding the two together would make the
+	// fallback's success indistinguishable from the primary source working, and
+	// the entire point of the fallback is that the primary did not.
+	//
+	// FallbackSource is the source that was asked (empty means the fallback never
+	// ran for this image, including because it was skipped); FallbackScanned that
+	// it answered; FallbackError why it could not.
+	FallbackSource  string
+	FallbackScanned bool
+	FallbackError   string
+
+	// CountsSource names who produced Counts. Empty means the scan provider, which
+	// is every image the fallback did not fill in.
+	//
+	// Severity is not a shared scale. The provider's "critical" and a fallback
+	// scanner's "critical" come from different vendor feeds, so a total summed
+	// across both is a blend of two taxonomies. Carrying the source per image is
+	// what lets a reader see which rows are which, instead of a single number that
+	// silently means two things.
+	CountsSource string
+
 	// InFlight is set when an open pull request would apply this image's upgrade.
 	// InFlightChecked reports whether detection ran, so a nil InFlight can be told
 	// apart from "nobody has started this".
@@ -334,6 +360,44 @@ type AssessedImage struct {
 	// It is the difference between "you ignored this" and "this has not shipped
 	// since March", which are different conversations to have with a team.
 	ImageBuilt time.Time
+}
+
+// ProviderAssessed reports whether the scan provider assessed any workload of
+// this image. Mirrors Finding.ProviderAssessed at the dedupe unit, which is where
+// scanning decisions are made.
+//
+// It deliberately keeps saying false after a fallback scan has filled the counts
+// in. The question it answers is "did the provider look", and a fallback answering
+// in its place does not change that answer - it is the reason the question is
+// being asked.
+func (a AssessedImage) ProviderAssessed() bool {
+	for _, o := range a.Occurrences {
+		if o.Assessed {
+			return true
+		}
+	}
+	return false
+}
+
+// CountsFromVulns aggregates per-CVE detail into severity counts.
+//
+// Used to fill Counts for an image the provider never assessed, where the
+// alternative on the report is a "?" for a scan that did in fact happen. Severity
+// is taken verbatim from the vulnerability, so a scanner's non-standard bucket
+// survives here exactly as it does from a provider.
+func CountsFromVulns(vulns []Vulnerability) Counts {
+	if len(vulns) == 0 {
+		return nil
+	}
+	out := make(Counts, len(standardSeverities))
+	for _, v := range vulns {
+		sev := v.Severity
+		if sev == "" {
+			sev = SeverityUnknown
+		}
+		out[sev]++
+	}
+	return out
 }
 
 // AffectedPackage is a package carrying a CVE, and the version that fixes it.
@@ -539,6 +603,14 @@ type Finding struct {
 	ScanError      string
 	ExploitChecked bool
 
+	// Fallback* and CountsSource mirror the assessed image: a scan run only
+	// because the provider never assessed this image, and who produced Counts.
+	// See AssessedImage for why these are not folded into Scanned/ScanError.
+	FallbackSource  string
+	FallbackScanned bool
+	FallbackError   string
+	CountsSource    string
+
 	// Upgrade, when set, is the newer version available for how this image is
 	// deployed (the remediation path). RemediationChecked reports whether
 	// detection ran, so a nil Upgrade can be told apart from an unresolved one.
@@ -665,6 +737,15 @@ const (
 	SignalStaleFix     = "stale-fix"
 	SignalUnassessed   = "unassessed"
 	SignalSuppressed   = "suppressed"
+	// SignalFallbackScan marks a finding whose counts came from the fallback
+	// scanner rather than the scan provider, because the provider never assessed
+	// the image.
+	//
+	// It rides ALONGSIDE unassessed rather than replacing it: the coverage gap is
+	// still a coverage gap, and the numbers on the row are from a different feed
+	// than every other row. A reader comparing this row's criticals against the one
+	// above it is comparing two scanners, and has to be told so.
+	SignalFallbackScan = "fallback-scan"
 	// SignalEndOfLife marks a finding whose base image sits on a line nobody
 	// maintains any more. It is a statement about the FUTURE, which no severity count
 	// captures: the CVEs on it today are the fewest it will ever have, because no
@@ -697,6 +778,9 @@ func (f Finding) Signals() []string {
 	if !f.ProviderAssessed() {
 		out = append(out, SignalUnassessed)
 	}
+	if f.FallbackScanned {
+		out = append(out, SignalFallbackScan)
+	}
 	if f.Suppressed {
 		out = append(out, SignalSuppressed)
 	}
@@ -725,12 +809,17 @@ func (f Finding) Signals() []string {
 // safely be read as "we never asked" - the one absence in this codebase that is
 // unambiguous.
 type Sources struct {
-	Provider      string
-	VulnSource    string
-	ExploitSource string
-	AgeSource     string
-	LiveSource    string
-	SupportSource string
+	Provider   string
+	VulnSource string
+	// FallbackVulnSource is the source asked about images the provider never
+	// assessed. Empty means no fallback was configured, so an unassessed image is
+	// unassessed full stop - which is a different report from one where the
+	// fallback ran and could not pull the image either.
+	FallbackVulnSource string
+	ExploitSource      string
+	AgeSource          string
+	LiveSource         string
+	SupportSource      string
 
 	// Remediation is whether upgrades were looked for at all; BaseDiff whether base
 	// images were scanned to establish what an upgrade clears; InFlight whether open

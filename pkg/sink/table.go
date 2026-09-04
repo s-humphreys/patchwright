@@ -96,6 +96,8 @@ func writeLegend(w io.Writer) {
 	fmt.Fprintln(w, "  PRIORITY   policy verdict. supp = suppressed, with the rule in the JSON reasons")
 	fmt.Fprintln(w, "  CRIT/HIGH  severity counts from the scan provider. ? = the provider NEVER ASSESSED this")
 	fmt.Fprintln(w, "             image, so nothing is known about it. Not the same as 0.")
+	fmt.Fprintln(w, "             12~ = the fallback scanner supplied this, because the provider did not. A real")
+	fmt.Fprintln(w, "             count, from a different vendor feed than the rows without a ~.")
 	fmt.Fprintln(w, "  FIXCRIT    criticals with a fix available, from the vuln scanner. - = not scanned, err = failed")
 	fmt.Fprintln(w, "  AGE        days since the scan provider first saw the oldest CVE on the image; \"-\" when")
 	fmt.Fprintln(w, "             no CVE is dated (no --age-source, or the provider has not seen them)")
@@ -264,8 +266,18 @@ func kevMark(f model.Finding) string {
 // Note this is about the *provider*. An optional vuln source (Trivy) not having
 // run is not a coverage gap, so it never produces "?" here; its findings surface
 // in FIXCRIT independently.
+//
+// A count the fallback scanner supplied is printed with a trailing "~". The
+// number is real, and better than the "?" it replaces, but it came from a
+// different scanner than every other row in the column: a reader comparing 12
+// against the 40 above it is comparing two vendor feeds. One character is enough
+// to stop that being an invisible comparison, and the legend below the table says
+// what it means.
 func countMark(f model.Finding, severity string) string {
 	if !f.ProviderAssessed() {
+		if f.FallbackScanned {
+			return fmt.Sprintf("%d~", f.Counts.Get(severity))
+		}
 		return "?"
 	}
 	return fmt.Sprintf("%d", f.Counts.Get(severity))

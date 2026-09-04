@@ -221,6 +221,62 @@ func TestSummaryReportsCoverage(t *testing.T) {
 	}
 }
 
+// The fallback splits provider_unassessed into what was recovered and what is
+// genuinely uncovered, WITHOUT closing the provider gap. An alert on the provider
+// must not go quiet because something else compensated for it.
+func TestSummarySplitsUnassessedByFallbackCoverage(t *testing.T) {
+	recovered := finding("acr.io/recovered:1", "engineering", "orders", false, false)
+	recovered.Occurrences = []model.Occurrence{{Assessed: false}}
+	recovered.FallbackScanned = true
+	recovered.FallbackSource = "trivy"
+	recovered.CountsSource = "trivy"
+
+	failed := finding("acr.io/failed:2", "engineering", "orders", false, false)
+	failed.Occurrences = []model.Occurrence{{Assessed: false}}
+	failed.FallbackSource = "trivy"
+	failed.FallbackError = "UNAUTHORIZED: authentication required"
+
+	neverAsked := finding("acr.io/skipped:3", "engineering", "orders", false, false)
+	neverAsked.Occurrences = []model.Occurrence{{Assessed: false}}
+
+	s := New(stubAssessor{findings: []model.Finding{
+		assessedFinding("acr.io/seen:1", "engineering", "orders", true),
+		recovered, failed, neverAsked,
+	}})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+	var body struct {
+		Summary summaryView `json:"summary"`
+	}
+	decodeInto(t, rec, &body)
+	got := body.Summary
+
+	// All three are still unassessed by the provider. That is the point.
+	if got.ProviderUnassessed != 3 {
+		t.Errorf("provider_unassessed = %d, want 3 (a fallback does not close the provider gap)", got.ProviderUnassessed)
+	}
+	if got.FallbackScanned != 1 {
+		t.Errorf("fallback_scanned = %d, want 1", got.FallbackScanned)
+	}
+	if got.FallbackFailed != 1 {
+		t.Errorf("fallback_failed = %d, want 1", got.FallbackFailed)
+	}
+	// The residual: asked-and-failed plus never-asked. This is what "unassessed"
+	// meant before the fallback existed.
+	if got.Uncovered != 2 {
+		t.Errorf("uncovered = %d, want 2", got.Uncovered)
+	}
+	if len(got.FallbackFailures) != 1 || got.FallbackFailures[0].Findings != 1 {
+		t.Errorf("fallback_failures = %+v, want one reason accounting for one finding", got.FallbackFailures)
+	}
+	if got.ProviderAssessed+got.ProviderUnassessed != got.Findings {
+		t.Errorf("the coverage counts must still partition findings: %d + %d != %d",
+			got.ProviderAssessed, got.ProviderUnassessed, got.Findings)
+	}
+}
+
 // The opposite error to the one the coverage counts prevent: concluding that the
 // actionable queue describes only the assessed findings. A vulnerability scanner
 // can find fixable CVEs the provider never looked for, and on a real estate 14 of

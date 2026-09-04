@@ -32,6 +32,7 @@ patchwright assess -i export.csv -c config/ --all --show-suppressed
 | `--show-suppressed` | Include suppressed findings |
 | `--live-source`, `--live-option` | [Live reconciliation](reconciliation.md) |
 | `--vuln-source`, `--vuln-option` | [Vulnerability scanning](scanning.md) |
+| `--fallback-vuln-source`, `--fallback-vuln-option` | Scan **only** the images the provider never assessed, so a coverage gap reports data rather than `?` |
 | `--exploit-source`, `--exploit-option` | EPSS + KEV enrichment |
 | `--age-source`, `--age-option` | Date CVEs from the provider's first-seen times |
 | `--support-source`, `--support-option` | Check whether each base image's line is still maintained. Without it, an end-of-life base is indistinguishable from an up-to-date one |

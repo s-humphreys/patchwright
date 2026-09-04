@@ -705,6 +705,32 @@ components:
         scanned: { type: boolean }
         exploit_checked: { type: boolean }
         scan_error: { type: string }
+        counts_source:
+          type: string
+          description: |
+            Who produced `counts`. Absent means the scan provider. Present names the
+            fallback scanner that supplied them because the provider never assessed
+            the image.
+
+            A client totalling counts across findings MUST read this: the provider's
+            "critical" and a fallback scanner's "critical" come from different vendor
+            feeds, so a sum over a mixed set blends two severity scales.
+        fallback_source:
+          type: string
+          description: >-
+            The fallback source asked about this image. Absent means it was never
+            asked — no fallback configured, or the image was skipped by scan policy.
+        fallback_scanned:
+          type: boolean
+          description: |
+            True when the fallback scanner supplied this finding's data.
+            `provider_assessed` stays false either way: the provider not looking is a
+            coverage gap the fallback compensates for, not one it closes.
+        fallback_error:
+          type: string
+          description: >-
+            Why the fallback could not read this image. Present means nothing has any
+            data for it — the residual coverage gap.
         oldest_cve_days:
           type: integer
           description: |
@@ -1427,6 +1453,25 @@ components:
           description: |
             Actionable findings on images the provider never assessed — actionable
             only because a scanner looked where the provider did not.
+        fallback_scanned:
+          type: integer
+          description: >-
+            Provider-unassessed findings a fallback scanner supplied counts for.
+        fallback_failed:
+          type: integer
+          description: >-
+            Provider-unassessed findings the fallback was asked about and could not
+            read.
+        uncovered:
+          type: integer
+          description: |
+            Provider-unassessed findings with no data from anybody: the fallback
+            failed, or was never asked. This is the residual gap and the number worth
+            an alert threshold.
+
+            `provider_unassessed` keeps counting all of them. A fallback working is
+            not the provider working, and a dashboard that stopped saying so would let
+            a scan provider quietly stop covering the estate.
         scanned: { type: integer }
         exploit_checked: { type: integer }
         in_flight:
@@ -1505,6 +1550,18 @@ components:
               name: { type: string }
               until: { type: string, description: "The date it lapsed, YYYY-MM-DD." }
         unassessed_reasons:
+          type: array
+          items:
+            type: object
+            properties:
+              reason: { type: string }
+              findings: { type: integer }
+        fallback_failures:
+          description: |
+            Findings the fallback could not cover, by the reason it failed, worst
+            first. The same argument as `unassessed_reasons` one layer down: a safety
+            net that cannot authenticate to the registry the provider could not
+            authenticate to either is one credential, not a coverage statistic.
           type: array
           items:
             type: object

@@ -23,24 +23,26 @@ import (
 
 func newAssessCmd() *cobra.Command {
 	var (
-		pf             providerFlags
-		configPaths    []string
-		format         string
-		outputs        []string
-		ownerClass     string
-		includeAll     bool
-		showSuppressed bool
-		liveSource     string
-		liveOptions    []string
-		supportSource  string
-		supportOptions []string
-		vulnSource     string
-		vulnOptions    []string
-		exploitSource  string
-		exploitOptions []string
-		ageSource      string
-		ageOptions     []string
-		remediation    bool
+		pf                  providerFlags
+		configPaths         []string
+		format              string
+		outputs             []string
+		ownerClass          string
+		includeAll          bool
+		showSuppressed      bool
+		liveSource          string
+		liveOptions         []string
+		supportSource       string
+		supportOptions      []string
+		vulnSource          string
+		vulnOptions         []string
+		fallbackVulnSource  string
+		fallbackVulnOptions []string
+		exploitSource       string
+		exploitOptions      []string
+		ageSource           string
+		ageOptions          []string
+		remediation         bool
 	)
 
 	cmd := &cobra.Command{
@@ -61,19 +63,21 @@ func newAssessCmd() *cobra.Command {
 			}
 
 			a, err := newAssessor(assessInputs{
-				provider:       pf,
-				configPaths:    configPaths,
-				liveSource:     liveSource,
-				liveOptions:    liveOptions,
-				vulnSource:     vulnSource,
-				vulnOptions:    vulnOptions,
-				exploitSource:  exploitSource,
-				exploitOptions: exploitOptions,
-				ageSource:      ageSource,
-				ageOptions:     ageOptions,
-				remediation:    remediation,
-				supportSource:  supportSource,
-				supportOptions: supportOptions,
+				provider:            pf,
+				configPaths:         configPaths,
+				liveSource:          liveSource,
+				liveOptions:         liveOptions,
+				vulnSource:          vulnSource,
+				vulnOptions:         vulnOptions,
+				fallbackVulnSource:  fallbackVulnSource,
+				fallbackVulnOptions: fallbackVulnOptions,
+				exploitSource:       exploitSource,
+				exploitOptions:      exploitOptions,
+				ageSource:           ageSource,
+				ageOptions:          ageOptions,
+				remediation:         remediation,
+				supportSource:       supportSource,
+				supportOptions:      supportOptions,
 			})
 			if err != nil {
 				return err
@@ -115,6 +119,9 @@ func newAssessCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&liveOptions, "live-option", nil, "live source option as key=value (repeatable), e.g. path=live.txt or contexts=c1,c2")
 	cmd.Flags().StringVar(&vulnSource, "vuln-source", "", "scan images for per-CVE fix availability ("+joinVulnSources()+")")
 	cmd.Flags().StringArrayVar(&vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable), e.g. severity=CRITICAL,HIGH")
+	cmd.Flags().StringVar(&fallbackVulnSource, "fallback-vuln-source", "",
+		"scan ONLY the images the scan provider never assessed, so a coverage gap reports data rather than \"?\" ("+joinVulnSources()+")")
+	cmd.Flags().StringArrayVar(&fallbackVulnOptions, "fallback-vuln-option", nil, "fallback vuln source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&exploitSource, "exploit-source", "", "enrich CVEs with exploit intel — EPSS + CISA KEV ("+joinExploitSources()+"); requires --vuln-source")
 	cmd.Flags().StringVar(&ageSource, "age-source", "",
 		"date CVEs from the scan provider's own first-seen times ("+joinAgeSources()+"); requires --vuln-source")
@@ -212,6 +219,29 @@ func buildScanner(name string, options []string, skipClasses, skipRegistries []s
 		return nil, err
 	}
 	scanner := enrich.NewImageScanner(src)
+	if skip := anySkip(skipByOwnerClass(skipClasses), skipByRegistry(skipRegistries)); skip != nil {
+		scanner.Skip = skip
+	}
+	return &scanner, nil
+}
+
+// buildFallbackScanner constructs the fallback scanner for the named source. It
+// obeys the same skip lists as the primary scanner: the fallback exists to close
+// a coverage gap, not to reopen a decision about what is worth scanning.
+func buildFallbackScanner(name string, options []string, skipClasses, skipRegistries []string) (*enrich.FallbackScanner, error) {
+	opts := enrich.Options{}
+	for _, kv := range options {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid --fallback-vuln-option %q, want key=value", kv)
+		}
+		opts[k] = v
+	}
+	src, err := enrich.NewVulnSource(name, opts)
+	if err != nil {
+		return nil, err
+	}
+	scanner := enrich.NewFallbackScanner(src)
 	if skip := anySkip(skipByOwnerClass(skipClasses), skipByRegistry(skipRegistries)); skip != nil {
 		scanner.Skip = skip
 	}

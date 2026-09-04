@@ -341,6 +341,23 @@ scan:
   # vuln source already knows the base URL from provider.api.baseURL. Set these only to
   # point a source somewhere else.
   vulnOptions: []
+
+  # A second source, asked ONLY about the images the scan provider never assessed.
+  #
+  # This matters when the provider and the vuln source are the same product (Rapid7
+  # supplies both): asking it again about an image it never assessed returns the same
+  # nothing, and those findings report "?" forever. Trivy pulls the image itself, so
+  # it can answer where the provider could not.
+  #
+  # Bounded deliberately. It never touches an image the provider assessed, and it
+  # obeys the same scan.skipOwnerClasses / scan.skipRegistries as the primary scanner,
+  # so it costs a handful of image pulls rather than a scan of the estate.
+  #
+  # Its counts are marked as its own everywhere they appear, and provider coverage
+  # metrics keep counting these images as unassessed: a safety net working is not the
+  # provider working, and an alert on the provider must not go quiet because of it.
+  fallbackVulnSource: ""     # e.g. "trivy"
+  fallbackVulnOptions: []
   # Also annotate CVEs with EPSS + CISA KEV (needs egress to first.org + cisa.gov).
   # Comma-separated: "public" gives EPSS + KEV, "rapid7" adds the platform's own
   # risk score. They are not interchangeable — see docs/scanning.md.

@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/s-humphreys/patchwright/pkg/registryauth"
 )
@@ -94,18 +92,10 @@ func (t *TrivyScanner) ScanRef(ctx context.Context, ref string) (*Result, error)
 	// several registries authenticate with an identity token and no password at
 	// all, which those variables cannot express. Isolating it also means Trivy
 	// cannot fall back to the developer's own config and its credential helpers.
-	resolve := t.Credentials
-	if resolve == nil {
-		resolve = registryauth.Credentials
-	}
-	cfg, _, err := resolve(ref)
-	if err != nil {
-		return nil, fmt.Errorf("credentials for %s: %w", ref, err)
-	}
 	// An isolated config either way. When nothing claims the registry the config
 	// is empty, so an anonymous pull stays anonymous instead of silently picking
 	// up the ambient docker config and its credential helpers.
-	dir, cleanup, err := writeDockerConfig(ref, cfg)
+	dir, cleanup, err := registryauth.IsolatedDockerConfig(ref, t.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("credentials for %s: %w", ref, err)
 	}
@@ -185,51 +175,4 @@ func lastLine(s string) string {
 	}
 	lines := strings.Split(s, "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
-}
-
-// writeDockerConfig writes a config containing exactly one registry's credentials,
-// and nothing else - no credsStore, no credHelpers.
-func writeDockerConfig(ref string, cfg *authn.AuthConfig) (dir string, cleanup func(), err error) {
-	parsed, err := name.ParseReference(ref)
-	if err != nil {
-		return "", nil, err
-	}
-	dir, err = os.MkdirTemp("", "pw-docker-")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup = func() { _ = os.RemoveAll(dir) }
-
-	entry := map[string]string{}
-	if cfg == nil {
-		cfg = &authn.AuthConfig{}
-	}
-	if cfg.Auth != "" {
-		entry["auth"] = cfg.Auth
-	}
-	if cfg.Username != "" {
-		entry["username"] = cfg.Username
-	}
-	if cfg.Password != "" {
-		entry["password"] = cfg.Password
-	}
-	if cfg.IdentityToken != "" {
-		entry["identitytoken"] = cfg.IdentityToken
-	}
-	if cfg.RegistryToken != "" {
-		entry["registrytoken"] = cfg.RegistryToken
-	}
-	body, err := json.Marshal(map[string]any{
-		"auths": map[string]any{parsed.Context().RegistryStr(): entry},
-	})
-	if err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	// 0600: the file holds a live registry credential for as long as the scan runs.
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return dir, cleanup, nil
 }
