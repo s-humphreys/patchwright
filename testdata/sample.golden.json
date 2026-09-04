@@ -22,6 +22,8 @@
     "reasons": [
       "matched actionable rule \"production-critical\""
     ],
+    "rule": "production-critical",
+    "rule_kind": "actionable",
     "exposure": "internal",
     "workload_count": 2,
     "provider_assessed": true,
@@ -78,6 +80,8 @@
     "reasons": [
       "matched actionable rule \"production-critical\""
     ],
+    "rule": "production-critical",
+    "rule_kind": "actionable",
     "exposure": "internal",
     "workload_count": 1,
     "provider_assessed": true,
@@ -130,6 +134,8 @@
     "reasons": [
       "matched actionable rule \"any-critical\""
     ],
+    "rule": "any-critical",
+    "rule_kind": "actionable",
     "exposure": "internal",
     "workload_count": 1,
     "provider_assessed": true,
@@ -182,6 +188,8 @@
     "reasons": [
       "suppressed by rule \"cloud-provider-managed\""
     ],
+    "rule": "cloud-provider-managed",
+    "rule_kind": "suppress",
     "exposure": "internal",
     "signals": [
       "suppressed"
@@ -237,6 +245,7 @@
     "reasons": [
       "no actionable rule matched"
     ],
+    "rule_kind": "none",
     "exposure": "internal",
     "workload_count": 1,
     "provider_assessed": true,

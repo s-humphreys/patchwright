@@ -150,6 +150,8 @@ func (e *Evaluator) Evaluate(f *model.Finding) error {
 		if matched {
 			f.Suppressed = true
 			f.Actionable = false
+			f.Rule = cr.rule.Name
+			f.RuleKind = model.RuleKindSuppress
 			f.Reasons = append(f.Reasons, fmt.Sprintf("suppressed by rule %q", cr.rule.Name))
 			return nil
 		}
@@ -163,11 +165,14 @@ func (e *Evaluator) Evaluate(f *model.Finding) error {
 		if matched {
 			f.Actionable = true
 			f.Priority = cr.rule.Priority
+			f.Rule = cr.rule.Name
+			f.RuleKind = model.RuleKindActionable
 			f.Reasons = append(f.Reasons, fmt.Sprintf("matched actionable rule %q", cr.rule.Name))
 			return nil
 		}
 	}
 
+	f.RuleKind = model.RuleKindNone
 	f.Reasons = append(f.Reasons, "no actionable rule matched")
 	return nil
 }

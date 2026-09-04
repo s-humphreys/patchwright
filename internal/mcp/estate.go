@@ -499,6 +499,17 @@ type TeamReport struct {
 	InProgress    int `json:"items_with_open_pull_request"`
 	StaleInFlight int `json:"items_with_stale_pull_request"`
 
+	// KnownExploited is this team's work items carrying a known-exploited CVE, and
+	// KEVFixable how many of those have an upgrade to move to. Same unit as
+	// work_items above and as the queue page, so they can be read against each other.
+	//
+	// Reported here rather than left to be counted off top_items, which is capped: a
+	// reader counting "kev" signals in that list gets a number that looks like the
+	// team's total and is silently truncated. A wrong number that looks right is
+	// worse than an absent one. exploitability_report has the full breakdown.
+	KnownExploited int `json:"known_exploited_items"`
+	KEVFixable     int `json:"known_exploited_with_fix"`
+
 	// ClearedByRebuilds is how many DISTINCT CVEs this team's rebuilds would remove,
 	// on the same footing as every other CVE count here.
 	ClearedByRebuilds *int `json:"cleared_by_rebuilds,omitempty"`
@@ -562,6 +573,15 @@ func teamReport(a Assessment, team string) (TeamReport, []string, bool) {
 			}
 		}
 	}
+	var owned []sink.FindingView
+	for _, f := range a.active() {
+		if f.Actionable && strings.EqualFold(f.Owner.Team, team) {
+			owned = append(owned, f)
+		}
+	}
+	kev := movable(owned, func(v sink.VulnView) bool { return v.KEV })
+	out.KnownExploited, out.KEVFixable = kev.Items, kev.WithFix
+
 	out.Services = len(services)
 	if measured {
 		n := len(clearable)

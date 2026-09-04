@@ -59,6 +59,17 @@ const (
 	PriorityLow    = "low"
 )
 
+// Policy rule kinds: which list decided a finding.
+//
+// RuleKindNone is a real verdict rather than a missing one. A finding no rule
+// matched is neither work nor an accepted risk: policy has no opinion about it, and
+// on a monthly review that is a gap in the rules rather than in the estate.
+const (
+	RuleKindActionable = "actionable"
+	RuleKindSuppress   = "suppress"
+	RuleKindNone       = "none"
+)
+
 // PriorityRank orders the conventional priority labels for display and
 // comparison; unknown labels rank 0 and therefore sort after all of them. This
 // is the single definition: a second copy elsewhere would let the two ladders
@@ -635,6 +646,17 @@ type Finding struct {
 	Suppressed bool
 	Priority   string   // free-form, defined by policy config
 	Reasons    []string // human-readable explanation of the verdict
+
+	// Rule is the name of the policy rule that decided this finding, and RuleKind
+	// which list it came from. Empty and RuleKindNone when nothing matched.
+	//
+	// Structured rather than left inside the Reasons prose, which two places were
+	// already recovering it from by looking for quotation marks. The rule names are
+	// the organisation's own vocabulary for what counts as a problem - they are what
+	// a policy report is keyed on - and a report keyed on a substring of a sentence
+	// breaks the day somebody rewords the sentence.
+	Rule     string
+	RuleKind string
 }
 
 // OldestVuln returns the earliest FirstSeen across this finding's CVEs, and whether

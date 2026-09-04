@@ -19,6 +19,8 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `GET /api/v1/finding?image=<ref>` | One image's finding |
 | `GET /api/v1/owners` | Per-team triage: where the fix goes, how much is ticketed, and how much of it is the sharp end (`urgent`, `known_exploited`, `exposed`, `end_of_life`) |
 | `GET /api/v1/summary` | Fleet headline, coverage counts, `unassessed_reasons` and `fallback_failures` |
+| `GET /api/v1/policy` | The estate against **your own** policy rules by name: what each caught, what each suppression holds and when it lapses, and what no rule speaks to. For a periodic security review |
+| `GET /api/v1/exploitability` | Exploited work items and how many can be moved on today, per team beside each team's urgent count, worst CVEs named. Same unit as the queue page. `?epss_threshold=` |
 | `GET /api/v1/analytics` | What to fix first: base upgrades ranked by what they clear, the classes of problem nobody is acting on, and per-owner responsiveness |
 | `GET /api/v1/config` | The ownership and policy rules as parsed at startup |
 | `POST /api/v1/assessments` | Trigger a refresh |
