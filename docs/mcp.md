@@ -25,6 +25,8 @@ enough to matter.
 | `worst_first` | The work queue, worst first, filterable by team, priority and exposure |
 | `team_report` | One team's whole position, including what is already in flight and what is merely open and stale |
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
+| `policy_report` | **The estate against your OWN rules**, by their names in your config: what each caught, what each suppression holds and when it lapses, and what no rule speaks to. For a periodic review or sign-off |
+| `exploitability_report` | **What is actually being exploited, and how much is fixable.** KEV and high-EPSS CVE counts with their fixable share, per team beside each team's urgent count, worst CVEs named |
 | `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
 
 **A service answers to any name that identifies it.** The bare repository
@@ -221,6 +223,89 @@ back both instead. Every miss returns the real names alongside it.
 
 `unattributed_work_items` is reported separately, and is usually the reason a team
 looks empty: work with no owning team appears in no `team_report` at all.
+
+## Reporting against your own policy
+
+`estate_summary` reports patchwright's view of what is worth acting on: known
+exploited, fixes gone stale, end-of-life bases. Those are a reasonable default and a
+poor basis for a report somebody signs. The standard a team is accountable to is its
+own policy, and if the rules say a critical in pre-production is medium, a report that
+calls it urgent is reporting somebody else's standard back at them.
+
+`policy_report` is that report. It is keyed on the rule names in your config, and it
+adds nothing to them:
+
+- **What each actionable rule caught** - deployments, services, teams, worst first -
+  in the order the rules are evaluated rather than by size. That order is the policy's
+  own statement of severity; sorting by count would put the biggest bucket above the
+  sharpest one.
+- **Rules that caught nothing**, listed rather than omitted. "We have a rule for
+  exploited criticals and it fired on nothing" and "we have no such rule" are the same
+  empty space in a report built only from findings, and opposite conclusions.
+- **Every suppression and when it lapses**: expired, a countdown, or no expiry at all.
+  A suppression is an accepted risk, so this is the part somebody has to actively
+  agree with — and one holding findings with no expiry date will never come back for
+  review on its own.
+- **What no rule matched.** Neither queued work nor accepted risk: policy has no
+  opinion. It is invisible in every other view, and how many of those carry a
+  reported critical is stated beside it.
+- The split by your own priority labels and by team.
+
+The same report is served at `GET /api/v1/policy`, from the same code, so a review
+pack assembled from the API cannot disagree with one an agent produced from the tool.
+
+Two things it will not do. It has no history, so it reports the state on the day it
+ran and says so first, before any number: a monthly cadence invites reading a snapshot
+as a record of the month. And the coverage counts bound it — a rule that did not match
+an image nobody assessed has not cleared it, it had nothing to match on.
+
+## Exploitation, and what can be moved on
+
+`policy_report` says what your rules decided. `exploitability_report` says what is
+actually being exploited and how much of it you can move on today.
+
+**The unit is work items, grouped by service, over actionable findings** — the same
+number the queue page shows. Filter it to the `kev` signal and it reports 34 items;
+tick "has a fix" and it reports 20. The tool computes that from the same findings, the
+same filters and the same grouping code, so:
+
+```
+known_exploited: { items: 34, items_with_fix: 20, items_without_fix: 14,
+                   items_with_fix_pct: 58.8, deployments: 34, services: 34 }
+```
+
+A tool reporting a different number for the same question than the page a team already
+uses is worse than one that stays quiet, which is why it is not counted any other way.
+
+One call also gives the per-team breakdown with each team's urgent count beside it, so
+the common question is not a join, and the worst CVEs named — a count with no names
+cannot be acted on, and the question after "we have 34" is always "which ones".
+`epss_threshold` defaults to 0.5, matching what the service and team reports already
+treat as high, and the report echoes back the threshold it used.
+
+### Two things that look like one number and are not
+
+**"Has a fix" means an upgrade path, not a published patch.** The queue's tick is a
+resolved upgrade with a version available. An image can carry a CVE that was patched
+upstream months ago and still have nowhere to move to, because nobody has built a
+release containing it. `cves.kev_fixable` is the other reading, and both are reported
+so neither can be mistaken for the other. On a real shape those diverge hard: two
+distinct exploited CVEs, both patched upstream — 100% fixable as vulnerabilities —
+spread across 34 pieces of work of which 20 can actually move.
+
+**Items are not CVEs.** The `cves` block underneath counts distinct vulnerabilities.
+One CVE spans many services and one service carries many CVEs, so the two will not
+match and neither is derivable from the other. `deployments` and `services` are
+reported alongside the item count so blast radius is visible without being confused
+with queue length.
+
+Everything else is a floor: per-CVE detail exists only for scanned deployments, so the
+unscanned remainder could hold exploited CVEs nobody looked for. With no exploit source
+configured every figure is zero because nothing was asked, and the report says outright
+not to report them. Non-actionable and suppressed findings are excluded, and both
+exclusions are stated.
+
+Served at `GET /api/v1/exploitability` too, with `?epss_threshold=`.
 
 ## Suppressed findings
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/mcp"
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -218,6 +219,70 @@ func TestSummaryReportsCoverage(t *testing.T) {
 	// Only the assessed finding has a resolved upgrade.
 	if got.RemediationUnresolved != 2 {
 		t.Errorf("remediation_unresolved = %d, want 2", got.RemediationUnresolved)
+	}
+}
+
+// The API and the MCP tool must not be able to disagree about the same run: the
+// report is a security sign-off, and two implementations would drift.
+func TestPolicyEndpointServesTheReport(t *testing.T) {
+	f := finding("acr.io/app:1", "engineering", "orders", true, false)
+	f.Occurrences = []model.Occurrence{{Assessed: true}}
+	f.Rule = "production-critical"
+	f.RuleKind = model.RuleKindActionable
+	f.Priority = "high"
+
+	orphan := finding("acr.io/orphan:1", "engineering", "orders", false, false)
+	orphan.Occurrences = []model.Occurrence{{Assessed: true}}
+	orphan.RuleKind = model.RuleKindNone
+
+	s := New(stubAssessor{findings: []model.Finding{f, orphan}})
+	s.WithConfig(&config.Config{
+		Actionable: []config.PolicyRule{
+			{Name: "production-critical", When: "counts['critical'] > 0", Priority: "high"},
+			{Name: "prelive-critical", When: "counts['critical'] > 0", Priority: "medium"},
+		},
+		Suppress: []config.PolicyRule{{Name: "not-running", When: "reconciled && !live"}},
+	})
+	s.Refresh(context.Background())
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policy", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body struct {
+		Policy mcp.PolicyReport `json:"policy"`
+	}
+	decodeInto(t, rec, &body)
+	got := body.Policy
+
+	if got.Verdicts.Actionable != 1 || got.Verdicts.NoRuleMatched != 1 {
+		t.Errorf("verdicts = %+v", got.Verdicts)
+	}
+	// Both configured rules, including the one that caught nothing. That is the whole
+	// reason the endpoint needs the config and not just the findings.
+	if len(got.ActionableRules) != 2 {
+		t.Fatalf("want both configured rules listed, got %d", len(got.ActionableRules))
+	}
+	if !got.ActionableRules[0].Matched || got.ActionableRules[1].Matched {
+		t.Errorf("rules = %+v, want the first matched and the second not", got.ActionableRules)
+	}
+	if len(got.SuppressRules) != 1 || !got.SuppressRules[0].NoExpiry {
+		t.Errorf("suppress = %+v, want the rule reported with no expiry", got.SuppressRules)
+	}
+	if len(got.Caveats) == 0 {
+		t.Error("a report with no caveats cannot say it is a snapshot")
+	}
+}
+
+// Before the first assessment: 503, not an empty report. An empty policy report reads
+// as an estate no rule found anything in, at the moment nothing is known.
+func TestPolicyEndpointRefusesBeforeTheFirstAssessment(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{}})
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/policy", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
 	}
 }
 

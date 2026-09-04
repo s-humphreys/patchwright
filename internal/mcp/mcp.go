@@ -49,6 +49,14 @@ type Assessment struct {
 	// a broken scan provider when the truth is that no vuln source was named - which
 	// is exactly what a model concluded, confidently, on the first real session.
 	Sources model.Sources
+
+	// Policy is the rule set the findings were evaluated against.
+	//
+	// The findings alone say which rules FIRED. A report on a policy also needs the
+	// rules that did not, and the suppressions holding nothing, because a rule set is
+	// reviewed as a whole. Empty when the caller could not supply it, which the
+	// report says rather than presenting a partial list as the whole policy.
+	Policy PolicyRules
 }
 
 // Source provides the current assessment. The server implements this over its
