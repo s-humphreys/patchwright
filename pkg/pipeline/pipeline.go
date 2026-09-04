@@ -24,6 +24,7 @@ type Pipeline struct {
 	attributor  *attribute.Attributor
 	evaluator   *policy.Evaluator
 	scanner     *enrich.ImageScanner        // optional: per-CVE scan after dedupe
+	fallback    *enrich.FallbackScanner     // optional: scan of what the provider never assessed
 	exploit     *enrich.ExploitEnricher     // optional: EPSS/KEV enrichment after scan
 	age         *enrich.AgeEnricher         // optional: CVE first-seen enrichment after scan
 	remediation *enrich.RemediationEnricher // optional: deployment upgrade detection
@@ -45,6 +46,17 @@ type Option func(*Pipeline)
 // populating each image's vulnerabilities before policy runs.
 func WithImageScanner(s *enrich.ImageScanner) Option {
 	return func(p *Pipeline) { p.scanner = s }
+}
+
+// WithFallbackScanner enables scanning of images the scan provider never
+// assessed, filling their counts from a second source.
+//
+// Runs directly after the primary scanner and before the exploit and age
+// enrichers, so the CVEs it recovers are annotated with EPSS and KEV like any
+// other. A fallback finding that cannot be told is known-exploited is only half
+// of a coverage fix.
+func WithFallbackScanner(s *enrich.FallbackScanner) Option {
+	return func(p *Pipeline) { p.fallback = s }
 }
 
 // WithExploitEnricher enables exploit-intelligence (EPSS/KEV) enrichment of the
@@ -144,6 +156,14 @@ func (p *Pipeline) Run(ctx context.Context, occurrences []model.Occurrence) ([]m
 	if p.scanner != nil {
 		if err := p.scanner.EnrichImages(ctx, images); err != nil {
 			return nil, err
+		}
+	}
+	if p.fallback != nil {
+		// Never fatal, and never returns one: the images it scans are the ones the
+		// provider could not read either, so every scan failing is the expected
+		// shape of a bad credential rather than a broken install.
+		if err := p.fallback.EnrichImages(ctx, images); err != nil {
+			p.recordFailure(ctx, "fallback-scan", err)
 		}
 	}
 	if p.age != nil {
@@ -252,6 +272,10 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				Live:               live,
 				Scanned:            ai.Scanned,
 				ScanError:          ai.ScanError,
+				FallbackSource:     ai.FallbackSource,
+				FallbackScanned:    ai.FallbackScanned,
+				FallbackError:      ai.FallbackError,
+				CountsSource:       ai.CountsSource,
 				ExploitChecked:     ai.ExploitChecked,
 				Upgrade:            ai.Upgrade,
 				RemediationChecked: ai.RemediationChecked,

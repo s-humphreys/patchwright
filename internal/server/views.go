@@ -48,6 +48,18 @@ type summaryView struct {
 	// describes only the assessed findings, when a large share of it does not.
 	ActionableUnassessed int `json:"actionable_unassessed"`
 
+	// FallbackScanned counts unassessed findings a fallback scanner supplied counts
+	// for, FallbackFailed those it was asked about and could not read, and
+	// Uncovered the unassessed findings with no data from anybody.
+	//
+	// Uncovered is the number that used to be ProviderUnassessed, and the one an
+	// alert belongs on. ProviderUnassessed keeps counting all of them: a fallback
+	// working is not the provider working, and a dashboard that stopped saying so
+	// would let a scan provider quietly stop covering the estate.
+	FallbackScanned int `json:"fallback_scanned"`
+	FallbackFailed  int `json:"fallback_failed"`
+	Uncovered       int `json:"uncovered"`
+
 	// ProviderDataNewest and ProviderDataOldest are when the scan provider last
 	// looked, taken from the assessment timestamps in its own data.
 	//
@@ -123,6 +135,13 @@ type summaryView struct {
 	// said so. Empty when the provider states no reasons (the CSV export does
 	// not), which is not the same as there being no problem.
 	UnassessedReasons []reasonCount `json:"unassessed_reasons,omitempty"`
+
+	// FallbackFailures counts findings the fallback could not cover, by the reason
+	// it failed, worst first. The same argument as UnassessedReasons one layer
+	// down: a safety net that cannot authenticate to the registry the provider
+	// could not authenticate to either is a single credential, not a coverage
+	// statistic. Empty when no fallback was configured.
+	FallbackFailures []reasonCount `json:"fallback_failures,omitempty"`
 }
 
 // sourceFailure is one enrichment that could not run, and why.
@@ -211,6 +230,7 @@ func buildSummary(findings []model.Finding) summaryView {
 	images := map[string]struct{}{}
 	reasons := map[string]int{}
 	blockers := map[string]int{}
+	fallbackFailures := map[string]int{}
 	for i := range findings {
 		f := &findings[i]
 		images[f.Image.Key()] = struct{}{}
@@ -239,6 +259,18 @@ func buildSummary(findings []model.Finding) summaryView {
 			s.ProviderUnassessed++
 			if f.Actionable {
 				s.ActionableUnassessed++
+			}
+			switch {
+			case f.FallbackScanned:
+				s.FallbackScanned++
+			case f.FallbackError != "":
+				s.FallbackFailed++
+				s.Uncovered++
+				fallbackFailures[normalizeUpgradeReason(f.FallbackError)]++
+			default:
+				// Never asked: no fallback configured, or this image was skipped
+				// by the same policy the primary scanner obeys. Still uncovered.
+				s.Uncovered++
 			}
 			// One finding, one vote for its primary reason. Counting every
 			// reason on every finding would make the shares sum past the
@@ -287,20 +319,33 @@ func buildSummary(findings []model.Finding) summaryView {
 	s.ProviderDataOldest, s.ProviderDataNewest = providerDataRange(findings)
 	s.UnassessedReasons = rankReasons(reasons)
 	s.RemediationBlockers = rankReasons(blockers)
+	s.FallbackFailures = rankReasons(fallbackFailures)
 	return s
 }
 
 // refLike matches an image reference inside an error message.
 var refLike = regexp.MustCompile(`[a-z0-9.-]+\.[a-z]{2,}/[^\s"',]+|"[^"]*/[^"]*"`)
 
+// idLike matches the per-request identifiers registries put in their errors - ACR
+// returns a correlation UUID on an auth failure, and registries return digests.
+//
+// One bucket per request is worse than useless: the reason metric exists to say
+// "this one credential accounts for all of it", and a unique id in every message
+// makes every finding its own cause.
+var idLike = regexp.MustCompile(`\b(?:sha256:)?[0-9a-f]{8}-?(?:[0-9a-f]{4}-?){3}[0-9a-f]{8,}\b`)
+
 // normalizeUpgradeReason collapses a reason into something countable.
 //
 // These messages embed the image they are about, so counting them raw would produce
 // one bucket per image — 700 buckets saying the same thing, which is no more useful
 // than the per-finding field. The reference is replaced so the shape of the failure is
-// what gets counted.
+// what gets counted. Per-request ids go the same way, for the same reason.
+//
+// Also used for fallback scan failures, whose text comes from a scanner rather than a
+// registry client but embeds exactly the same things.
 func normalizeUpgradeReason(reason string) string {
 	out := refLike.ReplaceAllString(strings.TrimSpace(reason), "<image>")
+	out = idLike.ReplaceAllString(out, "<id>")
 	const maxLen = 140
 	if len(out) > maxLen {
 		out = strings.TrimSpace(out[:maxLen]) + "…"
@@ -499,6 +544,8 @@ func metricsSnapshot(snap *snapshot) metrics.Snapshot {
 		Suppressed:          snap.summary.Suppressed,
 		ProviderAssessed:    snap.summary.ProviderAssessed,
 		ProviderUnassessed:  snap.summary.ProviderUnassessed,
+		FallbackScanned:     snap.summary.FallbackScanned,
+		Uncovered:           snap.summary.Uncovered,
 		Scanned:             snap.summary.Scanned,
 		ExploitChecked:      snap.summary.ExploitChecked,
 		Upgradable:          snap.summary.Upgradable,
@@ -541,6 +588,9 @@ func metricsSnapshot(snap *snapshot) metrics.Snapshot {
 	}
 	for _, r := range snap.summary.UnassessedReasons {
 		out.Reasons = append(out.Reasons, metrics.ReasonCount{Reason: r.Reason, Findings: r.Findings})
+	}
+	for _, r := range snap.summary.FallbackFailures {
+		out.FallbackFailures = append(out.FallbackFailures, metrics.ReasonCount{Reason: r.Reason, Findings: r.Findings})
 	}
 	return out
 }

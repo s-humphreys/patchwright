@@ -112,6 +112,14 @@ var (
 		"Findings the scan provider did not assess, by its stated reason.",
 		[]string{"reason"})
 
+	// fallbackFailureReasons is the same idea one layer down: why the safety net
+	// did not catch it either. Without it, a fallback that fails on every private
+	// image looks identical to one that was never configured, and both read as
+	// "coverage is what it is".
+	fallbackFailureReasons = gaugeVec("findings_fallback_failed_by_reason",
+		"Findings the fallback scanner could not cover, by the reason it failed.",
+		[]string{"reason"})
+
 	// remediationBlockers does the same for remediation. An expired registry
 	// credential silently turned 700 fixable findings into "unknown" on this estate,
 	// three times, and nothing on a dashboard moved except the upgradable count
@@ -140,6 +148,14 @@ var (
 
 	providerFetches = counterVec("provider_fetches_total",
 		"Fetches of scan data from the provider, by outcome.", []string{"result"})
+
+	// Counted apart from image_scans_total on purpose. That one measures the vuln
+	// source configured for the whole estate; this measures the safety net over the
+	// images the provider missed, and folding them together would hide a fallback
+	// failing completely inside a much larger success rate.
+	fallbackScans = counterVec("fallback_scans_total",
+		"Scans of provider-unassessed images by the fallback source, by result.",
+		[]string{"result"})
 )
 
 func init() {
@@ -196,6 +212,21 @@ type Snapshot struct {
 	ActionableBlind    int
 	UniqueImages       int
 
+	// FallbackScanned counts findings the provider never assessed whose counts a
+	// fallback scanner supplied instead, and Uncovered the ones still with no data
+	// from anybody.
+	//
+	// Uncovered is the residual, and the number worth an alert threshold: it is
+	// what "unassessed" meant before the fallback existed. Published as its own
+	// series rather than left as ProviderUnassessed minus FallbackScanned, because
+	// a gap somebody has to subtract on a dashboard is a gap nobody watches.
+	//
+	// ProviderUnassessed keeps counting BOTH. The provider not looking is the
+	// problem the fallback is compensating for, not one it solves, and an alert on
+	// it must not go quiet because the compensation is working.
+	FallbackScanned int
+	Uncovered       int
+
 	// ProviderDataNewest is the newest assessment time in the provider's data.
 	// Zero means nothing carried one, and the age metric is then not published
 	// rather than published as a huge number that would fire every alert.
@@ -209,6 +240,11 @@ type Snapshot struct {
 	InFlightUnmatchable int
 
 	Owners []OwnerSnapshot
+	// FallbackFailures are the reasons the fallback could not cover an unassessed
+	// image, worst first. The same argument as Reasons and Blockers: "coverage is
+	// 99%" is a statistic, "the fallback cannot authenticate to this registry
+	// either" is a job for somebody.
+	FallbackFailures []ReasonCount
 	// Reasons are the provider's reasons for missing coverage, and Blockers the
 	// reasons an upgrade could not be resolved. Kept apart: one is a scan-coverage
 	// problem and the other a registry-access problem, and they are fixed by
@@ -279,6 +315,8 @@ func Observe(s Snapshot) {
 		"known_exploited":       s.KnownExploited,
 		"remediation_unknown":   s.RemediationUnknown,
 		"actionable_unassessed": s.ActionableBlind,
+		"fallback_scanned":      s.FallbackScanned,
+		"uncovered":             s.Uncovered,
 		"in_flight":             s.InFlight,
 		"in_flight_unmatchable": s.InFlightUnmatchable,
 	} {
@@ -318,6 +356,11 @@ func Observe(s Snapshot) {
 	unassessedReasons.Reset()
 	for reason, n := range foldReasons(s.Reasons) {
 		unassessedReasons.WithLabelValues(reason).Set(float64(n))
+	}
+
+	fallbackFailureReasons.Reset()
+	for reason, n := range foldReasons(s.FallbackFailures) {
+		fallbackFailureReasons.WithLabelValues(reason).Set(float64(n))
 	}
 
 	// Alertable by cause: an expired registry credential turns hundreds of fixable
@@ -432,3 +475,6 @@ func ImageScan(result string) { imageScans.WithLabelValues(result).Inc() }
 
 // ProviderFetch records a fetch of scan data: "success" or "failure".
 func ProviderFetch(result string) { providerFetches.WithLabelValues(result).Inc() }
+
+// FallbackScan records one fallback scan attempt: "ok", "failed" or "skipped".
+func FallbackScan(result string) { fallbackScans.WithLabelValues(result).Inc() }

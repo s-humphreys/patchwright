@@ -19,7 +19,9 @@ running.
 It is equally deliberate about what it does *not* claim. An image the scanner never
 assessed reports `?`, never `0` — absent data and a clean result are different
 answers, and rendering the first as the second is the most misleading thing a
-vulnerability report can do.
+vulnerability report can do. A fallback scanner can fill that gap in, and when it
+does the numbers are marked as its own: coverage recovered from a second feed is
+still not the provider having looked.
 
 ---
 

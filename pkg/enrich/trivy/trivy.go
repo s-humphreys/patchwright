@@ -7,7 +7,12 @@
 //	trivy image --quiet --format json --scanners vuln <ref>
 //
 // Trivy pulls the image itself, so it needs network egress and, for private
-// registries, credentials via the standard docker config / cloud keychain.
+// registries, credentials. Those are resolved here and handed over explicitly in
+// an isolated docker config rather than left to Trivy's own keychain - see
+// registryauth.WriteDockerConfig for why. Before that, this source could not read
+// a private registry the rest of the tool could, which mattered most in the one
+// place it is now used as a fallback: the images a scan provider failed on are
+// usually the private ones.
 package trivy
 
 import (
@@ -16,12 +21,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/authn"
+
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
+	"github.com/s-humphreys/patchwright/pkg/registryauth"
 )
 
 func init() {
@@ -43,6 +53,10 @@ type source struct {
 	// Trivy's own default, which is a mirror list.
 	dbRepo   string
 	prepared bool // true once the DB has been pre-downloaded (see Prepare)
+
+	// credentials resolves the credentials for a reference. Nil uses
+	// registryauth.Credentials; injected so tests need no registry.
+	credentials func(ref string) (*authn.AuthConfig, bool, error)
 }
 
 // dbDownloadAttempts is how many times Prepare will try to fetch the DB.
@@ -139,13 +153,27 @@ func (s *source) Scan(ctx context.Context, image model.Image) ([]model.Vulnerabi
 	}
 	args = append(args, image.Ref)
 
+	// Credentials before the scan, in a config of this scan's own. When nothing
+	// claims the registry the config is empty, so an anonymous pull stays
+	// anonymous rather than silently picking up the ambient docker config.
+	dir, cleanup, err := registryauth.IsolatedDockerConfig(image.Ref, s.credentials)
+	if err != nil {
+		return nil, fmt.Errorf("credentials for %s: %w", image.Ref, err)
+	}
+	defer cleanup()
+
 	slog.DebugContext(ctx, "running trivy", "image", image.Ref, "severity", s.severity)
 	cmd := exec.CommandContext(ctx, s.binary, args...)
+	cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%w: %s", err, scanFailureReason(stderr.String()))
+		// The reason leads, the exit status trails. "exit status 1: unauthorized"
+		// reads the same to a human either way, but anything counting these by cause
+		// cuts at the first clause - and with the wrapping the other way round, every
+		// distinct failure folded to the bucket "exit status 1".
+		return nil, fmt.Errorf("%s (%w)", scanFailureReason(stderr.String()), err)
 	}
 	return parseReport(stdout.Bytes())
 }
@@ -253,12 +281,22 @@ func scanFailureReason(stderr string) string {
 		out = out[i+len("Fatal error"):]
 	}
 	out = strings.TrimSpace(strings.TrimLeft(out, "\t "))
+	out = strings.TrimSpace(trailingID.ReplaceAllString(out, ""))
 	// The innermost cause is the useful half; the wrapping chain above it is noise.
 	if i := strings.LastIndex(out, ": "); i >= 0 && len(out)-i < 120 {
 		return strings.TrimSpace(out[i+2:]) + " (while: " + firstCause(out[:i]) + ")"
 	}
 	return out
 }
+
+// trailingID matches a per-request identifier a registry appends to its errors -
+// ACR ends an auth failure with "CorrelationId: <uuid>".
+//
+// Stripped before the cause is picked out, because the innermost-clause heuristic
+// below would otherwise choose the identifier as the reason. That reported an
+// expired credential as a bare UUID, which is unactionable to read and, once these
+// are counted by cause, one metric bucket per request.
+var trailingID = regexp.MustCompile(`(?i)[,.;]?\s*\b\w*(?:id|uuid)\s*[:=]\s*\S+\s*$`)
 
 // firstCause returns the outermost wrapped context, which names what was being
 // scanned when the innermost error happened.

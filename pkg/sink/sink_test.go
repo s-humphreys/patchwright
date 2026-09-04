@@ -168,6 +168,34 @@ func TestCountMarkDistinguishesUnassessedFromClean(t *testing.T) {
 	}
 }
 
+// A fallback scan replaces the "?" with what it found, marked so the number is not
+// silently compared against the provider's in the same column.
+func TestCountMarkMarksFallbackCounts(t *testing.T) {
+	fallback := model.Finding{
+		Occurrences:     []model.Occurrence{{Assessed: false}},
+		Counts:          model.Counts{model.SeverityCritical: 12},
+		FallbackScanned: true,
+		CountsSource:    "trivy",
+	}
+	if got := countMark(fallback, model.SeverityCritical); got != "12~" {
+		t.Errorf("fallback counts: got %q, want \"12~\"", got)
+	}
+	// Zero from a fallback scan is a real zero - it looked and found none - so it
+	// must not fall back to "?".
+	fallback.Counts = model.Counts{}
+	if got := countMark(fallback, model.SeverityCritical); got != "0~" {
+		t.Errorf("fallback scanned and clean: got %q, want \"0~\"", got)
+	}
+	// Asked and failed is still nothing known.
+	failed := model.Finding{
+		Occurrences:   []model.Occurrence{{Assessed: false}},
+		FallbackError: "UNAUTHORIZED",
+	}
+	if got := countMark(failed, model.SeverityCritical); got != "?" {
+		t.Errorf("fallback failed: got %q, want \"?\"", got)
+	}
+}
+
 // Mixed occurrences: if any workload was assessed, the counts mean something.
 func TestProviderAssessedAcrossOccurrences(t *testing.T) {
 	mixed := model.Finding{Occurrences: []model.Occurrence{{Assessed: false}, {Assessed: true}}}

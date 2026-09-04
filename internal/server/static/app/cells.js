@@ -343,9 +343,25 @@ export function ruleName(f) {
 
 // severityCell: criticals and highs, the two that drive decisions, as "3C/10H".
 // "?" when the provider never assessed the image — absent data, not a clean result.
+//
+// A fallback scan gets the numbers with a trailing "~". The scan happened, so "?" is
+// no longer true, but the numbers came from a scanner the rest of the column did not:
+// the mark and its tooltip are what stop 3C/10H here being read as the same
+// measurement as 3C/10H two rows up.
 export function severityCell(f) {
-  if (!f.provider_assessed) {
+  if (!f.provider_assessed && !f.fallback_scanned) {
     return '<span class="unknown" title="The scan provider never assessed this image; its counts are absent, not zero.">?</span>';
+  }
+  if (!f.provider_assessed) {
+    const c = f.counts?.critical ?? 0, h = f.counts?.high ?? 0;
+    const src = f.counts_source || "a fallback scanner";
+    const title = `The scan provider never assessed this image; these counts came from ${src} instead. ` +
+      "A different vendor feed from the rows without a ~, so they are not directly comparable.";
+    const parts = [];
+    if (c) parts.push(`<span class="urgent">${c}C</span>`);
+    if (h) parts.push(`<span class="high">${h}H</span>`);
+    const body = parts.length ? parts.join("/") : '<span class="muted">0</span>';
+    return `<span title="${title}">${body}~</span>`;
   }
   const c = f.counts?.critical ?? 0, h = f.counts?.high ?? 0;
   if (!c && !h) return '<span class="muted">0</span>';

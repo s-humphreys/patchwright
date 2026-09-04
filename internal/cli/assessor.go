@@ -23,17 +23,25 @@ import (
 // shared by the `assess` and `serve` commands so both build the pipeline the
 // same way.
 type assessInputs struct {
-	provider       providerFlags
-	configPaths    []string
-	liveSource     string
-	liveOptions    []string
-	vulnSource     string
-	vulnOptions    []string
-	exploitSource  string
-	exploitOptions []string
-	ageSource      string
-	ageOptions     []string
-	remediation    bool
+	provider    providerFlags
+	configPaths []string
+	liveSource  string
+	liveOptions []string
+	vulnSource  string
+	vulnOptions []string
+	// fallbackVulnSource scans only the images the scan provider never assessed.
+	// Empty means no safety net, so those images report "?" as they always have.
+	//
+	// Named separately from vulnSource because on a real estate the two are the
+	// same product: Rapid7 supplies both the inventory and the per-CVE detail, and
+	// asking it again about an image it never assessed returns the same nothing.
+	fallbackVulnSource  string
+	fallbackVulnOptions []string
+	exploitSource       string
+	exploitOptions      []string
+	ageSource           string
+	ageOptions          []string
+	remediation         bool
 	// supportSource names where maintenance windows come from ("endoflife" or empty
 	// for none). Empty means support status is not checked at all, and every finding
 	// says so rather than implying its base is maintained.
@@ -77,7 +85,8 @@ func newAssessor(in assessInputs) (*assessor, error) {
 
 	sources := model.Sources{
 		Provider: in.provider.name, VulnSource: in.vulnSource,
-		ExploitSource: in.exploitSource, AgeSource: in.ageSource,
+		FallbackVulnSource: in.fallbackVulnSource,
+		ExploitSource:      in.exploitSource, AgeSource: in.ageSource,
 		LiveSource: in.liveSource, SupportSource: in.supportSource,
 		Remediation: in.remediation, ScanDisabled: cfg.Scan.Disabled,
 	}
@@ -196,6 +205,22 @@ func newAssessor(in assessInputs) (*assessor, error) {
 			return nil, err
 		}
 		popts = append(popts, pipeline.WithImageScanner(scanner))
+	}
+	if in.fallbackVulnSource != "" && cfg.Scan.Disabled {
+		slog.Warn("image scanning disabled by config (scan.disabled); the fallback scanner will not run either",
+			"fallback_vuln_source", in.fallbackVulnSource)
+	}
+	if in.fallbackVulnSource != "" && !cfg.Scan.Disabled {
+		// The same skip policy as the primary scanner, deliberately: an image
+		// somebody ruled out of scanning is not one to scan because a different
+		// source is asking.
+		fallback, err := buildFallbackScanner(in.fallbackVulnSource,
+			in.provider.inherited(in.fallbackVulnSource, in.fallbackVulnOptions),
+			cfg.Scan.EffectiveSkipOwnerClasses(), cfg.Scan.SkipRegistries)
+		if err != nil {
+			return nil, err
+		}
+		popts = append(popts, pipeline.WithFallbackScanner(fallback))
 	}
 	if in.ageSource != "" {
 		if in.vulnSource == "" {

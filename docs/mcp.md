@@ -199,6 +199,13 @@ The caveats now separate the three cases a bare zero collapses into:
 the coverage gap, counted, so it reads as *"412 need a registry credential"* rather
 than *"706 unassessed, cause unknown"*.
 
+Where a [fallback scanner](scanning.md#when-the-provider-never-assessed-an-image) ran,
+`coverage` splits the gap into `deployments_scanned_by_fallback` and
+`uncovered_deployments`, and a caveat says so. `assessed_deployments` deliberately does
+not include the recovered ones: asked how much of the estate the scan provider covers,
+a model has to get the provider's answer, and the severities the fallback supplied come
+from a different vendor feed than the rest.
+
 ## Names, and getting them wrong
 
 `list_facets` returns the team, class, priority, exposure and signal values that

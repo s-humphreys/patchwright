@@ -35,8 +35,8 @@ type FindingView struct {
 	// internal.
 	Exposure string `json:"exposure"`
 	// Signals are the notable facts about this finding (exposed, kev, in-flight,
-	// stale-fix, unassessed, suppressed). Each is a positive statement; absence
-	// asserts nothing.
+	// stale-fix, unassessed, fallback-scan, suppressed). Each is a positive
+	// statement; absence asserts nothing.
 	Signals         []string `json:"signals,omitempty"`
 	WorkloadCount   int      `json:"workload_count"`
 	FixableCritical int      `json:"fixable_critical,omitempty"`
@@ -72,6 +72,24 @@ type FindingView struct {
 	Scanned        bool   `json:"scanned"`
 	ExploitChecked bool   `json:"exploit_checked"`
 	ScanError      string `json:"scan_error,omitempty"`
+	// CountsSource names who produced Counts. Absent means the scan provider,
+	// which is every finding the fallback did not fill in.
+	//
+	// A consumer that totals counts across findings MUST read this. The provider's
+	// "critical" and a fallback scanner's "critical" come from different vendor
+	// feeds, so a sum over a mixed set is a blend of two severity scales rather
+	// than one number.
+	CountsSource string `json:"counts_source,omitempty"`
+	// FallbackScanned reports that this finding's data came from the fallback
+	// scanner, asked because provider_assessed is false. FallbackError is why it
+	// could not, when it was asked and failed - which is the residual coverage gap
+	// nothing has any data for.
+	//
+	// provider_assessed stays false in both cases. The provider not looking is a
+	// coverage problem the fallback compensates for, not one it closes.
+	FallbackSource  string `json:"fallback_source,omitempty"`
+	FallbackScanned bool   `json:"fallback_scanned,omitempty"`
+	FallbackError   string `json:"fallback_error,omitempty"`
 	// OldestCVEDays is how long the earliest-known CVE on this image has been known
 	// to the scan provider. Nil when no CVE has a date — no age source ran, or the
 	// provider has never seen these CVEs. Zero and unknown are different answers, so
@@ -429,6 +447,10 @@ func ToFindingView(f model.Finding) FindingView {
 		Scanned:            f.Scanned,
 		ExploitChecked:     f.ExploitChecked,
 		ScanError:          f.ScanError,
+		CountsSource:       f.CountsSource,
+		FallbackSource:     f.FallbackSource,
+		FallbackScanned:    f.FallbackScanned,
+		FallbackError:      f.FallbackError,
 		OldestCVEDays:      oldestDays,
 		OldestCVESeen:      oldestSeen,
 		RemediationChecked: f.RemediationChecked,

@@ -45,6 +45,8 @@ export const SIGNAL_BADGES = {
                   help: "That pull request has been open past the configured threshold. The fix exists and nobody has merged it." },
   unassessed:   { glyph: "\u25cc", label: "unassessed", cls: "badge-unassessed",
                   help: "The scan provider never assessed this image, so its zero counts are absent data rather than a clean result." },
+  "fallback-scan": { glyph: "\u2447", label: "fallback", cls: "badge-fallback",
+                  help: "The scan provider never assessed this image, so a fallback scanner supplied these counts instead. Real numbers, but from a different vendor feed than every row without this badge - comparing them across rows compares two scanners." },
   suppressed:   { glyph: "\u2298", label: "suppressed", cls: "badge-other",
                   help: "A suppress rule matched, so this is out of the actionable queue." },
   "end-of-life": { glyph: "\u2620", label: "eol", cls: "badge-eol",
@@ -57,8 +59,13 @@ export const SIGNAL_BADGES = {
 // rebuild can close today; an end-of-life base is every vulnerability from here on with
 // no rebuild that closes any of them. Sorting it lower would bury the finding whose cost
 // compounds under the ones that do not.
-export const SIGNAL_ORDER = ["exposed", "end-of-life", "kev", "stale-fix", "in-flight", "unassessed", "suppressed"];
-export const SIGNAL_WEIGHT = { exposed: 64, "end-of-life": 32, kev: 16, "stale-fix": 8, "in-flight": 4, unassessed: 2, suppressed: 1 };
+// fallback-scan sits next to unassessed because it only ever appears with it: it is
+// not a fact about the image, it is a fact about where the row's numbers came from.
+export const SIGNAL_ORDER = ["exposed", "end-of-life", "kev", "stale-fix", "in-flight", "unassessed", "fallback-scan", "suppressed"];
+// Weighted below unassessed on purpose. A fallback scan is coverage recovered, not
+// risk added, and sorting it up the queue would push the images somebody has the LEAST
+// reason to worry about above the ones nothing has looked at at all.
+export const SIGNAL_WEIGHT = { exposed: 64, "end-of-life": 32, kev: 16, "stale-fix": 8, "in-flight": 4, unassessed: 2, "fallback-scan": 1, suppressed: 1 };
 
 export function signalsCell(f) {
   const set = new Set(f.signals || []);
@@ -101,7 +108,17 @@ export function signalsSort(f) {
 }
 
 // Provider counts are only meaningful if the provider actually assessed the image.
-export const count = (f, sev) => (f.provider_assessed ? (f.counts?.[sev] ?? 0) : "?");
+//
+// A fallback scan replaces the "?" with the number it found, marked with a trailing
+// "~" and explained by the fallback badge on the row. Rendering it as a bare number
+// would put two scanners' severity scales in one column with nothing saying so; the
+// mark is what keeps the column honest without going back to "?" for a scan that
+// actually happened.
+export const count = (f, sev) => {
+  if (f.provider_assessed) return f.counts?.[sev] ?? 0;
+  if (f.fallback_scanned) return `${f.counts?.[sev] ?? 0}~`;
+  return "?";
+};
 export const epss = (f) => (f.exploit_checked ? epssPercent(maxEPSS(f)) : "-");
 
 // The scan provider's own composite ranking, highest across the image's CVEs.

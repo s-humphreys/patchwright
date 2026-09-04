@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+
+	"github.com/s-humphreys/patchwright/pkg/registryauth"
 )
 
 // A trimmed real Trivy report: an OS result and a language result, one of which
@@ -83,7 +85,7 @@ func TestDockerConfigCarriesAnIdentityTokenAndNothingElse(t *testing.T) {
 	// ACR and `az acr login` authenticate with an identity token and no password.
 	// An earlier version wrote TRIVY_USERNAME/TRIVY_PASSWORD, which cannot express
 	// that: the token was dropped and every private base image failed to pull.
-	dir, cleanup, err := writeDockerConfig("example.azurecr.io/base:1",
+	dir, cleanup, err := registryauth.WriteDockerConfig("example.azurecr.io/base:1",
 		&authn.AuthConfig{Username: "00000000-0000-0000-0000-000000000000", IdentityToken: "tok"})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +133,7 @@ func TestDockerConfigCarriesAnIdentityTokenAndNothingElse(t *testing.T) {
 func TestDockerConfigIsEmptyWhenNothingClaimsTheRegistry(t *testing.T) {
 	// An anonymous pull must stay anonymous rather than inheriting the developer's
 	// own docker config and its helpers.
-	dir, cleanup, err := writeDockerConfig("docker.io/library/alpine:3", nil)
+	dir, cleanup, err := registryauth.WriteDockerConfig("docker.io/library/alpine:3", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +150,7 @@ func TestDockerConfigIsEmptyWhenNothingClaimsTheRegistry(t *testing.T) {
 func TestDockerConfigIsRemovedAfterUse(t *testing.T) {
 	// It holds a live registry credential; leaving one temp dir per scan behind
 	// would leave hundreds on disk after a run.
-	dir, cleanup, err := writeDockerConfig("example.azurecr.io/base:1", &authn.AuthConfig{IdentityToken: "tok"})
+	dir, cleanup, err := registryauth.WriteDockerConfig("example.azurecr.io/base:1", &authn.AuthConfig{IdentityToken: "tok"})
 	if err != nil {
 		t.Fatal(err)
 	}

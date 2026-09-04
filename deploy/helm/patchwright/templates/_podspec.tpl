@@ -58,6 +58,12 @@ so they stay in sync. Callers pass a dict:
     {{- range .root.Values.scan.vulnOptions }}
     - "--vuln-option={{ . }}"
     {{- end }}
+    {{- if .root.Values.scan.fallbackVulnSource }}
+    - "--fallback-vuln-source={{ .root.Values.scan.fallbackVulnSource }}"
+    {{- range .root.Values.scan.fallbackVulnOptions }}
+    - "--fallback-vuln-option={{ . }}"
+    {{- end }}
+    {{- end }}
     {{- if .root.Values.scan.exploitSource }}
     - "--exploit-source={{ .root.Values.scan.exploitSource }}"
     {{- range .root.Values.scan.exploitOptions }}

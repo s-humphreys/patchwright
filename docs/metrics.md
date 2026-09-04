@@ -23,8 +23,9 @@ Enabling both is refused: two monitors on one target double every counter.
 | Metric | Notes |
 |---|---|
 | `patchwright_findings` | Unsuppressed findings |
-| `patchwright_findings_by_state{state}` | `actionable`, `suppressed`, `provider_assessed`, `provider_unassessed`, `scanned`, `exploit_checked`, `upgradable`, `known_exploited`, `remediation_unknown`, `actionable_unassessed` |
+| `patchwright_findings_by_state{state}` | `actionable`, `suppressed`, `provider_assessed`, `provider_unassessed`, `scanned`, `exploit_checked`, `upgradable`, `known_exploited`, `remediation_unknown`, `actionable_unassessed`, `fallback_scanned`, `uncovered` |
 | `patchwright_findings_unassessed_by_reason{reason}` | The provider's stated reasons |
+| `patchwright_findings_fallback_failed_by_reason{reason}` | Why the fallback could not cover them either |
 | `patchwright_owner_findings{class,team,state}` | `total`, `actionable`, `unassessed`, `ticketed` |
 | `patchwright_owner_responsiveness{class,team,metric}` | `unstarted`, `stale_unstarted`, `in_flight_stale`, `median_age_days` |
 | `patchwright_images_unique` | |
@@ -36,6 +37,7 @@ Enabling both is refused: two monitors on one target double every counter.
 | `patchwright_jira_requests_total{operation,outcome}` | `outcome` is `ok`, `auth_error`, `rate_limited`, `client_error`, `server_error`, `network_error` |
 | `patchwright_ticket_actions_total{action,result}` | `result` is `applied`, `noop`, `failed` |
 | `patchwright_image_scans_total{result}` | `ok`, `failed`, `skipped` |
+| `patchwright_fallback_scans_total{result}` | `ok`, `failed`, `skipped` — scans of provider-unassessed images only |
 
 ## Alerting
 
@@ -45,6 +47,20 @@ patchwright_provider_data_age_seconds > 86400 * 3
 
 # Coverage lost to one fixable cause.
 topk(3, patchwright_findings_unassessed_by_reason)
+
+# The scan provider failing to assess images. Alert on THIS, not on `uncovered`:
+# a fallback scanner covering the gap is not the provider working, and an alert
+# that goes quiet because something compensated is an alert that never fires
+# again when the provider degrades further.
+patchwright_findings_by_state{state="provider_unassessed"} > 0
+
+# The residual: findings nothing has any data for. A second, higher-severity
+# threshold on the same problem.
+patchwright_findings_by_state{state="uncovered"} > 0
+
+# The safety net failing for one cause — usually the same registry credential
+# the provider failed on.
+topk(3, patchwright_findings_fallback_failed_by_reason)
 
 # Ticketing stopped because credentials expired, which otherwise looks
 # identical to having no work to raise.

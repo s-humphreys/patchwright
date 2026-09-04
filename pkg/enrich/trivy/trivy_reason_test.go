@@ -42,3 +42,21 @@ func contains(s, sub string) bool {
 		return false
 	})()
 }
+
+// The ACR shape: an auth failure ending in a correlation UUID. The innermost-clause
+// heuristic used to pick the UUID, which reads as nothing and, once these are
+// counted by cause, is one metric bucket per request.
+func TestScanFailureReasonIgnoresTrailingCorrelationIDs(t *testing.T) {
+	stderr := "2026-09-04T08:40:00+01:00\tFATAL\tFatal error\trun error: image scan error: " +
+		"* remote error: GET https://acme.azurecr.io/oauth2/token?scope=repository%3Aapp%3Apull: " +
+		"UNAUTHORIZED: authentication required, visit https://aka.ms/acr/authorization for more " +
+		"information. CorrelationId: e5d7b9dc-367d-4a52-95f4-83f7f039a872"
+
+	got := scanFailureReason(stderr)
+	if contains(got, "e5d7b9dc") {
+		t.Errorf("reason is a per-request identifier: %s", got)
+	}
+	if !contains(got, "authentication required") {
+		t.Errorf("reason lost the actual cause: %s", got)
+	}
+}

@@ -221,6 +221,9 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&in.liveOptions, "live-option", nil, "live source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&in.vulnSource, "vuln-source", "", "scan images for per-CVE fix availability ("+joinVulnSources()+")")
 	cmd.Flags().StringArrayVar(&in.vulnOptions, "vuln-option", nil, "vuln source option as key=value (repeatable)")
+	cmd.Flags().StringVar(&in.fallbackVulnSource, "fallback-vuln-source", "",
+		"scan ONLY the images the scan provider never assessed ("+joinVulnSources()+")")
+	cmd.Flags().StringArrayVar(&in.fallbackVulnOptions, "fallback-vuln-option", nil, "fallback vuln source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&in.exploitSource, "exploit-source", "", "enrich CVEs with exploit intel ("+joinExploitSources()+"); requires --vuln-source")
 	cmd.Flags().StringArrayVar(&in.exploitOptions, "exploit-option", nil, "exploit source option as key=value (repeatable)")
 	cmd.Flags().StringVar(&in.ageSource, "age-source", "",

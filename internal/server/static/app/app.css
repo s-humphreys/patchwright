@@ -153,6 +153,9 @@
   .badge-inflight { color: var(--ok); }
   .badge-stale { color: var(--high); font-weight: 600; }
   .badge-unassessed { color: var(--muted); font-style: italic; }
+  /* Italic like unassessed, which it always accompanies: both are statements about
+     where the row's numbers came from rather than about the image itself. */
+  .badge-fallback { color: var(--muted); font-style: italic; }
   /* End of life reads as urgent because the cost compounds: not one exploited CVE, but
      every future CVE on an image nothing will rebuild. */
   .badge-eol { color: var(--urgent); font-weight: 600; }
