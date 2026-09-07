@@ -4,7 +4,7 @@
 # Pinned to the patch release go.mod requires: see the toolchain directive there for
 # the CVEs it carries fixes for. A floating tag would let a build pick a vulnerable
 # toolchain without anything failing.
-FROM --platform=$BUILDPLATFORM golang:1.27.0 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.1 AS build
 
 # The release tag, stamped into the binary so a running deployment can say which
 # build it is. Unset produces a binary that reports "dev", which is correct for a
