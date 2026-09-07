@@ -402,6 +402,94 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { description: No configuration was loaded }
 
+  /api/v1/policy:
+    get:
+      tags: [operations]
+      summary: The estate against your own policy rules
+      description: |
+        What YOUR configured rules decided, by the names they carry in your config:
+        what each actionable rule caught, what each suppression is holding and when
+        that decision lapses, the split by your own priority labels and by team, and
+        what no rule had an opinion about.
+
+        Built for a periodic security review. It is the same report the `policy_report`
+        MCP tool returns, from the same code, so a review pack assembled here cannot
+        disagree with one an agent produced from the tool.
+
+        Distinct from `/api/v1/analytics`, which is patchwright's own judgement of what
+        is worth acting on. This one adds no judgement of its own: it reports what your
+        rules said.
+
+        Read `caveats` before any number. The first one is always that this is the
+        state at the moment the assessment ran — patchwright keeps no history, so a
+        report on a monthly cadence is a snapshot and not a record of the month.
+      responses:
+        "200":
+          description: The policy report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, policy]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  policy: { $ref: "#/components/schemas/PolicyReport" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: >-
+            No assessment has completed yet. Deliberately not an empty report, which
+            would read as an estate no rule found anything in.
+
+  /api/v1/exploitability:
+    get:
+      tags: [operations]
+      summary: What is actually being exploited, and how much of it is fixable
+      description: |
+        How much of what the estate carries is being exploited, and how much of it can
+        be moved on today. Broken down per team alongside each team's urgent count,
+        with the worst CVEs named.
+
+        The headline unit is **work items over actionable findings**, grouped by
+        service — the same numbers the queue page shows at
+        `?signal=kev&fixable=true`, from the same findings, filters and grouping code.
+        A tool that reported a different figure for the same question than the page a
+        team already uses would be worse than one that stayed quiet.
+
+        Same code as the `exploitability_report` MCP tool.
+
+        Three things govern how every number must be read, all repeated in `caveats`:
+
+        - The headline counts are **work items**. The `cves` block underneath counts
+          distinct vulnerabilities, answers a different question, and will not match.
+        - **"Has a fix" means an upgrade path**, not a published patch. An image can
+          carry a patched CVE and still have nowhere to move to.
+        - Per-CVE detail exists only for scanned deployments, so every count is a
+          **lower bound**, never a total. Check `coverage`.
+      parameters:
+        - name: epss_threshold
+          in: query
+          required: false
+          schema: { type: number, minimum: 0, maximum: 1 }
+          description: >-
+            EPSS probability to count above (default 0.5, matching the threshold the
+            service and team reports use). Rejected rather than defaulted when invalid:
+            a caller who asked for 0.9 and silently got 0.5 would read the counts as
+            theirs.
+      responses:
+        "200":
+          description: The exploitability report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assessment, exploitability]
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  exploitability: { $ref: "#/components/schemas/ExploitabilityReport" }
+        "400": { description: "epss_threshold was not a probability in (0, 1]" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { description: No assessment has completed yet }
+
   /api/v1/assessments:
     post:
       tags: [operations]
@@ -624,6 +712,281 @@ components:
             Set when the most recent run failed. The previously cached result is
             still served, so a failed refresh does not blank the API.
 
+    Movable:
+      type: object
+      description: A set of work items and how much of it can be acted on today.
+      properties:
+        items:
+          type: integer
+          description: >-
+            Work items - one service and one upgrade target - grouped exactly as the
+            queue page groups them with "group by service" ticked. This is the headline
+            unit: it is what there is to do.
+        items_with_fix:
+          type: integer
+          description: |
+            Those with a resolved, available upgrade to move to: the queue's "has a fix"
+            tick.
+
+            NOT the same as a CVE having a published fixed version, which is
+            `cves.kev_fixable`. An image can carry a patched CVE and still have nowhere
+            to move to, because nobody has built a release containing the patch.
+        items_without_fix: { type: integer }
+        items_with_fix_pct:
+          type: number
+          description: >-
+            That share, 0-100 - what can be moved on right now. ABSENT when there are no
+            items: a percentage of nothing is not 0%, and rendering it as one turns
+            "nothing to do" into "nothing can be done".
+        deployments:
+          type: integer
+          description: >-
+            What those items cover - the blast radius, not the queue length. A service
+            at three tags on one upgrade target is one item and three deployments.
+        services: { type: integer }
+
+    CVEStats:
+      type: object
+      description: >-
+        The vulnerability-level view of the same findings: DISTINCT CVEs, not items. It
+        answers a different question from the item counts and will not equal them -
+        one CVE spans many services and one service carries many CVEs.
+      properties:
+        total: { type: integer, description: Distinct CVEs with per-CVE detail in scope. }
+        kev:
+          type: integer
+          description: >-
+            Distinct CVEs in CISA's Known Exploited Vulnerabilities catalogue:
+            confirmed exploitation in the wild, not a prediction.
+        kev_fixable:
+          type: integer
+          description: >-
+            How many have a published fixed version, counted when ANY affected image
+            reports one. A statement about the CVE ("a patch exists"), not about the
+            work ("we have somewhere to move to").
+        kev_no_fix:
+          type: integer
+          description: >-
+            The rest. These need a decision - mitigate, isolate or accept - rather than
+            an upgrade.
+        kev_fixable_pct: { type: number, description: "Absent when kev is 0." }
+        epss_above: { type: integer }
+        epss_above_fixable: { type: integer }
+
+    ExploitStats:
+      type: object
+      description: |
+        Exploitability for one scope, led by WORK ITEMS because that is the unit the
+        queue page counts and a ticket covers.
+
+        Computed from the same findings, the same filters and the same grouping code as
+        that page, so the two cannot report different numbers for the same question.
+      properties:
+        known_exploited:
+          allOf:
+            - $ref: "#/components/schemas/Movable"
+            - description: Items carrying a CVE in CISA's KEV catalogue.
+        epss_above:
+          allOf:
+            - $ref: "#/components/schemas/Movable"
+            - description: >-
+                Items carrying a CVE above the report's EPSS threshold - predicted
+                rather than observed exploitation. An item can be in both sets.
+        cves: { $ref: "#/components/schemas/CVEStats" }
+
+    ExploitabilityReport:
+      type: object
+      required: [freshness, coverage, epss_threshold, estate, by_team]
+      properties:
+        freshness: { type: object }
+        coverage:
+          type: object
+          description: >-
+            Bounds every count. Per-CVE detail exists only for scanned deployments, so
+            every number here is a floor.
+        epss_threshold:
+          type: number
+          description: >-
+            The probability the epss_above_* counts were taken at, echoed so a
+            threshold-dependent number is never stated without its threshold.
+        estate: { $ref: "#/components/schemas/ExploitStats" }
+        by_team:
+          type: array
+          description: Worst first — exploited before predicted, then by how much can be moved.
+          items:
+            allOf:
+              - $ref: "#/components/schemas/ExploitStats"
+              - type: object
+                properties:
+                  team: { type: string }
+                  class: { type: string }
+                  urgent_deployments:
+                    type: integer
+                    description: >-
+                      Deployments the policy rated urgent, on the same unit as
+                      /api/v1/policy's by_team so the two cannot disagree.
+        top_cves:
+          type: array
+          description: >-
+            The worst carried, named. A report of counts alone cannot be acted on: the
+            first question after "we have 13" is always "which ones".
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              severity: { type: string }
+              known_exploited: { type: boolean }
+              epss: { type: number }
+              epss_percentile: { type: number }
+              fix_available: { type: boolean }
+              fixed_version: { type: string }
+              deployments: { type: integer }
+              services: { type: integer }
+              teams: { type: array, items: { type: string } }
+              top_services: { type: array, items: { type: string } }
+        caveats:
+          type: array
+          items: { type: string }
+          description: What bounds these numbers. Read before any of them.
+
+    PolicyReport:
+      type: object
+      required: [freshness, scope, coverage, verdicts, actionable_rules, suppress_rules]
+      properties:
+        freshness:
+          type: object
+          description: When this ran, how old the provider's own data is, and which stages ran.
+        scope:
+          type: object
+          description: The denominator for everything below.
+          properties:
+            deployments: { type: integer }
+            services: { type: integer }
+            work_items:
+              type: integer
+              description: >-
+                The unit a ticket covers - one service and one upgrade - which is what a
+                queue length means to a team. `deployments` is what a coverage
+                percentage means. Different numbers on purpose.
+            teams: { type: integer }
+        coverage:
+          type: object
+          description: |
+            How much of the estate these counts describe. A rule that did not match an
+            unassessed image has not cleared it: there was nothing to match on.
+
+            Over UNSUPPRESSED deployments, matching the MCP tools, so its total is
+            `verdicts.actionable + verdicts.no_rule_matched` rather than
+            `scope.deployments`.
+        verdicts:
+          type: object
+          description: >-
+            Every deployment by what policy decided. The three sum to
+            `scope.deployments`, so the arithmetic is checkable.
+          properties:
+            actionable: { type: integer }
+            suppressed: { type: integer }
+            no_rule_matched:
+              type: integer
+              description: |
+                Neither queued work nor accepted risk: policy has no opinion. Reported
+                as a first-class number because it is invisible everywhere else — not
+                in the queue, not in the suppression list — and a rule set with a large
+                one is not covering the estate it governs.
+        actionable_rules:
+          type: array
+          description: |
+            In the order the rules are EVALUATED, not by size. That order is the
+            policy's own statement of severity; sorting by count would put the biggest
+            bucket above the sharpest one.
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              priority: { type: string }
+              when:
+                type: string
+                description: The rule's condition, so the report reads without the config open beside it.
+              deployments: { type: integer }
+              services: { type: integer }
+              teams: { type: integer }
+              top_services:
+                type: array
+                items: { type: string }
+                description: Worst affected, bounded. Use /api/v1/items for the full work list.
+              matched:
+                type: boolean
+                description: >-
+                  False when the rule caught nothing. Stated rather than left as a zero:
+                  a rule listed and quiet is a different thing from a rule that does not
+                  exist, and a report built only from findings cannot tell them apart.
+        suppress_rules:
+          type: array
+          description: What policy decided is not work, and when each decision lapses.
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              when: { type: string }
+              deployments: { type: integer }
+              services: { type: integer }
+              top_services: { type: array, items: { type: string } }
+              until: { type: string, description: "The date it lapses, YYYY-MM-DD." }
+              expired:
+                type: boolean
+                description: >-
+                  Lapsed. The findings it was hiding are back in the queue, so a rise
+                  since the last report may be a policy decision expiring rather than
+                  the estate getting worse.
+              expires_in_days: { type: integer }
+              no_expiry:
+                type: boolean
+                description: >-
+                  No expiry date, so nothing will bring it back for review. Accepted
+                  risk with no expiry is accepted risk forever.
+        by_priority:
+          type: array
+          description: Keyed by the priority labels your config defines, whatever those are.
+          items:
+            type: object
+            properties:
+              priority: { type: string }
+              deployments: { type: integer }
+              services: { type: integer }
+              work_items: { type: integer }
+        by_team:
+          type: array
+          items:
+            type: object
+            properties:
+              team: { type: string }
+              class: { type: string }
+              actionable: { type: integer }
+              suppressed: { type: integer }
+              no_rule_matched: { type: integer }
+              by_priority:
+                type: object
+                additionalProperties: { type: integer }
+        unmatched:
+          type: object
+          description: What no rule spoke to.
+          properties:
+            deployments: { type: integer }
+            services: { type: integer }
+            top_services: { type: array, items: { type: string } }
+            with_criticals:
+              type: integer
+              description: >-
+                How many carry a critical the provider reported. Without it the number
+                reads as harmless leftovers; with it, it is the count of known criticals
+                the policy declined to have an opinion about.
+        caveats:
+          type: array
+          items: { type: string }
+          description: >-
+            What this report cannot support, worst misreading first. Read before any
+            number in it.
+
     Finding:
       type: object
       required:
@@ -651,6 +1014,18 @@ components:
           type: array
           items: { type: string }
           description: Which rules produced this verdict.
+        rule:
+          type: string
+          description: >-
+            The policy rule that decided this finding, by the name it has in your own
+            config. Absent when no rule matched.
+        rule_kind:
+          type: string
+          enum: [actionable, suppress, none]
+          description: |
+            Which list the rule came from. `none` is a verdict, not missing data:
+            policy has no opinion about this finding, so it is neither queued work nor
+            an accepted risk.
         exposure:
           type: string
           enum: [public, internal, unknown]

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -49,6 +50,9 @@ func register(s *sdk.Server, src Source) {
 	}
 	type teamArgs struct {
 		Team string `json:"team" jsonschema:"the owning team"`
+	}
+	type epssArgs struct {
+		EPSSThreshold float64 `json:"epss_threshold,omitempty" jsonschema:"EPSS probability to count above, 0-1 (default 0.5). 0.5 means a 50% chance of exploitation in the next 30 days"`
 	}
 	type cveArgs struct {
 		ID string `json:"id" jsonschema:"the CVE identifier, e.g. CVE-2026-31431"`
@@ -152,6 +156,41 @@ func register(s *sdk.Server, src Source) {
 			return textResult(msg), nil, nil
 		}
 		return result(r)
+	})
+
+	sdk.AddTool(s, &sdk.Tool{
+		Name: "policy_report",
+		Description: "The estate measured against YOUR OWN policy rules, by the names they carry " +
+			"in your config: what each actionable rule caught, what each suppression is holding " +
+			"and when that decision lapses, the split by your own priority labels and by team, " +
+			"and what no rule had an opinion about. Built for a periodic security review or sign-off. " +
+			"Use this rather than estate_summary when the question is \"what does our policy say " +
+			"about the estate\" - estate_summary reports patchwright's own view of what is worth " +
+			"acting on, which is not the standard a team is accountable to.",
+	}, func(ctx context.Context, req *sdk.CallToolRequest, _ noArgs) (*sdk.CallToolResult, any, error) {
+		a := src()
+		if !a.ready() {
+			return textResult(errNoAssessment), nil, nil
+		}
+		return result(NewPolicyReport(a, time.Now()))
+	})
+
+	sdk.AddTool(s, &sdk.Tool{
+		Name: "exploitability_report",
+		Description: "How much of what the estate carries is being exploited, and how much can be " +
+			"moved on today. Counted in WORK ITEMS grouped by service - the same unit and the same " +
+			"numbers as the queue page filtered to the kev signal - with a per-team breakdown " +
+			"alongside each team's urgent count, and the worst CVEs named. Use this for \"how many " +
+			"KEVs do we have\", \"what share of them can we fix\", or any per-team breakdown of " +
+			"exploitation. \"Has a fix\" means an upgrade to move to, NOT a published patch; the " +
+			"cves block reports the other reading. Every count is a lower bound - per-CVE detail " +
+			"exists only for scanned deployments.",
+	}, func(ctx context.Context, req *sdk.CallToolRequest, args epssArgs) (*sdk.CallToolResult, any, error) {
+		a := src()
+		if !a.ready() {
+			return textResult(errNoAssessment), nil, nil
+		}
+		return result(NewExploitabilityReport(a, args.EPSSThreshold))
 	})
 
 	sdk.AddTool(s, &sdk.Tool{

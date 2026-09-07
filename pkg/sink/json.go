@@ -30,6 +30,14 @@ type FindingView struct {
 	Suppressed bool           `json:"suppressed"`
 	Priority   string         `json:"priority,omitempty"`
 	Reasons    []string       `json:"reasons"`
+	// Rule is the policy rule that decided this finding and RuleKind which list it
+	// came from: "actionable", "suppress", or "none" when no rule matched.
+	//
+	// "none" is a verdict, not a gap in the data. Policy has no opinion about that
+	// finding: it is neither queued work nor an accepted risk, and counting those is
+	// how a review finds the rules it is missing.
+	Rule     string `json:"rule,omitempty"`
+	RuleKind string `json:"rule_kind,omitempty"`
 	// Exposure is "public", "internal" or "unknown": reachability from the internet
 	// where something reports it. Unknown is a real answer and must not be read as
 	// internal.
@@ -433,6 +441,8 @@ func ToFindingView(f model.Finding) FindingView {
 		Suppressed:         f.Suppressed,
 		Priority:           f.Priority,
 		Reasons:            f.Reasons,
+		Rule:               f.Rule,
+		RuleKind:           f.RuleKind,
 		Exposure:           f.Exposure(),
 		Signals:            f.Signals(),
 		WorkloadCount:      len(f.Occurrences),

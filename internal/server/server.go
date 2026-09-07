@@ -139,6 +139,10 @@ type Server struct {
 	configSources []config.Source
 	// suppressRules is the loaded suppression policy, for reporting lapsed rules.
 	suppressRules []config.PolicyRule
+	// actionableRules is the loaded actionable policy, so a policy report can list a
+	// rule that matched nothing rather than leaving it out - which reads identically
+	// to the rule not existing.
+	actionableRules []config.PolicyRule
 
 	// metricsAuth brings /metrics under the shared token. Off by default: a scrape
 	// config needing a credential is friction where it is least tolerated.
@@ -328,26 +332,37 @@ func indexByImage(views []sink.FindingView) map[string]sink.FindingView {
 	return m
 }
 
+// assessment projects the cached snapshot onto the shape the report tools read.
+//
+// Shared by the MCP handler and /api/v1/policy so the two cannot answer differently
+// about the same run - which is the whole reason the report has one implementation.
+// The zero value means no assessment has completed, which every consumer must
+// distinguish from an empty estate.
+func (s *Server) assessment() mcp.Assessment {
+	snap := s.snapshot()
+	if snap == nil || snap.views == nil {
+		return mcp.Assessment{}
+	}
+	a := mcp.Assessment{
+		GeneratedAt: snap.generatedAt,
+		Version:     version.String(),
+		Findings:    snap.views,
+		Analytics:   snap.analytics,
+		Sources:     snap.sources,
+		Policy:      s.policyRules(),
+	}
+	if snap.summary.ProviderDataNewest != nil {
+		a.ProviderDataNewest = *snap.summary.ProviderDataNewest
+	}
+	return a
+}
+
 // mcpHandler serves the Model Context Protocol over the same cached assessment the
 // API and the page read. Answering from one is a map lookup, so there is nothing to
 // gain from a second process holding a second copy of the credentials.
 func (s *Server) mcpHandler() http.Handler {
 	return mcp.Handler("patchwright", version.String(), func() mcp.Assessment {
-		snap := s.snapshot()
-		if snap == nil || snap.views == nil {
-			return mcp.Assessment{}
-		}
-		a := mcp.Assessment{
-			GeneratedAt: snap.generatedAt,
-			Version:     version.String(),
-			Findings:    snap.views,
-			Analytics:   snap.analytics,
-			Sources:     snap.sources,
-		}
-		if snap.summary.ProviderDataNewest != nil {
-			a.ProviderDataNewest = *snap.summary.ProviderDataNewest
-		}
-		return a
+		return s.assessment()
 	})
 }
 

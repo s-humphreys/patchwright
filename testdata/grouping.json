@@ -17,6 +17,8 @@
       "signals": [],
       "priority": "medium",
       "reasons": ["matched actionable rule \"preproduction-critical\""],
+      "rule": "preproduction-critical",
+      "rule_kind": "actionable",
       "workload_count": 1,
       "dimensions": { "account": ["Development NA"], "namespace": ["storefront"] },
       "upgrade": {
@@ -41,6 +43,8 @@
       "signals": ["exposed", "kev"],
       "priority": "urgent",
       "reasons": ["matched actionable rule \"exploited-fixable-critical\""],
+      "rule": "exploited-fixable-critical",
+      "rule_kind": "actionable",
       "workload_count": 2,
       "dimensions": { "account": ["Production NA"], "namespace": ["storefront"] },
       "upgrade": {
@@ -65,6 +69,8 @@
       "signals": ["unassessed"],
       "priority": "low",
       "reasons": ["matched actionable rule \"any-critical\""],
+      "rule": "any-critical",
+      "rule_kind": "actionable",
       "workload_count": 1,
       "dimensions": { "account": ["PreProduction NA"], "namespace": ["storefront"] },
       "upgrade": {
@@ -89,6 +95,8 @@
       "signals": ["kev"],
       "priority": "urgent",
       "reasons": ["matched actionable rule \"exploited-fixable-critical\""],
+      "rule": "exploited-fixable-critical",
+      "rule_kind": "actionable",
       "workload_count": 1,
       "dimensions": { "account": ["Development EU"], "namespace": ["etl-tools"] },
       "upgrade": {
@@ -113,6 +121,8 @@
       "signals": [],
       "priority": "high",
       "reasons": ["matched actionable rule \"production-critical\""],
+      "rule": "production-critical",
+      "rule_kind": "actionable",
       "workload_count": 1,
       "dimensions": { "account": ["Production EU"], "namespace": ["ledger"] },
       "upgrade": {
@@ -137,6 +147,8 @@
       "signals": [],
       "priority": "high",
       "reasons": ["matched actionable rule \"production-critical\""],
+      "rule": "production-critical",
+      "rule_kind": "actionable",
       "workload_count": 1,
       "dimensions": { "account": ["Production EU"], "namespace": ["ledger-payments"] },
       "upgrade": {

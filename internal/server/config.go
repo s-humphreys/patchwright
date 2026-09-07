@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/mcp"
 	"github.com/s-humphreys/patchwright/pkg/config"
 )
 
@@ -28,14 +29,36 @@ type configSource struct {
 	Redacted bool `json:"redacted,omitempty"`
 }
 
-// WithConfig attaches the loaded configuration so it can be served, and so lapsed
-// suppressions can be reported.
+// WithConfig attaches the loaded configuration so it can be served, so lapsed
+// suppressions can be reported, and so a policy report can list the rules that
+// matched nothing.
 func (s *Server) WithConfig(cfg *config.Config) *Server {
 	if cfg != nil {
 		s.configSources = cfg.Sources
 		s.suppressRules = cfg.Suppress
+		s.actionableRules = cfg.Actionable
 	}
 	return s
+}
+
+// policyRules translates the loaded rules for the MCP tools.
+//
+// A translation rather than handing over config.PolicyRule, for the same reason
+// ticketsForAnalytics is one: the tool payload is a published contract, and coupling
+// it to the config struct would let a YAML field rename change a tool's output.
+func (s *Server) policyRules() mcp.PolicyRules {
+	out := mcp.PolicyRules{}
+	for _, r := range s.actionableRules {
+		out.Actionable = append(out.Actionable, mcp.PolicyRuleDef{
+			Name: r.Name, When: r.When, Priority: r.Priority,
+		})
+	}
+	for _, r := range s.suppressRules {
+		out.Suppress = append(out.Suppress, mcp.PolicyRuleDef{
+			Name: r.Name, When: r.When, Until: r.Until,
+		})
+	}
+	return out
 }
 
 // expiredSuppressions lists the suppress rules that have lapsed.

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/mcp"
 	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/internal/version"
 	"github.com/s-humphreys/patchwright/pkg/analytics"
@@ -64,22 +65,24 @@ func (s *Server) routes() map[string]http.Handler {
 		// Methods are named individually because a bare "/mcp" would out-specify
 		// "GET /" and collide with it. Streamable HTTP uses all three: POST to call
 		// a tool, GET for the server's stream, DELETE to end a session.
-		"POST /mcp":                mcpH,
-		"GET /mcp":                 mcpH,
-		"DELETE /mcp":              mcpH,
-		"GET /api/v1/findings":     http.HandlerFunc(s.handleFindings),
-		"GET /api/v1/finding":      http.HandlerFunc(s.handleFinding),
-		"GET /api/v1/items":        http.HandlerFunc(s.handleItems),
-		"GET /api/v1/service":      http.HandlerFunc(s.handleService),
-		"GET /api/v1/cves":         http.HandlerFunc(s.handleCVEs),
-		"GET /api/v1/cve":          http.HandlerFunc(s.handleCVE),
-		"GET /api/v1/owners":       http.HandlerFunc(s.handleOwners),
-		"GET /api/v1/summary":      http.HandlerFunc(s.handleSummary),
-		"GET /api/v1/analytics":    http.HandlerFunc(s.handleAnalytics),
-		"GET /api/v1/config":       http.HandlerFunc(s.handleConfig),
-		"POST /api/v1/assessments": http.HandlerFunc(s.handleRefresh),
-		"GET /api/v1/tickets":      http.HandlerFunc(s.handleTicketPlan),
-		"POST /api/v1/tickets":     http.HandlerFunc(s.handleTicketApply),
+		"POST /mcp":                  mcpH,
+		"GET /mcp":                   mcpH,
+		"DELETE /mcp":                mcpH,
+		"GET /api/v1/findings":       http.HandlerFunc(s.handleFindings),
+		"GET /api/v1/finding":        http.HandlerFunc(s.handleFinding),
+		"GET /api/v1/items":          http.HandlerFunc(s.handleItems),
+		"GET /api/v1/service":        http.HandlerFunc(s.handleService),
+		"GET /api/v1/cves":           http.HandlerFunc(s.handleCVEs),
+		"GET /api/v1/cve":            http.HandlerFunc(s.handleCVE),
+		"GET /api/v1/owners":         http.HandlerFunc(s.handleOwners),
+		"GET /api/v1/summary":        http.HandlerFunc(s.handleSummary),
+		"GET /api/v1/analytics":      http.HandlerFunc(s.handleAnalytics),
+		"GET /api/v1/config":         http.HandlerFunc(s.handleConfig),
+		"GET /api/v1/policy":         http.HandlerFunc(s.handlePolicy),
+		"GET /api/v1/exploitability": http.HandlerFunc(s.handleExploitability),
+		"POST /api/v1/assessments":   http.HandlerFunc(s.handleRefresh),
+		"GET /api/v1/tickets":        http.HandlerFunc(s.handleTicketPlan),
+		"POST /api/v1/tickets":       http.HandlerFunc(s.handleTicketApply),
 	}
 }
 
@@ -255,6 +258,54 @@ func (s *Server) handleSummary(w http.ResponseWriter, _ *http.Request) {
 		Assessment assessmentMeta `json:"assessment"`
 		Summary    summaryView    `json:"summary"`
 	}{s.meta(), sum})
+}
+
+// handlePolicy serves the estate measured against the configured rules.
+//
+// The same report the policy_report MCP tool returns, from the same code: it is
+// built for a periodic security review, and a review pack assembled from the API
+// must not be able to disagree with one an agent produced from the tool.
+//
+// 503 rather than an empty report before the first assessment. An empty policy
+// report reads as an estate no rule found anything in, which at that moment is the
+// most reassuring possible way to be wrong.
+func (s *Server) handlePolicy(w http.ResponseWriter, _ *http.Request) {
+	a := s.assessment()
+	if a.GeneratedAt.IsZero() {
+		writeError(w, http.StatusServiceUnavailable, "no assessment yet")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Assessment assessmentMeta   `json:"assessment"`
+		Policy     mcp.PolicyReport `json:"policy"`
+	}{s.meta(), mcp.NewPolicyReport(a, time.Now())})
+}
+
+// handleExploitability serves the KEV and EPSS arithmetic, optionally at a caller's
+// own EPSS threshold via ?epss_threshold=. Same code as the exploitability_report
+// MCP tool, for the same reason handlePolicy is.
+func (s *Server) handleExploitability(w http.ResponseWriter, r *http.Request) {
+	a := s.assessment()
+	if a.GeneratedAt.IsZero() {
+		writeError(w, http.StatusServiceUnavailable, "no assessment yet")
+		return
+	}
+	var threshold float64
+	if raw := r.URL.Query().Get("epss_threshold"); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		// Rejected rather than silently defaulted: a caller who asked for 0.9 and got
+		// 0.5 back would read the counts as theirs. The response echoes the threshold
+		// used, but a report is read long after the request that produced it.
+		if err != nil || v <= 0 || v > 1 {
+			writeError(w, http.StatusBadRequest, "epss_threshold must be a probability greater than 0 and at most 1")
+			return
+		}
+		threshold = v
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Assessment     assessmentMeta           `json:"assessment"`
+		Exploitability mcp.ExploitabilityReport `json:"exploitability"`
+	}{s.meta(), mcp.NewExploitabilityReport(a, threshold)})
 }
 
 // handleRefresh triggers an assessment in the background and returns 202.

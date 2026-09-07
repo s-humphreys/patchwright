@@ -115,7 +115,9 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
   so a fix sitting in an open PR is not ticketed again. ✅ Base-image differential
   and measured internet exposure. ✅ Analytics: what to fix first, and what nobody is
   acting on. ✅ An [MCP server](docs/mcp.md): read-only tools that answer about a
-  service, a team or a CVE in words, including what to DO about one service.
+  service, a team or a CVE in words, including what to DO about one service, and one
+  that reports the estate against your own policy rules by name, and one for
+  exploitation and what share of it is fixable, for a periodic review.
 
   Rolling fixes out is deliberately **not** here. An update bot already opens those
   pull requests, and a second thing computing versions would be two answers to one

@@ -133,9 +133,7 @@ func item(k string, members []sink.FindingView) Item {
 		InFlight: lead.InFlight, InFlightChecked: true,
 		Deployments: len(members),
 	}
-	if len(lead.Reasons) > 0 {
-		it.Rule = ruleName(lead.Reasons[0])
-	}
+	it.Rule = lead.Rule
 	it.PriorityWhere = discriminatingWhere(members, lead)
 
 	accounts, namespaces, signals := &set{}, &set{}, &set{}
@@ -187,16 +185,6 @@ func item(k string, members []sink.FindingView) Item {
 	sort.Strings(it.Tags)
 	sort.Strings(it.Images)
 	return it
-}
-
-// ruleName pulls the rule out of a recorded reason ('matched actionable rule "x"').
-func ruleName(reason string) string {
-	if i := strings.Index(reason, `"`); i >= 0 {
-		if j := strings.LastIndex(reason, `"`); j > i {
-			return reason[i+1 : j]
-		}
-	}
-	return reason
 }
 
 type set struct{ m map[string]struct{} }
