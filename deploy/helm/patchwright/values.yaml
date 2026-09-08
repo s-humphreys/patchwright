@@ -3,8 +3,12 @@
 #   RAPID7_API_KEY          the scan provider, in api mode
 #   AZURE_DEVOPS_PAT        reading pull requests, for in-flight detection
 #   JIRA_BASE_URL           ticketing
-#   JIRA_EMAIL              ticketing
-#   JIRA_API_TOKEN          ticketing
+#   JIRA_EMAIL              ticketing, with an Atlassian API token
+#   JIRA_API_TOKEN          ticketing, with an Atlassian API token
+#   JIRA_OAUTH_CLIENT_ID     ticketing, with an OAuth app instead
+#   JIRA_OAUTH_CLIENT_SECRET ticketing, with an OAuth app instead
+#   JIRA_OAUTH_REFRESH_TOKEN switches that app from client credentials to 3LO
+#   JIRA_CLOUD_ID           names the site under OAuth, if JIRA_BASE_URL is unset
 #   PATCHWRIGHT_API_TOKEN   requires a token on the API and status page
 #
 # Include only what you use. Every one of them is optional in the sense that matters:
@@ -106,8 +110,8 @@ ticketing:
   # credentialsSecretName; the chart refuses to render otherwise, matching the
   # binary, which refuses to start.
   autoTicket: false
-  # Jira credentials come from credentialsSecretName (JIRA_BASE_URL, JIRA_EMAIL,
-  # JIRA_API_TOKEN). Without them ticketing is off: the queue and the page are
+  # Jira credentials come from credentialsSecretName: JIRA_BASE_URL plus either
+  # JIRA_EMAIL and JIRA_API_TOKEN, or the JIRA_OAUTH_* set. Without them ticketing is off: the queue and the page are
   # unaffected, and ticket state is reported as unknown rather than as "no ticket".
   # The ticket template, mounted alongside the rules. Required for ticketing,
   # because `jira.template` is a path and the image ships no default: the wording

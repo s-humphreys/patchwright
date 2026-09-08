@@ -14,13 +14,52 @@ patchwright ticket -i findings.json -c config/ --confirm   # apply
 **Dry run is the default.** It prints every ticket in full, the tracker each lands
 on, and every skip with its reason.
 
-Credentials come from the environment, never the config file:
+Credentials come from the environment, never the config file. Either an Atlassian
+API token:
 
 ```sh
 export JIRA_BASE_URL=https://your-site.atlassian.net
 export JIRA_EMAIL=you@example.com
 export JIRA_API_TOKEN=...
 ```
+
+or an OAuth app, which is what you want when the credential must belong to the
+integration rather than to a person:
+
+```sh
+export JIRA_OAUTH_CLIENT_ID=...
+export JIRA_OAUTH_CLIENT_SECRET=...
+export JIRA_CLOUD_ID=...                               # or JIRA_BASE_URL
+export JIRA_OAUTH_REFRESH_TOKEN=...                    # 3LO apps only
+```
+
+Setting `JIRA_OAUTH_CLIENT_ID` selects OAuth; the API token variables are then
+ignored. The app needs `read:jira-work` and `write:jira-work`. Assignee is read as a
+field on the search, so `read:jira-user` is not required.
+
+Which grant is used follows from whether a refresh token is set:
+
+- **Client credentials (2LO)**, with no refresh token. The app acts as itself, needs
+  no browser consent, and access tokens are minted from the ID and secret whenever
+  the last one expires. Nothing to rotate and no person's account attached, which
+  makes it the better fit for a service.
+- **Refresh token (3LO)**, when `JIRA_OAUTH_REFRESH_TOKEN` is set. The app acts as
+  the user who authorised it. Get the token by adding `offline_access` to the scope
+  of a one-time authorization URL and exchanging the resulting code. Atlassian
+  rotates refresh tokens on use and patchwright keeps the new one in memory only, so
+  a restart falls back to the value in the environment — which stays valid, because a
+  rotated token is not invalidated until the next successful refresh.
+
+OAuth requests go to `api.atlassian.com/ex/jira/{cloudId}`, not to the site host, so
+the site is identified by cloud ID. Set `JIRA_CLOUD_ID` directly, or leave
+`JIRA_BASE_URL` set and it is looked up once from the sites the credential can reach:
+
+```sh
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  https://api.atlassian.com/oauth/token/accessible-resources
+```
+
+With access to several sites and neither variable set, patchwright refuses to guess.
 
 ## What one ticket covers
 
