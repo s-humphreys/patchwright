@@ -23,31 +23,43 @@ export JIRA_EMAIL=you@example.com
 export JIRA_API_TOKEN=...
 ```
 
-or an OAuth 2.0 (3LO) app, which is what you want when the credential must belong to
-the integration rather than to a person:
+or an OAuth app, which is what you want when the credential must belong to the
+integration rather than to a person:
 
 ```sh
 export JIRA_OAUTH_CLIENT_ID=...
 export JIRA_OAUTH_CLIENT_SECRET=...
-export JIRA_OAUTH_REFRESH_TOKEN=...
-export JIRA_BASE_URL=https://your-site.atlassian.net   # or JIRA_CLOUD_ID
+export JIRA_CLOUD_ID=...                               # or JIRA_BASE_URL
+export JIRA_OAUTH_REFRESH_TOKEN=...                    # 3LO apps only
 ```
 
 Setting `JIRA_OAUTH_CLIENT_ID` selects OAuth; the API token variables are then
-ignored. OAuth requests go to `api.atlassian.com/ex/jira/{cloudId}`, so the site is
-identified by cloud ID: set `JIRA_CLOUD_ID` directly, or leave `JIRA_BASE_URL` set and
-it is looked up once at startup from the sites the credential can reach. With access
-to several sites and neither set, patchwright refuses to guess.
+ignored. The app needs `read:jira-work` and `write:jira-work`. Assignee is read as a
+field on the search, so `read:jira-user` is not required.
 
-The app needs the classic scopes `read:jira-work`, `write:jira-work` and
-`read:jira-user`, plus `offline_access` to get a refresh token at all.
+Which grant is used follows from whether a refresh token is set:
 
-Two things to know about refresh tokens. Atlassian rotates them on every exchange, and
-patchwright keeps the new one in memory only, so a restart falls back to the token in
-the environment: keep that value in the Secret, and it stays valid because a rotated
-token remains usable until the next successful refresh. And a refresh token expires
-after 90 days of no use, which for a service that scans on a schedule will not happen,
-but is worth knowing if the deployment is paused.
+- **Client credentials (2LO)**, with no refresh token. The app acts as itself, needs
+  no browser consent, and access tokens are minted from the ID and secret whenever
+  the last one expires. Nothing to rotate and no person's account attached, which
+  makes it the better fit for a service.
+- **Refresh token (3LO)**, when `JIRA_OAUTH_REFRESH_TOKEN` is set. The app acts as
+  the user who authorised it. Get the token by adding `offline_access` to the scope
+  of a one-time authorization URL and exchanging the resulting code. Atlassian
+  rotates refresh tokens on use and patchwright keeps the new one in memory only, so
+  a restart falls back to the value in the environment — which stays valid, because a
+  rotated token is not invalidated until the next successful refresh.
+
+OAuth requests go to `api.atlassian.com/ex/jira/{cloudId}`, not to the site host, so
+the site is identified by cloud ID. Set `JIRA_CLOUD_ID` directly, or leave
+`JIRA_BASE_URL` set and it is looked up once from the sites the credential can reach:
+
+```sh
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  https://api.atlassian.com/oauth/token/accessible-resources
+```
+
+With access to several sites and neither variable set, patchwright refuses to guess.
 
 ## What one ticket covers
 

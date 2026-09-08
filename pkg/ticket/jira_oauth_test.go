@@ -206,19 +206,79 @@ func TestNewJiraSelectsOAuthWhenTheClientIDIsSet(t *testing.T) {
 }
 
 // A half-configured OAuth app should say what is missing, not 401 later.
-func TestNewJiraNamesMissingOAuthPieces(t *testing.T) {
+func TestNewJiraNamesAMissingClientSecret(t *testing.T) {
 	t.Setenv(EnvBaseURL, "https://one.atlassian.net")
 	t.Setenv(EnvOAuthClientID, "id")
 	t.Setenv(EnvOAuthClientSecret, "")
-	t.Setenv(EnvOAuthRefreshToken, "")
 
 	_, err := NewJira(config.JiraConfig{Project: "PROJ"})
 	if err == nil {
-		t.Fatal("expected an error naming the missing OAuth variables")
+		t.Fatal("expected an error naming the missing client secret")
 	}
-	for _, want := range []string{EnvOAuthClientSecret, EnvOAuthRefreshToken} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not name %s", err, want)
+	if !strings.Contains(err.Error(), EnvOAuthClientSecret) {
+		t.Errorf("error %q does not name %s", err, EnvOAuthClientSecret)
+	}
+}
+
+// A client-credentials app has no user and no refresh token; requiring one would
+// lock out the grant that needs no consent step at all.
+func TestNewJiraAcceptsClientCredentialsWithoutARefreshToken(t *testing.T) {
+	t.Setenv(EnvBaseURL, "https://one.atlassian.net")
+	t.Setenv(EnvOAuthClientID, "id")
+	t.Setenv(EnvOAuthClientSecret, "secret")
+	t.Setenv(EnvOAuthRefreshToken, "")
+	t.Setenv(EnvCloudID, "cloud-1")
+
+	j, err := NewJira(config.JiraConfig{Project: "PROJ"})
+	if err != nil {
+		t.Fatalf("NewJira: %v", err)
+	}
+	o, ok := j.auth.(*oauthAuth)
+	if !ok {
+		t.Fatalf("auth is %T, want *oauthAuth", j.auth)
+	}
+	if o.refreshToken != "" {
+		t.Error("a refresh token appeared from nowhere")
+	}
+	if got := o.grant("")["grant_type"]; got != "client_credentials" {
+		t.Errorf("grant_type = %q, want client_credentials", got)
+	}
+}
+
+func TestClientCredentialsMintsAndReMintsWithoutARefreshToken(t *testing.T) {
+	var grants []string
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode token request: %v", err)
+		}
+		grants = append(grants, body["grant_type"])
+		if body["audience"] != "api.atlassian.com" {
+			t.Errorf("audience = %q, want api.atlassian.com", body["audience"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// No refresh_token in the response: that is what client credentials returns.
+		_, _ = w.Write([]byte(`{"access_token":"at","expires_in":3600}`))
+	}))
+	defer tokens.Close()
+
+	o := &oauthAuth{clientID: "id", clientSecret: "s", tokenURL: tokens.URL, client: tokens.Client()}
+	if _, err := o.token(context.Background()); err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	// Expired, so the next call must mint again rather than give up for want of a
+	// refresh token.
+	o.expiry = time.Now().Add(-time.Minute)
+	if _, err := o.token(context.Background()); err != nil {
+		t.Fatalf("token (re-mint): %v", err)
+	}
+
+	if len(grants) != 2 {
+		t.Fatalf("made %d token requests, want 2", len(grants))
+	}
+	for _, g := range grants {
+		if g != "client_credentials" {
+			t.Errorf("grant_type = %q, want client_credentials", g)
 		}
 	}
 }

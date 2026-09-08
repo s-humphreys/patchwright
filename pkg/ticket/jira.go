@@ -49,8 +49,9 @@ const (
 //
 // Two credential shapes are supported. An Atlassian API token (email plus token,
 // Basic auth against the site) is the default; setting JIRA_OAUTH_CLIENT_ID
-// selects OAuth 2.0 (3LO) instead, which talks to api.atlassian.com and refreshes
-// its own access tokens.
+// selects OAuth instead, which talks to api.atlassian.com and mints its own
+// access tokens — by client credentials, or by refresh token if
+// JIRA_OAUTH_REFRESH_TOKEN is also set.
 func NewJira(cfg config.JiraConfig) (*Jira, error) {
 	auth, err := jiraAuthFromEnv()
 	if err != nil {
@@ -96,17 +97,14 @@ func jiraAuthFromEnv() (jiraAuth, error) {
 }
 
 func oauthFromEnv(base string) (jiraAuth, error) {
-	secret, refresh := os.Getenv(EnvOAuthClientSecret), os.Getenv(EnvOAuthRefreshToken)
-	var missing []string
+	secret := os.Getenv(EnvOAuthClientSecret)
 	if secret == "" {
-		missing = append(missing, EnvOAuthClientSecret)
+		return nil, fmt.Errorf("missing Jira OAuth credentials in the environment: %s", EnvOAuthClientSecret)
 	}
-	if refresh == "" {
-		missing = append(missing, EnvOAuthRefreshToken)
-	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("missing Jira OAuth credentials in the environment: %s", strings.Join(missing, ", "))
-	}
+	// The refresh token is what distinguishes the two grants. With one, the app
+	// acts as the user who authorised it (3LO); without, it acts as itself
+	// (client credentials), which needs no consent step and nothing to rotate.
+	refresh := os.Getenv(EnvOAuthRefreshToken)
 	// Neither is required, but without one of them a credential with access to
 	// several sites cannot be resolved to a single one.
 	if base == "" && os.Getenv(EnvCloudID) == "" {

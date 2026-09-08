@@ -196,7 +196,8 @@ kubectl create secret generic patchwright \
 | `RAPID7_API_KEY` | the scan provider in api mode |
 | `AZURE_DEVOPS_PAT` | in-flight detection (pull requests) |
 | `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | ticketing, with an Atlassian API token |
-| `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET`, `JIRA_OAUTH_REFRESH_TOKEN` | ticketing, with an OAuth 2.0 (3LO) app instead |
+| `JIRA_OAUTH_CLIENT_ID`, `JIRA_OAUTH_CLIENT_SECRET` | ticketing, with an OAuth app instead |
+| `JIRA_OAUTH_REFRESH_TOKEN` | switches that app from client credentials to 3LO |
 | `JIRA_CLOUD_ID` | names the site under OAuth, when `JIRA_BASE_URL` is not set |
 | `PATCHWRIGHT_API_TOKEN` | requires a token on the API and page; open without it |
 

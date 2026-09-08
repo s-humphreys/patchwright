@@ -5,9 +5,9 @@
 #   JIRA_BASE_URL           ticketing
 #   JIRA_EMAIL              ticketing, with an Atlassian API token
 #   JIRA_API_TOKEN          ticketing, with an Atlassian API token
-#   JIRA_OAUTH_CLIENT_ID     ticketing, with an OAuth 2.0 (3LO) app instead
-#   JIRA_OAUTH_CLIENT_SECRET ticketing, with an OAuth 2.0 (3LO) app instead
-#   JIRA_OAUTH_REFRESH_TOKEN ticketing, with an OAuth 2.0 (3LO) app instead
+#   JIRA_OAUTH_CLIENT_ID     ticketing, with an OAuth app instead
+#   JIRA_OAUTH_CLIENT_SECRET ticketing, with an OAuth app instead
+#   JIRA_OAUTH_REFRESH_TOKEN switches that app from client credentials to 3LO
 #   JIRA_CLOUD_ID           names the site under OAuth, if JIRA_BASE_URL is unset
 #   PATCHWRIGHT_API_TOKEN   requires a token on the API and status page
 #

@@ -48,10 +48,16 @@ const (
 	tokenSkew = 60 * time.Second
 )
 
-// oauthAuth holds a 3LO refresh token and exchanges it for short-lived access
-// tokens. Atlassian rotates refresh tokens on every exchange, so the current one
-// lives in memory only: a restart falls back to the token from the environment,
-// which stays valid until the next successful refresh replaces it.
+// oauthAuth exchanges an OAuth credential for short-lived access tokens, in
+// either of the two grants Atlassian offers.
+//
+// With a refresh token (3LO, a user authorised the app) the grant is
+// refresh_token. Atlassian rotates refresh tokens on every exchange, so the
+// current one lives in memory only: a restart falls back to the token from the
+// environment, which stays valid until the next successful refresh replaces it.
+//
+// Without one (2LO, the app acts as itself) the grant is client_credentials,
+// which needs no user and can be re-minted from the ID and secret at any time.
 type oauthAuth struct {
 	clientID     string
 	clientSecret string
@@ -68,6 +74,30 @@ type oauthAuth struct {
 	accessToken  string
 	expiry       time.Time
 	apiBase      string
+}
+
+// grant builds the token request. The audience is required for client
+// credentials and harmless on a refresh, so it is always sent.
+func (o *oauthAuth) grant(refresh string) map[string]string {
+	body := map[string]string{
+		"client_id":     o.clientID,
+		"client_secret": o.clientSecret,
+		"audience":      "api.atlassian.com",
+	}
+	if refresh == "" {
+		body["grant_type"] = "client_credentials"
+		return body
+	}
+	body["grant_type"] = "refresh_token"
+	body["refresh_token"] = refresh
+	return body
+}
+
+func (o *oauthAuth) grantName(refresh string) string {
+	if refresh == "" {
+		return "mint jira oauth token (client credentials)"
+	}
+	return "refresh jira oauth token"
 }
 
 func (o *oauthAuth) apply(ctx context.Context, req *http.Request) error {
@@ -114,13 +144,7 @@ func (o *oauthAuth) token(ctx context.Context) (string, error) {
 	refresh := o.refreshToken
 	o.mu.Unlock()
 
-	body := map[string]string{
-		"grant_type":    "refresh_token",
-		"client_id":     o.clientID,
-		"client_secret": o.clientSecret,
-		"refresh_token": refresh,
-	}
-	b, err := json.Marshal(body)
+	b, err := json.Marshal(o.grant(refresh))
 	if err != nil {
 		return "", err
 	}
@@ -133,7 +157,7 @@ func (o *oauthAuth) token(ctx context.Context) (string, error) {
 
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("refresh jira oauth token: %w", err)
+		return "", fmt.Errorf("%s: %w", o.grantName(refresh), err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body close, nothing to do on failure
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -141,9 +165,10 @@ func (o *oauthAuth) token(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// A refresh token is rotated on use and expires after inactivity; the body
-		// says which of those happened, and both need a human to re-authorise.
-		return "", fmt.Errorf("refresh jira oauth token: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		// Worth the body: under client_credentials this is usually a bad secret,
+		// while a refresh token is rotated on use and expires after inactivity, and
+		// that needs a human to re-authorise rather than a retry.
+		return "", fmt.Errorf("%s: %s: %s", o.grantName(refresh), resp.Status, strings.TrimSpace(string(data)))
 	}
 	var out struct {
 		AccessToken  string `json:"access_token"`
@@ -153,6 +178,8 @@ func (o *oauthAuth) token(ctx context.Context) (string, error) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", fmt.Errorf("decode jira oauth token response: %w", err)
 	}
+	// A client_credentials response carries no refresh token, by design: the next
+	// token is minted the same way this one was.
 	if out.AccessToken == "" {
 		return "", fmt.Errorf("jira oauth token response contained no access token")
 	}
