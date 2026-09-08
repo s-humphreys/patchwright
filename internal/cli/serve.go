@@ -161,21 +161,21 @@ func newServeCmd() *cobra.Command {
 						return fmt.Errorf("--auto-ticket needs Jira credentials: %w", jerr)
 					}
 				default:
-					srv = srv.WithTickets(jira, jira.BaseURL)
+					// Resolved rather than read from the environment: under OAuth the
+					// site is identified by cloud id, and a deployment that never sets
+					// JIRA_BASE_URL should still get clickable issue keys.
+					srv = srv.WithTickets(jira, jira.SiteURL(cmd.Context()))
 					planner, perr := ticket.NewPlannerWithDashboard(cfg.Jira, cfg.Dashboard)
 					if perr != nil {
 						return perr
 					}
 					srv = srv.WithTicketing(&serverTicketer{Planner: planner, Jira: jira}, autoTicket)
-					// Every tracker, not just the default: with routes configured, naming
-					// one project understates what this deployment can write to, and
-					// startup is where an operator checks that.
+					// Every tracker a route names: startup is where an operator checks
+					// what this deployment can write to.
 					slog.InfoContext(cmd.Context(), "ticketing enabled",
 						"projects", strings.Join(cfg.Jira.Projects(), ","),
-						"default_project", cfg.Jira.Project,
 						"issue_type", cfg.Jira.EffectiveIssueType(),
 						"routes", routeSummary(cfg.Jira),
-						"require_route", cfg.Jira.RequireRoute,
 						"auto_close", closeSummary(cfg.Jira),
 						"auto_ticket", autoTicket)
 					if autoTicket {

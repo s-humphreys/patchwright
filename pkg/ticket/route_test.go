@@ -84,16 +84,20 @@ func TestRoutesRejectBadConfiguration(t *testing.T) {
 // Resolution is a merge: a route states only what differs.
 func TestResolveInheritsEverythingNotOverridden(t *testing.T) {
 	base := config.JiraConfig{
-		Board: 1, Project: "OPS", Template: "t.tmpl", ImageField: "customfield_1",
-		IssueType: "Container Vulnerability", Priority: "Medium",
-		PriorityMap: map[string]string{"urgent": "Highest"},
-		Labels:      []string{"patchwright"},
+		DefaultTemplate: "t.tmpl",
+		IssueType:       "Container Vulnerability", Priority: "Medium",
+		Labels: []string{"patchwright"},
 	}
-	got := base.Resolve(config.TicketRoute{Name: "sre", When: "true", Project: "SRE", IssueType: "Bug"})
+	got := base.Resolve(config.TicketRoute{
+		Name: "sre", When: "true", Project: "SRE", Board: 1, ImageField: "customfield_1",
+		IssueType: "Bug", PriorityMap: map[string]string{"urgent": "Highest"},
+	})
 
 	if got.Project != "SRE" || got.EffectiveIssueType() != "Bug" {
 		t.Errorf("overrides not applied: project=%q issuetype=%q", got.Project, got.EffectiveIssueType())
 	}
+	// The default template and the deployment-wide settings come through; the
+	// tracker comes from the route.
 	if got.Template != "t.tmpl" || got.ImageField != "customfield_1" || got.Board != 1 {
 		t.Errorf("inherited settings lost: %+v", got)
 	}
@@ -109,43 +113,59 @@ func TestResolveInheritsEverythingNotOverridden(t *testing.T) {
 	}
 }
 
-// Naming a custom field must switch the lookup off labels, and vice versa:
-// writing one and searching the other finds nothing, so every run duplicates.
-func TestResolveKeepsTheImageKeyUnambiguous(t *testing.T) {
-	labelBase := config.JiraConfig{Board: 1, Project: "P", Template: "t", ImageLabel: true}
-	got := labelBase.Resolve(config.TicketRoute{Name: "r", When: "true", ImageField: "customfield_9"})
-	if got.ImageLabel || got.ImageField != "customfield_9" {
-		t.Errorf("field override left labels on: label=%v field=%q", got.ImageLabel, got.ImageField)
+// A route picks one image key or the other. Writing one and searching the other
+// finds nothing, so every run would duplicate — which is why setting both is a
+// configuration error rather than a precedence rule.
+func TestRouteImageKeyIsUnambiguous(t *testing.T) {
+	base := config.JiraConfig{DefaultTemplate: "t"}
+
+	field := base.Resolve(config.TicketRoute{Name: "r", When: "true", Board: 1, Project: "P",
+		ImageField: "customfield_9"})
+	if field.ImageLabel || field.ImageField != "customfield_9" {
+		t.Errorf("field route: label=%v field=%q", field.ImageLabel, field.ImageField)
 	}
 
-	fieldBase := config.JiraConfig{Board: 1, Project: "P", Template: "t", ImageField: "customfield_1"}
-	yes := true
-	got = fieldBase.Resolve(config.TicketRoute{Name: "r", When: "true", ImageLabel: &yes})
-	if !got.ImageLabel || got.ImageField != "" {
-		t.Errorf("label override left a field set: label=%v field=%q", got.ImageLabel, got.ImageField)
+	label := base.Resolve(config.TicketRoute{Name: "r", When: "true", Board: 1, Project: "P",
+		ImageLabel: boolPtr(true)})
+	if !label.ImageLabel || label.ImageField != "" {
+		t.Errorf("label route: label=%v field=%q", label.ImageLabel, label.ImageField)
 	}
-	if err := got.Validate(); err != nil {
-		t.Errorf("resolved config is invalid: %v", err)
+
+	both := config.JiraConfig{DefaultTemplate: "t", Routes: []config.TicketRoute{
+		{Name: "r", When: "true", Board: 1, Project: "P",
+			ImageField: "customfield_9", ImageLabel: boolPtr(true)},
+	}}
+	if err := both.Validate(); err == nil || !strings.Contains(err.Error(), "pick one") {
+		t.Errorf("a route setting both image keys was accepted: %v", err)
+	}
+	neither := config.JiraConfig{DefaultTemplate: "t", Routes: []config.TicketRoute{
+		{Name: "r", When: "true", Board: 1, Project: "P"},
+	}}
+	if err := neither.Validate(); err == nil {
+		t.Error("a route with no image key was accepted; every run would duplicate")
 	}
 }
 
 // Reconciliation has to search every tracker, or a ticket in another project is
 // invisible and the next run raises a duplicate.
 func TestProjectsListsEveryTracker(t *testing.T) {
-	cfg := config.JiraConfig{Project: "OPS", Routes: []config.TicketRoute{
+	cfg := config.JiraConfig{Routes: []config.TicketRoute{
+		{Name: "ops", When: "true", Project: "OPS"},
 		{Name: "sre", When: "true", Project: "SRE"},
-		{Name: "also-ops", When: "true"},            // inherits OPS
 		{Name: "dup", When: "true", Project: "SRE"}, // same project again
 	}}
 	got := cfg.Projects()
 	if len(got) != 2 || got[0] != "OPS" || got[1] != "SRE" {
-		t.Errorf("Projects() = %v, want [OPS SRE] with the base first", got)
+		t.Errorf("Projects() = %v, want [OPS SRE], de-duplicated", got)
 	}
 }
 
 func TestValidateRejectsRoutesThatResolveInvalid(t *testing.T) {
-	base := config.JiraConfig{Board: 1, Project: "P", Template: "t", ImageField: "customfield_1"}
-	base.Routes = []config.TicketRoute{{Name: "dup", When: "true"}, {Name: "dup", When: "true"}}
+	base := config.JiraConfig{DefaultTemplate: "t"}
+	tracker := config.TicketRoute{When: "true", Board: 1, Project: "P", ImageField: "customfield_1"}
+	dup1, dup2 := tracker, tracker
+	dup1.Name, dup2.Name = "dup", "dup"
+	base.Routes = []config.TicketRoute{dup1, dup2}
 	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Errorf("duplicate route names accepted: %v", err)
 	}
@@ -166,9 +186,10 @@ func TestPlannerNeverGroupsAcrossRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.JiraConfig{
-		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
+		DefaultTemplate: tmpl,
 		Routes: []config.TicketRoute{
-			{Name: "sre", When: "owner['team'] == 'sre'", Project: "SRE", IssueType: "Bug"},
+			{Name: "ops", When: "owner['team'] != 'sre'", Board: 1, Project: "OPS", ImageField: "customfield_1"},
+			{Name: "sre", When: "owner['team'] == 'sre'", Board: 2, Project: "SRE", ImageField: "customfield_1", IssueType: "Bug"},
 		},
 	}
 	p, err := NewPlanner(cfg)
@@ -193,8 +214,8 @@ func TestPlannerNeverGroupsAcrossRoutes(t *testing.T) {
 			t.Errorf("draft for route %q covers %d findings, so it spans owners", d.Route, len(d.Findings))
 		}
 	}
-	if !routes["sre"] || !routes[routeName] {
-		t.Errorf("drafts routed to %v, want one sre and one default", routes)
+	if !routes["sre"] || !routes["ops"] {
+		t.Errorf("drafts routed to %v, want one sre and one ops", routes)
 	}
 }
 
@@ -205,9 +226,8 @@ func TestEveryDraftIsRouted(t *testing.T) {
 	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
-	})
+	p, err := NewPlanner(config.JiraConfig{DefaultTemplate: tmpl, Routes: []config.TicketRoute{
+		{Name: "all", When: "true", Board: 1, Project: "OPS", ImageField: "customfield_1"}}})
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
 	}
@@ -222,19 +242,19 @@ func TestEveryDraftIsRouted(t *testing.T) {
 	}
 }
 
-// requireRoute: work with no configured tracker is reported, not quietly sent to
-// whichever board happens to be the default.
-func TestRequireRouteSkipsUnroutedWorkWithAReason(t *testing.T) {
+// Work with no configured tracker is reported, not quietly sent to whichever
+// board happens to be first: a tracker exists only on a route.
+func TestUnroutedWorkIsSkippedWithAReason(t *testing.T) {
 	dir := t.TempDir()
 	tmpl := dir + "/ticket.tmpl"
 	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.JiraConfig{
-		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
-		RequireRoute: true,
+		DefaultTemplate: tmpl,
 		Routes: []config.TicketRoute{
-			{Name: "platform", When: "owner['class'] == 'platform'", Project: "OPS"},
+			{Name: "platform", When: "owner['class'] == 'platform'",
+				Project: "OPS", Board: 1, ImageField: "customfield_1"},
 		},
 	}
 	p, err := NewPlanner(cfg)
@@ -256,7 +276,7 @@ func TestRequireRouteSkipsUnroutedWorkWithAReason(t *testing.T) {
 	for _, s := range plan.Skips {
 		if strings.Contains(s.Image, "acr.io/app") {
 			found = true
-			for _, want := range []string{"no ticket route", "engineering/orders", "requireRoute"} {
+			for _, want := range []string{"no ticket route", "engineering/orders"} {
 				if !strings.Contains(s.Reason, want) {
 					t.Errorf("skip reason %q does not mention %q", s.Reason, want)
 				}
@@ -268,32 +288,6 @@ func TestRequireRouteSkipsUnroutedWorkWithAReason(t *testing.T) {
 	}
 }
 
-// Without requireRoute the previous behaviour stands, so enabling routing does
-// not silently stop tickets for anyone who has not written routes yet.
-func TestWithoutRequireRouteUnroutedWorkUsesTheDefault(t *testing.T) {
-	dir := t.TempDir()
-	tmpl := dir + "/ticket.tmpl"
-	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "OPS", Template: tmpl, ImageField: "customfield_1",
-		Routes: []config.TicketRoute{
-			{Name: "platform", When: "owner['class'] == 'platform'", Project: "OPS"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewPlanner: %v", err)
-	}
-	plan, err := p.Plan([]sink.FindingView{routedView("engineering", "orders", "acr.io/app")})
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-	if len(plan.Drafts) != 1 || plan.Drafts[0].Route != routeName {
-		t.Fatalf("got %d drafts %+v, want one on the default route", len(plan.Drafts), plan.Drafts)
-	}
-}
-
 // minPriority: a tracker holding a hundred tickets nobody will action this quarter is
 // one people stop reading, and it takes the urgent ones down with it.
 func TestMinPriorityKeepsLowFindingsOutOfTheTracker(t *testing.T) {
@@ -302,10 +296,8 @@ func TestMinPriorityKeepsLowFindingsOutOfTheTracker(t *testing.T) {
 	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.JiraConfig{
-		Board: 1, Project: "P", Template: tmpl, ImageField: "customfield_1",
-		MinPriority: "high",
-	}
+	cfg := oneRoute(tmpl)
+	cfg.MinPriority = "high"
 	p, err := NewPlanner(cfg)
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
@@ -366,9 +358,8 @@ func TestNoMinPriorityTicketsEverything(t *testing.T) {
 	if err := os.WriteFile(tmpl, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "P", Template: tmpl, ImageField: "customfield_1",
-	})
+	p, err := NewPlanner(config.JiraConfig{DefaultTemplate: tmpl, Routes: []config.TicketRoute{
+		{Name: "all", When: "true", Board: 1, Project: "P", ImageField: "customfield_1"}}})
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
 	}
@@ -392,10 +383,12 @@ func TestMinPriorityIsPerRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.JiraConfig{
-		Board: 1, Project: "P", Template: tmpl, ImageField: "customfield_1",
-		MinPriority: "low",
+		DefaultTemplate: tmpl,
+		MinPriority:     "low",
 		Routes: []config.TicketRoute{
-			{Name: "strict", When: "owner['team'] == 'sre'", Project: "SRE", MinPriority: "urgent"},
+			{Name: "strict", When: "owner['team'] == 'sre'", Board: 2, Project: "SRE",
+				ImageField: "customfield_1", MinPriority: "urgent"},
+			{Name: "rest", When: "true", Board: 1, Project: "P", ImageField: "customfield_1"},
 		},
 	}
 	p, err := NewPlanner(cfg)
@@ -429,10 +422,8 @@ func TestMinPriorityIsPerRoute(t *testing.T) {
 // opposite of what the setting is for.
 func TestMinPriorityMustBeARankedLabel(t *testing.T) {
 	for _, bad := range []string{"High", "critical", "sev1", "urgentish"} {
-		cfg := config.JiraConfig{
-			Board: 1, Project: "P", Template: "t", ImageField: "customfield_1",
-			MinPriority: bad,
-		}
+		cfg := oneRoute("t")
+		cfg.MinPriority = bad
 		err := cfg.Validate()
 		if bad == "High" {
 			// Case matters: the ladder is lowercase, and accepting "High" here while
@@ -446,11 +437,122 @@ func TestMinPriorityMustBeARankedLabel(t *testing.T) {
 			t.Errorf("minPriority %q: err = %v", bad, err)
 		}
 	}
-	ok := config.JiraConfig{
-		Board: 1, Project: "P", Template: "t", ImageField: "customfield_1",
-		MinPriority: "high",
-	}
+	ok := oneRoute("t")
+	ok.MinPriority = "high"
 	if err := ok.Validate(); err != nil {
 		t.Errorf("a valid threshold was rejected: %v", err)
+	}
+}
+
+// boolPtr is for the pointer fields a route uses to distinguish "not set" from
+// "set false".
+func boolPtr(b bool) *bool { return &b }
+
+// oneRoute is the config shape a test needs when it does not care about routing:
+// a default template plus a single tracker everything matches.
+func oneRoute(tmpl string) config.JiraConfig {
+	return config.JiraConfig{
+		DefaultTemplate: tmpl,
+		Routes: []config.TicketRoute{
+			{Name: "all", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1"},
+		},
+	}
+}
+
+// Wording is what teams disagree about, so a route can carry its own template
+// while sharing every other setting. A route that says nothing gets the default.
+func TestRouteTemplateOverridesTheDefault(t *testing.T) {
+	dir := t.TempDir()
+	def, own := dir+"/default.tmpl", dir+"/sre.tmpl"
+	if err := os.WriteFile(def, []byte("Summary: default {{ .ServiceName }}\n\nthe shared body\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(own, []byte("Summary: sre {{ .ServiceName }}\n\nthe sre body\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(config.JiraConfig{
+		DefaultTemplate: def,
+		Routes: []config.TicketRoute{
+			{Name: "sre", When: "owner['team'] == 'sre'", Board: 2, Project: "SRE",
+				ImageField: "customfield_1", Template: own},
+			{Name: "rest", When: "true", Board: 1, Project: "OPS", ImageField: "customfield_1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	plan, err := p.Plan([]sink.FindingView{
+		routedView("platform", "sre", "acr.io/sre-thing"),
+		routedView("platform", "cpo", "acr.io/other-thing"),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	bodies := map[string]string{}
+	for _, d := range plan.Drafts {
+		bodies[d.Route] = d.Summary + "|" + d.Description
+	}
+	if !strings.Contains(bodies["sre"], "the sre body") {
+		t.Errorf("sre route did not use its own template: %q", bodies["sre"])
+	}
+	if !strings.Contains(bodies["rest"], "the shared body") {
+		t.Errorf("route without a template did not fall back to the default: %q", bodies["rest"])
+	}
+}
+
+// A route naming a template that does not parse must fail at startup, not on the
+// first ticket of the month for one team.
+func TestRouteTemplateIsParsedAtStartup(t *testing.T) {
+	dir := t.TempDir()
+	def, broken := dir+"/default.tmpl", dir+"/broken.tmpl"
+	if err := os.WriteFile(def, []byte("Summary: s\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(broken, []byte("Summary: s\n\n{{ .Nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewPlanner(config.JiraConfig{
+		DefaultTemplate: def,
+		Routes: []config.TicketRoute{
+			{Name: "sre", When: "true", Board: 1, Project: "SRE",
+				ImageField: "customfield_1", Template: broken},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "sre") {
+		t.Errorf("a route template that does not parse was accepted: %v", err)
+	}
+}
+
+// The dashboard link has to land on this ticket's work, not on everything its
+// team owns: a link that needs the reader to search for their own ticket is not
+// evidence, it is homework.
+func TestDashboardLinkTargetsTheTicketsWork(t *testing.T) {
+	single := TemplateData{Teams: []string{"cpe"}, Images: []string{"acr.io/thing"}}
+	if got := single.searchTerm(); got != "" {
+		t.Errorf("a single-service ticket should deep link, not search: %q", got)
+	}
+
+	grouped := TemplateData{
+		Teams:  []string{"cpe"},
+		Images: []string{"nats", "natsio/nats-server-config-reloader"},
+		Source: "https://dev.azure.com/capitalontap/DevOps/_git/flux-infra",
+		// The path is the more specific half: two charts in one repository are two
+		// pieces of work, and the repository alone would show both.
+		SourcePath: "bases/event-bus",
+	}
+	if got := grouped.searchTerm(); got != "bases/event-bus" {
+		t.Errorf("searchTerm = %q, want the source path", got)
+	}
+
+	noPath := grouped
+	noPath.SourcePath = ""
+	if got := noPath.searchTerm(); got != grouped.Source {
+		t.Errorf("searchTerm = %q, want the source when there is no path", got)
+	}
+
+	// Nothing shared: a search matching nothing is worse than no search at all.
+	nothing := TemplateData{Teams: []string{"cpe"}, Images: []string{"a", "b"}}
+	if got := nothing.searchTerm(); got != "" {
+		t.Errorf("searchTerm = %q, want empty", got)
 	}
 }

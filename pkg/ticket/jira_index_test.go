@@ -44,8 +44,9 @@ func TestOpenByImageIndexesEveryImageOnATicket(t *testing.T) {
 
 	j := &Jira{
 		BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
-		cfg: config.JiraConfig{Project: "PROJ", IssueType: "Container Vulnerability",
-			ImageField: "customfield_12345"},
+		cfg: config.JiraConfig{IssueType: "Container Vulnerability",
+			Routes: []config.TicketRoute{{Name: "all", When: "true", Board: 1,
+				Project: "PROJ", ImageField: "customfield_12345"}}},
 	}
 	got, err := j.OpenByImage(context.Background())
 	if err != nil {
@@ -95,7 +96,8 @@ func TestOpenByImageReadsLabelFallback(t *testing.T) {
 	defer srv.Close()
 
 	j := &Jira{BaseURL: srv.URL, Client: srv.Client(),
-		cfg: config.JiraConfig{Project: "PROJ", ImageLabel: true}}
+		cfg: config.JiraConfig{Routes: []config.TicketRoute{{Name: "all", When: "true",
+			Board: 1, Project: "PROJ", ImageLabel: boolPtr(true)}}}}
 	got, err := j.OpenByImage(context.Background())
 	if err != nil {
 		t.Fatalf("OpenByImage: %v", err)
@@ -127,7 +129,8 @@ func TestOpenByImageIgnoresIssuesWithoutTheField(t *testing.T) {
 	}))
 	defer srv.Close()
 	j := &Jira{BaseURL: srv.URL, Client: srv.Client(),
-		cfg: config.JiraConfig{Project: "PROJ", ImageField: "customfield_1"}}
+		cfg: config.JiraConfig{Routes: []config.TicketRoute{{Name: "all", When: "true",
+			Board: 1, Project: "PROJ", ImageField: "customfield_1"}}}}
 	got, err := j.OpenByImage(context.Background())
 	if err != nil {
 		t.Fatalf("OpenByImage: %v", err)

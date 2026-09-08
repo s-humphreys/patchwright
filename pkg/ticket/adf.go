@@ -11,7 +11,8 @@ import "strings"
 // expects to type, so the notation has to be converted rather than passed through.
 //
 // This handles the subset a ticket template actually uses: headings, bullet
-// lists, bold, and bare URLs. It is deliberately not a Markdown implementation.
+// lists, tables, bold, and bare URLs. It is deliberately not a Markdown
+// implementation.
 
 // ADFDocument converts template output to an ADF document.
 func ADFDocument(text string) map[string]any {
@@ -25,7 +26,7 @@ func ADFDocument(text string) map[string]any {
 func adfBlocks(text string) []any {
 	var out []any
 	for _, block := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n\n") {
-		lines := nonEmptyLines(block)
+		lines := foldWrapped(nonEmptyLines(block))
 		if len(lines) == 0 {
 			continue
 		}
@@ -35,15 +36,41 @@ func adfBlocks(text string) []any {
 		case len(lines) == 1 && isHeading(lines[0]):
 			out = append(out, heading(lines[0]))
 		default:
-			// A bullet list can follow a lead-in line in the same block ("Fixable
-			// critical CVEs:" then the items), so split rather than flattening the
-			// whole thing into one paragraph.
+			// A table or bullet list can follow a lead-in line in the same block
+			// ("Fixable critical CVEs:" then the items), so split rather than
+			// flattening the whole thing into one paragraph.
+			if i := firstTableRow(lines); i >= 0 && isTable(lines[i:]) {
+				if i > 0 {
+					out = append(out, blockFor(lines[:i]))
+				}
+				out = append(out, table(lines[i:]))
+				continue
+			}
 			if i := firstBullet(lines); i > 0 {
 				out = append(out, blockFor(lines[:i]), bulletList(lines[i:]))
 				continue
 			}
 			out = append(out, blockFor(lines))
 		}
+	}
+	return out
+}
+
+// foldWrapped joins a line that continues the bullet above it onto that bullet.
+//
+// A template author wrapping a long bullet across two lines is writing one
+// bullet, but the block then contains a non-bullet line, which used to demote
+// the entire block to a paragraph and render every "*" literally. Folding first
+// means the wrapping is invisible, which is what the author intended, and a
+// genuinely separate paragraph is still expressed the normal way: a blank line.
+func foldWrapped(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if len(out) > 0 && isBullet(out[len(out)-1]) && !isBullet(l) && !isHeading(l) && !isTableRow(l) {
+			out[len(out)-1] += " " + l
+			continue
+		}
+		out = append(out, l)
 	}
 	return out
 }
@@ -267,4 +294,109 @@ func textNode(text string, marks []any) any {
 		n["marks"] = marks
 	}
 	return n
+}
+
+// Tables.
+//
+// Markdown pipe tables, because a ticket that lists where a service runs reads
+// better as rows than as a sentence per deployment:
+//
+//	| Tag | Namespace |
+//	| --- | --------- |
+//	| v1.6.5 | sealed-secrets-tools |
+//
+// The delimiter row is required, as it is in Markdown: without it a line
+// beginning with "|" is more likely to be prose than a table, and guessing wrong
+// turns a paragraph into a one-column table.
+
+func isTableRow(line string) bool {
+	return strings.HasPrefix(line, "|") && strings.HasSuffix(line, "|") && len(line) > 1
+}
+
+func firstTableRow(lines []string) int {
+	for i, l := range lines {
+		if isTableRow(l) {
+			return i
+		}
+	}
+	return -1
+}
+
+// isTable reports whether lines start a table: a header row, then a delimiter
+// row. Anything after them that is not a row ends it.
+func isTable(lines []string) bool {
+	return len(lines) >= 2 && isTableRow(lines[0]) && isDelimiterRow(lines[1])
+}
+
+func isDelimiterRow(line string) bool {
+	if !isTableRow(line) {
+		return false
+	}
+	cells := tableCells(line)
+	if len(cells) == 0 {
+		return false
+	}
+	for _, c := range cells {
+		c = strings.TrimSpace(c)
+		c = strings.TrimPrefix(c, ":")
+		c = strings.TrimSuffix(c, ":")
+		// One dash is enough. Markdown conventionally wants three, but a column
+		// whose separator is a character short is a typo, and failing it turns the
+		// whole table into literal pipes in Jira — a bad trade for strictness.
+		if c == "" || strings.Trim(c, "-") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// tableCells splits one row on unescaped pipes, dropping the leading and
+// trailing empties the delimiters create.
+func tableCells(line string) []string {
+	parts := strings.Split(strings.Trim(line, "|"), "|")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
+}
+
+// table builds an ADF table from a header row, a delimiter row and the body rows
+// that follow. Rows are padded or truncated to the header's width: Jira renders a
+// ragged table badly, and a missing cell is likelier a template's empty value
+// than an intent to merge.
+func table(lines []string) any {
+	header := tableCells(lines[0])
+	rows := []any{tableRow(header, "tableHeader", len(header))}
+	for _, l := range lines[2:] {
+		if !isTableRow(l) {
+			break
+		}
+		rows = append(rows, tableRow(tableCells(l), "tableCell", len(header)))
+	}
+	return map[string]any{
+		"type":    "table",
+		"attrs":   map[string]any{"isNumberColumnEnabled": false, "layout": "default"},
+		"content": rows,
+	}
+}
+
+func tableRow(cells []string, cellType string, width int) any {
+	content := make([]any, 0, width)
+	for i := 0; i < width; i++ {
+		var text string
+		if i < len(cells) {
+			text = cells[i]
+		}
+		para := map[string]any{"type": "paragraph"}
+		if text != "" {
+			para["content"] = inline(text)
+		}
+		content = append(content, map[string]any{
+			"type":    cellType,
+			"attrs":   map[string]any{"colspan": 1, "rowspan": 1},
+			"content": []any{para},
+		})
+	}
+	return map[string]any{"type": "tableRow", "content": content}
 }

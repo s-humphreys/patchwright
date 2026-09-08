@@ -121,6 +121,18 @@ func oauthFromEnv(base string) (jiraAuth, error) {
 	}, nil
 }
 
+// SiteURL is the browser-facing address of the Jira site, for building issue
+// links. Empty when it cannot be determined, which costs a link and nothing else.
+//
+// Not the same as the API host: an OAuth deployment talks to api.atlassian.com,
+// and a link there is not one a person can open.
+func (j *Jira) SiteURL(ctx context.Context) string {
+	if j.auth != nil {
+		return j.auth.site(ctx)
+	}
+	return j.BaseURL
+}
+
 // Existing is a ticket already covering an image.
 type Existing struct {
 	Key     string
@@ -262,11 +274,17 @@ func (j *Jira) OpenByImage(ctx context.Context) (map[string][]Existing, error) {
 	return out, nil
 }
 
-// searchConfigs is every tracker to search: the default plus each route's.
+// searchConfigs is every tracker to search: one per route.
+//
+// The top-level settings are not one. They carry no project since a project
+// belongs to a board, and searching project "" would ask Jira an invalid
+// question on every reconcile.
 func (j *Jira) searchConfigs() []config.JiraConfig {
-	out := []config.JiraConfig{j.cfg}
+	out := make([]config.JiraConfig, 0, len(j.cfg.Routes))
 	for _, r := range j.cfg.Routes {
-		out = append(out, j.cfg.Resolve(r))
+		if resolved := j.cfg.Resolve(r); resolved.Project != "" {
+			out = append(out, resolved)
+		}
 	}
 	return out
 }

@@ -22,8 +22,10 @@ func tokenServer(t *testing.T, expiresIn int, calls *int) *httptest.Server {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode token request: %v", err)
 		}
-		if body["grant_type"] != "refresh_token" {
-			t.Errorf("grant_type = %q, want refresh_token", body["grant_type"])
+		switch body["grant_type"] {
+		case "refresh_token", "client_credentials":
+		default:
+			t.Errorf("grant_type = %q, want refresh_token or client_credentials", body["grant_type"])
 		}
 		*calls++
 		w.Header().Set("Content-Type", "application/json")
@@ -54,7 +56,8 @@ func TestOAuthSendsBearerAndReusesTokenUntilExpiry(t *testing.T) {
 	o.apiBase = api.URL
 
 	j := &Jira{auth: o, Client: api.Client(),
-		cfg: config.JiraConfig{Project: "PROJ", ImageField: "customfield_1"}}
+		cfg: config.JiraConfig{Routes: []config.TicketRoute{{Name: "all", When: "true",
+			Board: 1, Project: "PROJ", ImageField: "customfield_1"}}}}
 	if _, err := j.OpenByImage(context.Background()); err != nil {
 		t.Fatalf("OpenByImage: %v", err)
 	}
@@ -302,5 +305,51 @@ func TestNewJiraStillAcceptsAnAPIToken(t *testing.T) {
 	}
 	if j.Email != "you@example.com" || j.Token != "tok" {
 		t.Errorf("credentials not carried onto the client: %q %q", j.Email, j.Token)
+	}
+}
+
+// Issue links are built from the site address, which under OAuth is not the API
+// host and is not necessarily configured: without this the queue shows ticket
+// keys as plain text.
+func TestSiteURLIsDiscoveredWhenNotConfigured(t *testing.T) {
+	var refreshes int
+	tok := tokenServer(t, 3600, &refreshes)
+
+	var calls int
+	sites := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"cloud-1","url":"https://one.atlassian.net/"},
+		                        {"id":"cloud-2","url":"https://two.atlassian.net"}]`))
+	}))
+	defer sites.Close()
+
+	o := &oauthAuth{clientID: "id", clientSecret: "s", tokenURL: tok.URL,
+		client: tok.Client(), cloudID: "cloud-2"}
+	// The real call goes to api.atlassian.com; point the discovery at the stub.
+	got, err := o.accessibleSites(context.Background(), sites.URL)
+	if err != nil {
+		t.Fatalf("accessibleSites: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d sites, want 2", len(got))
+	}
+	if got[1].ID != "cloud-2" || got[1].URL != "https://two.atlassian.net" {
+		t.Errorf("site = %+v", got[1])
+	}
+}
+
+// A configured base URL is the answer without asking Atlassian.
+func TestSiteURLPrefersTheConfiguredBaseURL(t *testing.T) {
+	o := &oauthAuth{siteURL: "https://one.atlassian.net"}
+	if got := o.site(context.Background()); got != "https://one.atlassian.net" {
+		t.Errorf("site = %q", got)
+	}
+}
+
+func TestSiteURLOfAnAPITokenIsItsBaseURL(t *testing.T) {
+	b := basicAuth{baseURL: "https://one.atlassian.net"}
+	if got := b.site(context.Background()); got != "https://one.atlassian.net" {
+		t.Errorf("site = %q", got)
 	}
 }

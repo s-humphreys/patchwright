@@ -17,6 +17,9 @@ import (
 type jiraAuth interface {
 	apply(ctx context.Context, req *http.Request) error
 	base(ctx context.Context) (string, error)
+	// site is the browser-facing address of the Jira site, which is not the API
+	// host under OAuth: issue links have to be clickable by a person.
+	site(ctx context.Context) string
 }
 
 // basicAuth is an Atlassian account email plus an API token. Static: nothing to
@@ -31,6 +34,8 @@ func (b basicAuth) apply(_ context.Context, req *http.Request) error {
 }
 
 func (b basicAuth) base(context.Context) (string, error) { return b.baseURL, nil }
+
+func (b basicAuth) site(context.Context) string { return b.baseURL }
 
 // OAuth credential environment variables. Presence of the client ID is what
 // selects OAuth over an API token.
@@ -133,6 +138,38 @@ func (o *oauthAuth) base(ctx context.Context) (string, error) {
 	return o.apiBase, nil
 }
 
+// site is where a person opens an issue: https://your-site.atlassian.net, not the
+// api.atlassian.com host requests go to.
+//
+// Configured as JIRA_BASE_URL when there is one. Otherwise it is discovered from
+// the sites the credential can reach, because a deployment that identifies its
+// site by cloud ID should not have to state the address twice for links to work.
+// Best effort: an empty result costs link text, not correctness.
+func (o *oauthAuth) site(ctx context.Context) string {
+	o.mu.Lock()
+	if o.siteURL != "" {
+		defer o.mu.Unlock()
+		return o.siteURL
+	}
+	cloud := o.cloudID
+	o.mu.Unlock()
+
+	sites, err := o.accessibleSites(ctx, atlassianAPIHost)
+	if err != nil {
+		return ""
+	}
+	for _, s := range sites {
+		if s.ID == cloud || (cloud == "" && len(sites) == 1) {
+			url := strings.TrimSuffix(s.URL, "/")
+			o.mu.Lock()
+			o.siteURL = url
+			o.mu.Unlock()
+			return url
+		}
+	}
+	return ""
+}
+
 // token returns a valid access token, refreshing when the current one is absent
 // or close to expiry.
 func (o *oauthAuth) token(ctx context.Context) (string, error) {
@@ -205,35 +242,48 @@ func (o *oauthAuth) discoverCloudID(ctx context.Context) (string, error) {
 	return o.discoverCloudIDAt(ctx, atlassianAPIHost)
 }
 
-func (o *oauthAuth) discoverCloudIDAt(ctx context.Context, host string) (string, error) {
+// accessibleSite is one Atlassian site the credential can reach.
+type accessibleSite struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// accessibleSites lists them, which answers both "which cloud id" and "what
+// address does a person type".
+func (o *oauthAuth) accessibleSites(ctx context.Context, host string) ([]accessibleSite, error) {
 	tok, err := o.token(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+"/oauth/token/accessible-resources", nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Accept", "application/json")
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("list accessible jira sites: %w", err)
+		return nil, fmt.Errorf("list accessible jira sites: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // response body close, nothing to do on failure
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("list accessible jira sites: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, fmt.Errorf("list accessible jira sites: %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
-	var sites []struct {
-		ID  string `json:"id"`
-		URL string `json:"url"`
-	}
+	var sites []accessibleSite
 	if err := json.Unmarshal(data, &sites); err != nil {
-		return "", fmt.Errorf("decode accessible jira sites: %w", err)
+		return nil, fmt.Errorf("decode accessible jira sites: %w", err)
+	}
+	return sites, nil
+}
+
+func (o *oauthAuth) discoverCloudIDAt(ctx context.Context, host string) (string, error) {
+	sites, err := o.accessibleSites(ctx, host)
+	if err != nil {
+		return "", err
 	}
 	switch {
 	case len(sites) == 0:

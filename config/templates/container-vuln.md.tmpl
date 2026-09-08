@@ -46,10 +46,17 @@ This also updates the following, which are not bumped directly:
 {{ end -}}
 {{- end }}
 {{- if .Source }}* Change target: {{ .Source }}{{ if .SourcePath }} (path: {{ .SourcePath }}){{ end }}
-{{ end -}}
-* Workloads affected: {{ .WorkloadCount }}{{ if .Namespaces }} in namespace(s) {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }}{{ end }}
-{{ if .Accounts }}* Environments: {{ range $i, $a := .Accounts }}{{ if $i }}, {{ end }}{{ $a }}{{ end }}
 {{ end }}
+**Where it runs**
+
+{{ if .Deployments -}}
+| Tag | Environment | Namespaces | Accounts |
+| --- | ----------- | ---------- | -------- |
+{{ range .Deployments }}| `{{ .Tag }}` | {{ if .Environment }}{{ .Environment }}{{ else }}unknown{{ end }} | {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }} | {{ range $i, $a := .Accounts }}{{ if $i }}, {{ end }}{{ $a }}{{ end }} |
+{{ end }}
+{{ end -}}
+{{ .WorkloadCount }} workload(s) affected. Environment is a guess from account and namespace names, so treat the ordering as a hint rather than a fact.
+
 **Why this is prioritised**
 
 {{ if .ProviderAssessed -}}

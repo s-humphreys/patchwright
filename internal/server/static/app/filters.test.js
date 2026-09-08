@@ -36,7 +36,7 @@ globalThis.window = dom.window;
 globalThis.location = dom.window.location;
 globalThis.history = dom.window.history;
 
-const { apply, filterState, populate, select, selected, FACETS, UNATTRIBUTED } =
+const { apply, filterState, haystack, populate, select, selected, FACETS, UNATTRIBUTED } =
   await import('./filters.js');
 const { applyOwnerFilters, renderCurrentView } = await import('./queue.js');
 const { show } = await import('./tabs.js');
@@ -409,4 +409,19 @@ test('a multi-select survives a link', async () => {
   readURL(new URLSearchParams('signal=kev,exposed'));
   applyOwnerFilters();
   assert.deepEqual(selected('#signalFilter').sort(), ['exposed', 'kev']);
+});
+
+test('haystack includes the change target, so a grouped ticket can link to its rows', () => {
+  const f = {
+    image: 'docker.io/nats:2.10.29',
+    repository: 'nats',
+    upgrade: {
+      resolved: true, available: true, actionable: true,
+      source: 'https://dev.azure.com/capitalontap/DevOps/_git/flux-infra',
+      source_path: 'bases/event-bus',
+    },
+  };
+  const hay = haystack(f);
+  assert.ok(hay.includes('bases/event-bus'), `source path missing from: ${hay}`);
+  assert.ok(hay.includes('flux-infra'), `source missing from: ${hay}`);
 });

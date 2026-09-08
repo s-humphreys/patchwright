@@ -102,12 +102,14 @@ export function filterState() {
 
 // haystack is what the search box matches against: the fields someone would plausibly
 // type a fragment of. Ticket keys are included so "PROJ-12" finds every image a grouped
-// ticket covers.
+// ticket covers, and the change target so "bases/event-bus" finds everything one
+// repository and path is responsible for — which is what a grouped ticket links to.
 export function haystack(f) {
   const parts = [
     f.image, f.repository, f.registry, f.owner?.team, f.owner?.class, f.priority,
     (f.dimensions?.namespace || []).join(" "),
     (f.dimensions?.account || []).join(" "),
+    f.upgrade?.source, f.upgrade?.source_path,
     upgradeText(f), fixPath(f),
     f.in_flight ? `${f.in_flight.title} ${f.in_flight.repository}` : "",
     (f.signals || []).join(" "), f.exposure,

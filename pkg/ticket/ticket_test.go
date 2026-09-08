@@ -22,9 +22,8 @@ func newTestPlanner(t *testing.T, tmpl string) *Planner {
 	if err := os.WriteFile(path, []byte(tmpl), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "PROJ", Template: path, ImageField: "customfield_1",
-	})
+	p, err := NewPlanner(config.JiraConfig{DefaultTemplate: path, Routes: []config.TicketRoute{
+		{Name: "all", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1"}}})
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
 	}
@@ -111,9 +110,9 @@ func TestPlanRequireUpgradeDisabled(t *testing.T) {
 	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "PROJ", Template: path, ImageField: "cf", RequireUpgrade: &off,
-	})
+	cfg := oneRoute(path)
+	cfg.RequireUpgrade = &off
+	p, err := NewPlanner(cfg)
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
 	}
@@ -301,13 +300,24 @@ func TestNewPlannerRejectsUnusableConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte("Summary: x\n\ny\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	tracker := config.TicketRoute{Name: "all", When: "true", Board: 1, Project: "P", ImageField: "cf"}
+	withRoute := func(mutate func(*config.TicketRoute)) config.JiraConfig {
+		r := tracker
+		mutate(&r)
+		return config.JiraConfig{DefaultTemplate: path, Routes: []config.TicketRoute{r}}
+	}
 	cases := map[string]config.JiraConfig{
-		"no board":           {Project: "P", Template: path, ImageField: "cf"},
-		"no project":         {Board: 1, Template: path, ImageField: "cf"},
-		"no template":        {Board: 1, Project: "P", ImageField: "cf"},
-		"no image key":       {Board: 1, Project: "P", Template: path},
-		"both image keys":    {Board: 1, Project: "P", Template: path, ImageField: "cf", ImageLabel: true},
-		"missing template f": {Board: 1, Project: "P", Template: "/nope/nope.tmpl", ImageField: "cf"},
+		"no default template":        {Routes: []config.TicketRoute{tracker}},
+		"no routes":                  {DefaultTemplate: path},
+		"missing template f":         {DefaultTemplate: "/nope/nope.tmpl", Routes: []config.TicketRoute{tracker}},
+		"route without board":        withRoute(func(r *config.TicketRoute) { r.Board = 0 }),
+		"route without project":      withRoute(func(r *config.TicketRoute) { r.Project = "" }),
+		"route without an image key": withRoute(func(r *config.TicketRoute) { r.ImageField = "" }),
+		"route with both image keys": withRoute(func(r *config.TicketRoute) {
+			r.ImageLabel = boolPtr(true)
+		}),
+		"route without a name":      withRoute(func(r *config.TicketRoute) { r.Name = "" }),
+		"route without a condition": withRoute(func(r *config.TicketRoute) { r.When = "" }),
 	}
 	for name, cfg := range cases {
 		if _, err := NewPlanner(cfg); err == nil {
@@ -458,14 +468,13 @@ func TestPlanExclusions(t *testing.T) {
 	if err := os.WriteFile(path, []byte("Summary: Upgrade {{ .ServiceName }}\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
-		Exclude: []config.ExcludeRule{{
-			Name:   "crossplane",
-			When:   "dimensions['namespace'].exists(n, n == 'crossplane-system')",
-			Reason: "upgraded on their own cadence",
-		}},
-	})
+	cfg := oneRoute(path)
+	cfg.Exclude = []config.ExcludeRule{{
+		Name:   "crossplane",
+		When:   "dimensions['namespace'].exists(n, n == 'crossplane-system')",
+		Reason: "upgraded on their own cadence",
+	}}
+	p, err := NewPlanner(cfg)
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
 	}
@@ -499,10 +508,9 @@ func TestExclusionTakesPrecedenceOverUpgradeCheck(t *testing.T) {
 	if err := os.WriteFile(path, []byte("Summary: x\n\nbody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPlanner(config.JiraConfig{
-		Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
-		Exclude: []config.ExcludeRule{{Name: "all", When: "true"}},
-	})
+	cfg := oneRoute(path)
+	cfg.Exclude = []config.ExcludeRule{{Name: "all", When: "true"}}
+	p, err := NewPlanner(cfg)
 	if err != nil {
 		t.Fatalf("NewPlanner: %v", err)
 	}
@@ -537,10 +545,9 @@ func TestExclusionSharesThePolicyVocabulary(t *testing.T) {
 		"live && reconciled",
 		"upgrade_available",
 	} {
-		p, err := NewPlanner(config.JiraConfig{
-			Board: 1, Project: "PROJ", Template: path, ImageField: "cf",
-			Exclude: []config.ExcludeRule{{Name: "r", When: expr}},
-		})
+		cfg := oneRoute(path)
+		cfg.Exclude = []config.ExcludeRule{{Name: "r", When: expr}}
+		p, err := NewPlanner(cfg)
 		if err != nil {
 			t.Errorf("expression %q rejected: %v", expr, err)
 			continue

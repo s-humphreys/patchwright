@@ -87,13 +87,13 @@ func NewPlannerWithDashboard(cfg config.JiraConfig, dash config.DashboardConfig)
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(cfg.Template)
+	raw, err := os.ReadFile(cfg.DefaultTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("read ticket template %s: %w", cfg.Template, err)
+		return nil, fmt.Errorf("read ticket template %s: %w", cfg.DefaultTemplate, err)
 	}
 	tmpl, err := template.New("ticket").Parse(string(raw))
 	if err != nil {
-		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.Template, err)
+		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.DefaultTemplate, err)
 	}
 	routed, err := newRoutes(cfg.Routes)
 	if err != nil {
@@ -104,7 +104,7 @@ func NewPlannerWithDashboard(cfg config.JiraConfig, dash config.DashboardConfig)
 	// for one team is far worse than finding out at startup.
 	tmpls := map[string]*template.Template{routeName: tmpl}
 	for _, r := range cfg.Routes {
-		if r.Template == "" || r.Template == cfg.Template {
+		if r.Template == "" || r.Template == cfg.DefaultTemplate {
 			tmpls[r.Name] = tmpl
 			continue
 		}
@@ -158,17 +158,17 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
 			continue
 		}
-		// With requireRoute, an unrouted finding is reported rather than sent to
-		// the default tracker. Reported, not dropped: the work still exists and
-		// still needs a home, and silence here would read as "nothing to do".
-		if p.cfg.RequireRoute && p.routes.match(f) == routeName {
+		// A tracker is configured only on routes, so a finding matching none has
+		// nowhere to go. Reported, not dropped: the work still exists and still
+		// needs a home, and silence here would read as "nothing to do".
+		if p.routes.match(f) == routeName {
 			owner := "unattributed"
 			if f.Owner.Class != "" || f.Owner.Team != "" {
 				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
 			}
 			out.Skips = append(out.Skips, Skip{
 				Image: f.Image, Policy: true,
-				Reason: fmt.Sprintf("no ticket route matches its owner (%s) and requireRoute is set, "+
+				Reason: fmt.Sprintf("no ticket route matches its owner (%s), "+
 					"so no tracker is configured for this work", owner),
 			})
 			continue
@@ -452,12 +452,18 @@ func collapseObjectRef(source string) string {
 // render executes the template for one ticket group.
 func (p *Planner) render(group ticketGroup, route string) (Draft, error) {
 	data := newTemplateData(group)
-	// A deep link back to the evidence: the same work item the queue shows, filtered
-	// to this team and service. A ticket that says "14 criticals" is a claim; a link
-	// to the queue entry behind it is the claim plus its working.
+	// A deep link back to the evidence. A ticket that says "14 criticals" is a
+	// claim; a link to the queue entry behind it is the claim plus its working.
+	//
+	// One service is a deep link the page opens on arrival. A grouped ticket has no
+	// single work item to open, so it links to the queue searched for the change
+	// target it shares — which is what grouping is by, and so matches its rows and
+	// no others. Falling back to the team alone would land the reader on a list of
+	// everything that team owns, and make them find the ticket's own work in it.
 	data.DashboardURL = p.dash.Link(
 		[2]string{"team", data.Team()},
 		[2]string{"service", data.Repository()},
+		[2]string{"q", data.searchTerm()},
 	)
 	tmpl := p.tmpls[route]
 	if tmpl == nil {

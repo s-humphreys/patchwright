@@ -29,23 +29,11 @@ scan:
 # the environment, never from this file.
 #
 # jira:
-#   board: 100
-#   project: PROJ
-#   template: config/templates/container-vuln.md.tmpl
-#   imageField: customfield_XXXXX
-#   epic: PROJ-100
+#   # The wording every route uses unless it names its own. Everything a template
+#   # can say is documented on ticket.TemplateData.
+#   defaultTicketTemplate: config/templates/container-vuln.md.tmpl
 #   issueType: Container Vulnerability
-#
-#   # Carry the assessment's ordering into Jira. Without a map, every ticket is
-#   # raised at `priority` and the tracker cannot tell an urgent, exploited,
-#   # fixable finding from a low one. Not defaulted: priority schemes are
-#   # per-instance, and a name that does not exist fails ticket creation.
-#   priorityMap:
-#     urgent: Highest
-#     high: High
-#     medium: Medium
-#     low: Low
-#   priority: Medium        # fallback for anything unmapped
+#   priority: Medium        # fallback for anything a route's priorityMap misses
 #
 #   # Keep findings out of ticket creation without hiding them. Unlike suppress
 #   # below, an excluded finding stays in the assessment and the queue and is
@@ -57,16 +45,18 @@ scan:
 #       when: "dimensions['namespace'].exists(n, n == 'some-system')"
 #       reason: upgraded together on their own cadence
 #
-#   # Send a team's tickets to the tracker it actually uses. First match wins;
-#   # anything matching no route uses the settings above, and a route states only
-#   # what differs — template, image field and priority map are inherited.
+#   # Routes are where a tracker is described, so at least one is required. A
+#   # project key, a board, an image field and a priority scheme mean nothing
+#   # except in the context of the board they belong to, which is why they are
+#   # here rather than above: a deployment serving two teams has two of each.
+#   #
+#   # First match wins. A finding matching no route gets no ticket, and is
+#   # reported as a skip naming its owner, so unrouted work is visible rather
+#   # than silently landing on somebody else's board.
 #   #
 #   # A group of findings is never split across routes: two findings sharing one
 #   # upgrade but owned by different teams become two tickets, because one issue
 #   # cannot exist in two projects.
-#   # With requireRoute, a finding matching no route below gets no ticket at all,
-#   # rather than falling through to `project` above. It is still reported as a
-#   # skip with the owner named, so unrouted work is visible rather than silent.
 #   # Close a ticket when its work is provably finished: every image it covers is
 #   # still reported, was checked for a newer version, and is already on the latest
 #   # one, with live reconciliation having run. For the common case where someone
@@ -94,24 +84,40 @@ scan:
 #   # hidden. Per route as well as here.
 #   minPriority: high
 #
-#   requireRoute: true
 #   routes:
 #     - name: sre
 #       when: "owner['team'] == 'sre'"
 #       project: SRE
-#       issueType: Bug
+#       board: 42
+#       issueType: Bug            # overrides the deployment-wide setting above
 #       epic: SRE-42
 #       autoClose: true
-#       closeTransition: Ship It    # this project's workflow, not the one above
+#       closeTransition: Ship It  # this project's workflow, not another's
 #       # A team-managed project with no shared custom field can key on labels
 #       # instead; the lookup follows automatically.
 #       imageLabel: true
+#       # This team writes its own tickets differently. Omit to use
+#       # defaultTicketTemplate above.
+#       template: config/templates/sre.md.tmpl
+#       priorityMap:
+#         urgent: Blocker
+#         high: Major
 #     - name: platform
 #       when: "owner['class'] == 'platform'"
 #       project: PROJ
+#       board: 100
+#       epic: PROJ-100
+#       imageField: customfield_XXXXX
+#       # Carries the assessment's ordering into Jira. Without a map every ticket
+#       # is raised at `priority` and the tracker cannot tell an urgent,
+#       # exploited, fixable finding from a low one. Not defaulted: priority
+#       # schemes belong to a project, and a name that does not exist fails
+#       # ticket creation.
 #       priorityMap:
 #         urgent: Highest
 #         high: High
+#         medium: Medium
+#         low: Low
 
 # Remediation tuning. Optional; without it every image is treated as third-party.
 #

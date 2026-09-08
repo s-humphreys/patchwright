@@ -2,13 +2,14 @@
 #
 #   RAPID7_API_KEY          the scan provider, in api mode
 #   AZURE_DEVOPS_PAT        reading pull requests, for in-flight detection
-#   JIRA_BASE_URL           ticketing
 #   JIRA_EMAIL              ticketing, with an Atlassian API token
 #   JIRA_API_TOKEN          ticketing, with an Atlassian API token
 #   JIRA_OAUTH_CLIENT_ID     ticketing, with an OAuth app instead
 #   JIRA_OAUTH_CLIENT_SECRET ticketing, with an OAuth app instead
 #   JIRA_OAUTH_REFRESH_TOKEN switches that app from client credentials to 3LO
-#   JIRA_CLOUD_ID           names the site under OAuth, if JIRA_BASE_URL is unset
+#
+# JIRA_BASE_URL and JIRA_CLOUD_ID are not credentials and are set in
+# ticketing.jira below.
 #   PATCHWRIGHT_API_TOKEN   requires a token on the API and status page
 #
 # Include only what you use. Every one of them is optional in the sense that matters:
@@ -101,9 +102,16 @@ metrics:
     scrapeTimeout: 10s
 
 # Jira ticketing. The `jira:` block itself goes in config.policy below, with
-# `template: /etc/patchwright/ticket.md.tmpl` to match the file mounted from
-# ticketing.template.
+# `defaultTicketTemplate: /etc/patchwright/<name>.md.tmpl` naming one of the
+# templates mounted from ticketing.templates.
 ticketing:
+  # The Jira settings that are not credentials. The client id, secret and any API
+  # token still come from credentialsSecretName; these two only say which site,
+  # and JIRA_BASE_URL is what the status page builds issue links from — without
+  # it, a queue row shows a ticket key that cannot be clicked.
+  jira:
+    baseURL: ""    # https://your-site.atlassian.net
+    cloudID: ""    # for OAuth, in place of (or alongside) baseURL
   # Create and reconcile tickets on every scheduled refresh. Off by default: a
   # service that starts raising tickets the moment it is deployed is not a good
   # surprise, and the API endpoints work without it. Requires
@@ -113,11 +121,22 @@ ticketing:
   # Jira credentials come from credentialsSecretName: JIRA_BASE_URL plus either
   # JIRA_EMAIL and JIRA_API_TOKEN, or the JIRA_OAUTH_* set. Without them ticketing is off: the queue and the page are
   # unaffected, and ticket state is reported as unknown rather than as "no ticket".
-  # The ticket template, mounted alongside the rules. Required for ticketing,
-  # because `jira.template` is a path and the image ships no default: the wording
-  # of a ticket belongs to whoever owns the process. See
-  # config/templates/container-vuln.md.tmpl in the repository for a starting point.
-  template: ""
+  # Ticket templates, by name, mounted alongside the rules as
+  # /etc/patchwright/<name>.md.tmpl. At least one is required for ticketing,
+  # because `jira.defaultTicketTemplate` is a path and the image ships no
+  # default: the wording of a ticket belongs to whoever owns the process. See
+  # config/templates/container-vuln.md.tmpl in the repository for a starting
+  # point.
+  #
+  # More than one is for teams that write tickets differently. Point
+  # `jira.defaultTicketTemplate` at one and a route's `template` at another:
+  #
+  #   templates:
+  #     default: |
+  #       Summary: ...
+  #     sre: |
+  #       Summary: ...
+  templates: {}
 # Structured logs (written to stderr / pod logs).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)

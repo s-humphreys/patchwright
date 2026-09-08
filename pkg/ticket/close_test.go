@@ -43,7 +43,7 @@ func transition(id, name, toName, category string) map[string]any {
 }
 
 func baseCfg() config.JiraConfig {
-	return config.JiraConfig{Board: 1, Project: "PROJ", Template: "t", ImageField: "customfield_1"}
+	return config.JiraConfig{Project: "PROJ", ImageField: "customfield_1", Board: 1, Template: "t"}
 }
 
 func TestCloseUsesTheOnlyDoneTransition(t *testing.T) {

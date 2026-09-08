@@ -105,6 +105,23 @@ type Deployment struct {
 	Environment string
 }
 
+// searchTerm is what to search the queue for when there is no single service to
+// open: the shared change target, most specific part first.
+//
+// Empty when a service is named (the deep link is better) or when the group has
+// no shared target, since a search matching nothing is worse than no search: the
+// reader gets an empty queue and no way to tell whether that means "fixed" or
+// "the link was wrong".
+func (d TemplateData) searchTerm() string {
+	if d.Repository() != "" {
+		return ""
+	}
+	if d.SourcePath != "" {
+		return d.SourcePath
+	}
+	return d.Source
+}
+
 // Vuln is one CVE as a ticket template sees it.
 type Vuln struct {
 	ID           string
