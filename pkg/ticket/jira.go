@@ -121,6 +121,18 @@ func oauthFromEnv(base string) (jiraAuth, error) {
 	}, nil
 }
 
+// SiteURL is the browser-facing address of the Jira site, for building issue
+// links. Empty when it cannot be determined, which costs a link and nothing else.
+//
+// Not the same as the API host: an OAuth deployment talks to api.atlassian.com,
+// and a link there is not one a person can open.
+func (j *Jira) SiteURL(ctx context.Context) string {
+	if j.auth != nil {
+		return j.auth.site(ctx)
+	}
+	return j.BaseURL
+}
+
 // Existing is a ticket already covering an image.
 type Existing struct {
 	Key     string

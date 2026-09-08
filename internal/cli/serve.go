@@ -161,7 +161,10 @@ func newServeCmd() *cobra.Command {
 						return fmt.Errorf("--auto-ticket needs Jira credentials: %w", jerr)
 					}
 				default:
-					srv = srv.WithTickets(jira, jira.BaseURL)
+					// Resolved rather than read from the environment: under OAuth the
+					// site is identified by cloud id, and a deployment that never sets
+					// JIRA_BASE_URL should still get clickable issue keys.
+					srv = srv.WithTickets(jira, jira.SiteURL(cmd.Context()))
 					planner, perr := ticket.NewPlannerWithDashboard(cfg.Jira, cfg.Dashboard)
 					if perr != nil {
 						return perr
