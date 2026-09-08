@@ -452,12 +452,18 @@ func collapseObjectRef(source string) string {
 // render executes the template for one ticket group.
 func (p *Planner) render(group ticketGroup, route string) (Draft, error) {
 	data := newTemplateData(group)
-	// A deep link back to the evidence: the same work item the queue shows, filtered
-	// to this team and service. A ticket that says "14 criticals" is a claim; a link
-	// to the queue entry behind it is the claim plus its working.
+	// A deep link back to the evidence. A ticket that says "14 criticals" is a
+	// claim; a link to the queue entry behind it is the claim plus its working.
+	//
+	// One service is a deep link the page opens on arrival. A grouped ticket has no
+	// single work item to open, so it links to the queue searched for the change
+	// target it shares — which is what grouping is by, and so matches its rows and
+	// no others. Falling back to the team alone would land the reader on a list of
+	// everything that team owns, and make them find the ticket's own work in it.
 	data.DashboardURL = p.dash.Link(
 		[2]string{"team", data.Team()},
 		[2]string{"service", data.Repository()},
+		[2]string{"q", data.searchTerm()},
 	)
 	tmpl := p.tmpls[route]
 	if tmpl == nil {

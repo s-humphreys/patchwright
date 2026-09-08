@@ -118,8 +118,22 @@ so they stay in sync. Callers pass a dict:
     - {{ . | quote }}
     {{- end }}
   {{- $oidc := .root.Values.auth.oidc }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret $oidc.clientSecretRef.name $oidc.sessionKeyRef.name }}
+  {{- $jira := .root.Values.ticketing.jira }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret $oidc.clientSecretRef.name $oidc.sessionKeyRef.name $jira.baseURL $jira.cloudID }}
   env:
+    {{- if $jira.baseURL }}
+    # Not a credential: it names the site and builds the issue links the status
+    # page shows, so it belongs in values rather than in the Secret. Under an API
+    # token it is also the API host; under OAuth it is only the link base.
+    - name: JIRA_BASE_URL
+      value: {{ $jira.baseURL | quote }}
+    {{- end }}
+    {{- if $jira.cloudID }}
+    # Identifies the site for OAuth, which talks to api.atlassian.com rather than
+    # to the site host. Also not a credential.
+    - name: JIRA_CLOUD_ID
+      value: {{ $jira.cloudID | quote }}
+    {{- end }}
     {{- if $oidc.clientSecretRef.name }}
     # Referenced rather than injected through values: a client secret in a HelmRelease's
     # values is readable by anyone who can read HelmReleases, and shows up in git if the

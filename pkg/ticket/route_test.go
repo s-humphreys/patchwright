@@ -522,3 +522,37 @@ func TestRouteTemplateIsParsedAtStartup(t *testing.T) {
 		t.Errorf("a route template that does not parse was accepted: %v", err)
 	}
 }
+
+// The dashboard link has to land on this ticket's work, not on everything its
+// team owns: a link that needs the reader to search for their own ticket is not
+// evidence, it is homework.
+func TestDashboardLinkTargetsTheTicketsWork(t *testing.T) {
+	single := TemplateData{Teams: []string{"cpe"}, Images: []string{"acr.io/thing"}}
+	if got := single.searchTerm(); got != "" {
+		t.Errorf("a single-service ticket should deep link, not search: %q", got)
+	}
+
+	grouped := TemplateData{
+		Teams:  []string{"cpe"},
+		Images: []string{"nats", "natsio/nats-server-config-reloader"},
+		Source: "https://dev.azure.com/capitalontap/DevOps/_git/flux-infra",
+		// The path is the more specific half: two charts in one repository are two
+		// pieces of work, and the repository alone would show both.
+		SourcePath: "bases/event-bus",
+	}
+	if got := grouped.searchTerm(); got != "bases/event-bus" {
+		t.Errorf("searchTerm = %q, want the source path", got)
+	}
+
+	noPath := grouped
+	noPath.SourcePath = ""
+	if got := noPath.searchTerm(); got != grouped.Source {
+		t.Errorf("searchTerm = %q, want the source when there is no path", got)
+	}
+
+	// Nothing shared: a search matching nothing is worse than no search at all.
+	nothing := TemplateData{Teams: []string{"cpe"}, Images: []string{"a", "b"}}
+	if got := nothing.searchTerm(); got != "" {
+		t.Errorf("searchTerm = %q, want empty", got)
+	}
+}
