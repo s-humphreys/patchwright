@@ -414,3 +414,20 @@ func TestTableCanFollowALeadIn(t *testing.T) {
 		t.Fatalf("want paragraph + table, got %s", jsonOf(t, got))
 	}
 }
+
+// A separator a character short is a typo, not a decision to send literal pipes
+// to Jira, which is what rejecting the table would amount to.
+func TestShortDelimiterRowStillMakesATable(t *testing.T) {
+	got := blocks(t, "| Image | From | To |\n| ----- | ---- | -- |\n| nats | 2.10.29 | 2.14.6 |")
+	if blockType(t, got[0]) != "table" {
+		t.Fatalf("want a table, got %s", jsonOf(t, got))
+	}
+}
+
+// Alignment markers are Markdown, and a reader may well type them.
+func TestAlignedDelimiterRowIsStillADelimiter(t *testing.T) {
+	got := blocks(t, "| A | B |\n| :--- | ---: |\n| 1 | 2 |")
+	if blockType(t, got[0]) != "table" {
+		t.Fatalf("want a table, got %s", jsonOf(t, got))
+	}
+}

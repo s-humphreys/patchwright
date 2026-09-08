@@ -332,11 +332,18 @@ func isDelimiterRow(line string) bool {
 	if !isTableRow(line) {
 		return false
 	}
-	for _, c := range tableCells(line) {
+	cells := tableCells(line)
+	if len(cells) == 0 {
+		return false
+	}
+	for _, c := range cells {
 		c = strings.TrimSpace(c)
 		c = strings.TrimPrefix(c, ":")
 		c = strings.TrimSuffix(c, ":")
-		if len(c) < 3 || strings.Trim(c, "-") != "" {
+		// One dash is enough. Markdown conventionally wants three, but a column
+		// whose separator is a character short is a typo, and failing it turns the
+		// whole table into literal pipes in Jira — a bad trade for strictness.
+		if c == "" || strings.Trim(c, "-") != "" {
 			return false
 		}
 	}
