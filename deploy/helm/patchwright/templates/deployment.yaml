@@ -1,8 +1,8 @@
 {{- if and .Values.ticketing.autoTicket (not .Values.credentialsSecretName) }}
 {{- fail "ticketing.autoTicket requires credentialsSecretName holding the Jira credentials (JIRA_BASE_URL plus either JIRA_EMAIL and JIRA_API_TOKEN, or the JIRA_OAUTH_* set): the binary refuses to start without them, so this would crash-loop" }}
 {{- end }}
-{{- if and .Values.ticketing.autoTicket (not .Values.ticketing.template) }}
-{{- fail "ticketing.autoTicket requires ticketing.template: jira.template is a path and the image ships no default ticket template" }}
+{{- if and .Values.ticketing.autoTicket (not .Values.ticketing.templates) }}
+{{- fail "ticketing.autoTicket requires at least one entry in ticketing.templates: jira.defaultTicketTemplate is a path and the image ships no default ticket template" }}
 {{- end }}
 {{- if .Values.server.enabled }}
 apiVersion: apps/v1

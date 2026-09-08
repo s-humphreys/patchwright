@@ -204,8 +204,10 @@ func TestBundledTemplateConvertsToStructuredADF(t *testing.T) {
 
 func configForBundledTemplate() config.JiraConfig {
 	return config.JiraConfig{
-		Board: 1, Project: "PROJ", ImageField: "customfield_1",
-		Template: filepath.Join("..", "..", "config", "templates", "container-vuln.md.tmpl"),
+		DefaultTemplate: filepath.Join("..", "..", "config", "templates", "container-vuln.md.tmpl"),
+		Routes: []config.TicketRoute{
+			{Name: "all", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1"},
+		},
 	}
 }
 

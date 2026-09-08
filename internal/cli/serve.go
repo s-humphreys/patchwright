@@ -167,15 +167,12 @@ func newServeCmd() *cobra.Command {
 						return perr
 					}
 					srv = srv.WithTicketing(&serverTicketer{Planner: planner, Jira: jira}, autoTicket)
-					// Every tracker, not just the default: with routes configured, naming
-					// one project understates what this deployment can write to, and
-					// startup is where an operator checks that.
+					// Every tracker a route names: startup is where an operator checks
+					// what this deployment can write to.
 					slog.InfoContext(cmd.Context(), "ticketing enabled",
 						"projects", strings.Join(cfg.Jira.Projects(), ","),
-						"default_project", cfg.Jira.Project,
 						"issue_type", cfg.Jira.EffectiveIssueType(),
 						"routes", routeSummary(cfg.Jira),
-						"require_route", cfg.Jira.RequireRoute,
 						"auto_close", closeSummary(cfg.Jira),
 						"auto_ticket", autoTicket)
 					if autoTicket {

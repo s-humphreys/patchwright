@@ -87,13 +87,13 @@ func NewPlannerWithDashboard(cfg config.JiraConfig, dash config.DashboardConfig)
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(cfg.Template)
+	raw, err := os.ReadFile(cfg.DefaultTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("read ticket template %s: %w", cfg.Template, err)
+		return nil, fmt.Errorf("read ticket template %s: %w", cfg.DefaultTemplate, err)
 	}
 	tmpl, err := template.New("ticket").Parse(string(raw))
 	if err != nil {
-		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.Template, err)
+		return nil, fmt.Errorf("parse ticket template %s: %w", cfg.DefaultTemplate, err)
 	}
 	routed, err := newRoutes(cfg.Routes)
 	if err != nil {
@@ -104,7 +104,7 @@ func NewPlannerWithDashboard(cfg config.JiraConfig, dash config.DashboardConfig)
 	// for one team is far worse than finding out at startup.
 	tmpls := map[string]*template.Template{routeName: tmpl}
 	for _, r := range cfg.Routes {
-		if r.Template == "" || r.Template == cfg.Template {
+		if r.Template == "" || r.Template == cfg.DefaultTemplate {
 			tmpls[r.Name] = tmpl
 			continue
 		}
@@ -158,17 +158,17 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
 			continue
 		}
-		// With requireRoute, an unrouted finding is reported rather than sent to
-		// the default tracker. Reported, not dropped: the work still exists and
-		// still needs a home, and silence here would read as "nothing to do".
-		if p.cfg.RequireRoute && p.routes.match(f) == routeName {
+		// A tracker is configured only on routes, so a finding matching none has
+		// nowhere to go. Reported, not dropped: the work still exists and still
+		// needs a home, and silence here would read as "nothing to do".
+		if p.routes.match(f) == routeName {
 			owner := "unattributed"
 			if f.Owner.Class != "" || f.Owner.Team != "" {
 				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
 			}
 			out.Skips = append(out.Skips, Skip{
 				Image: f.Image, Policy: true,
-				Reason: fmt.Sprintf("no ticket route matches its owner (%s) and requireRoute is set, "+
+				Reason: fmt.Sprintf("no ticket route matches its owner (%s), "+
 					"so no tracker is configured for this work", owner),
 			})
 			continue

@@ -104,26 +104,31 @@ than the one they clicked through for.
 
 ## Configuration
 
-`board`, `project`, `template` and one of `imageField` / `imageLabel` are required.
+`defaultTicketTemplate` and at least one route are required. A route needs
+`project`, `board` and one of `imageField` / `imageLabel`: those describe a
+single tracker, so they live on the route rather than at the top level, and a
+deployment serving two teams has two of each.
 
 ```yaml
 jira:
-  board: 100
-  project: PROJ
-  template: config/templates/container-vuln.md.tmpl
-  imageField: customfield_XXXXX   # array-of-strings field holding the images
-  # imageLabel: true              # or labels, where no such field exists
-  epic: PROJ-100
-  issueType: Container Vulnerability
-  priorityMap:                    # carries the assessment's ordering into Jira
-    urgent: Highest
-    high: High
-    medium: Medium
-    low: Low
-  priority: Medium                # fallback for anything unmapped
-  requireUpgrade: true            # default
-  autoClose: false                # default
-  requireRoute: false             # default
+  defaultTicketTemplate: config/templates/container-vuln.md.tmpl
+  issueType: Container Vulnerability   # shared default, overridable per route
+  priority: Medium                     # fallback for anything unmapped
+  requireUpgrade: true                 # default
+  autoClose: false                     # default
+  routes:
+    - name: platform
+      when: "owner['class'] == 'platform'"
+      project: PROJ
+      board: 100
+      imageField: customfield_XXXXX    # array-of-strings field holding the images
+      # imageLabel: true               # or labels, where no such field exists
+      epic: PROJ-100
+      priorityMap:                     # carries the assessment's ordering into Jira
+        urgent: Highest
+        high: High
+        medium: Medium
+        low: Low
 ```
 
 `imageField` (or the label) is the idempotency key: it is how an existing ticket for
@@ -228,26 +233,39 @@ listed as skipped with the rule name.
 
 ## Routing
 
-`routes` sends each owner's tickets to its own tracker. First match wins; anything
-unmatched uses the top-level settings. A route states only what differs — template,
-image field, priority map and labels are inherited.
+`routes` sends each owner's tickets to its own tracker, and is where a tracker is
+described at all. First match wins, and a route states only what differs from the
+deployment-wide settings.
 
 ```yaml
 jira:
-  project: PROJ
+  defaultTicketTemplate: config/templates/container-vuln.md.tmpl
   autoClose: false
   routes:
     - name: sre
       when: "owner['team'] == 'sre'"
       project: SRE
-      issueType: Bug
+      board: 42
       imageLabel: true            # this project has no shared custom field
+      issueType: Bug
       autoClose: true
-      closeTransition: Ship It    # SRE's workflow, not PROJ's
+      closeTransition: Ship It    # SRE's workflow, not another project's
+      template: config/templates/sre.md.tmpl
     - name: platform
       when: "owner['class'] == 'platform'"
       project: PROJ
+      board: 100
+      imageField: customfield_XXXXX
 ```
+
+- A finding matching no route gets **no ticket**, and is reported as skipped with
+  its owner named, so unrouted work is visible rather than landing on whichever
+  board happens to be first:
+
+  ```
+  no ticket route matches its owner (engineering/orders), so no tracker is
+  configured for this work
+  ```
 
 - A group is never split across routes: two findings sharing one upgrade but owned
   by different teams become two tickets.
@@ -256,14 +274,6 @@ jira:
 - For tickets that already exist, settings resolve by the issue key's project, not
   by the route that created it.
 - Each route is validated as the configuration it resolves to, at load.
-
-`requireRoute: true` means no match, no ticket: an unmatched finding is reported as
-skipped rather than falling through to the default project.
-
-```
-no ticket route matches its owner (engineering/orders) and requireRoute is set,
-so no tracker is configured for this work
-```
 
 ## Updating and closing
 
@@ -338,6 +348,24 @@ Go `text/template`: first line `Summary: ...`, then a blank line, then the
 description. See
 [`config/templates/container-vuln.md.tmpl`](../config/templates/container-vuln.md.tmpl)
 for the available fields.
+
+`jira.defaultTicketTemplate` is the wording every route uses. A route may name
+its own `template` instead, for a team that writes tickets differently:
+
+```yaml
+jira:
+  defaultTicketTemplate: /etc/patchwright/default.md.tmpl
+  routes:
+    - name: sre
+      when: "owner['team'] == 'sre'"
+      project: SRE
+      board: 42
+      imageField: customfield_20983
+      template: /etc/patchwright/sre.md.tmpl
+```
+
+Every template is read and parsed at startup, so one that does not parse fails
+the deployment rather than one team's first ticket of the month.
 
 `**bold**`, `` `code` ``, bullet lists, tables, headings and bare URLs are
 translated to Atlassian Document Format. Code spans are left untouched inside.

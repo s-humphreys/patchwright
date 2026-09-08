@@ -101,8 +101,8 @@ metrics:
     scrapeTimeout: 10s
 
 # Jira ticketing. The `jira:` block itself goes in config.policy below, with
-# `template: /etc/patchwright/ticket.md.tmpl` to match the file mounted from
-# ticketing.template.
+# `defaultTicketTemplate: /etc/patchwright/<name>.md.tmpl` naming one of the
+# templates mounted from ticketing.templates.
 ticketing:
   # Create and reconcile tickets on every scheduled refresh. Off by default: a
   # service that starts raising tickets the moment it is deployed is not a good
@@ -113,11 +113,22 @@ ticketing:
   # Jira credentials come from credentialsSecretName: JIRA_BASE_URL plus either
   # JIRA_EMAIL and JIRA_API_TOKEN, or the JIRA_OAUTH_* set. Without them ticketing is off: the queue and the page are
   # unaffected, and ticket state is reported as unknown rather than as "no ticket".
-  # The ticket template, mounted alongside the rules. Required for ticketing,
-  # because `jira.template` is a path and the image ships no default: the wording
-  # of a ticket belongs to whoever owns the process. See
-  # config/templates/container-vuln.md.tmpl in the repository for a starting point.
-  template: ""
+  # Ticket templates, by name, mounted alongside the rules as
+  # /etc/patchwright/<name>.md.tmpl. At least one is required for ticketing,
+  # because `jira.defaultTicketTemplate` is a path and the image ships no
+  # default: the wording of a ticket belongs to whoever owns the process. See
+  # config/templates/container-vuln.md.tmpl in the repository for a starting
+  # point.
+  #
+  # More than one is for teams that write tickets differently. Point
+  # `jira.defaultTicketTemplate` at one and a route's `template` at another:
+  #
+  #   templates:
+  #     default: |
+  #       Summary: ...
+  #     sre: |
+  #       Summary: ...
+  templates: {}
 # Structured logs (written to stderr / pod logs).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)

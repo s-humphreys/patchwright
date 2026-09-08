@@ -54,7 +54,8 @@ func TestOAuthSendsBearerAndReusesTokenUntilExpiry(t *testing.T) {
 	o.apiBase = api.URL
 
 	j := &Jira{auth: o, Client: api.Client(),
-		cfg: config.JiraConfig{Project: "PROJ", ImageField: "customfield_1"}}
+		cfg: config.JiraConfig{Routes: []config.TicketRoute{{Name: "all", When: "true",
+			Board: 1, Project: "PROJ", ImageField: "customfield_1"}}}}
 	if _, err := j.OpenByImage(context.Background()); err != nil {
 		t.Fatalf("OpenByImage: %v", err)
 	}

@@ -508,24 +508,36 @@ func (r RemediationConfig) IsFirstParty(registry string) bool {
 // organization-specific (project, issue type, the custom field holding the
 // image) is configuration, so no Jira schema is baked into the tool.
 type JiraConfig struct {
-	// Board is the board id tickets are raised against. Required.
-	Board int `yaml:"board"`
-	// Project key, e.g. "PROJ". Required.
-	Project string `yaml:"project"`
-	// Template is a path to the ticket template (Go text/template). Its first
-	// line must be "Summary: ...", then a blank line, then the description.
-	// Required.
-	Template string `yaml:"template"`
+	// DefaultTemplate is the ticket template used by any route that does not name
+	// its own (Go text/template). Its first line must be "Summary: ...", then a
+	// blank line, then the description. Required.
+	//
+	// Wording is the one thing teams reliably disagree about, so a route can
+	// override it while sharing everything else. Everything a template can say is
+	// on ticket.TemplateData.
+	DefaultTemplate string `yaml:"defaultTicketTemplate"`
 
+	// The fields below describe one tracker, so they are set per route rather than
+	// here: a project key, a board, a custom field id and a priority scheme mean
+	// nothing except in the context of the board they belong to, and a deployment
+	// serving two teams has two of each. They are populated by Resolve and are not
+	// readable from configuration.
+	//
+	// Board is the board id tickets are raised against.
+	Board int `yaml:"-"`
+	// Project key, e.g. "PROJ".
+	Project string `yaml:"-"`
+	// Template is the resolved template path for this route.
+	Template string `yaml:"-"`
 	// ImageField is a custom field id (e.g. "customfield_12345") holding the
 	// image repositories a ticket covers. It doubles as the idempotency key: it
 	// is how an existing ticket for an image is found without local state.
-	// Exactly one of ImageField or ImageLabel is required.
-	ImageField string `yaml:"imageField"`
+	// Exactly one of ImageField or ImageLabel is required per route.
+	ImageField string `yaml:"-"`
 	// ImageLabel puts the images in labels instead, for projects with no such
 	// custom field. Labels are always JQL-queryable, so this is the fallback
 	// when a team-managed project will not filter on cf[NNNNN].
-	ImageLabel bool `yaml:"imageLabel"`
+	ImageLabel bool `yaml:"-"`
 
 	// Epic, when set, becomes each ticket's parent.
 	Epic string `yaml:"epic"`
@@ -540,10 +552,10 @@ type JiraConfig struct {
 	// fixable finding and a low one become indistinguishable the moment they
 	// become tickets.
 	//
-	// Deliberately not defaulted. Priority schemes are per-instance, and guessing
-	// names that do not exist would fail ticket creation with a Jira field error;
-	// see config/policy.yaml for a worked example.
-	PriorityMap map[string]string `yaml:"priorityMap"`
+	// Deliberately not defaulted, and set per route: priority schemes belong to a
+	// project, and a name that does not exist fails ticket creation with a Jira
+	// field error. See config/policy.yaml for a worked example.
+	PriorityMap map[string]string `yaml:"-"`
 	// Labels are added to every ticket, alongside any image labels.
 	Labels []string `yaml:"labels"`
 
@@ -628,20 +640,6 @@ type JiraConfig struct {
 	// decides what gets a ticket, never what is visible.
 	MinPriority string `yaml:"minPriority"`
 
-	// RequireRoute, when true, means a finding that matches no route gets no
-	// ticket rather than falling through to the settings above.
-	//
-	// Worth being explicit about, because the two behaviours are both defensible
-	// and the wrong one is silent. Fall-through suits a single shared board.
-	// RequireRoute suits a deployment where every tracker is named on purpose:
-	// coverage arriving for a team nobody has routed yet then produces reported
-	// skips rather than tickets on whichever board happens to be the default.
-	//
-	// Skipped findings are still reported with the reason, and still appear in the
-	// assessment and the queue. This decides where work is tracked, never whether
-	// it is visible.
-	RequireRoute bool `yaml:"requireRoute"`
-
 	// RequireUpgrade, when unset, defaults to true: no ticket is raised for a
 	// finding with nothing to upgrade to. A ticket saying "upgrade to the latest
 	// version" for an image already on the latest wastes the assignee's time,
@@ -683,32 +681,20 @@ func (j JiraConfig) JiraPriority(findingPriority string) string {
 
 // Validate checks the Jira config is usable. Called by the ticket command
 // rather than at load time, so an assess-only config need not define it.
+//
+// The deployment-level checks live here; everything that describes a single
+// tracker is checked on each route, because that is the only place it is
+// configured.
 func (j JiraConfig) Validate() error {
-	var missing []string
-	if j.Board == 0 {
-		missing = append(missing, "board")
+	if j.DefaultTemplate == "" {
+		return fmt.Errorf("jira config missing required field: defaultTicketTemplate")
 	}
-	if j.Project == "" {
-		missing = append(missing, "project")
-	}
-	if j.Template == "" {
-		missing = append(missing, "template")
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("jira config missing required field(s): %s", strings.Join(missing, ", "))
-	}
-	if j.ImageField == "" && !j.ImageLabel {
-		return fmt.Errorf("jira config needs imageField or imageLabel: without one there is no way to find an existing ticket for an image, so every run would raise duplicates")
-	}
-	if j.ImageField != "" && j.ImageLabel {
-		return fmt.Errorf("jira config sets both imageField and imageLabel; pick one so the idempotency key is unambiguous")
-	}
-	// Every route is validated as the configuration it actually becomes. A route
-	// is a merge, so it can only break the result by overriding something into an
-	// invalid combination, and that has to fail at load rather than at the first
-	// ticket it tries to raise.
 	if err := validateMinPriority(j.MinPriority); err != nil {
 		return err
+	}
+	if len(j.Routes) == 0 {
+		return fmt.Errorf("jira config defines no routes: a route is where the project, " +
+			"board and image field live, so without one there is no tracker to raise a ticket on")
 	}
 	names := map[string]bool{}
 	for i, r := range j.Routes {
@@ -721,12 +707,39 @@ func (j JiraConfig) Validate() error {
 			return fmt.Errorf("jira route %q: duplicate name", r.Name)
 		}
 		names[r.Name] = true
-		resolved := j.Resolve(r)
-		if err := resolved.Validate(); err != nil {
+		// Validated as the configuration it actually becomes, since a route is a
+		// merge and can only break the result by overriding into an invalid
+		// combination. That has to fail at load rather than at the first ticket.
+		if err := j.Resolve(r).validateTracker(); err != nil {
 			return fmt.Errorf("jira route %q: %w", r.Name, err)
 		}
 	}
 	return nil
+}
+
+// validateTracker checks one resolved route: everything needed to raise a ticket
+// on a specific board.
+func (j JiraConfig) validateTracker() error {
+	var missing []string
+	if j.Board == 0 {
+		missing = append(missing, "board")
+	}
+	if j.Project == "" {
+		missing = append(missing, "project")
+	}
+	if j.Template == "" {
+		missing = append(missing, "template (or jira.defaultTicketTemplate)")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required field(s): %s", strings.Join(missing, ", "))
+	}
+	if j.ImageField == "" && !j.ImageLabel {
+		return fmt.Errorf("needs imageField or imageLabel: without one there is no way to find an existing ticket for an image, so every run would raise duplicates")
+	}
+	if j.ImageField != "" && j.ImageLabel {
+		return fmt.Errorf("sets both imageField and imageLabel; pick one so the idempotency key is unambiguous")
+	}
+	return validateMinPriority(j.MinPriority)
 }
 
 // validateMinPriority rejects a threshold that is not on the ranked ladder.
@@ -826,21 +839,18 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	if r.Project != "" {
 		out.Project = r.Project
 	}
+	// A route without its own template gets the default: sharing wording is the
+	// common case, and overriding it is what a team that disagrees does.
+	out.Template = c.DefaultTemplate
 	if r.Template != "" {
 		out.Template = r.Template
 	}
-	if r.ImageField != "" {
-		out.ImageField = r.ImageField
-		// A route naming a custom field means that field, not labels, even when
-		// the base uses labels; otherwise the field would be written and the
-		// lookup would still search labels, and no ticket would ever be found.
-		out.ImageLabel = false
-	}
+	// The image key comes from the route whole, both halves together: quietly
+	// clearing one because the other was set would hide a route that names both,
+	// which is a mistake worth failing on rather than resolving.
+	out.ImageField, out.ImageLabel = r.ImageField, false
 	if r.ImageLabel != nil {
 		out.ImageLabel = *r.ImageLabel
-		if *r.ImageLabel {
-			out.ImageField = ""
-		}
 	}
 	if r.Epic != "" {
 		out.Epic = r.Epic
@@ -879,13 +889,13 @@ func (c JiraConfig) ForProject(project string) JiraConfig {
 	return c
 }
 
-// Projects returns every distinct project this configuration can write to, base
-// first. Reconciliation has to search all of them: a ticket that moved to
+// Projects returns every distinct project this configuration can write to, in
+// route order. Reconciliation has to search all of them: a ticket that moved to
 // another team's project is still an open ticket, and missing it would raise a
 // duplicate.
 func (c JiraConfig) Projects() []string {
-	seen := map[string]bool{c.Project: true}
-	out := []string{c.Project}
+	seen := map[string]bool{}
+	var out []string
 	for _, r := range c.Routes {
 		if r.Project != "" && !seen[r.Project] {
 			seen[r.Project] = true

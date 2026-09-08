@@ -9,10 +9,13 @@ data:
     {{- .Values.config.ownership | nindent 4 }}
   policy.yaml: |
     {{- .Values.config.policy | nindent 4 }}
-  {{- if .Values.ticketing.template }}
-  # Mounted at /etc/patchwright/ticket.md.tmpl. Safe to keep beside the rules:
-  # --config only reads *.yaml and *.yml from a directory, so a template in there
-  # is not mistaken for configuration.
-  ticket.md.tmpl: |
-    {{- .Values.ticketing.template | nindent 4 }}
+  {{- if .Values.ticketing.templates }}
+  # Each is mounted at /etc/patchwright/<name>.md.tmpl, which is what a route's
+  # template (or jira.defaultTicketTemplate) points at. Safe to keep beside the
+  # rules: --config only reads *.yaml and *.yml from a directory, so a template
+  # in there is not mistaken for configuration.
+  {{- end }}
+  {{- range $name, $body := .Values.ticketing.templates }}
+  {{ $name }}.md.tmpl: |
+    {{- $body | nindent 4 }}
   {{- end }}
