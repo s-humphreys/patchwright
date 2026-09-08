@@ -339,6 +339,24 @@ description. See
 [`config/templates/container-vuln.md.tmpl`](../config/templates/container-vuln.md.tmpl)
 for the available fields.
 
-`**bold**`, `` `code` ``, bullet lists, headings and bare URLs are translated to
-Atlassian Document Format. Code spans are left untouched inside. Anything
-unrecognised, including an unmatched `` ` ``, is passed through as written.
+`**bold**`, `` `code` ``, bullet lists, tables, headings and bare URLs are
+translated to Atlassian Document Format. Code spans are left untouched inside.
+Anything unrecognised, including an unmatched `` ` ``, is passed through as
+written.
+
+A bullet may wrap across lines: a line following a bullet that is not itself a
+bullet, heading or table row is folded onto it. A blank line is how you start a
+new paragraph, and it is also what separates a list from a line of prose after
+it — without one, that line is read as part of the list.
+
+Tables are Markdown pipe tables, and the delimiter row is required:
+
+```
+| Tag | Namespace |
+| --- | --------- |
+| `v1.6.5` | sealed-secrets-tools |
+```
+
+Rows are padded or truncated to the header's width, so a template whose value is
+empty still produces a rectangular table. A line starting with `|` and no
+delimiter row beneath it is treated as prose, not as a one-column table.

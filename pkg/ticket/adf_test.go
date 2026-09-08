@@ -341,3 +341,74 @@ func TestCodeCoexistsWithBoldAndLinks(t *testing.T) {
 		t.Errorf("links = %v", links)
 	}
 }
+
+// A bullet wrapped across lines is one bullet. Before folding, the stray
+// continuation line demoted the whole block to a paragraph and every "*"
+// rendered literally, which is what shipped in the first real tickets.
+func TestWrappedBulletStaysOneBullet(t *testing.T) {
+	got := blocks(t, "* Upgrade the chart.\n* Validate whether a Flux automation exists,\nand create one if not.\n* Roll it forward.")
+	if len(got) != 1 || blockType(t, got[0]) != "bulletList" {
+		t.Fatalf("want one bulletList, got %s", jsonOf(t, got))
+	}
+	js := jsonOf(t, got[0])
+	if !strings.Contains(js, "Validate whether a Flux automation exists, and create one if not.") {
+		t.Errorf("continuation line was not folded onto its bullet: %s", js)
+	}
+	if strings.Contains(js, "* ") {
+		t.Errorf("a literal bullet marker survived into the text: %s", js)
+	}
+}
+
+// A heading, its bullets and a wrapped one, as a template actually writes them.
+func TestHeadingThenWrappedBullets(t *testing.T) {
+	got := blocks(t, "**Technical Requirements & Actions**\n* Rebuild the image, because the base\nmoved to a newer digest.\n* Validate the automation.")
+	if len(got) != 2 {
+		t.Fatalf("want heading + bulletList, got %s", jsonOf(t, got))
+	}
+	if blockType(t, got[0]) != "heading" || blockType(t, got[1]) != "bulletList" {
+		t.Errorf("wrong block types: %s", jsonOf(t, got))
+	}
+}
+
+func TestPipeTableBecomesATable(t *testing.T) {
+	got := blocks(t, "| Tag | Namespace |\n| --- | --------- |\n| `v1.6.5` | sealed-secrets-tools |\n| v2.0.0 | tools |")
+	if len(got) != 1 || blockType(t, got[0]) != "table" {
+		t.Fatalf("want one table, got %s", jsonOf(t, got))
+	}
+	js := jsonOf(t, got[0])
+	if !strings.Contains(js, "tableHeader") {
+		t.Errorf("header row is not a header: %s", js)
+	}
+	if strings.Count(js, "tableRow") != 3 {
+		t.Errorf("want 3 rows (header + 2), got %s", js)
+	}
+	// Cell contents keep their inline marks, so a tag stays code rather than
+	// arriving with backticks showing.
+	if !strings.Contains(js, `"type":"code"`) {
+		t.Errorf("code span in a cell was not converted: %s", js)
+	}
+}
+
+// A short row must not silently produce a ragged table.
+func TestTableRowsArePaddedToTheHeaderWidth(t *testing.T) {
+	got := blocks(t, "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 |")
+	js := jsonOf(t, got[0])
+	if strings.Count(js, "tableCell") != 3 {
+		t.Errorf("want 3 body cells, padded from 2: %s", js)
+	}
+}
+
+// Without a delimiter row it is prose that happens to start with a pipe.
+func TestPipeLineWithoutDelimiterIsNotATable(t *testing.T) {
+	got := blocks(t, "| this is not a table |\n| nor is this |")
+	if blockType(t, got[0]) == "table" {
+		t.Errorf("treated pipe-prefixed prose as a table: %s", jsonOf(t, got))
+	}
+}
+
+func TestTableCanFollowALeadIn(t *testing.T) {
+	got := blocks(t, "Where it runs:\n| Tag | Namespace |\n| --- | --- |\n| v1 | tools |")
+	if len(got) != 2 || blockType(t, got[0]) != "paragraph" || blockType(t, got[1]) != "table" {
+		t.Fatalf("want paragraph + table, got %s", jsonOf(t, got))
+	}
+}
