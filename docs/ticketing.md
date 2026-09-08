@@ -14,13 +14,40 @@ patchwright ticket -i findings.json -c config/ --confirm   # apply
 **Dry run is the default.** It prints every ticket in full, the tracker each lands
 on, and every skip with its reason.
 
-Credentials come from the environment, never the config file:
+Credentials come from the environment, never the config file. Either an Atlassian
+API token:
 
 ```sh
 export JIRA_BASE_URL=https://your-site.atlassian.net
 export JIRA_EMAIL=you@example.com
 export JIRA_API_TOKEN=...
 ```
+
+or an OAuth 2.0 (3LO) app, which is what you want when the credential must belong to
+the integration rather than to a person:
+
+```sh
+export JIRA_OAUTH_CLIENT_ID=...
+export JIRA_OAUTH_CLIENT_SECRET=...
+export JIRA_OAUTH_REFRESH_TOKEN=...
+export JIRA_BASE_URL=https://your-site.atlassian.net   # or JIRA_CLOUD_ID
+```
+
+Setting `JIRA_OAUTH_CLIENT_ID` selects OAuth; the API token variables are then
+ignored. OAuth requests go to `api.atlassian.com/ex/jira/{cloudId}`, so the site is
+identified by cloud ID: set `JIRA_CLOUD_ID` directly, or leave `JIRA_BASE_URL` set and
+it is looked up once at startup from the sites the credential can reach. With access
+to several sites and neither set, patchwright refuses to guess.
+
+The app needs the classic scopes `read:jira-work`, `write:jira-work` and
+`read:jira-user`, plus `offline_access` to get a refresh token at all.
+
+Two things to know about refresh tokens. Atlassian rotates them on every exchange, and
+patchwright keeps the new one in memory only, so a restart falls back to the token in
+the environment: keep that value in the Secret, and it stays valid because a rotated
+token remains usable until the next successful refresh. And a refresh token expires
+after 90 days of no use, which for a service that scans on a schedule will not happen,
+but is worth knowing if the deployment is paused.
 
 ## What one ticket covers
 

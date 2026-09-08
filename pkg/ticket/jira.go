@@ -26,7 +26,10 @@ type Jira struct {
 	Email   string
 	Token   string
 	Client  *http.Client
-	cfg     config.JiraConfig
+	// auth authorises each request and resolves the API host. Nil means the
+	// legacy shape: Basic auth from Email and Token against BaseURL.
+	auth jiraAuth
+	cfg  config.JiraConfig
 	// byRoute is the resolved configuration per route name, so a write uses the
 	// project, issue type, image field and priority scheme of the tracker the
 	// planner chose. Always contains the default.
@@ -43,8 +46,39 @@ const (
 
 // NewJira builds a client from the environment. It returns a clear error naming
 // what is missing rather than failing later with a 401.
+//
+// Two credential shapes are supported. An Atlassian API token (email plus token,
+// Basic auth against the site) is the default; setting JIRA_OAUTH_CLIENT_ID
+// selects OAuth 2.0 (3LO) instead, which talks to api.atlassian.com and refreshes
+// its own access tokens.
 func NewJira(cfg config.JiraConfig) (*Jira, error) {
-	base, email, token := os.Getenv(EnvBaseURL), os.Getenv(EnvEmail), os.Getenv(EnvToken)
+	auth, err := jiraAuthFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	byRoute := map[string]config.JiraConfig{routeName: cfg}
+	for _, r := range cfg.Routes {
+		byRoute[r.Name] = cfg.Resolve(r)
+	}
+	j := &Jira{
+		byRoute: byRoute,
+		BaseURL: strings.TrimSuffix(os.Getenv(EnvBaseURL), "/"),
+		auth:    auth,
+		Client:  &http.Client{Timeout: 30 * time.Second},
+		cfg:     cfg,
+	}
+	if b, ok := auth.(basicAuth); ok {
+		j.Email, j.Token = b.email, b.token
+	}
+	return j, nil
+}
+
+func jiraAuthFromEnv() (jiraAuth, error) {
+	base := strings.TrimSuffix(os.Getenv(EnvBaseURL), "/")
+	if os.Getenv(EnvOAuthClientID) != "" {
+		return oauthFromEnv(base)
+	}
+	email, token := os.Getenv(EnvEmail), os.Getenv(EnvToken)
 	var missing []string
 	if base == "" {
 		missing = append(missing, EnvBaseURL+" (e.g. https://your-site.atlassian.net)")
@@ -58,17 +92,34 @@ func NewJira(cfg config.JiraConfig) (*Jira, error) {
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing Jira credentials in the environment: %s", strings.Join(missing, ", "))
 	}
-	byRoute := map[string]config.JiraConfig{routeName: cfg}
-	for _, r := range cfg.Routes {
-		byRoute[r.Name] = cfg.Resolve(r)
+	return basicAuth{email: email, token: token, baseURL: base}, nil
+}
+
+func oauthFromEnv(base string) (jiraAuth, error) {
+	secret, refresh := os.Getenv(EnvOAuthClientSecret), os.Getenv(EnvOAuthRefreshToken)
+	var missing []string
+	if secret == "" {
+		missing = append(missing, EnvOAuthClientSecret)
 	}
-	return &Jira{
-		byRoute: byRoute,
-		BaseURL: strings.TrimSuffix(base, "/"),
-		Email:   email,
-		Token:   token,
-		Client:  &http.Client{Timeout: 30 * time.Second},
-		cfg:     cfg,
+	if refresh == "" {
+		missing = append(missing, EnvOAuthRefreshToken)
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("missing Jira OAuth credentials in the environment: %s", strings.Join(missing, ", "))
+	}
+	// Neither is required, but without one of them a credential with access to
+	// several sites cannot be resolved to a single one.
+	if base == "" && os.Getenv(EnvCloudID) == "" {
+		slog.Warn("neither " + EnvBaseURL + " nor " + EnvCloudID + " is set: the Jira site will be discovered, which only works if the OAuth credential can reach exactly one")
+	}
+	return &oauthAuth{
+		clientID:     os.Getenv(EnvOAuthClientID),
+		clientSecret: secret,
+		refreshToken: refresh,
+		cloudID:      os.Getenv(EnvCloudID),
+		siteURL:      base,
+		tokenURL:     atlassianTokenURL,
+		client:       &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
 
@@ -851,11 +902,25 @@ func (j *Jira) do(ctx context.Context, method, path string, body, out any) error
 		}
 		rdr = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, j.BaseURL+path, rdr)
+	base := j.BaseURL
+	if j.auth != nil {
+		b, err := j.auth.base(ctx)
+		if err != nil {
+			return err
+		}
+		base = b
+	}
+	req, err := http.NewRequestWithContext(ctx, method, base+path, rdr)
 	if err != nil {
 		return err
 	}
-	req.SetBasicAuth(j.Email, j.Token)
+	if j.auth != nil {
+		if err := j.auth.apply(ctx, req); err != nil {
+			return err
+		}
+	} else {
+		req.SetBasicAuth(j.Email, j.Token)
+	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
