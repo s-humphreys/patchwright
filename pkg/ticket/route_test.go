@@ -615,3 +615,49 @@ func TestBundledTemplateExplainsABaseRebuild(t *testing.T) {
 		t.Errorf("a base rebuild still names the base image as the change target:\n%s", body)
 	}
 }
+
+// An estate whose accounts are named locally gets described wrongly by generic
+// words, or not at all: "Shared Infrastructure" matches nothing, so a ticket
+// says "unknown" about a deployment it can see perfectly well.
+func TestEnvironmentSequenceIsConfigurable(t *testing.T) {
+	envs := []config.Environment{
+		{Name: "development", Match: []string{"dev"}},
+		{Name: "production", Match: []string{"prod", "shared infrastructure"}},
+	}
+
+	got, rank := environmentOf(envs, []string{"Shared Infrastructure"}, nil)
+	if got != "production" {
+		t.Errorf("environment = %q, want production from the configured match", got)
+	}
+	if want := 1; rank != want {
+		t.Errorf("rank = %d, want %d: position in the sequence orders the rows", rank, want)
+	}
+
+	// Unconfigured, the same account is unrecognised rather than guessed at.
+	if got, _ := environmentOf(nil, []string{"Shared Infrastructure"}, nil); got != "" {
+		t.Errorf("environment = %q, want empty from the built-in sequence", got)
+	}
+
+	// The built-ins still apply when nothing is configured.
+	if got, _ := environmentOf(nil, []string{"Production UK"}, nil); got != "production" {
+		t.Errorf("environment = %q, want production", got)
+	}
+}
+
+// Order is the sequence, so a configured list decides promotion order too.
+func TestConfiguredEnvironmentsOrderTheRows(t *testing.T) {
+	envs := []config.Environment{
+		{Name: "prelive", Match: []string{"preproduction"}},
+		{Name: "live", Match: []string{"production"}},
+	}
+	group := []sink.FindingView{
+		{Image: "reg/app:2", Repository: "reg/app", Tag: "2",
+			Dimensions: map[string][]string{"account": {"Production UK"}}},
+		{Image: "reg/app:1", Repository: "reg/app", Tag: "1",
+			Dimensions: map[string][]string{"account": {"PreProduction UK"}}},
+	}
+	got := deployments(group, envs)
+	if len(got) != 2 || got[0].Environment != "prelive" || got[1].Environment != "live" {
+		t.Fatalf("rows out of sequence: %+v", got)
+	}
+}

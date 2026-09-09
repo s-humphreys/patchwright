@@ -244,7 +244,7 @@ func TestTemplateDataDeduplicatesCVEsAndOrdersByEPSS(t *testing.T) {
 			f.Vulns = vulns
 		})
 	}
-	d := newTemplateData(ticketGroup{primary: []sink.FindingView{mk("a/one"), mk("b/two")}})
+	d := newTemplateData(ticketGroup{primary: []sink.FindingView{mk("a/one"), mk("b/two")}}, nil)
 
 	if len(d.FixableCriticals) != 2 {
 		t.Fatalf("got %d fixable criticals, want 2 (deduped, fix-available criticals only): %+v", len(d.FixableCriticals), d.FixableCriticals)
@@ -260,13 +260,13 @@ func TestTemplateDataDeduplicatesCVEsAndOrdersByEPSS(t *testing.T) {
 // A template must not present zero counts as evidence when the provider never
 // assessed the images, so the flag has to reach the template data.
 func TestTemplateDataCarriesProviderAssessed(t *testing.T) {
-	unassessed := newTemplateData(ticketGroup{primary: []sink.FindingView{finding("a/one")}})
+	unassessed := newTemplateData(ticketGroup{primary: []sink.FindingView{finding("a/one")}}, nil)
 	if unassessed.ProviderAssessed {
 		t.Error("provider_assessed false in findings should stay false")
 	}
 	assessed := newTemplateData(ticketGroup{primary: []sink.FindingView{
 		finding("a/one", func(f *sink.FindingView) { f.ProviderAssessed = true; f.Counts["critical"] = 3 }),
-	}})
+	}}, nil)
 	if !assessed.ProviderAssessed || assessed.CriticalCount != 3 {
 		t.Errorf("assessed=%v criticals=%d, want true/3", assessed.ProviderAssessed, assessed.CriticalCount)
 	}
@@ -419,7 +419,7 @@ func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
 	collapsed := newTemplateData(ticketGroup{primary: []sink.FindingView{
 		mkObj("contrib/provider-a", "provider-a-aaa"),
 		mkObj("contrib/provider-b", "provider-b-bbb"),
-	}})
+	}}, nil)
 	if collapsed.Source != "" {
 		t.Errorf("Source = %q, want empty: the group's members have different targets", collapsed.Source)
 	}
@@ -437,7 +437,7 @@ func TestSharedChangeTargetOnlyWhenGenuinelyShared(t *testing.T) {
 			f.Upgrade.SourcePath = "bases/apps/example"
 		})
 	}
-	shared := newTemplateData(ticketGroup{primary: []sink.FindingView{mkShared("natsio/a"), mkShared("natsio/b")}})
+	shared := newTemplateData(ticketGroup{primary: []sink.FindingView{mkShared("natsio/a"), mkShared("natsio/b")}}, nil)
 	if shared.Source != "https://dev.example.com/_git/infra" || shared.SourcePath != "bases/apps/example" {
 		t.Errorf("shared target not surfaced: source=%q path=%q", shared.Source, shared.SourcePath)
 	}
@@ -451,7 +451,7 @@ func TestSourcePathStaysSeparateFromURL(t *testing.T) {
 			f.Upgrade.Source = "https://dev.example.com/_git/infra"
 			f.Upgrade.SourcePath = "bases/app"
 		}),
-	}})
+	}}, nil)
 	if strings.Contains(d.Source, "//bases") {
 		t.Errorf("Source %q has the path joined into it", d.Source)
 	}
@@ -778,7 +778,7 @@ func TestDeploymentsReadAsAPromotion(t *testing.T) {
 		{Image: "acr.io/app:1", Tag: "1", Dimensions: map[string][]string{"account": {"Development NA"}}},
 		{Image: "acr.io/app:2", Tag: "2", Dimensions: map[string][]string{"account": {"PreProduction NA"}}},
 	}
-	got := deployments(group)
+	got := deployments(group, nil)
 	var envs, tags []string
 	for _, d := range got {
 		envs = append(envs, d.Environment)
@@ -795,7 +795,7 @@ func TestDeploymentsReadAsAPromotion(t *testing.T) {
 func TestPreProductionIsNotProduction(t *testing.T) {
 	// "preproduction" contains "prod", so a naive scan puts it last and tells
 	// somebody to release to pre-production after production.
-	env, _ := environmentOf([]string{"PreProduction EU"}, nil)
+	env, _ := environmentOf(nil, []string{"PreProduction EU"}, nil)
 	if env != "staging" {
 		t.Errorf("environmentOf(PreProduction) = %q, want staging", env)
 	}
@@ -804,12 +804,12 @@ func TestPreProductionIsNotProduction(t *testing.T) {
 func TestUnrecognisedEnvironmentsSortLastAndSayNothing(t *testing.T) {
 	// A guess must not present itself as knowledge: an account nothing matched gets
 	// no environment name at all.
-	env, rank := environmentOf([]string{"Shared Infrastructure"}, nil)
+	env, rank := environmentOf(nil, []string{"Shared Infrastructure"}, nil)
 	if env != "" {
 		t.Errorf("environment = %q, want empty for an unrecognised name", env)
 	}
-	last, _ := environmentOf([]string{"Production EU"}, nil)
-	if _, prodRank := environmentOf([]string{last}, nil); rank <= prodRank {
+	last, _ := environmentOf(nil, []string{"Production EU"}, nil)
+	if _, prodRank := environmentOf(nil, []string{last}, nil); rank <= prodRank {
 		t.Errorf("unrecognised rank %d should sort after production %d", rank, prodRank)
 	}
 }

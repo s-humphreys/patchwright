@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -188,11 +189,11 @@ type UpgradeData struct {
 	Direct bool
 }
 
-func newTemplateData(tg ticketGroup) TemplateData {
+func newTemplateData(tg ticketGroup, envs []config.Environment) TemplateData {
 	group := tg.all()
 	d := TemplateData{}
 
-	d.Deployments = deployments(group)
+	d.Deployments = deployments(group, envs)
 
 	accounts, namespaces, teams, buildRepos := &set{}, &set{}, &set{}, &set{}
 	images, refs := &set{}, &set{}
@@ -415,35 +416,44 @@ func (s *set) sorted() []string {
 // decides the ORDER of a list in a ticket body, so a wrong guess costs a reader a
 // moment and never changes a verdict. Anything unmatched sorts last, since an
 // unrecognised environment is more likely to be a one-off than the first step.
-var environments = []struct {
-	name   string
-	tokens []string
-}{
-	{"development", []string{"dev", "sandbox", "local"}},
-	{"test", []string{"test", "qa", "integration"}},
-	{"staging", []string{"stag", "preprod", "pre-prod", "preproduction", "uat", "perf"}},
-	{"production", []string{"prod", "live"}},
+// defaultEnvironments is the sequence used when a deployment configures none.
+// The words are the ones most estates happen to use; an estate whose names are
+// local configures its own rather than being described wrongly.
+var defaultEnvironments = []config.Environment{
+	{Name: "development", Match: []string{"dev", "sandbox", "local"}},
+	{Name: "test", Match: []string{"test", "qa", "integration"}},
+	{Name: "staging", Match: []string{"stag", "preprod", "pre-prod", "preproduction", "uat", "perf"}},
+	{Name: "production", Match: []string{"prod", "live"}},
 }
 
-// environmentOf guesses where in a release sequence a deployment sits.
-func environmentOf(accounts, namespaces []string) (string, int) {
+// environmentOf guesses where in a release sequence a deployment sits, returning
+// the name and its position for ordering.
+//
+// The guess collapses a span to its earliest member: a tag running in every
+// environment reads as the first one. Right for ordering rows into a promotion
+// sequence, wrong as a description, which is why a ticket should show the
+// accounts beside it rather than this alone.
+func environmentOf(envs []config.Environment, accounts, namespaces []string) (string, int) {
+	if len(envs) == 0 {
+		envs = defaultEnvironments
+	}
 	haystack := strings.ToLower(strings.Join(append(append([]string{}, accounts...), namespaces...), " "))
 	// Earliest match wins, and the order matters for one specific reason:
 	// "preproduction" contains "prod", so staging has to be tested before production
 	// or a ticket tells somebody to release to pre-production after production.
-	for i, env := range environments {
-		for _, tok := range env.tokens {
-			if strings.Contains(haystack, tok) {
-				return env.name, i
+	for i, env := range envs {
+		for _, tok := range env.Match {
+			if strings.Contains(haystack, strings.ToLower(tok)) {
+				return env.Name, i
 			}
 		}
 	}
-	return "", len(environments)
+	return "", len(envs)
 }
 
 // deployments lists each grouped tag with where it runs, ordered by release
 // sequence so a ticket reads as a promotion rather than a set.
-func deployments(group []sink.FindingView) []Deployment {
+func deployments(group []sink.FindingView, envs []config.Environment) []Deployment {
 	out := make([]Deployment, 0, len(group))
 	rank := map[string]int{}
 	for _, f := range group {
@@ -451,7 +461,7 @@ func deployments(group []sink.FindingView) []Deployment {
 		namespaces := append([]string{}, f.Dimensions["namespace"]...)
 		sort.Strings(accounts)
 		sort.Strings(namespaces)
-		env, r := environmentOf(accounts, namespaces)
+		env, r := environmentOf(envs, accounts, namespaces)
 		d := Deployment{
 			Ref: f.Image, Repo: f.Repository, Tag: f.Tag,
 			Accounts: accounts, Namespaces: namespaces, Environment: env,

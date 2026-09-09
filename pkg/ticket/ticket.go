@@ -75,6 +75,18 @@ type Planner struct {
 	routes   *routes
 	tmpl     *template.Template
 	excluded *exclusions
+	// envs is the estate's release sequence, for ordering a ticket's deployments
+	// and naming where each runs. Empty means the built-in sequence.
+	envs []config.Environment
+}
+
+// WithEnvironments sets the release sequence a ticket describes deployments
+// against. Separate from construction because it belongs to the estate rather
+// than to the tracker, and a caller with no policy loaded still gets sane
+// ordering from the defaults.
+func (p *Planner) WithEnvironments(envs []config.Environment) *Planner {
+	p.envs = envs
+	return p
 }
 
 // NewPlanner loads and parses the configured ticket template.
@@ -451,7 +463,7 @@ func collapseObjectRef(source string) string {
 
 // render executes the template for one ticket group.
 func (p *Planner) render(group ticketGroup, route string) (Draft, error) {
-	data := newTemplateData(group)
+	data := newTemplateData(group, p.envs)
 	// A deep link back to the evidence. A ticket that says "14 criticals" is a
 	// claim; a link to the queue entry behind it is the claim plus its working.
 	//
