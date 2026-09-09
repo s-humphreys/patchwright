@@ -40,6 +40,23 @@ the repository too ([`deploy/helm`](../deploy/helm)), where their versions read
 3. Optionally a kubeconfig Secret for remote clusters, and registry credentials for
    scanning private images.
 
+**Rules and templates are read once, at startup.** Editing `config.policy`,
+`config.ownership` or `ticketing.templates` updates the ConfigMap, and the running
+pod carries on with what it parsed when it started — so a corrected rule or a
+reworded ticket template quietly does nothing until the pod restarts. Parsing at
+startup is deliberate: a template that does not parse should fail the deployment
+rather than one team's first ticket of the month.
+
+Nothing in the chart restarts the pod for you. Where config changes often, point a
+controller that watches ConfigMaps at it:
+
+```yaml
+annotations:
+  reloader.stakater.com/auto: "true"
+```
+
+Otherwise `kubectl rollout restart deploy/patchwright` after a config change.
+
 ## API mode
 
 ```sh

@@ -11,6 +11,10 @@ metadata:
   name: {{ include "patchwright.fullname" . }}
   labels:
     {{- include "patchwright.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: 1
   # The pod is not ready until its FIRST ASSESSMENT completes, which on a large estate
@@ -24,6 +28,10 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       labels:
         {{- include "patchwright.labels" . | nindent 8 }}
         {{- if .Values.registryAuth.azure.workloadIdentity.enabled }}
