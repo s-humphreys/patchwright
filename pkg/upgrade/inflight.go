@@ -84,7 +84,14 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 	sem := make(chan struct{}, e.concurrency())
 	repos := make(map[string]string, len(images))
 
+	// Two passes, and the order matters: everything already known is written before
+	// any goroutine exists, so the sequential writes cannot race the concurrent
+	// ones. Writing both from one loop crashed the process outright — a map write
+	// from the loop against a locked write from a goroutine it had already started
+	// is still two writers, and Go's runtime kills the process rather than
+	// corrupting the map.
 	matched, unmatchedRepo := 0, 0
+	var lookup []string
 	for i := range images {
 		img := &images[i]
 		img.InFlightChecked = true
@@ -98,19 +105,23 @@ func (e *InFlightEnricher) EnrichImages(ctx context.Context, images []model.Asse
 			repos[img.Image.Ref] = lastPathSegment(img.BuildRepo)
 			continue
 		}
+		lookup = append(lookup, img.Image.Ref)
+	}
+
+	for _, ref := range lookup {
 		wg.Add(1)
 		go func(ref string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			repo, err := e.buildRepo(ctx, ref)
-			mu.Lock()
-			defer mu.Unlock()
 			if err != nil || repo == "" {
 				return
 			}
+			mu.Lock()
+			defer mu.Unlock()
 			repos[ref] = repo
-		}(img.Image.Ref)
+		}(ref)
 	}
 	wg.Wait()
 

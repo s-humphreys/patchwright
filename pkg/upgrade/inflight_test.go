@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -296,5 +297,54 @@ func TestAThirdPartyImageIsNotReportedAsAPipelineGap(t *testing.T) {
 	}
 	if images[0].InFlightReason != "" {
 		t.Fatalf("third-party image reported as a build pipeline gap: %q", images[0].InFlightReason)
+	}
+}
+
+// A mixed estate — some images carrying a build-repo label already, some needing
+// a registry read — used to write one map from the loop and from the goroutines
+// it had already started. Go kills the process for that ("concurrent map
+// writes"), taking the whole assessment with it, so the two writers must never
+// overlap.
+//
+// Run with -race to catch a regression as a failure rather than as a crash under
+// load; without it, this still exercises both paths and asserts the result.
+func TestEnrichImagesResolvesBothRepositorySourcesConcurrently(t *testing.T) {
+	const n = 200
+	labels := map[string]map[string]string{}
+	images := make([]model.AssessedImage, 0, n)
+	for i := range n {
+		ref := fmt.Sprintf("reg/app-%d:1.0.0", i)
+		img := image(ref, "base", "2.0.0")
+		if i%2 == 0 {
+			// Known already, written by the sequential pass.
+			img.BuildRepo = fmt.Sprintf("org/project/_git/app-%d", i)
+		} else {
+			// Only discoverable by reading the image, so a goroutine writes it.
+			labels[ref] = map[string]string{repoLabel: fmt.Sprintf("app-%d", i)}
+		}
+		images = append(images, img)
+	}
+
+	prs := make([]PullRequest, 0, n)
+	for i := range n {
+		prs = append(prs, PullRequest{
+			Repository: fmt.Sprintf("app-%d", i),
+			Title:      "chore(deps): Update base Docker tag to v2.0.0",
+			Branch:     "renovate/base",
+		})
+	}
+
+	e := enricher(prs, labels, config.InFlightConfig{})
+	e.Concurrency = 16
+	if err := e.EnrichImages(context.Background(), images); err != nil {
+		t.Fatalf("EnrichImages: %v", err)
+	}
+
+	// Both sources have to land: a silent miss on either half would look like
+	// "nothing in flight", which is the answer that gets work duplicated.
+	for i := range images {
+		if images[i].InFlight == nil {
+			t.Fatalf("image %d (%s) was not matched to its pull request", i, images[i].Image.Ref)
+		}
 	}
 }
