@@ -303,7 +303,7 @@ func textNode(text string, marks []any) any {
 //
 //	| Tag | Namespace |
 //	| --- | --------- |
-//	| v1.6.5 | sealed-secrets-tools |
+//	| v1.6.5 | billing |
 //
 // The delimiter row is required, as it is in Markdown: without it a line
 // beginning with "|" is more likely to be prose than a table, and guessing wrong

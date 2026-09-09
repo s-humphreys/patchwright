@@ -541,8 +541,10 @@ type JiraConfig struct {
 
 	// Epic, when set, becomes each ticket's parent.
 	Epic string `yaml:"epic"`
-	// IssueType defaults to "Task".
-	IssueType string `yaml:"issueType"`
+	// IssueType defaults to "Task". Set per route: an issue type exists on the
+	// projects that define it and nowhere else, so one name across two boards
+	// fails ticket creation on whichever does not have it.
+	IssueType string `yaml:"-"`
 	// Priority is the Jira priority name used when PriorityMap has nothing for a
 	// finding, e.g. "Highest". Left to Jira's default when empty.
 	Priority string `yaml:"priority"`
@@ -855,9 +857,7 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	if r.Epic != "" {
 		out.Epic = r.Epic
 	}
-	if r.IssueType != "" {
-		out.IssueType = r.IssueType
-	}
+	out.IssueType = r.IssueType
 	if r.Priority != "" {
 		out.Priority = r.Priority
 	}

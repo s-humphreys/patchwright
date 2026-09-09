@@ -32,7 +32,6 @@ scan:
 #   # The wording every route uses unless it names its own. Everything a template
 #   # can say is documented on ticket.TemplateData.
 #   defaultTicketTemplate: config/templates/container-vuln.md.tmpl
-#   issueType: Container Vulnerability
 #   priority: Medium        # fallback for anything a route's priorityMap misses
 #
 #   # Keep findings out of ticket creation without hiding them. Unlike suppress
@@ -89,7 +88,7 @@ scan:
 #       when: "owner['team'] == 'sre'"
 #       project: SRE
 #       board: 42
-#       issueType: Bug            # overrides the deployment-wide setting above
+#       issueType: Bug            # exists on this project, not necessarily on others
 #       epic: SRE-42
 #       autoClose: true
 #       closeTransition: Ship It  # this project's workflow, not another's
@@ -106,6 +105,7 @@ scan:
 #       when: "owner['class'] == 'platform'"
 #       project: PROJ
 #       board: 100
+#       issueType: Container Vulnerability
 #       epic: PROJ-100
 #       imageField: customfield_XXXXX
 #       # Carries the assessment's ordering into Jira. Without a map every ticket

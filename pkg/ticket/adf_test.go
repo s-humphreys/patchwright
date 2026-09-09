@@ -373,7 +373,7 @@ func TestHeadingThenWrappedBullets(t *testing.T) {
 }
 
 func TestPipeTableBecomesATable(t *testing.T) {
-	got := blocks(t, "| Tag | Namespace |\n| --- | --------- |\n| `v1.6.5` | sealed-secrets-tools |\n| v2.0.0 | tools |")
+	got := blocks(t, "| Tag | Namespace |\n| --- | --------- |\n| `v1.6.5` | billing |\n| v2.0.0 | tools |")
 	if len(got) != 1 || blockType(t, got[0]) != "table" {
 		t.Fatalf("want one table, got %s", jsonOf(t, got))
 	}
