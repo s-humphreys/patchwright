@@ -137,6 +137,25 @@ ticketing:
   #     sre: |
   #       Summary: ...
   templates: {}
+# Annotations on the Deployment and CronJob themselves. The reason this exists:
+# patchwright reads its rules and ticket templates ONCE, at startup, so a change
+# to config.policy or ticketing.templates does nothing until the pod restarts.
+# Nothing in the chart restarts it for you, so a controller that watches the
+# ConfigMap is the way to make config changes take effect:
+#
+#   annotations:
+#     reloader.stakater.com/auto: "true"
+#
+# or, to watch only this release's ConfigMap:
+#
+#   annotations:
+#     configmap.reloader.stakater.com/reload: patchwright-rules
+annotations: {}
+# Annotations on the pods. Separate from the above because a controller watching
+# for config changes reads the workload's annotations, while things like scrape
+# hints and mesh configuration read the pod's.
+podAnnotations: {}
+
 # Structured logs (written to stderr / pod logs).
 logLevel: info             # debug, info, warn, or error
 logFormat: json            # text or json (json recommended in-cluster)

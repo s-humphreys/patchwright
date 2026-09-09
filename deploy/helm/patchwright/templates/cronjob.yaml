@@ -8,6 +8,10 @@ metadata:
   name: {{ include "patchwright.fullname" . }}
   labels:
     {{- include "patchwright.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   schedule: {{ .Values.cronjob.schedule | quote }}
   concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
@@ -19,6 +23,10 @@ spec:
       activeDeadlineSeconds: {{ .Values.cronjob.activeDeadlineSeconds }}
       template:
         metadata:
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           labels:
             {{- include "patchwright.labels" . | nindent 12 }}
             {{- if .Values.registryAuth.azure.workloadIdentity.enabled }}
