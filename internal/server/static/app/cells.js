@@ -208,6 +208,17 @@ export function ticketsFor(f) {
   return S.ticketsByRepo ? S.ticketsByRepo[f.repository] || [] : [];
 }
 
+/**
+ * ticketState is the three answers a ticket lookup can give, kept apart because
+ * "nobody has raised one" and "we could not look" call for different things: the
+ * first is work to do, the second is a broken integration.
+ * @returns {"ticketed"|"none"|"unknown"}
+ */
+export function ticketState(f) {
+  if (!S.ticketsByRepo) return "unknown";
+  return ticketsFor(f).length ? "ticketed" : "none";
+}
+
 // "-" means no open ticket; "?" means we were not able to look. Conflating them
 // would be the same mistake as printing an unscanned image's counts as zero.
 export function ticketCell(f) {

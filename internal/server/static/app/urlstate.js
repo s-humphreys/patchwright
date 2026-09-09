@@ -23,6 +23,7 @@ const CONTROLS = [
   { id: '#classFilter', param: 'class', kind: 'facet' },
   { id: '#teamFilter', param: 'team', kind: 'facet' },
   { id: '#fixFilter', param: 'fix', kind: 'facet' },
+  { id: '#ticketFilter', param: 'ticket', kind: 'facet' },
   { id: '#signalFilter', param: 'signal', kind: 'facet' },
   { id: '#urgencyFilter', param: 'urgency', kind: 'facet' },
   { id: '#search', param: 'q', kind: 'value' },

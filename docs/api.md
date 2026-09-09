@@ -313,6 +313,11 @@ is a link somebody can send: `?view=cves&signal=kev,exposed&team=orders`. Severa
 values within one filter mean ANY of them; the filters are still ANDed with each
 other.
 
+`ticket=none` is the one worth knowing: it lists work nobody has raised a ticket
+for. Its third value, `unknown`, is deliberately separate — when Jira cannot be
+reached every row is unknown rather than untracked, because reporting them as
+untracked would send somebody to raise duplicates of tickets that already exist.
+
 **Export CSV** beside the queue count writes the rows currently on screen, in
 whichever view is showing, with the filters applied - which is the point, since the
 reader has usually already narrowed to the thing they were asked about. The

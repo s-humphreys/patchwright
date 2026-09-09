@@ -1,5 +1,5 @@
 import { SIGNAL_ORDER } from './badges.js';
-import { PRI_RANK, fixPath, ticketsFor, upgradeText } from './cells.js';
+import { PRI_RANK, fixPath, ticketState, ticketsFor, upgradeText } from './cells.js';
 import { $, esc } from './util.js';
 
 // The filter bar governs the page, not one table.
@@ -55,6 +55,12 @@ export const FACETS = [
     // Fixed order rather than by count: the list is ranked by how much each should
     // change what somebody does next, and that ranking should not move about.
     order: (a, b) => SIGNAL_ORDER.indexOf(a) - SIGNAL_ORDER.indexOf(b) },
+  { name: "ticket", id: "#ticketFilter", allLabel: "all tickets",
+    values: (f) => [ticketState(f)],
+    // Fixed order: "what has nobody raised yet" is the question this filter exists
+    // for, so it sits at the top rather than wherever the counts put it.
+    order: (a, b) => ["none", "ticketed", "unknown"].indexOf(a) -
+      ["none", "ticketed", "unknown"].indexOf(b) },
   { name: "fix", id: "#fixFilter", allLabel: "all fixes",
     values: (f) => [fixPath(f)],
     order: (a, b) => ["direct", "managed", "none", "unknown", "?"].indexOf(a) -

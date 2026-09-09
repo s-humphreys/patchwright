@@ -18,6 +18,7 @@ const dom = new JSDOM('<!doctype html><html><body>' +
   '<details class="sel ms" id="urgencyFilter"><summary></summary><div class="ms-menu"></div></details>' +
   '<details class="sel ms" id="signalFilter"><summary></summary><div class="ms-menu"></div></details>' +
   '<details class="sel ms" id="fixFilter"><summary></summary><div class="ms-menu"></div></details>' +
+  '<details class="sel ms" id="ticketFilter"><summary></summary><div class="ms-menu"></div></details>' +
   '<input type="checkbox" id="onlyActionable" checked>' +
   '<input type="checkbox" id="onlyFixable">' +
   '<input type="checkbox" id="showSuppressed">' +
@@ -424,4 +425,39 @@ test('haystack includes the change target, so a grouped ticket can link to its r
   const hay = haystack(f);
   assert.ok(hay.includes('bases/event-bus'), `source path missing from: ${hay}`);
   assert.ok(hay.includes('_git/infra'), `source missing from: ${hay}`);
+});
+
+test('the ticket filter separates untracked work from an unreadable Jira', () => {
+  setUp();
+  S.ticketsByRepo = { 'reg/a': [{ key: 'PROJ-1', status: 'In Progress' }] };
+  const ticketed = { ...rows[0], repository: 'reg/a' };
+  const untracked = { ...rows[1], repository: 'reg/b' };
+
+  const st = { ...filterState(), ticket: ['none'] };
+  const got = apply([ticketed, untracked], st);
+  assert.deepEqual(got.map(f => f.repository), ['reg/b'],
+    'selecting "none" should leave only work nobody has raised a ticket for');
+
+  const raised = apply([ticketed, untracked], { ...filterState(), ticket: ['ticketed'] });
+  assert.deepEqual(raised.map(f => f.repository), ['reg/a']);
+
+  // Jira unreachable: every row is "unknown", and none of them count as untracked.
+  // Reporting them as work nobody has raised would send somebody to raise
+  // duplicates of tickets that already exist.
+  S.ticketsByRepo = null;
+  const blind = apply([ticketed, untracked], { ...filterState(), ticket: ['none'] });
+  assert.equal(blind.length, 0, 'an unreadable Jira must not read as untracked');
+  const unknown = apply([ticketed, untracked], { ...filterState(), ticket: ['unknown'] });
+  assert.equal(unknown.length, 2);
+});
+
+test('the ticket filter survives a round trip through the URL', async () => {
+  setUp();
+  S.ticketsByRepo = {};
+  const { readURL } = await import('./urlstate.js');
+  // The menu has to exist before a value can be ticked, the same as any facet.
+  populate(rows, filterState());
+  readURL(new URLSearchParams('ticket=none'));
+  assert.deepEqual(filterState().ticket, ['none'],
+    'a link naming a ticket state should restore that filter');
 });
