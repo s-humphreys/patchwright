@@ -40,6 +40,12 @@ type TemplateData struct {
 	// into this ticket in the first place.
 	Fixes []ImageUpgrade
 
+	// BuildRepos are the repositories that build these images, when the images
+	// record one. For a base-image rebuild this is the only actionable location a
+	// ticket has: Source names the base being moved onto, which is somebody
+	// else's repository and not where the work happens.
+	BuildRepos []string
+
 	// Source and SourcePath are the change target shared by everything on this
 	// ticket: the repository (or owning custom resource) and the directory within
 	// it. They sit at the top level, not under Upgrade, because grouping is BY
@@ -92,9 +98,13 @@ type TemplateData struct {
 
 // Deployment is one tag of a repository and where it runs.
 type Deployment struct {
-	// Ref is the full image reference, Tag its tag alone.
-	Ref string
-	Tag string
+	// Ref is the full image reference, Repo the bare repository and Tag its tag
+	// alone. A grouped ticket lists several images, and a table of tags with no
+	// repository beside them cannot be read: two of them are often the same
+	// version of different things.
+	Ref  string
+	Repo string
+	Tag  string
 	// Accounts and Namespaces are where this particular tag runs.
 	Accounts   []string
 	Namespaces []string
@@ -102,6 +112,11 @@ type Deployment struct {
 	// names ("development", "test", "staging", "production", or "" when nothing in
 	// them matched). A guess, and labelled as one: it orders the list and must not
 	// be read as a fact about the estate.
+	//
+	// It collapses a span to its earliest member, so one tag running in every
+	// environment reads as "development". That is right for ordering and wrong as
+	// a description, which is why the accounts are carried alongside it and why
+	// the bundled template shows those rather than this.
 	Environment string
 }
 
@@ -179,7 +194,7 @@ func newTemplateData(tg ticketGroup) TemplateData {
 
 	d.Deployments = deployments(group)
 
-	accounts, namespaces, teams := &set{}, &set{}, &set{}
+	accounts, namespaces, teams, buildRepos := &set{}, &set{}, &set{}, &set{}
 	images, refs := &set{}, &set{}
 	seenCVE := map[string]bool{}
 
@@ -194,6 +209,9 @@ func newTemplateData(tg ticketGroup) TemplateData {
 		}
 		if f.Owner.Team != "" {
 			teams.add(f.Owner.Team)
+		}
+		if f.BuildRepo != "" {
+			buildRepos.add(f.BuildRepo)
 		}
 		d.WorkloadCount += f.WorkloadCount
 		d.CriticalCount += f.Counts["critical"]
@@ -226,6 +244,7 @@ func newTemplateData(tg ticketGroup) TemplateData {
 	d.Images, d.Refs = images.sorted(), refs.sorted()
 	d.ImageCount = len(d.Images)
 	d.Accounts, d.Namespaces, d.Teams = accounts.sorted(), namespaces.sorted(), teams.sorted()
+	d.BuildRepos = buildRepos.sorted()
 
 	// Highest EPSS first: a ticket should lead with the CVE most likely to be
 	// exploited, not whichever the scanner happened to emit first.
@@ -434,8 +453,8 @@ func deployments(group []sink.FindingView) []Deployment {
 		sort.Strings(namespaces)
 		env, r := environmentOf(accounts, namespaces)
 		d := Deployment{
-			Ref: f.Image, Tag: f.Tag, Accounts: accounts, Namespaces: namespaces,
-			Environment: env,
+			Ref: f.Image, Repo: f.Repository, Tag: f.Tag,
+			Accounts: accounts, Namespaces: namespaces, Environment: env,
 		}
 		rank[f.Image] = r
 		out = append(out, d)
@@ -447,6 +466,15 @@ func deployments(group []sink.FindingView) []Deployment {
 		return out[i].Ref < out[j].Ref
 	})
 	return out
+}
+
+// BuildRepo is the single repository that builds these images, else "". A ticket
+// covering images from two repositories cannot name one as the place to work.
+func (d TemplateData) BuildRepo() string {
+	if len(d.BuildRepos) == 1 {
+		return d.BuildRepos[0]
+	}
+	return ""
 }
 
 // Team is the single owning team when there is exactly one, else "". Used to build a
