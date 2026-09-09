@@ -31,6 +31,14 @@ type Config struct {
 	// risk, known false positive). Suppression takes precedence over
 	// actionability.
 	Suppress []PolicyRule `yaml:"suppress"`
+	// Environments name the release sequence this estate promotes through, in
+	// order, and how to recognise each one from an account or namespace name.
+	// Empty means the built-in sequence, which recognises the usual words.
+	//
+	// Worth configuring wherever the names are local: an account called "Shared
+	// Infrastructure" matches nothing generic, so a ticket describing it either
+	// says nothing or guesses.
+	Environments []Environment `yaml:"environments"`
 	// Scan tunes image vulnerability scanning.
 	Scan ScanConfig `yaml:"scan"`
 	// Remediation tunes how upgrades are detected.
@@ -905,6 +913,21 @@ func (c JiraConfig) Projects() []string {
 	return out
 }
 
+// Environment is one step of the release sequence, and the substrings that
+// identify it in an account or namespace name.
+//
+// Order is the sequence itself, and it is also the matching order: the first
+// environment whose substring appears wins. That matters more than it looks -
+// "preproduction" contains "prod", so a sequence listing production before
+// staging labels pre-production as production and tells somebody to release in
+// the wrong order.
+type Environment struct {
+	// Name is what a ticket calls it, e.g. "production".
+	Name string `yaml:"name"`
+	// Match are lowercase substrings of an account or namespace name.
+	Match []string `yaml:"match"`
+}
+
 // ExcludeRule keeps matching findings out of ticket creation. When is a CEL
 // boolean over the same variables as policy rules (image, counts, owner,
 // dimensions, labels, vulns, ...), so one expression language covers both.
@@ -1151,6 +1174,18 @@ func (c *Config) validate() error {
 		if err := validatePolicyRule("suppress", r, seen); err != nil {
 			return err
 		}
+	}
+	names := map[string]bool{}
+	for i, e := range c.Environments {
+		switch {
+		case e.Name == "":
+			return fmt.Errorf("environment %d: missing name", i)
+		case len(e.Match) == 0:
+			return fmt.Errorf("environment %q: missing match; without one it can never be recognised", e.Name)
+		case names[e.Name]:
+			return fmt.Errorf("duplicate environment name %q", e.Name)
+		}
+		names[e.Name] = true
 	}
 	return nil
 }

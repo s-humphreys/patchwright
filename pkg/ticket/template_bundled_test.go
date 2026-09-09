@@ -22,10 +22,11 @@ func TestBundledTemplateThroughADF(t *testing.T) {
 		ServiceName: "svc", Priority: "urgent", ImageCount: 1, WorkloadCount: 4,
 		ProviderAssessed: true, CriticalCount: 2, HighCount: 9,
 		Deployments: []Deployment{
-			{Tag: "1.2.3", Environment: "production", Namespaces: []string{"a"}, Accounts: []string{"Prod UK"}},
-			{Tag: "1.2.2", Namespaces: []string{"a", "b"}, Accounts: []string{"Dev"}},
+			{Repo: "svc", Tag: "1.2.3", Environment: "production", Namespaces: []string{"a"}, Accounts: []string{"Prod UK"}},
+			{Repo: "svc", Tag: "1.2.2", Namespaces: []string{"a", "b"}, Accounts: []string{"Dev"}},
 		},
-		Upgrades: []ImageUpgrade{{Repo: "svc", Current: "1.2.3", Latest: "1.3.0", Direct: true}},
+		Upgrades:   []ImageUpgrade{{Repo: "svc", Current: "1.2.3", Latest: "1.3.0", Direct: true}},
+		BuildRepos: []string{"org/svc"},
 	}); err != nil {
 		t.Fatal(err)
 	}

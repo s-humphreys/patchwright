@@ -2,8 +2,10 @@ package ticket
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -574,5 +576,88 @@ func TestIssueTypeIsPerRoute(t *testing.T) {
 	untyped.Name = "untyped"
 	if got := base.Resolve(untyped).EffectiveIssueType(); got != "Task" {
 		t.Errorf("issue type = %q, want the Task default rather than another route's", got)
+	}
+}
+
+// A base rebuild has to say three things a reader cannot infer: that the service
+// itself is unchanged, where to rebuild it, and that a rebuilt image fixes
+// nothing until it is redeployed. Naming the base image as the "change target"
+// said none of them, and pointed at somebody else's repository.
+func TestBundledTemplateExplainsABaseRebuild(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "templates", "container-vuln.md.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := template.Must(template.New("t").Parse(string(raw)))
+	var sb strings.Builder
+	if err := tm.Execute(&sb, TemplateData{
+		ServiceName: "svc", Priority: "urgent", WorkloadCount: 2, ProviderAssessed: true,
+		BuildRepos: []string{"org/svc"},
+		Upgrade: &UpgradeData{Kind: "base", Name: "example.io/base/core",
+			Current: "aaaaaaaaaaaa", Latest: "bbbbbbbbbbbb", Source: "example.io/base/core:3.0"},
+		Deployments: []Deployment{{Repo: "svc", Tag: "1.0.0", Namespaces: []string{"tools"},
+			Accounts: []string{"Shared"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := sb.String()
+	for _, want := range []string{
+		"built on top of example.io/base/core",
+		"Rebuild from org/svc",
+		"Redeploy the new image everywhere it runs",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body does not explain %q:\n%s", want, body)
+		}
+	}
+	// The base image is not a place anybody here can make a change.
+	if strings.Contains(body, "Change target: example.io/base/core") {
+		t.Errorf("a base rebuild still names the base image as the change target:\n%s", body)
+	}
+}
+
+// An estate whose accounts are named locally gets described wrongly by generic
+// words, or not at all: "Shared Infrastructure" matches nothing, so a ticket
+// says "unknown" about a deployment it can see perfectly well.
+func TestEnvironmentSequenceIsConfigurable(t *testing.T) {
+	envs := []config.Environment{
+		{Name: "development", Match: []string{"dev"}},
+		{Name: "production", Match: []string{"prod", "shared infrastructure"}},
+	}
+
+	got, rank := environmentOf(envs, []string{"Shared Infrastructure"}, nil)
+	if got != "production" {
+		t.Errorf("environment = %q, want production from the configured match", got)
+	}
+	if want := 1; rank != want {
+		t.Errorf("rank = %d, want %d: position in the sequence orders the rows", rank, want)
+	}
+
+	// Unconfigured, the same account is unrecognised rather than guessed at.
+	if got, _ := environmentOf(nil, []string{"Shared Infrastructure"}, nil); got != "" {
+		t.Errorf("environment = %q, want empty from the built-in sequence", got)
+	}
+
+	// The built-ins still apply when nothing is configured.
+	if got, _ := environmentOf(nil, []string{"Production UK"}, nil); got != "production" {
+		t.Errorf("environment = %q, want production", got)
+	}
+}
+
+// Order is the sequence, so a configured list decides promotion order too.
+func TestConfiguredEnvironmentsOrderTheRows(t *testing.T) {
+	envs := []config.Environment{
+		{Name: "prelive", Match: []string{"preproduction"}},
+		{Name: "live", Match: []string{"production"}},
+	}
+	group := []sink.FindingView{
+		{Image: "reg/app:2", Repository: "reg/app", Tag: "2",
+			Dimensions: map[string][]string{"account": {"Production UK"}}},
+		{Image: "reg/app:1", Repository: "reg/app", Tag: "1",
+			Dimensions: map[string][]string{"account": {"PreProduction UK"}}},
+	}
+	got := deployments(group, envs)
+	if len(got) != 2 || got[0].Environment != "prelive" || got[1].Environment != "live" {
+		t.Fatalf("rows out of sequence: %+v", got)
 	}
 }

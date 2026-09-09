@@ -45,6 +45,9 @@ func newTicketCmd() *cobra.Command {
 				return err
 			}
 			planner, err := ticket.NewPlannerWithDashboard(cfg.Jira, cfg.Dashboard)
+			if err == nil {
+				planner = planner.WithEnvironments(cfg.Environments)
+			}
 			if err != nil {
 				return err
 			}

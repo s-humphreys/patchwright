@@ -45,17 +45,20 @@ This also updates the following, which are not bumped directly:
 {{ range . }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}
 {{ end -}}
 {{- end }}
-{{- if .Source }}* Change target: {{ .Source }}{{ if .SourcePath }} (path: {{ .SourcePath }}){{ end }}
-{{ end }}
+{{- if and .Upgrade (eq .Upgrade.Kind "base") }}* Nothing in {{ .ServiceName }} itself changes. It is built on top of {{ .Upgrade.Name }}, and that image has been rebuilt with the fixes while keeping the same tag, so rebuilding {{ .ServiceName }} picks them up.
+{{ if .BuildRepo }}* Rebuild from {{ .BuildRepo }}.
+{{ end }}* Redeploy the new image everywhere it runs, listed below. A rebuilt image fixes nothing until it is running.
+{{ else }}{{- if .Source }}* Change target: {{ .Source }}{{ if .SourcePath }} (path: {{ .SourcePath }}){{ end }}
+{{ end }}{{ end }}
 **Where it runs**
 
 {{ if .Deployments -}}
-| Tag | Environment | Namespaces | Accounts |
-| --- | ----------- | ---------- | -------- |
-{{ range .Deployments }}| `{{ .Tag }}` | {{ if .Environment }}{{ .Environment }}{{ else }}unknown{{ end }} | {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }} | {{ range $i, $a := .Accounts }}{{ if $i }}, {{ end }}{{ $a }}{{ end }} |
+| Image | Tag | Namespaces | Accounts |
+| ----- | --- | ---------- | -------- |
+{{ range .Deployments }}| `{{ .Repo }}` | `{{ .Tag }}` | {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }} | {{ range $i, $a := .Accounts }}{{ if $i }}, {{ end }}{{ $a }}{{ end }} |
 {{ end }}
 {{ end -}}
-{{ .WorkloadCount }} workload(s) affected. Environment is a guess from account and namespace names, so treat the ordering as a hint rather than a fact.
+{{ .WorkloadCount }} workload(s) affected. Rows are ordered by how far through an environment sequence they look, which is a guess from the account and namespace names.
 
 **Why this is prioritised**
 

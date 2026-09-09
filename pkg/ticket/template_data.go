@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -39,6 +40,12 @@ type TemplateData struct {
 	// present these as things to bump: nobody can, which is why they were merged
 	// into this ticket in the first place.
 	Fixes []ImageUpgrade
+
+	// BuildRepos are the repositories that build these images, when the images
+	// record one. For a base-image rebuild this is the only actionable location a
+	// ticket has: Source names the base being moved onto, which is somebody
+	// else's repository and not where the work happens.
+	BuildRepos []string
 
 	// Source and SourcePath are the change target shared by everything on this
 	// ticket: the repository (or owning custom resource) and the directory within
@@ -92,9 +99,13 @@ type TemplateData struct {
 
 // Deployment is one tag of a repository and where it runs.
 type Deployment struct {
-	// Ref is the full image reference, Tag its tag alone.
-	Ref string
-	Tag string
+	// Ref is the full image reference, Repo the bare repository and Tag its tag
+	// alone. A grouped ticket lists several images, and a table of tags with no
+	// repository beside them cannot be read: two of them are often the same
+	// version of different things.
+	Ref  string
+	Repo string
+	Tag  string
 	// Accounts and Namespaces are where this particular tag runs.
 	Accounts   []string
 	Namespaces []string
@@ -102,6 +113,11 @@ type Deployment struct {
 	// names ("development", "test", "staging", "production", or "" when nothing in
 	// them matched). A guess, and labelled as one: it orders the list and must not
 	// be read as a fact about the estate.
+	//
+	// It collapses a span to its earliest member, so one tag running in every
+	// environment reads as "development". That is right for ordering and wrong as
+	// a description, which is why the accounts are carried alongside it and why
+	// the bundled template shows those rather than this.
 	Environment string
 }
 
@@ -173,13 +189,13 @@ type UpgradeData struct {
 	Direct bool
 }
 
-func newTemplateData(tg ticketGroup) TemplateData {
+func newTemplateData(tg ticketGroup, envs []config.Environment) TemplateData {
 	group := tg.all()
 	d := TemplateData{}
 
-	d.Deployments = deployments(group)
+	d.Deployments = deployments(group, envs)
 
-	accounts, namespaces, teams := &set{}, &set{}, &set{}
+	accounts, namespaces, teams, buildRepos := &set{}, &set{}, &set{}, &set{}
 	images, refs := &set{}, &set{}
 	seenCVE := map[string]bool{}
 
@@ -194,6 +210,9 @@ func newTemplateData(tg ticketGroup) TemplateData {
 		}
 		if f.Owner.Team != "" {
 			teams.add(f.Owner.Team)
+		}
+		if f.BuildRepo != "" {
+			buildRepos.add(f.BuildRepo)
 		}
 		d.WorkloadCount += f.WorkloadCount
 		d.CriticalCount += f.Counts["critical"]
@@ -226,6 +245,7 @@ func newTemplateData(tg ticketGroup) TemplateData {
 	d.Images, d.Refs = images.sorted(), refs.sorted()
 	d.ImageCount = len(d.Images)
 	d.Accounts, d.Namespaces, d.Teams = accounts.sorted(), namespaces.sorted(), teams.sorted()
+	d.BuildRepos = buildRepos.sorted()
 
 	// Highest EPSS first: a ticket should lead with the CVE most likely to be
 	// exploited, not whichever the scanner happened to emit first.
@@ -396,35 +416,44 @@ func (s *set) sorted() []string {
 // decides the ORDER of a list in a ticket body, so a wrong guess costs a reader a
 // moment and never changes a verdict. Anything unmatched sorts last, since an
 // unrecognised environment is more likely to be a one-off than the first step.
-var environments = []struct {
-	name   string
-	tokens []string
-}{
-	{"development", []string{"dev", "sandbox", "local"}},
-	{"test", []string{"test", "qa", "integration"}},
-	{"staging", []string{"stag", "preprod", "pre-prod", "preproduction", "uat", "perf"}},
-	{"production", []string{"prod", "live"}},
+// defaultEnvironments is the sequence used when a deployment configures none.
+// The words are the ones most estates happen to use; an estate whose names are
+// local configures its own rather than being described wrongly.
+var defaultEnvironments = []config.Environment{
+	{Name: "development", Match: []string{"dev", "sandbox", "local"}},
+	{Name: "test", Match: []string{"test", "qa", "integration"}},
+	{Name: "staging", Match: []string{"stag", "preprod", "pre-prod", "preproduction", "uat", "perf"}},
+	{Name: "production", Match: []string{"prod", "live"}},
 }
 
-// environmentOf guesses where in a release sequence a deployment sits.
-func environmentOf(accounts, namespaces []string) (string, int) {
+// environmentOf guesses where in a release sequence a deployment sits, returning
+// the name and its position for ordering.
+//
+// The guess collapses a span to its earliest member: a tag running in every
+// environment reads as the first one. Right for ordering rows into a promotion
+// sequence, wrong as a description, which is why a ticket should show the
+// accounts beside it rather than this alone.
+func environmentOf(envs []config.Environment, accounts, namespaces []string) (string, int) {
+	if len(envs) == 0 {
+		envs = defaultEnvironments
+	}
 	haystack := strings.ToLower(strings.Join(append(append([]string{}, accounts...), namespaces...), " "))
 	// Earliest match wins, and the order matters for one specific reason:
 	// "preproduction" contains "prod", so staging has to be tested before production
 	// or a ticket tells somebody to release to pre-production after production.
-	for i, env := range environments {
-		for _, tok := range env.tokens {
-			if strings.Contains(haystack, tok) {
-				return env.name, i
+	for i, env := range envs {
+		for _, tok := range env.Match {
+			if strings.Contains(haystack, strings.ToLower(tok)) {
+				return env.Name, i
 			}
 		}
 	}
-	return "", len(environments)
+	return "", len(envs)
 }
 
 // deployments lists each grouped tag with where it runs, ordered by release
 // sequence so a ticket reads as a promotion rather than a set.
-func deployments(group []sink.FindingView) []Deployment {
+func deployments(group []sink.FindingView, envs []config.Environment) []Deployment {
 	out := make([]Deployment, 0, len(group))
 	rank := map[string]int{}
 	for _, f := range group {
@@ -432,10 +461,10 @@ func deployments(group []sink.FindingView) []Deployment {
 		namespaces := append([]string{}, f.Dimensions["namespace"]...)
 		sort.Strings(accounts)
 		sort.Strings(namespaces)
-		env, r := environmentOf(accounts, namespaces)
+		env, r := environmentOf(envs, accounts, namespaces)
 		d := Deployment{
-			Ref: f.Image, Tag: f.Tag, Accounts: accounts, Namespaces: namespaces,
-			Environment: env,
+			Ref: f.Image, Repo: f.Repository, Tag: f.Tag,
+			Accounts: accounts, Namespaces: namespaces, Environment: env,
 		}
 		rank[f.Image] = r
 		out = append(out, d)
@@ -447,6 +476,15 @@ func deployments(group []sink.FindingView) []Deployment {
 		return out[i].Ref < out[j].Ref
 	})
 	return out
+}
+
+// BuildRepo is the single repository that builds these images, else "". A ticket
+// covering images from two repositories cannot name one as the place to work.
+func (d TemplateData) BuildRepo() string {
+	if len(d.BuildRepos) == 1 {
+		return d.BuildRepos[0]
+	}
+	return ""
 }
 
 // Team is the single owning team when there is exactly one, else "". Used to build a

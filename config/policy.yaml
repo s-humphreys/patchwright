@@ -25,6 +25,27 @@ scan:
   skipOwnerClasses: [cloud-provider]
   # skipRegistries: [acme.azurecr.io]
 
+# The release sequence this estate promotes through, in order, and how to
+# recognise each step from an account or namespace name. Optional: without it the
+# built-in sequence recognises the usual words (dev/sandbox/local, test/qa,
+# stag/preprod/uat, prod/live).
+#
+# Worth setting wherever the names are local. An account called "Shared
+# Infrastructure" matches nothing generic, so a ticket either says nothing about
+# where a service runs or guesses at it.
+#
+# Order is the sequence and also the matching order, and that matters more than
+# it looks: "preproduction" contains "prod", so listing production first labels
+# pre-production as production and tells somebody to release in the wrong order.
+#
+# environments:
+#   - name: development
+#     match: [dev, sandbox]
+#   - name: staging
+#     match: [preproduction, uat]
+#   - name: production
+#     match: [production, live, shared infrastructure]
+
 # Ticket creation (`patchwright ticket`). See the README; credentials come from
 # the environment, never from this file.
 #

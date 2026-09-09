@@ -342,6 +342,36 @@ worth reading — a staleness note is keyed on the version now available, so a t
 that moves again is said again. A comment already present is reported as
 `already_present`, never counted as posted.
 
+## Environments
+
+A ticket says where a service runs, and orders those rows the way the estate
+promotes: development first, production last. Both come from matching account and
+namespace names against a sequence.
+
+The built-in sequence recognises the usual words. Where the names are local, set
+your own in the policy config — an account called `Shared Infrastructure` matches
+nothing generic, so a ticket describing it says nothing:
+
+```yaml
+environments:
+  - name: development
+    match: [dev, sandbox]
+  - name: staging
+    match: [preproduction, uat]
+  - name: production
+    match: [production, live, shared infrastructure]
+```
+
+Order is the sequence and the matching order both. `preproduction` contains
+`prod`, so a list with production first labels pre-production as production, and
+a ticket then asks for a release in the wrong order.
+
+The match is a guess and collapses a span: one tag running in every environment
+takes the earliest name that matches. That is what makes it useful for ordering
+and wrong as a description, so a template should show the accounts beside it
+rather than the name alone — which is why the bundled template's table lists
+accounts and not this.
+
 ## Template
 
 Go `text/template`: first line `Summary: ...`, then a blank line, then the

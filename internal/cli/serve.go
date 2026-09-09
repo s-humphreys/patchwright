@@ -169,6 +169,7 @@ func newServeCmd() *cobra.Command {
 					if perr != nil {
 						return perr
 					}
+					planner = planner.WithEnvironments(cfg.Environments)
 					srv = srv.WithTicketing(&serverTicketer{Planner: planner, Jira: jira}, autoTicket)
 					// Every tracker a route names: startup is where an operator checks
 					// what this deployment can write to.
