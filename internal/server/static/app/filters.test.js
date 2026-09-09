@@ -417,11 +417,11 @@ test('haystack includes the change target, so a grouped ticket can link to its r
     repository: 'nats',
     upgrade: {
       resolved: true, available: true, actionable: true,
-      source: 'https://dev.azure.com/capitalontap/DevOps/_git/flux-infra',
+      source: 'https://dev.example.com/_git/infra',
       source_path: 'bases/event-bus',
     },
   };
   const hay = haystack(f);
   assert.ok(hay.includes('bases/event-bus'), `source path missing from: ${hay}`);
-  assert.ok(hay.includes('flux-infra'), `source missing from: ${hay}`);
+  assert.ok(hay.includes('_git/infra'), `source missing from: ${hay}`);
 });

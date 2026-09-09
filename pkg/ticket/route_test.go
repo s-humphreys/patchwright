@@ -85,8 +85,8 @@ func TestRoutesRejectBadConfiguration(t *testing.T) {
 func TestResolveInheritsEverythingNotOverridden(t *testing.T) {
 	base := config.JiraConfig{
 		DefaultTemplate: "t.tmpl",
-		IssueType:       "Container Vulnerability", Priority: "Medium",
-		Labels: []string{"patchwright"},
+		Priority:        "Medium",
+		Labels:          []string{"patchwright"},
 	}
 	got := base.Resolve(config.TicketRoute{
 		Name: "sre", When: "true", Project: "SRE", Board: 1, ImageField: "customfield_1",
@@ -97,7 +97,7 @@ func TestResolveInheritsEverythingNotOverridden(t *testing.T) {
 		t.Errorf("overrides not applied: project=%q issuetype=%q", got.Project, got.EffectiveIssueType())
 	}
 	// The default template and the deployment-wide settings come through; the
-	// tracker comes from the route.
+	// tracker, issue type included, comes from the route.
 	if got.Template != "t.tmpl" || got.ImageField != "customfield_1" || got.Board != 1 {
 		t.Errorf("inherited settings lost: %+v", got)
 	}
@@ -535,7 +535,7 @@ func TestDashboardLinkTargetsTheTicketsWork(t *testing.T) {
 	grouped := TemplateData{
 		Teams:  []string{"cpe"},
 		Images: []string{"nats", "natsio/nats-server-config-reloader"},
-		Source: "https://dev.azure.com/capitalontap/DevOps/_git/flux-infra",
+		Source: "https://dev.example.com/_git/infra",
 		// The path is the more specific half: two charts in one repository are two
 		// pieces of work, and the repository alone would show both.
 		SourcePath: "bases/event-bus",
@@ -554,5 +554,25 @@ func TestDashboardLinkTargetsTheTicketsWork(t *testing.T) {
 	nothing := TemplateData{Teams: []string{"cpe"}, Images: []string{"a", "b"}}
 	if got := nothing.searchTerm(); got != "" {
 		t.Errorf("searchTerm = %q, want empty", got)
+	}
+}
+
+// An issue type exists on the projects that define it and nowhere else, so it
+// belongs to the route. One name inherited across two boards fails ticket
+// creation on whichever board does not have it, at write time, per team.
+func TestIssueTypeIsPerRoute(t *testing.T) {
+	base := config.JiraConfig{DefaultTemplate: "t"}
+	tracker := config.TicketRoute{When: "true", Board: 1, Project: "P", ImageField: "customfield_1"}
+
+	typed := tracker
+	typed.Name, typed.IssueType = "typed", "Container Vulnerability"
+	if got := base.Resolve(typed).EffectiveIssueType(); got != "Container Vulnerability" {
+		t.Errorf("issue type = %q, want the route's", got)
+	}
+
+	untyped := tracker
+	untyped.Name = "untyped"
+	if got := base.Resolve(untyped).EffectiveIssueType(); got != "Task" {
+		t.Errorf("issue type = %q, want the Task default rather than another route's", got)
 	}
 }

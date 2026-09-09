@@ -112,7 +112,6 @@ deployment serving two teams has two of each.
 ```yaml
 jira:
   defaultTicketTemplate: config/templates/container-vuln.md.tmpl
-  issueType: Container Vulnerability   # shared default, overridable per route
   priority: Medium                     # fallback for anything unmapped
   requireUpgrade: true                 # default
   autoClose: false                     # default
@@ -121,6 +120,7 @@ jira:
       when: "owner['class'] == 'platform'"
       project: PROJ
       board: 100
+      issueType: Container Vulnerability
       imageField: customfield_XXXXX    # array-of-strings field holding the images
       # imageLabel: true               # or labels, where no such field exists
       epic: PROJ-100
@@ -360,7 +360,7 @@ jira:
       when: "owner['team'] == 'sre'"
       project: SRE
       board: 42
-      imageField: customfield_20983
+      imageField: customfield_XXXXX
       template: /etc/patchwright/sre.md.tmpl
 ```
 
@@ -382,7 +382,7 @@ Tables are Markdown pipe tables, and the delimiter row is required:
 ```
 | Tag | Namespace |
 | --- | --------- |
-| `v1.6.5` | sealed-secrets-tools |
+| `v1.6.5` | billing |
 ```
 
 Rows are padded or truncated to the header's width, so a template whose value is
