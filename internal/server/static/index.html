@@ -40,6 +40,7 @@
     <details class="sel ms" id="urgencyFilter" title="Policy's verdict on how pressing each finding is. Ordered worst first, because the list is a scale and sorting it as text puts high above urgent."><summary>urgency: all</summary><div class="ms-menu"></div></details>
     <details class="sel ms" id="signalFilter"><summary>signal: all</summary><div class="ms-menu"></div></details>
     <details class="sel ms" id="fixFilter"><summary>fix: all</summary><div class="ms-menu"></div></details>
+    <details class="sel ms" id="ticketFilter" title="Whether a Jira ticket already covers this work. 'none' is what nobody has raised yet; 'unknown' means Jira could not be reached, which is not the same thing and is not counted as untracked."><summary>ticket: all</summary><div class="ms-menu"></div></details>
   </div>
   <div class="controls-row toggles">
     <label class="toggle" title="Actionable is the policy verdict: this warrants action. It is not the same as having a version to move to, which is the Fix column - an image already on its latest release can still be actionable, and needs a decision rather than a bump."><input type="checkbox" id="onlyActionable" checked> actionable only</label>
