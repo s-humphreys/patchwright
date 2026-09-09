@@ -368,10 +368,6 @@ func (j *Jira) openByImageIn(ctx context.Context, cfg config.JiraConfig) (map[st
 	}
 }
 
-// imageFieldName is the field to request and read images from, for the default
-// tracker. Per-tracker callers use jiraImageFieldName directly.
-func (j *Jira) imageFieldName() string { return jiraImageFieldName(j.cfg) }
-
 func jiraImageFieldName(cfg config.JiraConfig) string {
 	if cfg.ImageLabel {
 		return "labels"
@@ -406,12 +402,6 @@ func (j *Jira) cfgForKey(key string) config.JiraConfig {
 		}
 	}
 	return j.cfg
-}
-
-// imagesOf extracts the image repositories a ticket covers. Labels are converted
-// back from their sanitised form so they match a finding's repository again.
-func (j *Jira) imagesOf(fields map[string]json.RawMessage) []string {
-	return imagesOfFields(j.cfg, fields)
 }
 
 // imagesOfFields reads the images a ticket covers out of whichever field the
