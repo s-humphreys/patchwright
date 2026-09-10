@@ -14,7 +14,7 @@ jobs:
         with:
           # Matches the toolchain pinned in go.mod, which carries stdlib CVE fixes.
           # check-latest stays on so a newer patch is picked up rather than pinned out.
-          go-version: "1.27.0"
+          go-version: "1.27.1"
           check-latest: true
       - name: Verify formatting
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
@@ -105,7 +105,7 @@ jobs:
         with:
           # Matches the toolchain pinned in go.mod, which carries stdlib CVE fixes.
           # check-latest stays on so a newer patch is picked up rather than pinned out.
-          go-version: "1.27.0"
+          go-version: "1.27.1"
           check-latest: true
       - name: Install kind
         run: go install sigs.k8s.io/kind@latest
