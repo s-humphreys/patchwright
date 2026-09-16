@@ -3,6 +3,8 @@ package ticket
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"text/template"
@@ -659,5 +661,147 @@ func TestConfiguredEnvironmentsOrderTheRows(t *testing.T) {
 	got := deployments(group, envs)
 	if len(got) != 2 || got[0].Environment != "prelive" || got[1].Environment != "live" {
 		t.Fatalf("rows out of sequence: %+v", got)
+	}
+}
+
+// disambigView is one deployment of a service on a given base, which is the
+// shape that produces two identically worded rebuild tickets.
+func disambigView(repo, tag, account, base, from, to string) sink.FindingView {
+	return sink.FindingView{
+		Image: repo + ":" + tag, Repository: repo, Tag: tag,
+		Priority: "urgent", Actionable: true, RemediationChecked: true,
+		Owner:      sink.OwnerView{Class: "product", Team: "ics"},
+		Dimensions: map[string][]string{"account": {account}},
+		Counts:     map[string]int{"critical": 1},
+		Upgrade: &sink.UpgradeView{
+			Kind: "base", Name: base, Current: from, Latest: to,
+			Available: true, Resolved: true, Actionable: true,
+		},
+	}
+}
+
+// One service, two bases: production still on the old one, development already
+// moved. Two real rebuilds, worded identically, which on a board reads as a
+// duplicate somebody should close.
+func TestCollidingSummariesAreDisambiguated(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/t.tmpl"
+	body := "Summary: Rebuild {{ .ServiceName }} on a patched base image" +
+		"{{ with .Disambiguator }} ({{ . }}){{ end }}\n\nbody\n"
+	if err := os.WriteFile(tmpl, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(oneRoute(tmpl))
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	p = p.WithEnvironments([]config.Environment{
+		{Name: "development", Match: []string{"development"}},
+		{Name: "production", Match: []string{"production"}},
+	})
+
+	plan, err := p.Plan([]sink.FindingView{
+		disambigView("svc", "1.0.15", "Production UK", "acr.io/dotnet/aspnet", "8.0.13", "8.0.22"),
+		disambigView("svc", "1.0.21", "Development UK", "acr.io/dotnet/aspnet/10", "1.0.2", "1.2.2"),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 2 {
+		t.Fatalf("got %d drafts, want 2: two bases are two rebuilds", len(plan.Drafts))
+	}
+	got := []string{plan.Drafts[0].Summary, plan.Drafts[1].Summary}
+	sort.Strings(got)
+	want := []string{
+		"Rebuild svc on a patched base image (development)",
+		"Rebuild svc on a patched base image (production)",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("summaries = %q, want %q", got, want)
+	}
+}
+
+// A ticket with nothing to be confused with keeps the summary its template
+// wrote. The point of the field is to stay out of the way.
+func TestASingleTicketIsNotDisambiguated(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/t.tmpl"
+	body := "Summary: Rebuild {{ .ServiceName }} on a patched base image" +
+		"{{ with .Disambiguator }} ({{ . }}){{ end }}\n\nbody\n"
+	if err := os.WriteFile(tmpl, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(oneRoute(tmpl))
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	plan, err := p.Plan([]sink.FindingView{
+		disambigView("svc", "1.0.15", "Production UK", "acr.io/dotnet/aspnet", "8.0.13", "8.0.22"),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Drafts) != 1 || plan.Drafts[0].Summary != "Rebuild svc on a patched base image" {
+		t.Errorf("summary = %q, want it unchanged", plan.Drafts[0].Summary)
+	}
+}
+
+// Environments that do not separate the tickets fall through to the base image,
+// which is what the grouping split them on in the first place.
+func TestDisambiguationFallsBackToTheBase(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/t.tmpl"
+	body := "Summary: Rebuild {{ .ServiceName }}{{ with .Disambiguator }} ({{ . }}){{ end }}\n\nbody\n"
+	if err := os.WriteFile(tmpl, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(oneRoute(tmpl))
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	p = p.WithEnvironments([]config.Environment{{Name: "production", Match: []string{"production"}}})
+
+	// Both cover production, so the environment says nothing.
+	plan, err := p.Plan([]sink.FindingView{
+		disambigView("svc", "1.0.15", "Production UK", "acr.io/dotnet/aspnet", "8.0.13", "8.0.22"),
+		disambigView("svc", "1.0.21", "Production US", "acr.io/dotnet/aspnet/10", "1.0.2", "1.2.2"),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	got := []string{plan.Drafts[0].Summary, plan.Drafts[1].Summary}
+	sort.Strings(got)
+	want := []string{
+		"Rebuild svc (acr.io/dotnet/aspnet)",
+		"Rebuild svc (acr.io/dotnet/aspnet/10)",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("summaries = %q, want the base to separate them: %q", got, want)
+	}
+}
+
+// A template that never mentions the field is unaffected, which is what keeps
+// this from being a breaking change for an existing deployment.
+func TestTemplatesIgnoringTheFieldAreUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	tmpl := dir + "/t.tmpl"
+	if err := os.WriteFile(tmpl, []byte("Summary: Rebuild {{ .ServiceName }}\n\nbody\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPlanner(oneRoute(tmpl))
+	if err != nil {
+		t.Fatalf("NewPlanner: %v", err)
+	}
+	plan, err := p.Plan([]sink.FindingView{
+		disambigView("svc", "1.0.15", "Production UK", "acr.io/dotnet/aspnet", "8.0.13", "8.0.22"),
+		disambigView("svc", "1.0.21", "Development UK", "acr.io/dotnet/aspnet/10", "1.0.2", "1.2.2"),
+	})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	for _, d := range plan.Drafts {
+		if d.Summary != "Rebuild svc" {
+			t.Errorf("summary = %q, want it untouched", d.Summary)
+		}
 	}
 }

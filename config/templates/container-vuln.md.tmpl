@@ -18,13 +18,17 @@
                 themselves (chain-merged tickets only)
     .Upgrades - the version move(s) to apply, one entry per image
                 (.Ref .Repo .Current .Latest .Source .SourcePath .Managed .Direct)
+    .Disambiguator - set ONLY when another ticket in this run renders the same
+                summary, naming what makes this one different. Empty otherwise,
+                so putting it in a summary costs nothing on the tickets that
+                have nothing to be confused with.
 
   This is an EXAMPLE. Edit it to match how your teams actually work.
 */ -}}
 {{- if .Upgrade -}}
-Summary: Upgrade {{ .ServiceName }} to {{ .Upgrade.Latest }}
+Summary: Upgrade {{ .ServiceName }} to {{ .Upgrade.Latest }}{{ with .Disambiguator }} ({{ . }}){{ end }}
 {{- else -}}
-Summary: Upgrade {{ .ServiceName }} {{ .GroupNoun }} ({{ .ImageCount }}) to their latest versions
+Summary: Upgrade {{ .ServiceName }} {{ .GroupNoun }} ({{ .ImageCount }}) to their latest versions{{ with .Disambiguator }} ({{ . }}){{ end }}
 {{- end }}
 
 **Business objective/requirements**
