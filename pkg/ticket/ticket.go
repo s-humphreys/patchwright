@@ -188,13 +188,17 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 		eligible = append(eligible, f)
 	}
 
+	// Groups are kept beside their drafts: a summary collision is only visible
+	// once every draft exists, and resolving it means rendering those again.
+	var sources []rendered
+
 	// Group within a route, never across one. Two findings that share an upgrade
 	// still need two tickets when they belong to different teams' trackers: one
 	// issue cannot exist in two projects, and merging them would silently move
 	// one team's work onto another team's board.
 	for _, name := range p.routeOrder(eligible) {
 		for _, g := range mergeChains(group(byRoute(eligible, p.routes, name), p.campaign(name))) {
-			d, err := p.render(g, name)
+			d, err := p.render(g, name, "")
 			if err != nil {
 				return nil, err
 			}
@@ -214,9 +218,95 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 				continue
 			}
 			out.Drafts = append(out.Drafts, d)
+			sources = append(sources, rendered{group: g, route: name})
 		}
 	}
+	if err := p.disambiguate(out.Drafts, sources); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// rendered is what a draft was rendered from, kept so it can be rendered again
+// once the run knows which summaries collide.
+type rendered struct {
+	group ticketGroup
+	route string
+}
+
+// disambiguate re-renders the tickets whose summaries collide, telling each one
+// what makes it different from the others.
+//
+// A template renders one ticket and cannot see the rest of the run, so this is
+// the only place the collision is visible. It happens for real: one service whose
+// production deployment still sits on an older base than its development one is
+// two rebuilds, worded identically, and a board showing the same line twice reads
+// as a duplicate somebody should close.
+//
+// Tickets that collide with nothing are left exactly as they were rendered.
+func (p *Planner) disambiguate(drafts []Draft, sources []rendered) error {
+	bySummary := map[string][]int{}
+	for i, d := range drafts {
+		bySummary[d.Summary] = append(bySummary[d.Summary], i)
+	}
+	for _, idx := range bySummary {
+		if len(idx) < 2 {
+			continue
+		}
+		// The environments a ticket covers say what a reader plans around, so they
+		// are tried first. Where they do not separate the tickets - two rebuilds both
+		// covering production - the base being moved onto does, since that is what
+		// the grouping split them on.
+		for _, values := range [][]string{
+			disambiguatorsBy(drafts, sources, idx, byEnvironment),
+			disambiguatorsBy(drafts, sources, idx, byBaseImage),
+		} {
+			if !distinct(values) {
+				continue
+			}
+			for n, i := range idx {
+				d, err := p.render(sources[i].group, sources[i].route, values[n])
+				if err != nil {
+					return err
+				}
+				// Only the wording changes; everything else was decided by the group.
+				drafts[i].Summary, drafts[i].Description = d.Summary, d.Description
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func disambiguatorsBy(drafts []Draft, sources []rendered, idx []int, f func(TemplateData) string) []string {
+	out := make([]string, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, f(newTemplateData(sources[i].group, nil)))
+	}
+	return out
+}
+
+func byEnvironment(d TemplateData) string { return strings.Join(d.environmentSpan(), ", ") }
+
+func byBaseImage(d TemplateData) string {
+	if d.Upgrade == nil {
+		return ""
+	}
+	return d.Upgrade.Name
+}
+
+// distinct reports whether every value is non-empty and unlike the others. A
+// disambiguator that repeats, or that is missing on one ticket, has not
+// disambiguated anything and is better left off than printed.
+func distinct(values []string) bool {
+	seen := map[string]bool{}
+	for _, v := range values {
+		if v == "" || seen[v] {
+			return false
+		}
+		seen[v] = true
+	}
+	return true
 }
 
 // routeConfig resolves the settings for a route name, so a per-team threshold is
@@ -461,9 +551,11 @@ func collapseObjectRef(source string) string {
 	return parts[0] + "/" + parts[1]
 }
 
-// render executes the template for one ticket group.
-func (p *Planner) render(group ticketGroup, route string) (Draft, error) {
+// render executes the template for one ticket group. disambiguator is empty on
+// the first pass and set only for the tickets that turn out to share a summary.
+func (p *Planner) render(group ticketGroup, route, disambiguator string) (Draft, error) {
 	data := newTemplateData(group, p.envs)
+	data.Disambiguator = disambiguator
 	// A deep link back to the evidence. A ticket that says "14 criticals" is a
 	// claim; a link to the queue entry behind it is the claim plus its working.
 	//

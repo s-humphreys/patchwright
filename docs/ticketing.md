@@ -379,6 +379,31 @@ description. See
 [`config/templates/container-vuln.md.tmpl`](../config/templates/container-vuln.md.tmpl)
 for the available fields.
 
+### When two tickets say the same thing
+
+One service can produce two tickets that word themselves identically: a rebuild
+whose production deployment still sits on an older base than its development one
+is two separate pieces of work, and "Rebuild svc on a patched base image" twice
+reads as a duplicate somebody should close.
+
+A template renders one ticket and cannot see the others, so the planner does it:
+after rendering, any tickets sharing a summary are rendered again with
+`.Disambiguator` set — the environments that ticket covers, or the base it
+rebuilds onto where the environments do not separate them. It is empty for every
+other ticket, so a template can use it without lengthening the summaries that are
+already unique:
+
+```
+Summary: Rebuild {{ .ServiceName }} on a patched base image{{ with .Disambiguator }} ({{ . }}){{ end }}
+```
+
+```
+Rebuild svc on a patched base image (production)
+Rebuild svc on a patched base image (development, prelive)
+```
+
+A template that never mentions the field is unaffected.
+
 `jira.defaultTicketTemplate` is the wording every route uses. A route may name
 its own `template` instead, for a team that writes tickets differently:
 

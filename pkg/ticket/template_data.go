@@ -65,6 +65,17 @@ type TemplateData struct {
 	// tags and which one moves first.
 	Deployments []Deployment
 
+	// Disambiguator is set only when another ticket in the same run renders the
+	// same summary: the environments this one covers, or failing that the base it
+	// rebuilds onto. Empty otherwise, so a template that uses it stays short for
+	// the tickets that have nothing to be confused with.
+	//
+	// It exists because a template cannot see the other tickets in a run. Two
+	// deployments of one service on different bases - production still on 8, dev
+	// and prelive already on 10 - are two real pieces of work whose summaries are
+	// identical, and a board showing the same line twice reads as a duplicate.
+	Disambiguator string
+
 	// DashboardURL deep-links to this work item on the status page, or is empty when
 	// no dashboard URL is configured. A template must guard on it: a link to a
 	// hostname nobody can reach is worse than no link.
@@ -485,6 +496,21 @@ func (d TemplateData) BuildRepo() string {
 		return d.BuildRepos[0]
 	}
 	return ""
+}
+
+// environmentSpan is the distinct environments this ticket covers, in promotion
+// order. Empty when none were recognised.
+func (d TemplateData) environmentSpan() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, dep := range d.Deployments {
+		if dep.Environment == "" || seen[dep.Environment] {
+			continue
+		}
+		seen[dep.Environment] = true
+		out = append(out, dep.Environment)
+	}
+	return out
 }
 
 // Team is the single owning team when there is exactly one, else "". Used to build a
