@@ -38,8 +38,10 @@ func TestAggregateClassifiesByOpeningState(t *testing.T) {
 		{Key: "k1", Kind: KindResolved, At: day(2026, 8, 12), Payload: Payload{Opened: &openedKEV, Ticketed: true, DaysOpen: ptr(40), Evidence: "x"}},
 		{Key: "k1", Kind: KindTicketClosed, At: day(2026, 8, 12), Payload: Payload{Ticket: "DVOP-1", EvidenceAtClose: ptr(true)}},
 		{Key: "k2", Kind: KindLapsed, At: day(2026, 8, 20), Payload: Payload{Opened: &openedPlain, DaysOpen: ptr(47), Reason: "acr.io/x is no longer reported"}},
-		// September: a ticket closed by hand with the finding still open.
+		// September: a ticket closed by hand with the finding still open, and one
+		// patchwright closed because nothing was running the image.
 		{Key: "k3", Kind: KindTicketClosed, At: day(2026, 9, 2), Payload: Payload{Ticket: "DVOP-2", EvidenceAtClose: ptr(false)}},
+		{Key: "k4", Kind: KindTicketClosed, At: day(2026, 9, 3), Payload: Payload{Ticket: "DVOP-4", EvidenceAtClose: ptr(false), Reason: "not-running"}},
 		// Outside the range: ignored.
 		{Key: "k9", Kind: KindOpened, At: day(2026, 6, 2), Payload: Payload{Snapshot: &openedPlain}},
 	}
@@ -85,7 +87,7 @@ func TestAggregateClassifiesByOpeningState(t *testing.T) {
 		t.Errorf("august tickets = %+v", aug)
 	}
 
-	if sep.TicketsClosed != 1 || sep.TicketsClosedFindingOpen != 1 || sep.Opened != 0 {
+	if sep.TicketsClosed != 2 || sep.TicketsClosedFindingOpen != 2 || sep.Opened != 0 || sep.TicketsClosedByTool["not-running"] != 1 {
 		t.Errorf("september = %+v", sep)
 	}
 

@@ -572,7 +572,17 @@ func (j *Jira) Close(ctx context.Context, req CloseRequest) error {
 	if req.Unworked {
 		unworked = cfg.CloseTransitionUnworked
 	}
-	id, name, usedUnworked, err := j.doneTransition(ctx, key, cfg.CloseTransition, unworked)
+	want, priorityOverride := cfg.CloseTransition, cfg.ClosePriorityUnworked
+	if req.NoLongerActionable {
+		// A not-done closure has exactly one acceptable transition, the configured
+		// one; falling back to a done transition would record work that never
+		// happened as complete.
+		if cfg.CloseNoLongerActionable == nil {
+			return fmt.Errorf("close %s as not actionable: closeNoLongerActionable is not configured for this project", key)
+		}
+		want, unworked, priorityOverride = cfg.CloseNoLongerActionable.Transition, "", cfg.CloseNoLongerActionable.Priority
+	}
+	id, name, usedUnworked, err := j.doneTransition(ctx, key, want, unworked)
 	if err != nil {
 		return err
 	}
@@ -589,8 +599,8 @@ func (j *Jira) Close(ctx context.Context, req CloseRequest) error {
 	// is part of the same statement. Only on this path: work somebody completed keeps
 	// the priority it was triaged at.
 	priority := ""
-	if usedUnworked {
-		priority = cfg.ClosePriorityUnworked
+	if usedUnworked || req.NoLongerActionable {
+		priority = priorityOverride
 	}
 	if priority != "" {
 		body["fields"] = map[string]any{"priority": map[string]string{"name": priority}}

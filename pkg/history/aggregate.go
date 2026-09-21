@@ -85,6 +85,10 @@ type Movement struct {
 	// TicketsClosedFindingOpen is a ticket closed while patchwright had no evidence
 	// the work was done: a human closing a ticket on an image that still runs.
 	TicketsClosedFindingOpen int `json:"tickets_closed_finding_open"`
+	// TicketsClosedByTool splits the tickets patchwright itself closed by reason
+	// (upgrade-landed, not-running, no-longer-actionable). The remainder of
+	// TicketsClosed were closed by people.
+	TicketsClosedByTool map[string]int `json:"tickets_closed_by_tool,omitempty"`
 
 	// EPSSDecayed is items that left the EPSS bucket because the score fell while
 	// they were open. Not remediation, and not hidden.
@@ -281,6 +285,12 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 			m.TicketsClosed++
 			if e.Payload.EvidenceAtClose != nil && !*e.Payload.EvidenceAtClose {
 				m.TicketsClosedFindingOpen++
+			}
+			if e.Payload.Reason != "" {
+				if m.TicketsClosedByTool == nil {
+					m.TicketsClosedByTool = map[string]int{}
+				}
+				m.TicketsClosedByTool[e.Payload.Reason]++
 			}
 		}
 	}

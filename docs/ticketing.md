@@ -142,7 +142,7 @@ per-instance and a name that does not exist fails ticket creation.
 | `create` | no open ticket covers any of the change's images |
 | `extend` | a ticket covers part of the change; the rest are added, with a comment |
 | `update` | the target moved on and nobody has picked the ticket up |
-| `close` | the work is provably finished (needs `autoClose`) |
+| `close` | the work is provably finished (needs `autoClose`), or nobody picked the ticket up and its work stopped mattering (needs `closeNoLongerActionable`) |
 | `note-stale` | the target moved on, but someone has picked the ticket up |
 | `note-done` | the finding no longer asks for anything, so the work appears done |
 | `hold` | nothing can be judged yet, because the data needed is missing. **Writes nothing** |
@@ -318,6 +318,45 @@ and fails loudly, because recording their work as not-done would misrepresent it
 `closeTransition` wins wherever it is available, since "done" is the truer statement
 about finished work. The comment says which case it is, so a closed-as-not-done ticket
 does not read as a decision to skip the work.
+
+**`closeNoLongerActionable` closes tickets whose work stopped mattering.** Distinct
+from `autoClose`, which needs proof the upgrade landed. This covers the two ways a
+ticket's images leave the queue without that proof while still being assessed:
+
+- **Not running.** Every workload running the image has gone from every cluster,
+  and liveness was reconciled for all of them. The vulnerabilities are still in the
+  image; nothing is running it. If it is deployed again a new ticket is raised,
+  since closed tickets never suppress a new one.
+- **No longer actionable.** Something is still live and no policy rule asks for
+  anything on it any more. The CVEs that raised the ticket are gone from what runs,
+  even if a newer version still exists.
+
+```yaml
+jira:
+  closeNoLongerActionable:
+    transition: "WON'T BE DONE"   # required: a done-category status that means not done
+    priority: Lowest              # optional, as closePriorityUnworked
+  routes:
+    - name: data-platform
+      # ...
+      closeNoLongerActionable:
+        transition: Not To Do     # this board's word for it
+```
+
+It applies **only to tickets nobody has picked up**: unassigned and still in a new
+status category. A ticket somebody is working gets the same reasoning as a comment
+and the decision stays theirs. The comment on a closed ticket states which case it
+was and why, and the plan's `why` says the same thing. The transition is required
+rather than guessed because "Done" and "Won't Do" say opposite things about the same
+work, and this is the second one.
+
+What it will not do, whatever is configured: close a ticket whose image is still
+actionable in any environment (that ticket is in a draft, not on this path); close
+one dropped by `minPriority` or an exclusion (held); close one whose available
+version could not be resolved (held); or close one whose image has left the
+assessment entirely (a comment, because absence is not evidence). Findings that only
+a fallback scanner assessed are findings like any other, so a rule they trigger keeps
+the ticket open.
 
 `closePriorityUnworked` clears the priority on that path:
 
