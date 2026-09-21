@@ -543,15 +543,26 @@ the defaults are coarse and meant to be overridden.
 
 ## History
 
-[History](history.md) needs a PostgreSQL database. Put the connection string in the
-credentials Secret as `PATCHWRIGHT_HISTORY_DSN` and enable it with a retention:
+[History](history.md) needs a PostgreSQL database. Describe the connection in values
+and point at the Secret key holding the password:
 
 ```yaml
 history:
   enabled: true
   retention: 400d
-  auth: azure          # Azure Database for PostgreSQL with Entra; else password
+  connection:
+    host: db.example.internal
+    database: patchwright
+    user: patchwright
+  passwordSecretRef:
+    name: patchwright-history   # akv2k8s output, or any Secret
+    key: password
 ```
+
+The chart renders `PATCHWRIGHT_HISTORY_DSN` from the connection and injects the
+password as `PATCHWRIGHT_HISTORY_PASSWORD`, so the HelmRelease shows the host and
+nothing else. Alternatively leave `connection.host` empty and put a complete DSN in
+the credentials Secret yourself. With `auth: azure` no password is used at all.
 
 `enabled: false` with the key present in the Secret is history **off**: the chart
 renders nothing for it and the binary is not told. `enabled: true` with no retention

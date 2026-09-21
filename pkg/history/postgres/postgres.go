@@ -52,6 +52,10 @@ const azureScope = "https://ossrdbms-aad.database.windows.net/.default"
 type Options struct {
 	DSN  string
 	Auth Auth
+	// Password, when set, replaces whatever the DSN carries. It exists so a
+	// deployment can keep the connection string in plain configuration and the
+	// password in a Secret, rather than URL-escaping one into the other.
+	Password string
 	// Timeout bounds every query. Zero means ten seconds.
 	Timeout time.Duration
 }
@@ -73,6 +77,9 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	}
 	switch opts.Auth {
 	case "", AuthPassword:
+		if opts.Password != "" {
+			cfg.ConnConfig.Password = opts.Password
+		}
 	case AuthAzure:
 		cred, err := azidentity.NewDefaultAzureCredential(nil)
 		if err != nil {

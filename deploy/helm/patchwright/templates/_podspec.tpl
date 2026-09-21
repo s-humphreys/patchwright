@@ -119,8 +119,22 @@ so they stay in sync. Callers pass a dict:
     {{- end }}
   {{- $oidc := .root.Values.auth.oidc }}
   {{- $jira := .root.Values.ticketing.jira }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret $oidc.clientSecretRef.name $oidc.sessionKeyRef.name $jira.baseURL $jira.cloudID }}
+  {{- $history := .root.Values.history }}
+  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret $oidc.clientSecretRef.name $oidc.sessionKeyRef.name $jira.baseURL $jira.cloudID (and $history.enabled $history.connection.host) }}
   env:
+    {{- if and $history.enabled $history.connection.host }}
+    # Not a credential: the password comes separately, so this can sit in values and
+    # a reader of the HelmRelease learns the host and nothing else.
+    - name: PATCHWRIGHT_HISTORY_DSN
+      value: {{ printf "postgres://%s@%s:%v/%s?sslmode=%s" $history.connection.user $history.connection.host $history.connection.port $history.connection.database $history.connection.sslmode | quote }}
+    {{- if and $history.passwordSecretRef.name (ne $history.auth "azure") }}
+    - name: PATCHWRIGHT_HISTORY_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: {{ $history.passwordSecretRef.name }}
+          key: {{ $history.passwordSecretRef.key | default "password" }}
+    {{- end }}
+    {{- end }}
     {{- if $jira.baseURL }}
     # Not a credential: it names the site and builds the issue links the status
     # page shows, so it belongs in values rather than in the Secret. Under an API

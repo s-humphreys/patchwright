@@ -454,6 +454,21 @@ history:
   # connection for Azure Database for PostgreSQL; the DSN then names a user and no
   # password, and the pod's workload identity must be a database user).
   auth: password
+  # Where the database is. Set host and the chart renders PATCHWRIGHT_HISTORY_DSN
+  # from these; leave it empty to supply the DSN yourself in credentialsSecretName.
+  connection:
+    host: ""
+    port: 5432
+    database: patchwright
+    user: patchwright
+    sslmode: require
+  # The Secret key holding the password, injected as PATCHWRIGHT_HISTORY_PASSWORD and
+  # applied over the DSN. Referenced rather than placed in values for the same reason
+  # the OIDC client secret is: values are readable by anyone who can read the
+  # HelmRelease. Unused with auth: azure.
+  passwordSecretRef:
+    name: ""
+    key: password
 
 registryAuth:
   # Credentials for Trivy to pull PRIVATE images. Use your cloud's workload

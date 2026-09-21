@@ -24,7 +24,10 @@ history:
 ```
 
 The connection string is the credential, so it comes from the environment and its
-presence is what switches history on. Retention is required and deliberately not
+presence is what switches history on. Where the password is kept apart from the
+connection details, set `PATCHWRIGHT_HISTORY_PASSWORD` as well: it replaces whatever
+the DSN carries, so the DSN can be plain configuration and only the password a
+secret, with nothing URL-escaped into anything. Retention is required and deliberately not
 defaulted: the record is a history of which services carried exploitable
 vulnerabilities and for how long, and how long to keep that is a decision for
 whoever owns the organisation's security records, not for a config file to inherit.
