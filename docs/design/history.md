@@ -162,6 +162,14 @@ events        id, item_key, assessment_id, kind, at, payload jsonb
 report needs is a query over `events` by month; a rollup table is not required at
 this volume and is not built until a query is shown to need it.
 
+The assessment row grew during the build: severity totals, distinct CVE counts, the
+page's summary as given, and the full work-item list as JSON. The last is a step
+towards the snapshots this note argues against, taken deliberately as a hedge. The
+record cannot be backfilled, the storage is a shared database where a few hundred
+items an hour is nothing, and the question that arrives in a month is more likely to
+be answerable from the items than from the events. If it is never read it can be
+dropped; if it had not been written it could not be recovered.
+
 Rows hold image references, CVE identifiers, team names and versions. No personal
 data, unless a ticket assignee is ever stored, which this design does not do.
 

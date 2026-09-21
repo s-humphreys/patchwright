@@ -106,6 +106,15 @@ func (m *memStore) Assessments(_ context.Context, since, until time.Time) ([]his
 	return out, nil
 }
 
+func (m *memStore) AssessmentItems(_ context.Context, id int64) ([]history.Snapshot, error) {
+	for _, a := range m.assessments {
+		if a.ID == id {
+			return a.Items, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *memStore) Item(_ context.Context, key string) (*history.ItemHistory, error) {
 	out := &history.ItemHistory{Key: key}
 	for _, st := range m.items {
@@ -198,8 +207,8 @@ func TestHistoryRecordsAcrossRefreshes(t *testing.T) {
 	if k := store.kinds(); k[history.KindOpened] != 2 || len(store.assessments) != 1 {
 		t.Fatalf("first refresh should open two items and record one assessment: %v", k)
 	}
-	if store.assessments[0].Items != 2 || store.assessments[0].Risk.Items != 2 {
-		t.Errorf("assessment row = %+v", store.assessments[0])
+	if a := store.assessments[0]; a.ItemCount != 2 || a.Risk.Items != 2 || len(a.Items) != 2 || a.Counts["critical"] != 2 || a.Summary == nil {
+		t.Errorf("assessment row = %+v", a)
 	}
 
 	// The orders upgrade lands; billing disappears from the scan entirely.

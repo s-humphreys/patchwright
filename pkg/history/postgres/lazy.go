@@ -91,6 +91,14 @@ func (l *Lazy) Assessments(ctx context.Context, since, until time.Time) ([]histo
 	return s.Assessments(ctx, since, until)
 }
 
+func (l *Lazy) AssessmentItems(ctx context.Context, assessmentID int64) ([]history.Snapshot, error) {
+	s, err := l.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.AssessmentItems(ctx, assessmentID)
+}
+
 func (l *Lazy) Item(ctx context.Context, key string) (*history.ItemHistory, error) {
 	s, err := l.get(ctx)
 	if err != nil {

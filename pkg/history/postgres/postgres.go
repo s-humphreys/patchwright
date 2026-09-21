@@ -214,11 +214,25 @@ func (s *Store) Record(ctx context.Context, a history.Assessment, events []histo
 	risk, _ := json.Marshal(a.Risk)
 	byClass, _ := json.Marshal(orEmpty(a.ByClass))
 	byTeam, _ := json.Marshal(orEmpty(a.ByTeam))
+	counts, _ := json.Marshal(orEmptyInts(a.Counts))
+	actionableCounts, _ := json.Marshal(orEmptyInts(a.ActionableCounts))
+	summary := []byte("{}")
+	if a.Summary != nil {
+		if b, err := json.Marshal(a.Summary); err == nil {
+			summary = b
+		}
+	}
+	var snapshot []byte
+	if a.Items != nil {
+		snapshot, _ = json.Marshal(a.Items)
+	}
 	var id int64
 	if err := tx.QueryRow(ctx, `INSERT INTO assessments
-		(started_at, finished_at, findings, actionable, items, risk, by_class, by_team)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-		a.StartedAt, a.FinishedAt, a.Findings, a.Actionable, a.Items, risk, byClass, byTeam).Scan(&id); err != nil {
+		(started_at, finished_at, findings, actionable, items, risk, by_class, by_team,
+		 counts, actionable_counts, distinct_cves, distinct_kev, distinct_epss_high, summary, snapshot)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+		a.StartedAt, a.FinishedAt, a.Findings, a.Actionable, a.ItemCount, risk, byClass, byTeam,
+		counts, actionableCounts, a.DistinctCVEs, a.DistinctKEV, a.DistinctEPSSHigh, summary, snapshot).Scan(&id); err != nil {
 		return 0, fmt.Errorf("history: insert assessment: %w", err)
 	}
 	if err := applyEvents(ctx, tx, id, events); err != nil {
@@ -233,6 +247,13 @@ func (s *Store) Record(ctx context.Context, a history.Assessment, events []histo
 func orEmpty(m map[string]history.RiskStats) map[string]history.RiskStats {
 	if m == nil {
 		return map[string]history.RiskStats{}
+	}
+	return m
+}
+
+func orEmptyInts(m map[string]int) map[string]int {
+	if m == nil {
+		return map[string]int{}
 	}
 	return m
 }
@@ -350,7 +371,8 @@ func scanEvents(rows pgx.Rows) ([]history.Event, error) {
 func (s *Store) Assessments(ctx context.Context, since, until time.Time) ([]history.Assessment, error) {
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
-	rows, err := s.pool.Query(ctx, `SELECT id, started_at, finished_at, findings, actionable, items, risk, by_class, by_team
+	rows, err := s.pool.Query(ctx, `SELECT id, started_at, finished_at, findings, actionable, items, risk, by_class, by_team,
+		counts, actionable_counts, distinct_cves, distinct_kev, distinct_epss_high, summary
 		FROM assessments WHERE finished_at >= $1 AND finished_at < $2 ORDER BY finished_at, id`, since, until)
 	if err != nil {
 		return nil, fmt.Errorf("history: assessments: %w", err)
@@ -359,8 +381,9 @@ func (s *Store) Assessments(ctx context.Context, since, until time.Time) ([]hist
 	var out []history.Assessment
 	for rows.Next() {
 		var a history.Assessment
-		var risk, byClass, byTeam []byte
-		if err := rows.Scan(&a.ID, &a.StartedAt, &a.FinishedAt, &a.Findings, &a.Actionable, &a.Items, &risk, &byClass, &byTeam); err != nil {
+		var risk, byClass, byTeam, counts, actionableCounts, summary []byte
+		if err := rows.Scan(&a.ID, &a.StartedAt, &a.FinishedAt, &a.Findings, &a.Actionable, &a.ItemCount, &risk, &byClass, &byTeam,
+			&counts, &actionableCounts, &a.DistinctCVEs, &a.DistinctKEV, &a.DistinctEPSSHigh, &summary); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(risk, &a.Risk); err != nil {
@@ -368,9 +391,35 @@ func (s *Store) Assessments(ctx context.Context, since, until time.Time) ([]hist
 		}
 		_ = json.Unmarshal(byClass, &a.ByClass)
 		_ = json.Unmarshal(byTeam, &a.ByTeam)
+		_ = json.Unmarshal(counts, &a.Counts)
+		_ = json.Unmarshal(actionableCounts, &a.ActionableCounts)
+		if len(summary) > 0 && string(summary) != "{}" {
+			a.Summary = json.RawMessage(summary)
+		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// AssessmentItems returns the work items recorded for one run.
+func (s *Store) AssessmentItems(ctx context.Context, assessmentID int64) ([]history.Snapshot, error) {
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	var raw []byte
+	if err := s.pool.QueryRow(ctx, `SELECT snapshot FROM assessments WHERE id = $1`, assessmentID).Scan(&raw); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("history: assessment items: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var out []history.Snapshot
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("history: assessment %d items: %w", assessmentID, err)
+	}
+	return out, nil
 }
 
 // Item returns one key's record, or nil when it was never seen.

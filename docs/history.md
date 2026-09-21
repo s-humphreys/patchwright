@@ -66,9 +66,23 @@ one as a lapse.
 Resolved and lapsed are never summed. A time-to-remediate that counted coverage loss
 as remediation would improve fastest when the scanner broke.
 
-Each assessment also records the estate's risk: the sum, median, p90 and maximum of
-the work items' risk scores, and the same per class and per team. That is the
-direction line on the page.
+Each item's snapshot carries what a later question is likely to need: its rule,
+priority and signals; its risk score and worst counts per severity; where it runs
+(accounts and namespaces, kept raw so production can be told apart by whatever names
+the estate uses); its exposure; the upgrade's kind and target; the open tickets
+covering it; and every distinct CVE it carries with severity, CVSS, EPSS, KEV and
+fix availability. The `resolved` and `lapsed` events carry both the opening and the
+closing snapshot, so "which CVEs did we fix" is on the event itself. CVEs arriving or
+leaving while an item stays open are a `changed` event.
+
+Each assessment also records the estate: severity totals over all unsuppressed
+findings and over the actionable ones, distinct CVE, KEV and high-EPSS counts, the
+risk score sum, median, p90 and maximum of the work items (and the same per class and
+per team), the status page's headline summary as it stood, and the full work-item
+list. The last two are deliberately more than the report reads today. Storage is
+cheap and the record cannot be backfilled, so anything the page can say now can be
+asked about historically, and a question nobody has thought of yet can be answered by
+re-deriving from the items rather than from the events.
 
 ### Classified by the opening state
 

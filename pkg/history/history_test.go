@@ -21,6 +21,12 @@ func view(image, class, team, priority string) sink.FindingView {
 		RemediationChecked: true,
 		Upgrade:            &sink.UpgradeView{Kind: "helm", Name: "nginx", Current: "1.0", Latest: "1.2", Available: true, Resolved: true},
 		Liveness:           &sink.LivenessView{Live: true},
+		Exposure:           "public",
+		Dimensions:         map[string][]string{"account": {"Production UK"}, "namespace": {"orders"}},
+		Vulns: []sink.VulnView{
+			{ID: "CVE-2026-1", Severity: "critical", KEV: true, EPSS: 0.7},
+			{ID: "CVE-2026-2", Severity: "high", FixAvailable: true},
+		},
 	}
 }
 
@@ -60,8 +66,48 @@ func TestSnapshotsGroupByTargetNameNotVersion(t *testing.T) {
 	if !reflect.DeepEqual(orders.Tickets, []string{"DVOP-1"}) || !orders.Ticketed() {
 		t.Errorf("tickets = %v", orders.Tickets)
 	}
-	if len(orders.Images) != 2 || orders.Critical != 2 {
-		t.Errorf("images/counts wrong: %+v", orders)
+	if len(orders.Images) != 2 || orders.Critical != 2 || orders.Counts["high"] != 5 || orders.Kind != "helm" {
+		t.Errorf("images/counts/kind wrong: %+v", orders)
+	}
+	if orders.Exposure != "public" || !reflect.DeepEqual(orders.Accounts, []string{"Production UK"}) || !reflect.DeepEqual(orders.Namespaces, []string{"orders"}) {
+		t.Errorf("placement wrong: %+v", orders)
+	}
+	if len(orders.CVEs) != 2 || orders.CVEs[0].ID != "CVE-2026-1" || !orders.CVEs[0].KEV || orders.CVEs[0].EPSS != 0.7 || !orders.CVEs[1].FixAvailable {
+		t.Errorf("cves should be the union with the worst reading: %+v", orders.CVEs)
+	}
+}
+
+func TestChangedRecordsCVEMovement(t *testing.T) {
+	v := view("acr.io/app:1", "eng", "orders", "high")
+	prev := Snapshots([]sink.FindingView{v}, nil)[0]
+	v.Vulns = []sink.VulnView{{ID: "CVE-2026-2", Severity: "high"}, {ID: "CVE-2026-3", Severity: "critical"}}
+	cur := Snapshots([]sink.FindingView{v}, nil)
+	events := Diff(Input{Open: []State{openState(1, prev, t0)}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
+	if len(events) != 1 || events[0].Kind != KindChanged {
+		t.Fatalf("want a changed event, got %+v", events)
+	}
+	p := events[0].Payload
+	if !reflect.DeepEqual(p.CVEsAdded, []string{"CVE-2026-3"}) || !reflect.DeepEqual(p.CVEsRemoved, []string{"CVE-2026-1"}) {
+		t.Errorf("cve movement = +%v -%v", p.CVEsAdded, p.CVEsRemoved)
+	}
+}
+
+func TestSummariseCountsTheEstate(t *testing.T) {
+	a := view("acr.io/app:1", "eng", "orders", "high")
+	b := view("acr.io/lib:1", "eng", "billing", "low")
+	b.Actionable = false
+	c := view("acr.io/sup:1", "eng", "billing", "low")
+	c.Suppressed = true
+	items := Snapshots([]sink.FindingView{a, b, c}, nil)
+	got := Summarise(t0, t0.Add(time.Minute), []sink.FindingView{a, b, c}, items, map[string]int{"findings": 3})
+	if got.Findings != 2 || got.Actionable != 1 || got.ItemCount != 1 {
+		t.Errorf("headline = %+v", got)
+	}
+	if got.Counts["critical"] != 4 || got.ActionableCounts["critical"] != 2 {
+		t.Errorf("counts = %v actionable %v (suppressed excluded, summed not maxed)", got.Counts, got.ActionableCounts)
+	}
+	if got.DistinctCVEs != 2 || got.DistinctKEV != 1 || got.DistinctEPSSHigh != 1 || got.Summary == nil || len(got.Items) != 1 {
+		t.Errorf("detail = %+v", got)
 	}
 }
 

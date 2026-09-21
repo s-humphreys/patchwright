@@ -65,7 +65,7 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	events := history.Diff(history.Input{
 		Open: open, Current: current, Views: snap.views, OpenTickets: tickets, Now: snap.generatedAt,
 	})
-	a := history.Summarise(started, snap.generatedAt, snap.summary.Findings, snap.summary.Actionable, current)
+	a := history.Summarise(started, snap.generatedAt, snap.views, current, snap.summary)
 	id, err := rec.store.Record(ctx, a, events)
 	if err != nil {
 		rec.fail(ctx, "record assessment", err)

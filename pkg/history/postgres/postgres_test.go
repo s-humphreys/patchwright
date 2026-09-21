@@ -51,7 +51,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 	var v int
-	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 1 {
+	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 2 {
 		t.Errorf("schema version = %d (%v)", v, err)
 	}
 }
@@ -63,8 +63,9 @@ func TestLifecycleRoundTrip(t *testing.T) {
 
 	a := snap("eng|orders|app|svc", "app", "orders")
 	b := snap("eng|billing|lib|svc", "lib", "billing", "DVOP-1")
-	id1, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0.Add(time.Minute), Items: 2, Risk: history.RiskStats{Items: 2, Sum: 1000},
-		ByClass: map[string]history.RiskStats{"eng": {Items: 2}}},
+	id1, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0.Add(time.Minute), ItemCount: 2, Risk: history.RiskStats{Items: 2, Sum: 1000},
+		ByClass: map[string]history.RiskStats{"eng": {Items: 2}},
+		Counts:  map[string]int{"critical": 7}, DistinctKEV: 3, Summary: map[string]any{"findings": 905}, Items: []history.Snapshot{a, b}},
 		[]history.Event{
 			{Key: a.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &a}},
 			{Key: b.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &b}},
@@ -95,7 +96,7 @@ func TestLifecycleRoundTrip(t *testing.T) {
 	a2.Priority = "urgent"
 	opened := open[0].Opened
 	days := 20
-	_, err = s.Record(ctx, history.Assessment{StartedAt: t1, FinishedAt: t1.Add(time.Minute), Items: 1, Risk: history.RiskStats{Items: 1, Sum: 500}},
+	_, err = s.Record(ctx, history.Assessment{StartedAt: t1, FinishedAt: t1.Add(time.Minute), ItemCount: 1, Risk: history.RiskStats{Items: 1, Sum: 500}},
 		[]history.Event{
 			{ItemID: open[1].ID, Key: a.Key, Kind: history.KindChanged, At: t1, Payload: history.Payload{Snapshot: &a2, Changes: []string{"priority: high -> urgent"}}},
 			{ItemID: open[0].ID, Key: b.Key, Kind: history.KindResolved, At: t1, Payload: history.Payload{Opened: &opened, OpenedAt: &t0, DaysOpen: &days, Ticketed: true, Evidence: "lib is on 1.1."}},
@@ -128,6 +129,15 @@ func TestLifecycleRoundTrip(t *testing.T) {
 	as, err := s.Assessments(ctx, t0, t1.Add(time.Hour))
 	if err != nil || len(as) != 2 || as[0].Risk.Sum != 1000 || as[0].ByClass["eng"].Items != 2 {
 		t.Errorf("assessments = %+v (%v)", as, err)
+	}
+	if as[0].Counts["critical"] != 7 || as[0].DistinctKEV != 3 || as[0].Summary == nil || as[0].Items != nil {
+		t.Errorf("assessment detail = counts %v kev %d summary %v items %v (items are read separately)", as[0].Counts, as[0].DistinctKEV, as[0].Summary, as[0].Items)
+	}
+	if items, err := s.AssessmentItems(ctx, id1); err != nil || len(items) != 2 || items[0].Key != a.Key {
+		t.Errorf("assessment items = %+v (%v)", items, err)
+	}
+	if items, err := s.AssessmentItems(ctx, 9999); err != nil || items != nil {
+		t.Errorf("unknown assessment items should be nil, nil: %+v %v", items, err)
 	}
 	first, ok, err := s.First(ctx)
 	if err != nil || !ok || !first.Equal(t0.Add(time.Minute)) {
