@@ -1,8 +1,15 @@
 # Design: history, and reporting movement
 
-Status: **proposed, not built.** Supersedes the storage section of
-[persistence.md](persistence.md); the problem statement and the evidence rule there
-stand.
+Status: **phase 1 built** (the event log, the store, the API and retention; see
+[docs/history.md](../history.md)). Phases 2 and 3 are not. Supersedes the storage
+section of [persistence.md](persistence.md); the problem statement and the evidence
+rule there stand.
+
+One decision moved during the build: the item key drops the target **version** and
+keeps only the target's name. The queue key includes the version so that two moves
+are two rows; a history keyed that way would have closed and reopened an item every
+time upstream cut a release, and reported each as a lapse. The version is carried in
+the snapshot and a change to it is a `changed` event.
 
 ## The ask
 

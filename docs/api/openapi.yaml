@@ -440,6 +440,79 @@ paths:
             No assessment has completed yet. Deliberately not an empty report, which
             would read as an estate no rule found anything in.
 
+  /api/v1/history:
+    get:
+      tags: [operations]
+      summary: How the queue moved over a period, and the estate's risk direction
+      description: |
+        The record of movement between assessments, by calendar month (or ISO week):
+        what opened, what was resolved WITH evidence, what lapsed without it, and the
+        estate's risk score at the end of each period. Off unless a history store is
+        configured, in which case `history.enabled` is false and the caveat says so.
+
+        Every count is in work items (a team, a service and what it upgrades to),
+        classified by how the item looked when the record first saw it. A resolution
+        on an item whose EPSS score decayed while it was open still counts under
+        `epss-high`, because that is what it was when we found it; the decay itself
+        is reported separately as `epss_decayed`.
+
+        `resolved_ticketed` is a subset of `resolved`, never a separate total: the
+        difference is work that landed by another route. `lapsed` is never
+        remediation. `tickets_closed_finding_open` is a ticket somebody closed while
+        the image still ran. See docs/history.md.
+      parameters:
+        - name: since
+          in: query
+          description: Start of the range, as a number of days back (`90d`, the default) or RFC 3339.
+          schema: { type: string }
+        - name: until
+          in: query
+          description: End of the range, RFC 3339. Default now.
+          schema: { type: string, format: date-time }
+        - name: bucket
+          in: query
+          description: Period to group by.
+          schema: { type: string, enum: [month, week], default: month }
+      responses:
+        "200":
+          description: "The report, or an `enabled: false` report when history is off"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  status: { $ref: "#/components/schemas/HistoryStatus" }
+                  history: { $ref: "#/components/schemas/HistoryReport" }
+        "400": { description: A parameter could not be parsed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { description: The history store could not be read }
+
+  /api/v1/history/item:
+    get:
+      tags: [operations]
+      summary: One work item's record, every event oldest first
+      parameters:
+        - name: key
+          in: query
+          required: true
+          description: The work item key, as `/api/v1/history` and the queue report it.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The item's spans and events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  item: { $ref: "#/components/schemas/HistoryItem" }
+        "400": { description: key is missing }
+        "404": { description: History is not enabled, or the key was never seen }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { description: The history store could not be read }
+
   /api/v1/exploitability:
     get:
       tags: [operations]
@@ -689,6 +762,118 @@ components:
               error: { type: string }
 
   schemas:
+    HistoryStatus:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        last_recorded: { type: string, format: date-time }
+        last_error: { type: string, description: The most recent store failure; the assessment was unaffected }
+        retention_days: { type: integer }
+    HistoryReport:
+      type: object
+      description: Every count is in work items, classified by the item's OPENING state.
+      properties:
+        schema_version: { type: integer }
+        enabled: { type: boolean }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        bucket: { type: string, enum: [month, week] }
+        first_recorded: { type: string, format: date-time, description: When the record begins. Periods before it are empty because nothing was watching }
+        assessments: { type: integer }
+        retention_days: { type: integer }
+        risk:
+          type: array
+          items: { $ref: "#/components/schemas/HistoryRiskPoint" }
+        movement:
+          type: array
+          items: { $ref: "#/components/schemas/HistoryMovement" }
+        open:
+          type: object
+          properties:
+            items: { type: integer }
+            ticketed: { type: integer }
+            by_signal: { type: object, additionalProperties: { type: integer } }
+            age_days: { type: object, additionalProperties: { type: integer } }
+        caveats: { type: array, items: { type: string } }
+    HistoryRiskStats:
+      type: object
+      properties:
+        items: { type: integer }
+        sum: { type: number }
+        p50: { type: number }
+        p90: { type: number }
+        max: { type: number }
+        urgent: { type: integer }
+        known_exploited: { type: integer }
+    HistoryRiskPoint:
+      type: object
+      description: The estate at the LAST assessment of the period.
+      properties:
+        period: { type: string }
+        at: { type: string, format: date-time }
+        assessments: { type: integer }
+        findings: { type: integer }
+        actionable: { type: integer }
+        risk: { $ref: "#/components/schemas/HistoryRiskStats" }
+        by_class: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryRiskStats" } }
+        by_team: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryRiskStats" } }
+    HistoryCounts:
+      type: object
+      properties:
+        opened: { type: integer }
+        resolved: { type: integer }
+        lapsed: { type: integer }
+        resolved_ticketed: { type: integer, description: The ticketed subset of resolved }
+    HistoryMovement:
+      type: object
+      properties:
+        period: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        opened: { type: integer }
+        resolved: { type: integer, description: Left the queue with evidence the work is done }
+        lapsed: { type: integer, description: Left the queue without evidence. Never remediation }
+        reassigned: { type: integer }
+        resolved_ticketed: { type: integer, description: Subset of resolved }
+        resolved_unticketed: { type: integer, description: Resolved less resolved_ticketed; work that landed by another route }
+        tickets_raised: { type: integer }
+        tickets_closed: { type: integer }
+        tickets_closed_finding_open: { type: integer, description: Closed while patchwright had no evidence the work was done }
+        epss_decayed: { type: integer, description: Left the EPSS bucket by score decay, not by a patch }
+        became_known_exploited: { type: integer }
+        median_days_to_resolve: { type: number, description: Over resolved items only }
+        lapse_reasons: { type: object, additionalProperties: { type: integer } }
+        by_signal: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryCounts" } }
+        by_rule: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryCounts" } }
+        by_priority: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryCounts" } }
+        by_team: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryCounts" } }
+    HistoryItem:
+      type: object
+      properties:
+        key: { type: string }
+        items:
+          type: array
+          description: One entry per open-to-close span of the key
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              key: { type: string }
+              opened_at: { type: string, format: date-time }
+              closed_at: { type: string, format: date-time }
+              closed_kind: { type: string, enum: [resolved, lapsed] }
+              opened: { type: object, description: The item as first seen }
+              current: { type: object, description: The item as last seen }
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              key: { type: string }
+              kind: { type: string, enum: [opened, changed, reassigned, ticket_raised, ticket_closed, resolved, lapsed] }
+              at: { type: string, format: date-time }
+              payload: { type: object }
     AssessmentMeta:
       type: object
       required: [generated_at, running]

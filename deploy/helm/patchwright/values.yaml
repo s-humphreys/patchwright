@@ -434,6 +434,27 @@ age:
   source: ""                 # e.g. "rapid7"
   options: []                # inherited from the provider for a same-named source
 
+# History: the record of how the queue moved between assessments, served from the
+# page and /api/v1/history without a metrics stack in between. Needs a PostgreSQL
+# database; see docs/history.md and docs/design/history.md.
+#
+# The connection string is the credential, so it is read from credentialsSecretName
+# as PATCHWRIGHT_HISTORY_DSN and its presence is what switches history on. Nothing
+# here is rendered unless enabled is true, so the Secret carrying the key with
+# enabled false is history off.
+history:
+  enabled: false
+  # How long events and closed items are kept, as days ("400d") or a Go duration.
+  # Required when enabled and deliberately not defaulted: the record is a history of
+  # which services carried exploitable vulnerabilities and for how long, and how long
+  # to keep that is for whoever owns security records to decide. The binary refuses
+  # to start with a DSN and no retention.
+  retention: ""
+  # "password" (whatever the DSN carries) or "azure" (an Entra token minted per
+  # connection for Azure Database for PostgreSQL; the DSN then names a user and no
+  # password, and the pod's workload identity must be a database user).
+  auth: password
+
 registryAuth:
   # Credentials for Trivy to pull PRIVATE images. Use your cloud's workload
   # identity (no secrets to manage) or mount a docker config Secret. Enable at

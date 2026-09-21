@@ -80,6 +80,8 @@ func (s *Server) routes() map[string]http.Handler {
 		"GET /api/v1/config":         http.HandlerFunc(s.handleConfig),
 		"GET /api/v1/policy":         http.HandlerFunc(s.handlePolicy),
 		"GET /api/v1/exploitability": http.HandlerFunc(s.handleExploitability),
+		"GET /api/v1/history":        http.HandlerFunc(s.handleHistory),
+		"GET /api/v1/history/item":   http.HandlerFunc(s.handleHistoryItem),
 		"POST /api/v1/assessments":   http.HandlerFunc(s.handleRefresh),
 		"GET /api/v1/tickets":        http.HandlerFunc(s.handleTicketPlan),
 		"POST /api/v1/tickets":       http.HandlerFunc(s.handleTicketApply),

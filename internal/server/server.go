@@ -164,6 +164,9 @@ type Server struct {
 	ticketer   Ticketer
 	autoTicket bool
 
+	// history is nil unless a store is configured; see history.go.
+	history *historyRecorder
+
 	mu      sync.RWMutex
 	latest  *snapshot
 	running bool
@@ -225,18 +228,23 @@ func (s *Server) Refresh(ctx context.Context) {
 		return
 	}
 	s.running = true
-	s.startedAt = time.Now()
+	started := time.Now()
+	s.startedAt = started
 	s.mu.Unlock()
 
 	// published is set once a successful snapshot is cached, so ticketing reconciles
-	// exactly what the API is serving rather than a half-built or failed cache.
+	// exactly what the API is serving rather than a half-built or failed cache. The
+	// history record comes first so the items tickets are attributed to exist, and
+	// ticket writes are recorded last because they are what reconciliation did.
 	published := false
+	var snap *snapshot
 	defer func() {
 		s.mu.Lock()
 		s.running = false
 		s.mu.Unlock()
 		if published {
-			s.autoReconcile(ctx)
+			s.recordHistory(ctx, snap, started)
+			s.recordTicketWrites(ctx, s.autoReconcile(ctx))
 		}
 	}()
 
@@ -244,7 +252,7 @@ func (s *Server) Refresh(ctx context.Context) {
 	done := metrics.AssessmentStarted()
 	findings, err := s.assessor.Run(ctx)
 	done(err)
-	snap := &snapshot{generatedAt: time.Now()}
+	snap = &snapshot{generatedAt: time.Now()}
 	if err != nil {
 		snap.err = err.Error()
 		slog.ErrorContext(ctx, "server: assessment failed", "error", err)
