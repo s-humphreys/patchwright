@@ -44,9 +44,9 @@ func TestAggregateClassifiesByOpeningState(t *testing.T) {
 		{Key: "k9", Kind: KindOpened, At: day(2026, 6, 2), Payload: Payload{Snapshot: &openedPlain}},
 	}
 	assessments := []Assessment{
-		{FinishedAt: day(2026, 7, 3), Findings: 100, Actionable: 40, Items: 2, Risk: RiskStats{Items: 2, Sum: 900}},
-		{FinishedAt: day(2026, 7, 30), Findings: 100, Actionable: 40, Items: 2, Risk: RiskStats{Items: 2, Sum: 950}},
-		{FinishedAt: day(2026, 8, 30), Findings: 90, Actionable: 30, Items: 1, Risk: RiskStats{Items: 1, Sum: 400}},
+		{FinishedAt: day(2026, 7, 3), Findings: 100, Actionable: 40, ItemCount: 2, Risk: RiskStats{Items: 2, Sum: 900}},
+		{FinishedAt: day(2026, 7, 30), Findings: 100, Actionable: 40, ItemCount: 2, Risk: RiskStats{Items: 2, Sum: 950}},
+		{FinishedAt: day(2026, 8, 30), Findings: 90, Actionable: 30, ItemCount: 1, Risk: RiskStats{Items: 1, Sum: 400}},
 	}
 	open := []State{{OpenedAt: day(2026, 9, 1), Current: Snapshot{Key: "k3", Signals: []string{"kev"}, Tickets: []string{"DVOP-3"}}}}
 

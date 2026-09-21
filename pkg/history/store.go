@@ -24,8 +24,11 @@ type Store interface {
 	Append(ctx context.Context, assessmentID int64, events []Event) error
 	// Events returns events in [since, until), oldest first.
 	Events(ctx context.Context, since, until time.Time) ([]Event, error)
-	// Assessments returns assessment rows in [since, until), oldest first.
+	// Assessments returns assessment rows in [since, until), oldest first, without
+	// their Items, which are read one run at a time.
 	Assessments(ctx context.Context, since, until time.Time) ([]Assessment, error)
+	// AssessmentItems returns the work items recorded for one assessment.
+	AssessmentItems(ctx context.Context, assessmentID int64) ([]Snapshot, error)
 	// Item returns the history of one key: every item row that carried it and their
 	// events, oldest first. Nil, nil when the key was never seen.
 	Item(ctx context.Context, key string) (*ItemHistory, error)

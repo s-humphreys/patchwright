@@ -81,14 +81,31 @@ type Snapshot struct {
 	// known to move to.
 	Target        string `json:"target,omitempty"`
 	TargetVersion string `json:"target_version,omitempty"`
+	// Kind is the upgrade's kind (base, helm, ...), so rebuilds and version bumps
+	// can be told apart in a report.
+	Kind string `json:"kind,omitempty"`
 
 	Rule     string   `json:"rule,omitempty"`
 	Priority string   `json:"priority,omitempty"`
 	Signals  []string `json:"signals,omitempty"`
+	// Exposure is public when any deployment is reachable from the internet,
+	// internal when all reporting ones are internal, unknown when none reported.
+	Exposure string `json:"exposure,omitempty"`
+	// Accounts and Namespaces are where the item runs, kept raw so a report can
+	// classify production against the rest by whatever names the estate uses,
+	// without depending on a rule name that will be renamed.
+	Accounts   []string `json:"accounts,omitempty"`
+	Namespaces []string `json:"namespaces,omitempty"`
 	// Risk is the highest representative risk score across the item's deployments.
 	Risk     float64 `json:"risk"`
 	Critical int     `json:"critical"`
 	High     int     `json:"high"`
+	// Counts is the worst count per severity across the item's deployments.
+	Counts map[string]int `json:"counts,omitempty"`
+	// CVEs is every distinct CVE across the item's deployments, with what was known
+	// about each. It is what makes "which CVEs did we fix" answerable, and is bounded
+	// by the images rather than by time.
+	CVEs []CVE `json:"cves,omitempty"`
 	// OldestCVE is the earliest first-seen date across the item's CVEs, when any is
 	// dated. It is the age source for time-to-remediate.
 	OldestCVE *time.Time `json:"oldest_cve,omitempty"`
@@ -98,8 +115,29 @@ type Snapshot struct {
 	Tickets []string `json:"tickets,omitempty"`
 }
 
+// CVE is one vulnerability as an item carried it.
+type CVE struct {
+	ID           string     `json:"id"`
+	Severity     string     `json:"severity,omitempty"`
+	CVSS         float64    `json:"cvss,omitempty"`
+	EPSS         float64    `json:"epss,omitempty"`
+	KEV          bool       `json:"kev,omitempty"`
+	FixAvailable bool       `json:"fix_available,omitempty"`
+	FirstSeen    *time.Time `json:"first_seen,omitempty"`
+}
+
 // Ticketed reports whether any open ticket covered the item.
 func (s Snapshot) Ticketed() bool { return len(s.Tickets) > 0 }
+
+// CVEIDs lists the item's CVE identifiers, sorted.
+func (s Snapshot) CVEIDs() []string {
+	out := make([]string, 0, len(s.CVEs))
+	for _, c := range s.CVEs {
+		out = append(out, c.ID)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Has reports whether the snapshot carries a signal.
 func (s Snapshot) Has(signal string) bool {
@@ -153,6 +191,9 @@ type Payload struct {
 	// survives the item row being pruned.
 	Opened   *Snapshot  `json:"opened,omitempty"`
 	OpenedAt *time.Time `json:"opened_at,omitempty"`
+	// Closed is the item's last recorded state before it resolved or lapsed, so
+	// what was actually fixed (its CVEs, its versions) is on the closing event.
+	Closed *Snapshot `json:"closed,omitempty"`
 	// DaysOpen is the age at resolution or lapse.
 	DaysOpen *int `json:"days_open,omitempty"`
 	// Ticketed is whether an open ticket covered the item when it resolved or lapsed.
@@ -167,6 +208,8 @@ type Payload struct {
 	Changes        []string `json:"changes,omitempty"`
 	SignalsAdded   []string `json:"signals_added,omitempty"`
 	SignalsRemoved []string `json:"signals_removed,omitempty"`
+	CVEsAdded      []string `json:"cves_added,omitempty"`
+	CVEsRemoved    []string `json:"cves_removed,omitempty"`
 
 	// From and To are the owners either side of a reassignment.
 	From *Owner `json:"from,omitempty"`
@@ -233,20 +276,55 @@ func snapshot(key string, members []sink.FindingView, tickets map[string][]strin
 		Rule: lead.Rule, Priority: lead.Priority,
 	}
 	if lead.Upgrade != nil {
-		s.Target, s.TargetVersion = lead.Upgrade.Name, lead.Upgrade.Latest
+		s.Target, s.TargetVersion, s.Kind = lead.Upgrade.Name, lead.Upgrade.Latest, lead.Upgrade.Kind
 	}
 	signals := map[string]bool{}
 	ticketed := map[string]bool{}
+	accounts, namespaces := map[string]bool{}, map[string]bool{}
+	cves := map[string]CVE{}
+	exposedAny, internalKnown := false, false
 	for _, f := range members {
 		s.Images = append(s.Images, f.Image)
 		if f.Risk > s.Risk {
 			s.Risk = f.Risk
 		}
-		if c := f.Counts["critical"]; c > s.Critical {
-			s.Critical = c
+		for sev, n := range f.Counts {
+			if n > s.Counts[sev] {
+				if s.Counts == nil {
+					s.Counts = map[string]int{}
+				}
+				s.Counts[sev] = n
+			}
 		}
-		if h := f.Counts["high"]; h > s.High {
-			s.High = h
+		s.Critical, s.High = s.Counts["critical"], s.Counts["high"]
+		for _, a := range f.Dimensions["account"] {
+			accounts[a] = true
+		}
+		for _, n := range f.Dimensions["namespace"] {
+			namespaces[n] = true
+		}
+		switch f.Exposure {
+		case "public":
+			exposedAny = true
+		case "internal":
+			internalKnown = true
+		}
+		for _, v := range f.Vulns {
+			c, seen := cves[v.ID]
+			if !seen {
+				c = CVE{ID: v.ID, Severity: v.Severity, CVSS: v.CVSS, FirstSeen: v.FirstSeen}
+			}
+			// The worst reading across deployments: a CVE is exploited if any
+			// scan says so, and fixable if any deployment has a fix.
+			c.KEV = c.KEV || v.KEV
+			c.FixAvailable = c.FixAvailable || v.FixAvailable
+			if v.EPSS > c.EPSS {
+				c.EPSS = v.EPSS
+			}
+			if v.CVSS > c.CVSS {
+				c.CVSS = v.CVSS
+			}
+			cves[v.ID] = c
 		}
 		if f.OldestCVESeen != nil && (s.OldestCVE == nil || f.OldestCVESeen.Before(*s.OldestCVE)) {
 			t := *f.OldestCVESeen
@@ -274,8 +352,28 @@ func snapshot(key string, members []sink.FindingView, tickets map[string][]strin
 	delete(signals, "unassessed")
 	s.Signals = sortedKeys(signals)
 	s.Tickets = sortedKeys(ticketed)
+	s.Accounts, s.Namespaces = sortedKeys(accounts), sortedKeys(namespaces)
+	switch {
+	case exposedAny:
+		s.Exposure = "public"
+	case internalKnown:
+		s.Exposure = "internal"
+	default:
+		s.Exposure = "unknown"
+	}
+	for _, id := range sortedKeys(boolKeys(cves)) {
+		s.CVEs = append(s.CVEs, cves[id])
+	}
 	sort.Strings(s.Images)
 	return s
+}
+
+func boolKeys(m map[string]CVE) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -408,10 +506,10 @@ func reassigned(st State, to Snapshot, now time.Time) Event {
 // closed decides whether an item that left the queue was resolved or lapsed, and
 // records any tickets that closed with it.
 func closed(st State, byRepo map[string][]sink.FindingView, now time.Time) Event {
-	opened := st.Opened
+	opened, closedState := st.Opened, st.Current
 	openedAt := st.OpenedAt
 	days := int(now.Sub(openedAt).Hours() / 24)
-	p := Payload{Opened: &opened, OpenedAt: &openedAt, DaysOpen: &days, Ticketed: st.Current.Ticketed()}
+	p := Payload{Opened: &opened, Closed: &closedState, OpenedAt: &openedAt, DaysOpen: &days, Ticketed: st.Current.Ticketed()}
 	evidence, reason := Evidence(st.Current, byRepo)
 	kind := KindLapsed
 	if reason == "" {
@@ -487,13 +585,25 @@ func changed(st State, now Snapshot, at time.Time) (Event, bool) {
 	for _, s := range removed {
 		changes = append(changes, "-"+s)
 	}
+	// CVEs arriving or leaving while the item stays open is movement worth
+	// recording: a partial fix, or a newly published CVE against a running image.
+	cvesAdded, cvesRemoved := diffStrings(prev.CVEIDs(), now.CVEIDs())
+	if len(cvesAdded) > 0 {
+		changes = append(changes, fmt.Sprintf("+%d CVEs", len(cvesAdded)))
+	}
+	if len(cvesRemoved) > 0 {
+		changes = append(changes, fmt.Sprintf("-%d CVEs", len(cvesRemoved)))
+	}
 	if len(changes) == 0 {
 		return Event{}, false
 	}
 	snap := now
 	return Event{
 		ItemID: st.ID, Key: st.Current.Key, Kind: KindChanged, At: at,
-		Payload: Payload{Snapshot: &snap, Changes: changes, SignalsAdded: added, SignalsRemoved: removed},
+		Payload: Payload{
+			Snapshot: &snap, Changes: changes, SignalsAdded: added, SignalsRemoved: removed,
+			CVEsAdded: cvesAdded, CVEsRemoved: cvesRemoved,
+		},
 	}, true
 }
 
@@ -582,11 +692,29 @@ type Assessment struct {
 	FinishedAt time.Time `json:"finished_at"`
 	Findings   int       `json:"findings"`
 	Actionable int       `json:"actionable"`
-	Items      int       `json:"items"`
+	ItemCount  int       `json:"item_count"`
 	Risk       RiskStats `json:"risk"`
 	// ByClass and ByTeam split the risk the same way the owners page does.
 	ByClass map[string]RiskStats `json:"by_class,omitempty"`
 	ByTeam  map[string]RiskStats `json:"by_team,omitempty"`
+
+	// Counts are severity totals summed over every unsuppressed finding, and
+	// ActionableCounts over the actionable ones: "total criticals across the
+	// estate" month on month. Distinct CVE tallies sit beside them because a CVE on
+	// sixty images is one vulnerability and sixty findings.
+	Counts           map[string]int `json:"counts,omitempty"`
+	ActionableCounts map[string]int `json:"actionable_counts,omitempty"`
+	DistinctCVEs     int            `json:"distinct_cves"`
+	DistinctKEV      int            `json:"distinct_kev"`
+	DistinctEPSSHigh int            `json:"distinct_epss_high"`
+
+	// Summary is the server's headline summary for the run, stored as given so any
+	// aggregate the status page shows today can be asked about historically.
+	Summary any `json:"summary,omitempty"`
+	// Items is the full work-item list for the run. Not returned by Assessments,
+	// which would be heavy; it is stored so a question nobody has asked yet can be
+	// answered by re-deriving from the items rather than from the events.
+	Items []Snapshot `json:"items,omitempty"`
 }
 
 // RiskStats summarise the risk scores of a set of work items. Sum is the estate
@@ -636,12 +764,42 @@ func percentile(sorted []float64, p float64) float64 {
 	return sorted[idx]
 }
 
-// Summarise builds an Assessment row from an assessment's items.
-func Summarise(started, finished time.Time, findings, actionable int, items []Snapshot) Assessment {
+// Summarise builds an Assessment row from an assessment's findings and items.
+// summary is the server's headline view, stored as given.
+func Summarise(started, finished time.Time, views []sink.FindingView, items []Snapshot, summary any) Assessment {
 	a := Assessment{
-		StartedAt: started, FinishedAt: finished, Findings: findings, Actionable: actionable,
-		Items: len(items), Risk: Risk(items), ByClass: map[string]RiskStats{}, ByTeam: map[string]RiskStats{},
+		StartedAt: started, FinishedAt: finished,
+		Risk: Risk(items), ByClass: map[string]RiskStats{}, ByTeam: map[string]RiskStats{},
+		Counts: map[string]int{}, ActionableCounts: map[string]int{},
+		Summary: summary, Items: items,
 	}
+	cves, kev, epss := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, v := range views {
+		if v.Suppressed {
+			continue
+		}
+		a.Findings++
+		for sev, n := range v.Counts {
+			a.Counts[sev] += n
+		}
+		if v.Actionable {
+			a.Actionable++
+			for sev, n := range v.Counts {
+				a.ActionableCounts[sev] += n
+			}
+		}
+		for _, c := range v.Vulns {
+			cves[c.ID] = true
+			if c.KEV {
+				kev[c.ID] = true
+			}
+			if c.EPSS > EPSSHigh {
+				epss[c.ID] = true
+			}
+		}
+	}
+	a.DistinctCVEs, a.DistinctKEV, a.DistinctEPSSHigh = len(cves), len(kev), len(epss)
+	a.ItemCount = len(items)
 	byClass, byTeam := map[string][]Snapshot{}, map[string][]Snapshot{}
 	for _, s := range items {
 		byClass[s.Class] = append(byClass[s.Class], s)
