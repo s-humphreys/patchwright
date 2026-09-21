@@ -142,7 +142,7 @@ per-instance and a name that does not exist fails ticket creation.
 | `create` | no open ticket covers any of the change's images |
 | `extend` | a ticket covers part of the change; the rest are added, with a comment |
 | `update` | the target moved on and nobody has picked the ticket up |
-| `close` | the work is provably finished (needs `autoClose`), or nobody picked the ticket up and its work stopped mattering (needs `closeNoLongerActionable`) |
+| `close` | the work is provably finished (needs `autoClose`), or nobody picked the ticket up and its work stopped mattering (needs `closeTransitionNoLongerActionable`) |
 | `note-stale` | the target moved on, but someone has picked the ticket up |
 | `note-done` | the finding no longer asks for anything, so the work appears done |
 | `hold` | nothing can be judged yet, because the data needed is missing. **Writes nothing** |
@@ -319,7 +319,7 @@ and fails loudly, because recording their work as not-done would misrepresent it
 about finished work. The comment says which case it is, so a closed-as-not-done ticket
 does not read as a decision to skip the work.
 
-**`closeNoLongerActionable` closes tickets whose work stopped mattering.** Distinct
+**`closeTransitionNoLongerActionable` closes tickets whose work stopped mattering.** Distinct
 from `autoClose`, which needs proof the upgrade landed. This covers the two ways a
 ticket's images leave the queue without that proof while still being assessed:
 
@@ -333,21 +333,19 @@ ticket's images leave the queue without that proof while still being assessed:
 
 ```yaml
 jira:
-  closeNoLongerActionable:
-    transition: "WON'T BE DONE"   # required: a done-category status that means not done
-    priority: Lowest              # optional, as closePriorityUnworked
+  closeTransitionNoLongerActionable: "WON'T BE DONE"   # a done-category status that means not done
+  closePriorityNoLongerActionable: Lowest              # optional, as closePriorityUnworked
   routes:
     - name: data-platform
       # ...
-      closeNoLongerActionable:
-        transition: Not To Do     # this board's word for it
+      closeTransitionNoLongerActionable: Not To Do     # this board's word for it
 ```
 
 It applies **only to tickets nobody has picked up**: unassigned and still in a new
 status category. A ticket somebody is working gets the same reasoning as a comment
 and the decision stays theirs. The comment on a closed ticket states which case it
-was and why, and the plan's `why` says the same thing. The transition is required
-rather than guessed because "Done" and "Won't Do" say opposite things about the same
+was and why, and the plan's `why` says the same thing. The transition is named rather
+than guessed because "Done" and "Won't Do" say opposite things about the same
 work, and this is the second one.
 
 What it will not do, whatever is configured: close a ticket whose image is still

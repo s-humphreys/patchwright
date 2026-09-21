@@ -577,10 +577,10 @@ func (j *Jira) Close(ctx context.Context, req CloseRequest) error {
 		// A not-done closure has exactly one acceptable transition, the configured
 		// one; falling back to a done transition would record work that never
 		// happened as complete.
-		if cfg.CloseNoLongerActionable == nil {
-			return fmt.Errorf("close %s as not actionable: closeNoLongerActionable is not configured for this project", key)
+		if cfg.CloseTransitionNoLongerActionable == "" {
+			return fmt.Errorf("close %s as not actionable: closeTransitionNoLongerActionable is not configured for this project", key)
 		}
-		want, unworked, priorityOverride = cfg.CloseNoLongerActionable.Transition, "", cfg.CloseNoLongerActionable.Priority
+		want, unworked, priorityOverride = cfg.CloseTransitionNoLongerActionable, "", cfg.ClosePriorityNoLongerActionable
 	}
 	id, name, usedUnworked, err := j.doneTransition(ctx, key, want, unworked)
 	if err != nil {

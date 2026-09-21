@@ -17,7 +17,7 @@ func noLongerActionableCfg() config.JiraConfig {
 		DefaultTemplate: "t",
 		Routes: []config.TicketRoute{{
 			Name: "r", When: "true", Project: "PROJ", Board: 1, ImageField: "customfield_1",
-			CloseNoLongerActionable: &config.CloseNoLongerActionable{Transition: "WON'T BE DONE", Priority: "Lowest"},
+			CloseTransitionNoLongerActionable: "WON'T BE DONE", ClosePriorityNoLongerActionable: "Lowest",
 		}},
 	}
 }
@@ -178,7 +178,7 @@ func TestJiraCloseUsesTheNotActionableTransition(t *testing.T) {
 	}}
 	cfg := baseCfg()
 	cfg.CloseTransition = "Done"
-	cfg.CloseNoLongerActionable = &config.CloseNoLongerActionable{Transition: "WON'T BE DONE", Priority: "Lowest"}
+	cfg.CloseTransitionNoLongerActionable, cfg.ClosePriorityNoLongerActionable = "WON'T BE DONE", "Lowest"
 	err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "why", Unworked: true, NoLongerActionable: true})
 	if err != nil {
 		t.Fatalf("Close: %v", err)
@@ -197,7 +197,7 @@ func TestJiraCloseUsesTheNotActionableTransition(t *testing.T) {
 func TestJiraCloseRefusesNotActionableWithoutConfiguration(t *testing.T) {
 	ts := &transitionServer{transitions: []map[string]any{transition("31", "Done", "Done", "done")}}
 	err := ts.jira(t, baseCfg()).Close(context.Background(), CloseRequest{Key: "PROJ-1", NoLongerActionable: true})
-	if err == nil || !strings.Contains(err.Error(), "closeNoLongerActionable") {
+	if err == nil || !strings.Contains(err.Error(), "closeTransitionNoLongerActionable") {
 		t.Fatalf("must refuse rather than fall back to Done: %v", err)
 	}
 	if ts.posted != nil {

@@ -641,14 +641,17 @@ type JiraConfig struct {
 	// it was triaged at, since that is a record of how urgent it was.
 	ClosePriorityUnworked string `yaml:"closePriorityUnworked"`
 
-	// CloseNoLongerActionable closes a ticket nobody has picked up when its work has
-	// stopped mattering rather than been done: every workload running the image has
-	// gone, or no rule asks for the upgrade any more. Distinct from AutoClose, which
-	// closes on proof the upgrade landed, because a board may want either without
-	// the other. Set by presence; the transition is required and should name a
-	// done-category status that means "not done" ("Won't Do", "Not To Do"), since
-	// recording this as completed work would be false. Per route as well as here.
-	CloseNoLongerActionable *CloseNoLongerActionable `yaml:"closeNoLongerActionable"`
+	// CloseTransitionNoLongerActionable, when set, closes a ticket nobody has picked
+	// up when its work has stopped mattering rather than been done: every workload
+	// running the image has gone, or no rule asks for the upgrade any more. Distinct
+	// from AutoClose, which closes on proof the upgrade landed, because a board may
+	// want either without the other. It names a done-category status that means
+	// "not done" ("Won't Do", "Not To Do"), since recording this as completed work
+	// would be false. Per route as well as here.
+	CloseTransitionNoLongerActionable string `yaml:"closeTransitionNoLongerActionable"`
+	// ClosePriorityNoLongerActionable replaces the priority on that path, as
+	// ClosePriorityUnworked does on its own.
+	ClosePriorityNoLongerActionable string `yaml:"closePriorityNoLongerActionable"`
 
 	// MinPriority is the lowest assessment priority worth a ticket: "high" raises
 	// urgent and high findings and leaves the rest in the queue. Empty means every
@@ -670,16 +673,6 @@ type JiraConfig struct {
 	RequireUpgrade *bool `yaml:"requireUpgrade"`
 }
 
-// CloseNoLongerActionable is how to close a ticket whose work stopped mattering.
-type CloseNoLongerActionable struct {
-	// Transition is the workflow transition or target status to use.
-	Transition string `yaml:"transition"`
-	// Priority, when set, replaces the ticket's priority on the way out, as
-	// closePriorityUnworked does: a not-done ticket at Highest keeps appearing in
-	// priority-ordered views.
-	Priority string `yaml:"priority"`
-}
-
 // isSet reports whether a config file actually defined a jira section, so an
 // empty one does not clobber a section defined in an earlier file.
 func (j JiraConfig) isSet() bool {
@@ -688,7 +681,7 @@ func (j JiraConfig) isSet() bool {
 		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil ||
 		len(j.Exclude) > 0 || len(j.PriorityMap) > 0 || len(j.Routes) > 0 ||
 		j.GroupBy != "" || j.MinPriority != "" || j.AutoClose || j.CloseTransition != "" ||
-		j.CloseTransitionUnworked != "" || j.ClosePriorityUnworked != "" || j.CloseNoLongerActionable != nil
+		j.CloseTransitionUnworked != "" || j.ClosePriorityUnworked != "" || j.CloseTransitionNoLongerActionable != ""
 }
 
 // EffectiveRequireUpgrade reports whether findings with no available upgrade
@@ -774,9 +767,9 @@ func (j JiraConfig) validateTracker() error {
 	if j.ImageField != "" && j.ImageLabel {
 		return fmt.Errorf("sets both imageField and imageLabel; pick one so the idempotency key is unambiguous")
 	}
-	if c := j.CloseNoLongerActionable; c != nil && strings.TrimSpace(c.Transition) == "" {
-		return fmt.Errorf("closeNoLongerActionable needs a transition: the status that records a ticket " +
-			"as not done is the board's to name, and guessing between \"Done\" and \"Won't Do\" would misrecord it")
+	if j.ClosePriorityNoLongerActionable != "" && j.CloseTransitionNoLongerActionable == "" {
+		return fmt.Errorf("closePriorityNoLongerActionable is set without closeTransitionNoLongerActionable: " +
+			"the transition is what switches the behaviour on, and the priority alone does nothing")
 	}
 	return validateMinPriority(j.MinPriority)
 }
@@ -829,12 +822,13 @@ type TicketRoute struct {
 	// the tracker, not of the deployment: one team may want closing automated and
 	// another may not, and a transition named "Done" in one project says nothing
 	// about another project's workflow.
-	AutoClose               *bool                    `yaml:"autoClose"`
-	CloseTransition         string                   `yaml:"closeTransition"`
-	CloseTransitionUnworked string                   `yaml:"closeTransitionUnworked"`
-	ClosePriorityUnworked   string                   `yaml:"closePriorityUnworked"`
-	CloseNoLongerActionable *CloseNoLongerActionable `yaml:"closeNoLongerActionable"`
-	MinPriority             string                   `yaml:"minPriority"`
+	AutoClose                         *bool  `yaml:"autoClose"`
+	CloseTransition                   string `yaml:"closeTransition"`
+	CloseTransitionUnworked           string `yaml:"closeTransitionUnworked"`
+	ClosePriorityUnworked             string `yaml:"closePriorityUnworked"`
+	CloseTransitionNoLongerActionable string `yaml:"closeTransitionNoLongerActionable"`
+	ClosePriorityNoLongerActionable   string `yaml:"closePriorityNoLongerActionable"`
+	MinPriority                       string `yaml:"minPriority"`
 
 	Project     string            `yaml:"project"`
 	Template    string            `yaml:"template"`
@@ -873,8 +867,11 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	if r.ClosePriorityUnworked != "" {
 		out.ClosePriorityUnworked = r.ClosePriorityUnworked
 	}
-	if r.CloseNoLongerActionable != nil {
-		out.CloseNoLongerActionable = r.CloseNoLongerActionable
+	if r.CloseTransitionNoLongerActionable != "" {
+		out.CloseTransitionNoLongerActionable = r.CloseTransitionNoLongerActionable
+	}
+	if r.ClosePriorityNoLongerActionable != "" {
+		out.ClosePriorityNoLongerActionable = r.ClosePriorityNoLongerActionable
 	}
 	if r.MinPriority != "" {
 		out.MinPriority = r.MinPriority

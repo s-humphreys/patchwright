@@ -279,7 +279,7 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 			// the upgrade is not proven to have landed. Why it left the queue decides
 			// what to say: switched off everywhere, or no rule asking any more.
 			reason, detail := noLongerActionable(images, byRepo(in.Findings))
-			if cfg := in.Config.ForProject(projectOf(t.Key)).CloseNoLongerActionable; cfg != nil && t.Untouched() {
+			if in.Config.ForProject(projectOf(t.Key)).CloseTransitionNoLongerActionable != "" && t.Untouched() {
 				out = append(out, Action{
 					Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true, Reason: reason,
 					Message: noLongerActionableComment(reason, detail),
