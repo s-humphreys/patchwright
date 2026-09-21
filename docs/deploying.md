@@ -555,7 +555,7 @@ history:
     database: patchwright
     user: patchwright
   passwordSecretRef:
-    name: patchwright-history   # akv2k8s output, or any Secret
+    name: patchwright-history
     key: password
 ```
 
