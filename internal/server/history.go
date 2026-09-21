@@ -61,6 +61,10 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 		rec.fail(ctx, "list open items", err)
 		return
 	}
+	// The store answered, so a failure reported earlier is over. Cleared here rather
+	// than only after a successful record, or the status would keep showing an
+	// error the grant had already fixed.
+	rec.clearError()
 	current := history.Snapshots(snap.views, tickets)
 	events := history.Diff(history.Input{
 		Open: open, Current: current, Views: snap.views, OpenTickets: tickets, Now: snap.generatedAt,
@@ -136,6 +140,12 @@ func (s *Server) recordTicketWrites(ctx context.Context, results []ticket.Result
 		return
 	}
 	slog.InfoContext(ctx, "history: recorded ticket events", "events", len(events))
+}
+
+func (r *historyRecorder) clearError() {
+	r.mu.Lock()
+	r.lastErr = ""
+	r.mu.Unlock()
 }
 
 func (r *historyRecorder) fail(ctx context.Context, what string, err error) {

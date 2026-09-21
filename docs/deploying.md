@@ -573,6 +573,21 @@ With `auth: azure` the pod's workload identity must exist as a database user
 NetworkPolicy, when enabled, opens TCP 5432 to anywhere; narrow it to the server's
 address with `networkPolicy.egress` once you know it.
 
+The role needs to own or have `CREATE` on the schema it connects to, because the
+tables are created at startup. On PostgreSQL 15 and later `public` no longer grants
+that to every role, and on Azure Database for PostgreSQL making the role the database
+owner is not always enough either, so run this **connected to the history database**,
+since schema privileges are per database:
+
+```sql
+\c patchwright
+grant all on schema public to patchwright;
+```
+
+Without it the pod logs `history: store unavailable; will retry` with `permission
+denied for schema public`, the assessment carries on unaffected, and the next use
+after the grant connects and migrates.
+
 The record cannot be rebuilt if lost, so the database's backup is what stands between
 the estate and a blank history. That is the point of choosing an operated database
 over a volume.

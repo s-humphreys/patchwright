@@ -39,7 +39,9 @@ same identity chain registry authentication uses (workload identity in the clust
 the CLI's login on a laptop). Nothing is stored.
 
 The schema is created and migrated at startup. Migrations are numbered SQL files
-embedded in the binary; the database user needs to own the schema it connects to.
+embedded in the binary. The database user needs `CREATE` on the schema it connects
+to, which on PostgreSQL 15 and later means granting it explicitly; see
+[deploying.md](deploying.md#history).
 
 If the database is unreachable the assessment still runs and the page still serves.
 History reports itself unavailable, the log says why, and the next refresh tries
