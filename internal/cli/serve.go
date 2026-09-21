@@ -66,6 +66,10 @@ const envAPIToken = "PATCHWRIGHT_API_TOKEN"
 // presence is what switches history on. See docs/history.md.
 const envHistoryDSN = "PATCHWRIGHT_HISTORY_DSN"
 
+// envHistoryPassword replaces the password in the DSN, so the connection string can
+// live in configuration and only the password in a Secret.
+const envHistoryPassword = "PATCHWRIGHT_HISTORY_PASSWORD"
+
 // Sign-in secrets come from the environment for the same reason the token does: a client
 // secret in a flag lands in a process list, a shell history and a pod spec.
 const (
@@ -219,7 +223,9 @@ func newServeCmd() *cobra.Command {
 						"which services carried exploitable vulnerabilities, and how long to keep it is a "+
 						"decision to make, not a default to inherit", envHistoryDSN)
 				}
-				store := postgres.NewLazy(postgres.Options{DSN: dsn, Auth: postgres.Auth(cfg.History.Auth)})
+				store := postgres.NewLazy(postgres.Options{
+					DSN: dsn, Auth: postgres.Auth(cfg.History.Auth), Password: os.Getenv(envHistoryPassword),
+				})
 				defer store.Close()
 				srv = srv.WithHistory(store, retention)
 				slog.InfoContext(cmd.Context(), "history enabled",
