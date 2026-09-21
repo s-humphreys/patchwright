@@ -200,7 +200,11 @@ type Payload struct {
 	Ticketed bool `json:"ticketed,omitempty"`
 	// Evidence is the observed state that justified a resolution.
 	Evidence string `json:"evidence,omitempty"`
-	// Reason is why a lapse could not be called a resolution.
+	// Reason is why a lapse could not be called a resolution. On a ticket_closed
+	// event it is instead why patchwright itself closed the ticket (upgrade-landed,
+	// not-running, no-longer-actionable), and empty when a person closed it: a
+	// ticket closed because the image was switched off is not a ticket closed
+	// because the work was done.
 	Reason string `json:"reason,omitempty"`
 
 	// Changes describe a changed event in words; SignalsAdded and SignalsRemoved are
@@ -401,7 +405,11 @@ type Input struct {
 	// OpenTickets maps a repository to the tickets still open for it, so a ticket
 	// that closed alongside an item leaving the queue is recorded with it.
 	OpenTickets map[string][]string
-	Now         time.Time
+	// ClosedReasons are the tickets patchwright closed since the last run, by key,
+	// with why. A ticket gone from the open index without an entry here was closed
+	// by a person.
+	ClosedReasons map[string]string
+	Now           time.Time
 }
 
 // Diff compares the open items against the current assessment and returns the
@@ -437,7 +445,7 @@ func Diff(in Input) []Event {
 		}
 		ev := closed(st, byRepo, in.Now)
 		events = append(events, ev)
-		events = append(events, ticketsClosed(st, ticketsFor(st.Current, in.OpenTickets), ev.Kind == KindResolved, in.Now)...)
+		events = append(events, ticketsClosed(st, ticketsFor(st.Current, in.OpenTickets), ev.Kind == KindResolved, in.ClosedReasons, in.Now)...)
 	}
 
 	for _, s := range in.Current {
@@ -453,7 +461,7 @@ func Diff(in Input) []Event {
 		if ev, changed := changed(st, s, in.Now); changed {
 			events = append(events, ev)
 		}
-		events = append(events, ticketsClosed(st, s.Tickets, false, in.Now)...)
+		events = append(events, ticketsClosed(st, s.Tickets, false, in.ClosedReasons, in.Now)...)
 	}
 	return events
 }
@@ -638,14 +646,14 @@ func diffStrings(prev, now []string) (added, removed []string) {
 // ticketsClosed records tickets that covered the item last time and no longer do.
 // Only open tickets are indexed, so a key that has gone from the index has closed or
 // moved to a done status; phase three of the design reads the date from the tracker.
-func ticketsClosed(st State, nowTickets []string, evidence bool, at time.Time) []Event {
+func ticketsClosed(st State, nowTickets []string, evidence bool, reasons map[string]string, at time.Time) []Event {
 	_, gone := diffStrings(st.Current.Tickets, nowTickets)
 	out := make([]Event, 0, len(gone))
 	for _, key := range gone {
 		e := evidence
 		out = append(out, Event{
 			ItemID: st.ID, Key: st.Current.Key, Kind: KindTicketClosed, At: at,
-			Payload: Payload{Ticket: key, EvidenceAtClose: &e},
+			Payload: Payload{Ticket: key, EvidenceAtClose: &e, Reason: reasons[key]},
 		})
 	}
 	return out

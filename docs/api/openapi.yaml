@@ -839,6 +839,10 @@ components:
         tickets_raised: { type: integer }
         tickets_closed: { type: integer }
         tickets_closed_finding_open: { type: integer, description: Closed while patchwright had no evidence the work was done }
+        tickets_closed_by_tool:
+          type: object
+          description: Tickets patchwright itself closed, by reason (upgrade-landed, not-running, no-longer-actionable). The rest of tickets_closed were closed by people.
+          additionalProperties: { type: integer }
         epss_decayed: { type: integer, description: Left the EPSS bucket by score decay, not by a patch }
         became_known_exploited: { type: integer }
         median_days_to_resolve: { type: number, description: Over resolved items only }

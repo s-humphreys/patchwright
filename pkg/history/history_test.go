@@ -186,6 +186,18 @@ func TestDiffResolvesWithEvidence(t *testing.T) {
 	if tc.Kind != KindTicketClosed || tc.Payload.Ticket != "DVOP-9" || tc.Payload.EvidenceAtClose == nil || !*tc.Payload.EvidenceAtClose {
 		t.Errorf("ticket closed with evidence expected, got %+v", tc)
 	}
+	if tc.Payload.Reason != "" {
+		t.Errorf("a ticket nobody told us about was closed by a person: reason should be empty, got %q", tc.Payload.Reason)
+	}
+
+	// The same close, but patchwright did it and said why.
+	again := Diff(Input{
+		Open: []State{openState(3, prev, opened)}, Views: []sink.FindingView{now},
+		ClosedReasons: map[string]string{"DVOP-9": "not-running"}, Now: t0,
+	})
+	if again[1].Payload.Reason != "not-running" {
+		t.Errorf("reason should be carried onto the ticket_closed event: %+v", again[1].Payload)
+	}
 }
 
 func TestDiffLapsesWithoutEvidence(t *testing.T) {

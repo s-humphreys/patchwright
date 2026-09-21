@@ -33,9 +33,12 @@ type historyRecorder struct {
 	// written after reconciliation attach to the same run and the same items.
 	assessmentID int64
 	open         []history.State
-	lastErr      string
-	lastRecorded time.Time
-	lastPruned   history.Pruned
+	// closedReasons are the tickets the last reconciliation closed and why, so the
+	// next diff can say a ticket left the index because patchwright closed it.
+	closedReasons map[string]string
+	lastErr       string
+	lastRecorded  time.Time
+	lastPruned    history.Pruned
 }
 
 // WithHistory attaches a store. retention bounds what Prune keeps; it is required
@@ -56,6 +59,10 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 		return
 	}
 	tickets := openTicketKeys(snap.tickets)
+	rec.mu.Lock()
+	closedReasons := rec.closedReasons
+	rec.closedReasons = nil
+	rec.mu.Unlock()
 	open, err := rec.store.Open(ctx)
 	if err != nil {
 		rec.fail(ctx, "list open items", err)
@@ -67,7 +74,8 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	rec.clearError()
 	current := history.Snapshots(snap.views, tickets)
 	events := history.Diff(history.Input{
-		Open: open, Current: current, Views: snap.views, OpenTickets: tickets, Now: snap.generatedAt,
+		Open: open, Current: current, Views: snap.views, OpenTickets: tickets,
+		ClosedReasons: closedReasons, Now: snap.generatedAt,
 	})
 	a := history.Summarise(started, snap.generatedAt, snap.views, current, snap.summary)
 	id, err := rec.store.Record(ctx, a, events)
@@ -114,6 +122,7 @@ func (s *Server) recordTicketWrites(ctx context.Context, results []ticket.Result
 		return
 	}
 	var writes []history.TicketWrite
+	closed := map[string]string{}
 	for _, r := range results {
 		if r.Err != nil || r.Key == "" {
 			continue
@@ -123,7 +132,14 @@ func (s *Server) recordTicketWrites(ctx context.Context, results []ticket.Result
 			writes = append(writes, history.TicketWrite{Key: r.Key, Action: string(r.Action.Kind), Images: r.Action.Draft.Images})
 		case ticket.ActionExtend:
 			writes = append(writes, history.TicketWrite{Key: r.Key, Action: string(r.Action.Kind), Images: r.Action.Images})
+		case ticket.ActionClose:
+			closed[r.Key] = r.Action.Reason
 		}
+	}
+	if len(closed) > 0 {
+		rec.mu.Lock()
+		rec.closedReasons = closed
+		rec.mu.Unlock()
 	}
 	if len(writes) == 0 {
 		return

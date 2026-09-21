@@ -33,6 +33,9 @@ type CloseRequest struct {
 	// Unworked marks a ticket nobody picked up, which widens the transitions that
 	// may be used. See config.CloseTransitionUnworked.
 	Unworked bool
+	// NoLongerActionable selects the closeTransitionNoLongerActionable transition rather than
+	// the done ones: the ticket is being recorded as not done, deliberately.
+	NoLongerActionable bool
 }
 
 // Result records what an Apply run did, per action, so a caller can report it
@@ -74,6 +77,7 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 		case ActionClose:
 			r.Err = a.Close(ctx, CloseRequest{
 				Key: act.TicketKey, Comment: act.Message, Unworked: act.Unworked,
+				NoLongerActionable: act.NoLongerActionable,
 			})
 		case ActionNoteStale, ActionNoteDone:
 			var posted bool

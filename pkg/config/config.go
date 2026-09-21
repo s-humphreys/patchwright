@@ -641,6 +641,18 @@ type JiraConfig struct {
 	// it was triaged at, since that is a record of how urgent it was.
 	ClosePriorityUnworked string `yaml:"closePriorityUnworked"`
 
+	// CloseTransitionNoLongerActionable, when set, closes a ticket nobody has picked
+	// up when its work has stopped mattering rather than been done: every workload
+	// running the image has gone, or no rule asks for the upgrade any more. Distinct
+	// from AutoClose, which closes on proof the upgrade landed, because a board may
+	// want either without the other. It names a done-category status that means
+	// "not done" ("Won't Do", "Not To Do"), since recording this as completed work
+	// would be false. Per route as well as here.
+	CloseTransitionNoLongerActionable string `yaml:"closeTransitionNoLongerActionable"`
+	// ClosePriorityNoLongerActionable replaces the priority on that path, as
+	// ClosePriorityUnworked does on its own.
+	ClosePriorityNoLongerActionable string `yaml:"closePriorityNoLongerActionable"`
+
 	// MinPriority is the lowest assessment priority worth a ticket: "high" raises
 	// urgent and high findings and leaves the rest in the queue. Empty means every
 	// actionable finding is ticketed.
@@ -664,10 +676,12 @@ type JiraConfig struct {
 // isSet reports whether a config file actually defined a jira section, so an
 // empty one does not clobber a section defined in an earlier file.
 func (j JiraConfig) isSet() bool {
-	return j.Board != 0 || j.Project != "" || j.Template != "" ||
+	return j.Board != 0 || j.Project != "" || j.Template != "" || j.DefaultTemplate != "" ||
 		j.ImageField != "" || j.ImageLabel || j.Epic != "" || j.IssueType != "" ||
 		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil ||
-		len(j.Exclude) > 0 || len(j.PriorityMap) > 0
+		len(j.Exclude) > 0 || len(j.PriorityMap) > 0 || len(j.Routes) > 0 ||
+		j.GroupBy != "" || j.MinPriority != "" || j.AutoClose || j.CloseTransition != "" ||
+		j.CloseTransitionUnworked != "" || j.ClosePriorityUnworked != "" || j.CloseTransitionNoLongerActionable != ""
 }
 
 // EffectiveRequireUpgrade reports whether findings with no available upgrade
@@ -753,6 +767,10 @@ func (j JiraConfig) validateTracker() error {
 	if j.ImageField != "" && j.ImageLabel {
 		return fmt.Errorf("sets both imageField and imageLabel; pick one so the idempotency key is unambiguous")
 	}
+	if j.ClosePriorityNoLongerActionable != "" && j.CloseTransitionNoLongerActionable == "" {
+		return fmt.Errorf("closePriorityNoLongerActionable is set without closeTransitionNoLongerActionable: " +
+			"the transition is what switches the behaviour on, and the priority alone does nothing")
+	}
 	return validateMinPriority(j.MinPriority)
 }
 
@@ -804,11 +822,13 @@ type TicketRoute struct {
 	// the tracker, not of the deployment: one team may want closing automated and
 	// another may not, and a transition named "Done" in one project says nothing
 	// about another project's workflow.
-	AutoClose               *bool  `yaml:"autoClose"`
-	CloseTransition         string `yaml:"closeTransition"`
-	CloseTransitionUnworked string `yaml:"closeTransitionUnworked"`
-	ClosePriorityUnworked   string `yaml:"closePriorityUnworked"`
-	MinPriority             string `yaml:"minPriority"`
+	AutoClose                         *bool  `yaml:"autoClose"`
+	CloseTransition                   string `yaml:"closeTransition"`
+	CloseTransitionUnworked           string `yaml:"closeTransitionUnworked"`
+	ClosePriorityUnworked             string `yaml:"closePriorityUnworked"`
+	CloseTransitionNoLongerActionable string `yaml:"closeTransitionNoLongerActionable"`
+	ClosePriorityNoLongerActionable   string `yaml:"closePriorityNoLongerActionable"`
+	MinPriority                       string `yaml:"minPriority"`
 
 	Project     string            `yaml:"project"`
 	Template    string            `yaml:"template"`
@@ -846,6 +866,12 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if r.ClosePriorityUnworked != "" {
 		out.ClosePriorityUnworked = r.ClosePriorityUnworked
+	}
+	if r.CloseTransitionNoLongerActionable != "" {
+		out.CloseTransitionNoLongerActionable = r.CloseTransitionNoLongerActionable
+	}
+	if r.ClosePriorityNoLongerActionable != "" {
+		out.ClosePriorityNoLongerActionable = r.ClosePriorityNoLongerActionable
 	}
 	if r.MinPriority != "" {
 		out.MinPriority = r.MinPriority

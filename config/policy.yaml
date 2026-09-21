@@ -97,6 +97,14 @@ scan:
 #   # appearing in priority-ordered views. Only on that path — completed work keeps
 #   # the priority it was triaged at.
 #   closePriorityUnworked: Lowest
+#   # Close a ticket nobody picked up when its work stopped mattering rather than
+#   # got done: nothing runs the image anywhere any more, or no rule asks for the
+#   # upgrade. Distinct from autoClose, which needs proof the upgrade landed. Name
+#   # the board's "not done" status; recording this as completed work would be
+#   # false. Tickets somebody is working on are commented on instead. Per route as
+#   # well as here.
+#   closeTransitionNoLongerActionable: Won't Do
+#   closePriorityNoLongerActionable: Lowest
 #
 #   # Lowest assessment priority worth a ticket. The queue can hold a hundred low
 #   # findings usefully; a tracker holding a hundred nobody will action becomes one

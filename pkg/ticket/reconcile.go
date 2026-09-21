@@ -88,6 +88,13 @@ type Action struct {
 	// CloseTransitionUnworked — because "not done" is an accurate record of a
 	// ticket that was never actioned and a false one of a ticket someone worked.
 	Unworked bool
+	// NoLongerActionable marks a close made because the work stopped mattering
+	// rather than because it was done, so the writer uses that transition and the
+	// history records the reason.
+	NoLongerActionable bool
+	// Reason is the machine-readable cause of a close or done-note: upgrade-landed,
+	// not-running, no-longer-actionable.
+	Reason string
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
 	//
@@ -222,7 +229,7 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 					// be the same one already in hand.
 					unworked := t.Untouched()
 					out = append(out, Action{
-						Kind: ActionClose, TicketKey: t.Key, Unworked: unworked,
+						Kind: ActionClose, TicketKey: t.Key, Unworked: unworked, Reason: ReasonUpgradeLanded,
 						Message: closeComment(evidence, unworked),
 						Why:     closeWhy(unworked),
 					})
@@ -268,19 +275,80 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				})
 				continue
 			}
+			// From here the images are all still assessed and none is actionable, but
+			// the upgrade is not proven to have landed. Why it left the queue decides
+			// what to say: switched off everywhere, or no rule asking any more.
+			reason, detail := noLongerActionable(images, byRepo(in.Findings))
+			if in.Config.ForProject(projectOf(t.Key)).CloseTransitionNoLongerActionable != "" && t.Untouched() {
+				out = append(out, Action{
+					Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true, Reason: reason,
+					Message: noLongerActionableComment(reason, detail),
+					Why:     noLongerActionableWhy(reason),
+				})
+				continue
+			}
 			out = append(out, Action{
-				Kind: ActionNoteDone, TicketKey: t.Key,
-				Message: "patchwright no longer reports an available upgrade for this ticket's " +
-					"images, which suggests the work is done. Left open deliberately: closing " +
-					"is a human decision.",
-				// Nothing in this note varies, so it is said exactly once.
-				Dedupe: "note-done",
-				Why:    "no longer in the queue and its images are still assessed",
+				Kind: ActionNoteDone, TicketKey: t.Key, Reason: reason,
+				Message: "patchwright no longer reports work for this ticket: " + detail +
+					" Left open deliberately: closing is a human decision.",
+				// Keyed on the reason, so a ticket that stops being not-running and
+				// becomes not-actionable is told why again.
+				Dedupe: "note-done:" + reason,
+				Why:    noLongerActionableWhy(reason),
 			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TicketKey < out[j].TicketKey })
 	return out
+}
+
+// Reasons a ticket's work stopped being asked for. Carried on the action so the
+// comment, the plan and the history all say the same thing.
+const (
+	ReasonUpgradeLanded      = "upgrade-landed"
+	ReasonNotRunning         = "not-running"
+	ReasonNoLongerActionable = "no-longer-actionable"
+)
+
+// noLongerActionable says why a ticket's images left the queue without the upgrade
+// being proven to have landed. Not running wins only when every workload has gone
+// and liveness was reconciled for all of them: the vulnerabilities are still in the
+// image, nothing is running it. Otherwise something is live, or liveness is unknown,
+// and no rule asks for it, which is the risk having gone by another route.
+func noLongerActionable(images []string, byRepo map[string][]sink.FindingView) (reason, detail string) {
+	allGone := true
+	for _, img := range images {
+		for _, f := range byRepo[img] {
+			if f.Liveness == nil || f.Liveness.Live {
+				allGone = false
+			}
+		}
+	}
+	list := strings.Join(images, ", ")
+	if allGone {
+		return ReasonNotRunning, "no workload is running " + list + " in any cluster. The vulnerabilities " +
+			"are still in the image; if it is deployed again a new ticket will be raised."
+	}
+	return ReasonNoLongerActionable, "no policy rule asks for anything on " + list + " any more. The " +
+		"vulnerabilities that raised this ticket are gone from what is running; a newer version may still " +
+		"exist, but nothing requires it."
+}
+
+func noLongerActionableComment(reason, detail string) string {
+	head := "Closing as not done: the work this ticket asked for is no longer required by policy."
+	if reason == ReasonNotRunning {
+		head = "Closing as not done: the image this ticket covers is no longer running anywhere."
+	}
+	return head + "\n\n" + detail + "\n\nNobody had picked this ticket up, so it is being closed as " +
+		"not-worked rather than as completed work, which is the accurate record. Checked, not assumed: " +
+		"patchwright never closes a ticket because a finding merely disappeared. Reopen if this is wrong."
+}
+
+func noLongerActionableWhy(reason string) string {
+	if reason == ReasonNotRunning {
+		return "no longer in the queue: nothing is running its images anywhere"
+	}
+	return "no longer in the queue: no rule asks for its images any more"
 }
 
 // latestOf reports the version a single-image draft asks for, used to key a
