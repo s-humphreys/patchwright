@@ -9,6 +9,14 @@ data:
     {{- .Values.config.ownership | nindent 4 }}
   policy.yaml: |
     {{- .Values.config.policy | nindent 4 }}
+  {{- if .Values.history.enabled }}
+  # Structured values rather than a pasted block, because the two settings are the
+  # chart's to validate: a missing retention fails at render, not at pod start.
+  history.yaml: |
+    history:
+      retention: {{ required "history.retention is required when history.enabled is true; see docs/history.md" .Values.history.retention | quote }}
+      auth: {{ .Values.history.auth | default "password" | quote }}
+  {{- end }}
   {{- if .Values.ticketing.templates }}
   # Each is mounted at /etc/patchwright/<name>.md.tmpl, which is what a route's
   # template (or jira.defaultTicketTemplate) points at. Safe to keep beside the

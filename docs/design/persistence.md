@@ -1,6 +1,8 @@
 # Design: remembering what changed
 
-Status: **proposed, not built.**
+Status: **proposed, not built.** The storage choice below (SQLite on a volume) is
+superseded by [history.md](history.md), which chooses PostgreSQL and decides how the
+record is surfaced. The problem statement and the evidence rule here still stand.
 
 ## The problem
 

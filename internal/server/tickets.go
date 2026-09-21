@@ -152,21 +152,25 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 // --auto-ticket gave no indication that work was piling up — the plan existed
 // only for whoever thought to call the API. Pending work nobody can see is the
 // same failure as absent data rendered as zero: the log has to say it.
-func (s *Server) autoReconcile(ctx context.Context) {
+//
+// It returns what was applied, so the history record can attribute tickets to the
+// items they cover; nil when nothing was written.
+func (s *Server) autoReconcile(ctx context.Context) []ticket.Result {
 	if s.ticketer == nil {
-		return
+		return nil
 	}
 	actions, err := s.planTickets(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "ticket reconciliation: could not plan", "error", err)
-		return
+		return nil
 	}
 	logPlan(ctx, "schedule", actions, s.autoTicket, s.autoTicket)
 	if !s.autoTicket {
-		return
+		return nil
 	}
 	results := ticket.Apply(ctx, s.ticketer, actions)
 	auditWrites(ctx, "schedule", results)
+	return results
 }
 
 // logPlan records what reconciliation intends to do, whether or not it will be

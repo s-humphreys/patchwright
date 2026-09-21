@@ -20,11 +20,25 @@ requests, and does not change cluster state.
 | CVE metadata, EPSS scores, KEV membership | Public | In memory only |
 | Jira credentials, API token | **Secret** | Environment variables from Secrets |
 | Registry credentials for base-image scanning | **Secret** | Minted per scan, written to a private file under `/tmp` for the length of one scan, then deleted |
+| History: work items, when they opened and closed, tickets, evidence | Internal, security record | PostgreSQL, only when `PATCHWRIGHT_HISTORY_DSN` is set; pruned to `history.retention` |
+| History database connection string | **Secret** | Environment variable from a Secret; never logged or written |
 
 No personal data is processed. Nothing is written to disk except Trivy's cache and
 that credential file (`/tmp`, an `emptyDir`, mode 0600 and removed when the scan
-returns), and no database is used: the service holds one assessment in memory and
-rebuilds it on refresh.
+returns). By default no database is used: the service holds one assessment in memory
+and rebuilds it on refresh.
+
+**With [history](docs/history.md) enabled that changes.** A PostgreSQL database then
+holds an append-only record of how work items moved between assessments: image
+references, CVE identifiers, team names, versions, ticket keys, and when each item
+opened and closed. That is a history of which services carried exploitable
+vulnerabilities and for how long, useful to an attacker and subject to whatever
+retention applies to security records. Still no personal data. Retention is a
+required setting applied after every assessment; the connection string is read from
+the environment and never written; and with `history.auth: azure` no password exists
+anywhere, since an Entra token is minted per connection. The database's own controls
+(network, encryption at rest, backup) are the organisation's, which is why the design
+chose one that is already operated over a file on a volume.
 
 The credential file deserves a note, because handing a subprocess a secret is
 exactly the kind of thing a review should ask about. Base-image scanning shells out
@@ -71,6 +85,7 @@ connections beyond the Kubernetes API.
 | `www.cisa.gov` | CISA Known Exploited Vulnerabilities catalogue | `--exploit-source=public` |
 | `endoflife.date` | Whether a base image's line is still maintained | `--support-source=endoflife` |
 | Trivy's vulnerability database (an OCI registry) | Scanner database updates | `--vuln-source=trivy` |
+| The history database (PostgreSQL) | Recording and reading how the queue moved | `PATCHWRIGHT_HISTORY_DSN` |
 | Your Jira instance | Search for existing tickets; create, edit, comment, and (opt-in) transition to done | `jira:` config + credentials |
 
 The chart can render a NetworkPolicy restricting this (`networkPolicy.enabled`).

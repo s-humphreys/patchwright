@@ -14,6 +14,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/internal/server"
 	"github.com/s-humphreys/patchwright/pkg/config"
+	"github.com/s-humphreys/patchwright/pkg/history/postgres"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
@@ -60,6 +61,10 @@ func closeSummary(cfg config.JiraConfig) string {
 // envAPIToken is the shared token required by the API and status page. Empty or
 // unset leaves both unauthenticated.
 const envAPIToken = "PATCHWRIGHT_API_TOKEN"
+
+// envHistoryDSN is the PostgreSQL connection string for the history store; its
+// presence is what switches history on. See docs/history.md.
+const envHistoryDSN = "PATCHWRIGHT_HISTORY_DSN"
 
 // Sign-in secrets come from the environment for the same reason the token does: a client
 // secret in a flag lands in a process list, a shell history and a pod spec.
@@ -191,6 +196,36 @@ func newServeCmd() *cobra.Command {
 				return fmt.Errorf("--auto-ticket needs a jira config block: %w", err)
 			}
 
+			// History: the record of movement between assessments. Switched on by the
+			// connection string being present, since that is the credential; the
+			// retention is required from config so the record never outlives a policy
+			// nobody set. The store connects lazily so an unreachable database costs
+			// the history and not the assessment.
+			if dsn := os.Getenv(envHistoryDSN); dsn != "" {
+				paths, err := expandConfigPaths(in.configPaths)
+				if err != nil {
+					return fmt.Errorf("%s is set but the config could not be read: %w", envHistoryDSN, err)
+				}
+				cfg, err := config.Load(paths...)
+				if err != nil {
+					return fmt.Errorf("%s is set but the config could not be loaded: %w", envHistoryDSN, err)
+				}
+				retention, err := cfg.History.RetentionDuration()
+				if err != nil {
+					return err
+				}
+				if retention == 0 {
+					return fmt.Errorf("%s is set but history.retention is not: the record is a history of "+
+						"which services carried exploitable vulnerabilities, and how long to keep it is a "+
+						"decision to make, not a default to inherit", envHistoryDSN)
+				}
+				store := postgres.NewLazy(postgres.Options{DSN: dsn, Auth: postgres.Auth(cfg.History.Auth)})
+				defer store.Close()
+				srv = srv.WithHistory(store, retention)
+				slog.InfoContext(cmd.Context(), "history enabled",
+					"retention", cfg.History.Retention, "auth", authSummary(cfg.History.Auth))
+			}
+
 			ctx := cmd.Context()
 			// Run assessments (initial + on interval) in the background.
 			go srv.Start(ctx, interval)
@@ -275,4 +310,11 @@ func registerOIDCFlags(cmd *cobra.Command, f *oidcFlags) {
 	cmd.Flags().StringSliceVar(&f.emails, "oidc-allowed-email", nil, "restrict sign-in to these addresses")
 	cmd.Flags().StringSliceVar(&f.domains, "oidc-allowed-domain", nil, "restrict sign-in to these email domains")
 	cmd.Flags().DurationVar(&f.sessionTTL, "oidc-session-ttl", 0, "how long a sign-in lasts (default 12h)")
+}
+
+func authSummary(auth string) string {
+	if auth == "" {
+		return "password"
+	}
+	return auth
 }

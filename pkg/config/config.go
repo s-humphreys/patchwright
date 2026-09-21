@@ -51,6 +51,10 @@ type Config struct {
 	// anything it writes elsewhere can link back to the evidence.
 	Dashboard DashboardConfig `yaml:"dashboard"`
 
+	// History is the record of movement between assessments. Off unless a store is
+	// configured; see docs/design/history.md.
+	History HistoryConfig `yaml:"history"`
+
 	// Sources is the raw text of each file this config was loaded from, in order.
 	// Not settable from YAML: it describes the load, not the configuration.
 	Sources []Source `yaml:"-"`
@@ -1099,6 +1103,12 @@ func Load(paths ...string) (*Config, error) {
 		if part.Dashboard.URL != "" {
 			cfg.Dashboard.URL = part.Dashboard.URL
 		}
+		if part.History.Retention != "" {
+			cfg.History.Retention = part.History.Retention
+		}
+		if part.History.Auth != "" {
+			cfg.History.Auth = part.History.Auth
+		}
 		if part.Remediation.Upgrade.Strategy != "" {
 			cfg.Remediation.Upgrade.Strategy = part.Remediation.Upgrade.Strategy
 		}
@@ -1174,6 +1184,9 @@ func (c *Config) validate() error {
 		if err := validatePolicyRule("suppress", r, seen); err != nil {
 			return err
 		}
+	}
+	if err := c.History.validate(); err != nil {
+		return err
 	}
 	names := map[string]bool{}
 	for i, e := range c.Environments {

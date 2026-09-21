@@ -540,3 +540,28 @@ CronJob has exited by the time anything scrapes it.
 
 `networkPolicy.enabled=true` restricts ingress to the API port and egress to HTTPS;
 the defaults are coarse and meant to be overridden.
+
+## History
+
+[History](history.md) needs a PostgreSQL database. Put the connection string in the
+credentials Secret as `PATCHWRIGHT_HISTORY_DSN` and enable it with a retention:
+
+```yaml
+history:
+  enabled: true
+  retention: 400d
+  auth: azure          # Azure Database for PostgreSQL with Entra; else password
+```
+
+`enabled: false` with the key present in the Secret is history **off**: the chart
+renders nothing for it and the binary is not told. `enabled: true` with no retention
+fails at render, since a record with no retention is one nobody decided to keep.
+
+With `auth: azure` the pod's workload identity must exist as a database user
+(`pgaadauth_create_principal` on Azure) and the DSN names it with no password. The
+NetworkPolicy, when enabled, opens TCP 5432 to anywhere; narrow it to the server's
+address with `networkPolicy.egress` once you know it.
+
+The record cannot be rebuilt if lost, so the database's backup is what stands between
+the estate and a blank history. That is the point of choosing an operated database
+over a volume.

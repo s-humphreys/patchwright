@@ -90,6 +90,7 @@ somebody acts on:
 | [MCP](docs/mcp.md) | Read-only tools an LLM client can ask about the estate |
 | [Authentication](docs/authentication.md) | Sign-in with OIDC, and tokens for scripts |
 | [Metrics](docs/metrics.md) | Prometheus metrics and what to alert on |
+| [History](docs/history.md) | Month-on-month movement: what was resolved with evidence, what lapsed, ticketed against unticketed, and the risk direction |
 | [Deploying](docs/deploying.md) | OCI charts, RBAC, registry credentials, Flux |
 | [Development](docs/development.md) | Build, test, run against your own data |
 | [Security](SECURITY.md) | What it touches, and what it deliberately cannot do |
@@ -123,10 +124,12 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
   pull requests, and a second thing computing versions would be two answers to one
   question. What is missing is knowing which repositories it covers, which is a read
   rather than an automation.
-- **Next** [Remembering what changed](docs/design/persistence.md). Every assessment
-  is a snapshot, so nothing the tool says is about movement: it cannot report time to
-  remediate, whether a queue is shrinking, or whether a change actually helped. The
-  first phase needs no storage at all.
+- **Phase 7** ✅ [History](docs/history.md): an event log in PostgreSQL, off by
+  default, so the tool can say what was resolved with evidence, what lapsed, how much
+  was ticketed work, and which way the estate's risk is moving, from the API and
+  without a metrics stack. Remaining: the page's history view, an MCP `trend_report`,
+  and tracker dates for cycle time
+  ([design](docs/design/history.md)).
 
 ## Licence
 

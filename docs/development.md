@@ -31,6 +31,14 @@ clusters.
 
 ## e2e suite
 
+The history store's tests run against a real PostgreSQL named by
+`PATCHWRIGHT_TEST_POSTGRES_DSN` and skip without one:
+
+```sh
+docker run -d --rm -e POSTGRES_PASSWORD=pw -p 55432:5432 postgres:17-alpine
+PATCHWRIGHT_TEST_POSTGRES_DSN=postgres://postgres:pw@localhost:55432/postgres go test ./pkg/history/postgres
+```
+
 `test/e2e` (`//go:build e2e`) stands up a real kind cluster, deploys a running
 Deployment and a completed Job, and asserts the client-go live source and the full
 pipeline mark running images live and completed or absent ones not-running.
