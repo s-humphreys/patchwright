@@ -586,51 +586,35 @@ func (j *Jira) Close(ctx context.Context, req CloseRequest) error {
 	if err != nil {
 		return err
 	}
-	body := map[string]any{
-		"transition": map[string]string{"id": id},
-	}
+
+	// The reasoning goes on as its own comment, BEFORE the transition, never inside
+	// it. Jira accepts a comment or a field change in a transition request and then
+	// silently discards both when the transition has no screen, which most "won't
+	// do" transitions do not; a 204 is not confirmation that anything but the status
+	// changed. Posting first also puts the explanation above the status change in
+	// the ticket's history. Deduplicated, so a transition that then fails and is
+	// retried next run does not say the same thing twice.
 	if comment != "" {
-		body["update"] = map[string]any{
-			"comment": []any{map[string]any{"add": map[string]any{"body": ADFDocument(comment)}}},
+		if _, err := j.CommentOnce(ctx, key, "close", comment); err != nil {
+			return fmt.Errorf("close %s: could not post the reason, so the ticket was left open: %w", key, err)
 		}
+	}
+	if err := j.do(ctx, http.MethodPost,
+		"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions",
+		map[string]any{"transition": map[string]string{"id": id}}, nil); err != nil {
+		return fmt.Errorf("close %s via %q (the reason is already posted; the ticket is still open): %w", key, name, err)
 	}
 	// A ticket closed as not-worked that keeps its original priority still appears in
 	// every "highest priority" filter until someone notices it is closed. Clearing it
-	// is part of the same statement. Only on this path: work somebody completed keeps
-	// the priority it was triaged at.
-	priority := ""
-	if usedUnworked || req.NoLongerActionable {
-		priority = priorityOverride
-	}
-	if priority != "" {
-		body["fields"] = map[string]any{"priority": map[string]string{"name": priority}}
-	}
-	if err := j.do(ctx, http.MethodPost,
-		"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions", body, nil); err != nil {
-		// Some workflows reject a comment supplied with a transition (a transition
-		// screen with required fields). Retrying without it still closes the
-		// ticket, and a closed ticket with no explanation beats an open ticket
-		// nobody is looking at — but say so, because the reasoning is the point.
-		slog.WarnContext(ctx, "transition with comment failed; retrying without the comment",
-			"ticket", key, "transition", name, "error", err)
-		if bare := j.do(ctx, http.MethodPost,
-			"/rest/api/3/issue/"+url.PathEscape(key)+"/transitions",
-			map[string]any{"transition": map[string]string{"id": id}}, nil); bare != nil {
-			return fmt.Errorf("close %s via %q: %w", key, name, err)
-		}
-		// The closure landed, so record the reasoning separately rather than
-		// losing it. A failure here is not worth failing the close over.
-		if cerr := j.Comment(ctx, key, comment); cerr != nil {
-			slog.WarnContext(ctx, "closed but could not post the reason",
-				"ticket", key, "error", cerr)
-		}
-		if priority != "" {
-			if perr := j.setPriority(ctx, key, priority); perr != nil {
-				// Worth saying: the ticket is closed but still carries the priority it
-				// was raised at, so it will keep appearing in priority-ordered views.
-				slog.WarnContext(ctx, "closed but could not clear the priority",
-					"ticket", key, "priority", priority, "error", perr)
-			}
+	// is part of the same statement. Only on those paths: work somebody completed
+	// keeps the priority it was triaged at. Done as an edit, for the same reason the
+	// comment is separate.
+	if (usedUnworked || req.NoLongerActionable) && priorityOverride != "" {
+		if perr := j.setPriority(ctx, key, priorityOverride); perr != nil {
+			// Worth saying: the ticket is closed but still carries the priority it
+			// was raised at, so it will keep appearing in priority-ordered views.
+			slog.WarnContext(ctx, "closed but could not clear the priority",
+				"ticket", key, "priority", priorityOverride, "error", perr)
 		}
 	}
 	return nil

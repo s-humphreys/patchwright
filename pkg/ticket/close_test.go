@@ -16,21 +16,52 @@ type transitionServer struct {
 	transitions []map[string]any
 	posted      map[string]any
 	status      int
+	// comments are the bodies posted to the comment endpoint, in order, and
+	// editedPriority what a PUT to the issue set. Both are separate requests from
+	// the transition now, because Jira drops anything else riding on a transition
+	// that has no screen.
+	comments       []string
+	editedPriority string
+	// order records the sequence of writes, so a test can assert the reasoning was
+	// posted before the status changed.
+	order []string
 }
 
 func (ts *transitionServer) jira(t *testing.T, cfg config.JiraConfig) *Jira {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comment"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"startAt": 0, "maxResults": 100, "total": 0, "comments": []any{}})
+		case r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"transitions": ts.transitions})
-			return
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comment"):
+			var body struct {
+				Body map[string]any `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			ts.comments = append(ts.comments, flattenADF(body.Body))
+			ts.order = append(ts.order, "comment")
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPut:
+			var body struct {
+				Fields struct {
+					Priority struct{ Name string } `json:"priority"`
+				} `json:"fields"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			ts.editedPriority = body.Fields.Priority.Name
+			ts.order = append(ts.order, "priority")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			_ = json.NewDecoder(r.Body).Decode(&ts.posted)
+			ts.order = append(ts.order, "transition")
+			if ts.status != 0 {
+				w.WriteHeader(ts.status)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 		}
-		_ = json.NewDecoder(r.Body).Decode(&ts.posted)
-		if ts.status != 0 {
-			w.WriteHeader(ts.status)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(srv.Close)
 	return &Jira{BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
@@ -58,10 +89,17 @@ func TestCloseUsesTheOnlyDoneTransition(t *testing.T) {
 	if tr["id"] != "31" {
 		t.Errorf("transitioned with id %v, want 31 (the done one)", tr["id"])
 	}
-	// The comment must ride along in the same request, so an explanation cannot
-	// arrive without the transition or the reverse.
-	if _, ok := ts.posted["update"]; !ok {
-		t.Error("no comment accompanied the transition")
+	// The reasoning is its own comment, posted before the status changes, and the
+	// transition carries nothing else: Jira drops a comment or field sent with a
+	// transition that has no screen, and says nothing.
+	if len(ts.comments) != 1 || !strings.Contains(ts.comments[0], "because") {
+		t.Errorf("the reason should be posted as a comment: %v", ts.comments)
+	}
+	if _, ok := ts.posted["update"]; ok {
+		t.Error("the transition must not carry the comment")
+	}
+	if len(ts.order) < 2 || ts.order[0] != "comment" || ts.order[1] != "transition" {
+		t.Errorf("comment should precede the transition: %v", ts.order)
 	}
 }
 
@@ -176,46 +214,17 @@ func TestCloseUsesTheRoutesTransitionForItsOwnProject(t *testing.T) {
 
 // A workflow that rejects a comment supplied with the transition must still close,
 // with the reasoning posted separately rather than lost.
-func TestCloseFallsBackWhenTheWorkflowRejectsTheComment(t *testing.T) {
-	var posts int
-	var sawComment bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(map[string]any{"transitions": []map[string]any{
-				transition("31", "Done", "Done", "done"),
-			}})
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/comment") {
-			sawComment = true
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-		posts++
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		// Reject only the attempt carrying a comment, as a transition screen with
-		// required fields would.
-		if _, ok := body["update"]; ok {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"errorMessages":["Field 'comment' cannot be set"]}`))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	cfg := baseCfg()
-	j := &Jira{BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
-		cfg: cfg, byRoute: map[string]config.JiraConfig{routeName: cfg}}
-	if err := j.Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because reasons"}); err != nil {
-		t.Fatalf("Close failed instead of retrying without the comment: %v", err)
+// If the transition itself fails, the reason has already been posted and the ticket
+// is still open; the error says so, and the comment is deduplicated so the retry
+// next run does not say it again.
+func TestCloseReportsATransitionFailureAfterCommenting(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{transition("31", "Done", "Done", "done")}, status: http.StatusBadRequest}
+	err := ts.jira(t, baseCfg()).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because reasons"})
+	if err == nil || !strings.Contains(err.Error(), "still open") {
+		t.Fatalf("a failed transition must be reported, got %v", err)
 	}
-	if posts != 2 {
-		t.Errorf("made %d transition attempts, want 2 (with, then without, the comment)", posts)
-	}
-	if !sawComment {
-		t.Error("the reasoning was lost: no comment posted after the bare transition")
+	if len(ts.comments) != 1 {
+		t.Errorf("the reason should have been posted first: %v", ts.comments)
 	}
 }
 
@@ -453,13 +462,11 @@ func TestUnworkedCloseClearsThePriority(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	fields, ok := ts.posted["fields"].(map[string]any)
-	if !ok {
-		t.Fatalf("transition carried no fields: %v", ts.posted)
+	if ts.editedPriority != "Unprioritised" {
+		t.Errorf("priority = %q, want Unprioritised set by an edit after the transition", ts.editedPriority)
 	}
-	pri, _ := fields["priority"].(map[string]any)
-	if pri["name"] != "Unprioritised" {
-		t.Errorf("priority = %v, want Unprioritised", pri["name"])
+	if _, ok := ts.posted["fields"]; ok {
+		t.Errorf("the transition must not carry fields, Jira drops them without a screen: %v", ts.posted)
 	}
 }
 
@@ -481,8 +488,8 @@ func TestCloseViaDoneLeavesThePriorityAlone(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if _, ok := ts.posted["fields"]; ok {
-		t.Errorf("a close via Done changed the priority: %v", ts.posted)
+	if ts.editedPriority != "" {
+		t.Errorf("a close via Done changed the priority: %q", ts.editedPriority)
 	}
 }
 
@@ -501,64 +508,27 @@ func TestUnworkedCloseWithoutAPriorityLeavesItAlone(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if _, ok := ts.posted["fields"]; ok {
-		t.Errorf("priority was changed without being configured: %v", ts.posted)
+	if ts.editedPriority != "" {
+		t.Errorf("priority was changed without being configured: %q", ts.editedPriority)
 	}
 }
 
-// A transition screen that rejects fields must still close the ticket, with the
-// priority applied separately rather than lost.
-func TestPriorityIsAppliedSeparatelyWhenTheScreenRejectsIt(t *testing.T) {
-	var transitions, edits int
-	var editedPriority string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet:
-			_ = json.NewEncoder(w).Encode(map[string]any{"transitions": []map[string]any{
-				transition("51", "WON'T BE DONE", "WON'T BE DONE", "done"),
-			}})
-		case r.Method == http.MethodPut:
-			edits++
-			var body struct {
-				Fields struct {
-					Priority struct{ Name string } `json:"priority"`
-				} `json:"fields"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			editedPriority = body.Fields.Priority.Name
-			w.WriteHeader(http.StatusNoContent)
-		case strings.HasSuffix(r.URL.Path, "/comment"):
-			w.WriteHeader(http.StatusCreated)
-		default:
-			transitions++
-			var body map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			// Reject anything carrying extra fields, as a restrictive screen would.
-			if _, ok := body["fields"]; ok {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"errorMessages":["Field 'priority' cannot be set"]}`))
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		}
-	}))
-	defer srv.Close()
-
+// The priority is always applied by an edit after the transition, never inside it:
+// a transition without a screen accepts fields and discards them, which is worse
+// than rejecting them.
+func TestPriorityIsAppliedByASeparateEdit(t *testing.T) {
+	ts := &transitionServer{transitions: []map[string]any{transition("51", "WON'T BE DONE", "WON'T BE DONE", "done")}}
 	cfg := baseCfg()
 	cfg.CloseTransitionUnworked = "WON'T BE DONE"
 	cfg.ClosePriorityUnworked = "Unprioritised"
-	j := &Jira{BaseURL: srv.URL, Email: "e", Token: "t", Client: srv.Client(),
-		cfg: cfg, byRoute: map[string]config.JiraConfig{routeName: cfg}}
-
-	if err := j.Close(context.Background(), CloseRequest{
-		Key: "PROJ-1", Comment: "because", Unworked: true,
-	}); err != nil {
-		t.Fatalf("Close failed instead of retrying without the fields: %v", err)
+	if err := ts.jira(t, cfg).Close(context.Background(), CloseRequest{Key: "PROJ-1", Comment: "because", Unworked: true}); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	if transitions != 2 {
-		t.Errorf("made %d transition attempts, want 2 (with, then without, the fields)", transitions)
+	want := []string{"comment", "transition", "priority"}
+	if strings.Join(ts.order, ",") != strings.Join(want, ",") {
+		t.Errorf("write order = %v, want %v", ts.order, want)
 	}
-	if edits != 1 || editedPriority != "Unprioritised" {
-		t.Errorf("priority not applied separately: edits=%d priority=%q", edits, editedPriority)
+	if ts.editedPriority != "Unprioritised" {
+		t.Errorf("priority edit = %q", ts.editedPriority)
 	}
 }

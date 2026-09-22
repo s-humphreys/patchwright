@@ -58,3 +58,21 @@ func TestHistoryConfigLoadsAndValidates(t *testing.T) {
 		t.Errorf("no history block should be fine: %v", err)
 	}
 }
+
+// The environments sequence was parsed but never copied out of the file it came
+// from, so a configured sequence was silently replaced by the built-in guess and a
+// namespace called "backstage" read as staging.
+func TestEnvironmentsSurviveLoad(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "env.yaml")
+	if err := os.WriteFile(p, []byte("environments:\n  - name: production\n    match: [production, shared infrastructure]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Environments) != 1 || cfg.Environments[0].Name != "production" || len(cfg.Environments[0].Match) != 2 {
+		t.Errorf("environments were not loaded: %+v", cfg.Environments)
+	}
+}

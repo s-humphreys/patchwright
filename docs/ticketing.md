@@ -372,6 +372,15 @@ the priority is set in a follow-up edit rather than lost.
 
 ## Comments
 
+**A closing comment is posted before the transition, as its own comment.** Jira
+accepts a comment or a field change inside a transition request and then silently
+discards both when the transition has no screen, which most "won't do" transitions
+do not; the request returns 204 and nothing but the status changes. So the reason
+goes on first, the transition carries nothing, and any priority change is a separate
+edit afterwards. The order also reads correctly in the ticket's history. If the
+transition then fails, the reason is already there, the ticket is left open, the
+error says so, and the comment is deduplicated so the retry does not repeat it.
+
 Each note carries a reference (`` `patchwright-ref: note-done` ``) and existing
 comments are read before posting, so a long-lived ticket does not collect an
 identical note every run. The reference encodes what would make a fresh comment
