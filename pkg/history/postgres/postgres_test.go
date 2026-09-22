@@ -51,7 +51,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 	var v int
-	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 2 {
+	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 3 {
 		t.Errorf("schema version = %d (%v)", v, err)
 	}
 }
@@ -69,7 +69,7 @@ func TestLifecycleRoundTrip(t *testing.T) {
 		[]history.Event{
 			{Key: a.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &a}},
 			{Key: b.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &b}},
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("record: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestLifecycleRoundTrip(t *testing.T) {
 		[]history.Event{
 			{ItemID: open[1].ID, Key: a.Key, Kind: history.KindChanged, At: t1, Payload: history.Payload{Snapshot: &a2, Changes: []string{"priority: high -> urgent"}}},
 			{ItemID: open[0].ID, Key: b.Key, Kind: history.KindResolved, At: t1, Payload: history.Payload{Opened: &opened, OpenedAt: &t0, DaysOpen: &days, Ticketed: true, Evidence: "lib is on 1.1."}},
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("record 2: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestLifecycleRoundTrip(t *testing.T) {
 	// A recurrence after a close is a new row under the same key.
 	t2 := t1.AddDate(0, 0, 5)
 	if _, err := s.Record(ctx, history.Assessment{StartedAt: t2, FinishedAt: t2},
-		[]history.Event{{Key: b.Key, Kind: history.KindOpened, At: t2, Payload: history.Payload{Snapshot: &b}}}); err != nil {
+		[]history.Event{{Key: b.Key, Kind: history.KindOpened, At: t2, Payload: history.Payload{Snapshot: &b}}}, nil); err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	item, _ = s.Item(ctx, b.Key)
@@ -182,7 +182,7 @@ func TestReassignmentMovesTheKey(t *testing.T) {
 	t0 := time.Now().UTC().Truncate(time.Second)
 	a := snap("eng|orders|app|svc", "app", "orders")
 	if _, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0},
-		[]history.Event{{Key: a.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &a}}}); err != nil {
+		[]history.Event{{Key: a.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &a}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	open, _ := s.Open(ctx)
@@ -190,7 +190,7 @@ func TestReassignmentMovesTheKey(t *testing.T) {
 	moved.Team, moved.Key = "payments", "eng|payments|app|svc"
 	if _, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0.Add(time.Hour)},
 		[]history.Event{{ItemID: open[0].ID, Key: a.Key, Kind: history.KindReassigned, At: t0.Add(time.Hour),
-			Payload: history.Payload{Snapshot: &moved, From: &history.Owner{Class: "eng", Team: "orders"}, To: &history.Owner{Class: "eng", Team: "payments"}}}}); err != nil {
+			Payload: history.Payload{Snapshot: &moved, From: &history.Owner{Class: "eng", Team: "orders"}, To: &history.Owner{Class: "eng", Team: "payments"}}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	open, _ = s.Open(ctx)
@@ -212,5 +212,34 @@ func TestOpenRejectsUnknownAuth(t *testing.T) {
 	}
 	if _, err := Open(context.Background(), Options{}); err == nil {
 		t.Fatal("empty DSN must be refused")
+	}
+}
+
+func TestMarksPersistAndClearOnClose(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	a := snap("eng|orders|app|svc", "app", "orders")
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0},
+		[]history.Event{{Key: a.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &a}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := s.Open(ctx)
+	since := t0.Add(time.Hour)
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: since, FinishedAt: since}, nil,
+		[]history.Mark{{ItemID: open[0].ID, Missing: 2, MissingSince: &since}}); err != nil {
+		t.Fatal(err)
+	}
+	open, _ = s.Open(ctx)
+	if open[0].Missing != 2 || open[0].MissingSince == nil || !open[0].MissingSince.Equal(since) {
+		t.Fatalf("mark should round-trip: %+v", open[0])
+	}
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: since, FinishedAt: since}, nil,
+		[]history.Mark{{ItemID: open[0].ID}}); err != nil {
+		t.Fatal(err)
+	}
+	open, _ = s.Open(ctx)
+	if open[0].Missing != 0 || open[0].MissingSince != nil {
+		t.Fatalf("a zero mark clears: %+v", open[0])
 	}
 }

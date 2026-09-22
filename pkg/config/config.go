@@ -1135,6 +1135,9 @@ func Load(paths ...string) (*Config, error) {
 		if part.History.Auth != "" {
 			cfg.History.Auth = part.History.Auth
 		}
+		if part.History.LapseAfter != 0 {
+			cfg.History.LapseAfter = part.History.LapseAfter
+		}
 		if part.Remediation.Upgrade.Strategy != "" {
 			cfg.Remediation.Upgrade.Strategy = part.Remediation.Upgrade.Strategy
 		}

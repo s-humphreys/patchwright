@@ -82,7 +82,7 @@ func TestChangedRecordsCVEMovement(t *testing.T) {
 	prev := Snapshots([]sink.FindingView{v}, nil)[0]
 	v.Vulns = []sink.VulnView{{ID: "CVE-2026-2", Severity: "high"}, {ID: "CVE-2026-3", Severity: "critical"}}
 	cur := Snapshots([]sink.FindingView{v}, nil)
-	events := Diff(Input{Open: []State{openState(1, prev, t0)}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
+	events, _ := Diff(Input{Open: []State{openState(1, prev, t0)}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
 	if len(events) != 1 || events[0].Kind != KindChanged {
 		t.Fatalf("want a changed event, got %+v", events)
 	}
@@ -117,7 +117,7 @@ func openState(id int64, s Snapshot, openedAt time.Time) State {
 
 func TestDiffOpensNewItems(t *testing.T) {
 	cur := Snapshots([]sink.FindingView{view("acr.io/app:1", "eng", "orders", "high")}, nil)
-	events := Diff(Input{Current: cur, Now: t0})
+	events, _ := Diff(Input{Current: cur, Now: t0})
 	if len(events) != 1 || events[0].Kind != KindOpened || events[0].Payload.Snapshot == nil {
 		t.Fatalf("want one opened event with a snapshot, got %+v", events)
 	}
@@ -134,7 +134,7 @@ func TestDiffRecordsChangesWhileOpen(t *testing.T) {
 	v.TopEPSS = 0.9
 	cur := Snapshots([]sink.FindingView{v}, nil)
 
-	events := Diff(Input{Open: []State{openState(7, prev, t0.AddDate(0, 0, -3))}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
+	events, _ := Diff(Input{Open: []State{openState(7, prev, t0.AddDate(0, 0, -3))}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
 	if len(events) != 1 || events[0].Kind != KindChanged || events[0].ItemID != 7 {
 		t.Fatalf("want one changed event for item 7, got %+v", events)
 	}
@@ -150,7 +150,7 @@ func TestDiffRecordsChangesWhileOpen(t *testing.T) {
 	}
 
 	// A second identical run is silent.
-	again := Diff(Input{Open: []State{openState(7, cur[0], t0)}, Current: cur, Views: []sink.FindingView{v}, Now: t0.Add(time.Hour)})
+	again, _ := Diff(Input{Open: []State{openState(7, cur[0], t0)}, Current: cur, Views: []sink.FindingView{v}, Now: t0.Add(time.Hour)})
 	if len(again) != 0 {
 		t.Errorf("no movement should produce no events, got %+v", again)
 	}
@@ -162,7 +162,7 @@ func TestDiffResolvesWithEvidence(t *testing.T) {
 	now := fixed(v)
 	opened := t0.AddDate(0, 0, -40)
 
-	events := Diff(Input{
+	events, _ := Diff(Input{
 		Open: []State{openState(3, prev, opened)}, Current: nil, Views: []sink.FindingView{now},
 		OpenTickets: nil, Now: t0,
 	})
@@ -191,7 +191,7 @@ func TestDiffResolvesWithEvidence(t *testing.T) {
 	}
 
 	// The same close, but patchwright did it and said why.
-	again := Diff(Input{
+	again, _ := Diff(Input{
 		Open: []State{openState(3, prev, opened)}, Views: []sink.FindingView{now},
 		ClosedReasons: map[string]string{"DVOP-9": "not-running"}, Now: t0,
 	})
@@ -219,7 +219,7 @@ func TestDiffLapsesWithoutEvidence(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			events := Diff(Input{Open: []State{st}, Views: c.views, Now: t0})
+			events, _ := Diff(Input{Open: []State{st}, Views: c.views, LapseAfter: 1, Now: t0})
 			if len(events) != 1 || events[0].Kind != KindLapsed {
 				t.Fatalf("want lapsed, got %+v", events)
 			}
@@ -239,7 +239,7 @@ func TestDiffReassignsRatherThanClosing(t *testing.T) {
 	v.Owner.Team = "payments"
 	cur := Snapshots([]sink.FindingView{v}, nil)
 
-	events := Diff(Input{Open: []State{openState(5, prev, t0)}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
+	events, _ := Diff(Input{Open: []State{openState(5, prev, t0)}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
 	if len(events) != 1 || events[0].Kind != KindReassigned || events[0].ItemID != 5 {
 		t.Fatalf("want a single reassigned event, got %+v", events)
 	}
@@ -269,3 +269,55 @@ func TestRiskStats(t *testing.T) {
 		t.Errorf("empty set is zero, not a panic")
 	}
 }
+
+// A provider that drops a repository from one response and returns it in the next
+// has said nothing about the work, so an absence is counted rather than recorded
+// until it has lasted the grace period.
+func TestDiffWaitsBeforeLapsing(t *testing.T) {
+	v := view("acr.io/app:1", "eng", "orders", "high")
+	prev := Snapshots([]sink.FindingView{v}, nil)[0]
+	st := openState(3, prev, t0.AddDate(0, 0, -5))
+
+	// First absence: no event, one mark starting the clock.
+	events, marks := Diff(Input{Open: []State{st}, Now: t0})
+	if len(events) != 0 || len(marks) != 1 || marks[0].ItemID != 3 || marks[0].Missing != 1 || marks[0].MissingSince == nil || !marks[0].MissingSince.Equal(t0) {
+		t.Fatalf("first absence should mark, not lapse: events=%+v marks=%+v", events, marks)
+	}
+
+	// Second absence, still inside the default grace period.
+	st.Missing, st.MissingSince = 1, ptrTime(t0)
+	events, marks = Diff(Input{Open: []State{st}, Now: t0.Add(time.Hour)})
+	if len(events) != 0 || len(marks) != 1 || marks[0].Missing != 2 || !marks[0].MissingSince.Equal(t0) {
+		t.Fatalf("second absence keeps counting from the first: events=%+v marks=%+v", events, marks)
+	}
+
+	// Third absence: the grace period is spent.
+	st.Missing = 2
+	events, marks = Diff(Input{Open: []State{st}, Now: t0.Add(2 * time.Hour)})
+	if len(marks) != 0 || len(events) != 1 || events[0].Kind != KindLapsed {
+		t.Fatalf("third absence lapses: events=%+v marks=%+v", events, marks)
+	}
+	if events[0].Payload.MissedRuns != 3 || events[0].Payload.MissingSince == nil || !events[0].Payload.MissingSince.Equal(t0) {
+		t.Errorf("the lapse should say how long it was missing: %+v", events[0].Payload)
+	}
+
+	// Back inside the window: the counter clears and nothing is recorded.
+	st.Missing = 2
+	cur := Snapshots([]sink.FindingView{v}, nil)
+	events, marks = Diff(Input{Open: []State{st}, Current: cur, Views: []sink.FindingView{v}, Now: t0.Add(2 * time.Hour)})
+	if len(events) != 0 || len(marks) != 1 || marks[0].Missing != 0 || marks[0].MissingSince != nil {
+		t.Fatalf("a return within the grace period is silent and clears the mark: events=%+v marks=%+v", events, marks)
+	}
+}
+
+// Evidence is positive data and is never made to wait.
+func TestDiffResolvesImmediatelyDespiteGrace(t *testing.T) {
+	v := view("acr.io/app:1", "eng", "orders", "high")
+	prev := Snapshots([]sink.FindingView{v}, nil)[0]
+	events, marks := Diff(Input{Open: []State{openState(3, prev, t0)}, Views: []sink.FindingView{fixed(v)}, Now: t0})
+	if len(marks) != 0 || len(events) != 1 || events[0].Kind != KindResolved {
+		t.Fatalf("evidence resolves on the first run: events=%+v marks=%+v", events, marks)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }

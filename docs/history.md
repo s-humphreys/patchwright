@@ -21,6 +21,7 @@ export PATCHWRIGHT_HISTORY_DSN=postgres://patchwright@db.example.internal:5432/p
 history:
   retention: 400d      # required: how long events and closed items are kept
   auth: azure          # optional: mint an Entra token per connection; default password
+  lapseAfter: 3        # optional: absent assessments before an item lapses; default 3
 ```
 
 The connection string is the credential, so it comes from the environment and its
@@ -67,6 +68,25 @@ one as a lapse.
 
 Resolved and lapsed are never summed. A time-to-remediate that counted coverage loss
 as remediation would improve fastest when the scanner broke.
+
+### Absence is counted before it is believed
+
+A scan provider's hourly responses are not identical: a handful of repositories
+drop out of one and return in the next, and once in a while a whole slice goes
+missing for a single call. Recording each as a lapse and a reopening would turn
+provider jitter into movement, and the first day of the record did exactly that.
+
+So an item that disappears **without evidence** is marked missing and counted, not
+lapsed. It lapses only after `lapseAfter` consecutive absent assessments (default
+three), and the lapse says how long it had been missing. An item that returns inside
+that window writes nothing: as far as the record is concerned nothing happened.
+Resolution with evidence is never delayed, because evidence is positive data rather
+than absence. The open summary reports how many items are currently in that limbo
+as `missing`.
+
+Ticket reconciliation reads the same state: a ticket whose image is absent from this
+assessment but was reported inside the grace period is held, rather than told its
+coverage is gone.
 
 Each item's snapshot carries what a later question is likely to need: its rule,
 priority and signals; its risk score and worst counts per severity; where it runs

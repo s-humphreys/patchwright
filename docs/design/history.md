@@ -231,6 +231,22 @@ ticketing was switched on. It cannot attach a rule or signal to those tickets wi
 any confidence, and should not try. That history is reported as tickets, not as
 resolutions.
 
+## Learned on day one: absence needs a grace period
+
+Within a day of going live the record showed the provider's responses are not
+stable call to call: five to twenty repositories drop out of an hourly response and
+return in the next, and one call returned 766 distinct images against a steady 911
+to 920. The diff treated each absence as a lapse and each return as an opening, so
+the first day carries phantom movement in both columns.
+
+The fix keeps the evidence rule and adds patience to the other side of it. An item
+that disappears without evidence is counted, not lapsed, and lapses only after
+`lapseAfter` consecutive absent assessments. Returning inside the window is silent.
+Evidence still resolves on the first run, because evidence is data and absence is
+not. Ticket reconciliation holds a ticket whose image is inside that window rather
+than telling it coverage is gone. The first day's events are left as written; the
+caveats say when the record began.
+
 ## Considered and deferred: a separate UI deployment
 
 The page serves from process memory, and readiness means an assessment is cached.

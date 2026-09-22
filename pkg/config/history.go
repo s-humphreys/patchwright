@@ -21,6 +21,11 @@ type HistoryConfig struct {
 	// the DSN carries) or "azure" (an Entra token minted per connection for Azure
 	// Database for PostgreSQL, with no password anywhere).
 	Auth string `yaml:"auth"`
+	// LapseAfter is how many consecutive assessments an item must be absent from,
+	// without evidence its work was done, before it lapses. Scan providers drop a
+	// few repositories from one response and return them in the next; counting each
+	// as a lapse and a reopening would turn that jitter into movement. Default 3.
+	LapseAfter int `yaml:"lapseAfter"`
 }
 
 // RetentionDuration parses Retention. Zero with no error when unset.
@@ -31,6 +36,9 @@ func (h HistoryConfig) RetentionDuration() (time.Duration, error) {
 func (h HistoryConfig) validate() error {
 	if _, err := parseRetention(h.Retention); err != nil {
 		return fmt.Errorf("history.retention: %w", err)
+	}
+	if h.LapseAfter < 0 {
+		return fmt.Errorf("history.lapseAfter: %d must be at least 1 (1 lapses on the first absent assessment)", h.LapseAfter)
 	}
 	switch h.Auth {
 	case "", "password", "azure":

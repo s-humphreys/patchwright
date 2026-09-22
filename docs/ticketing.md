@@ -145,7 +145,7 @@ per-instance and a name that does not exist fails ticket creation.
 | `close` | the work is provably finished (needs `autoClose`), or nobody picked the ticket up and its work stopped mattering (needs `closeTransitionNoLongerActionable`) |
 | `note-stale` | the target moved on, but someone has picked the ticket up |
 | `note-done` | the finding no longer asks for anything, so the work appears done |
-| `hold` | nothing can be judged yet, because the data needed is missing. **Writes nothing** |
+| `hold` | nothing can be judged yet, because the data needed is missing, or the image was reported a run or two ago and the provider may bring it back. **Writes nothing** |
 | `skip` | already covers the change correctly |
 
 **A policy decision is not the work being done.** A finding that leaves the queue because

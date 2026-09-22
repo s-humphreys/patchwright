@@ -19,7 +19,7 @@ type Store interface {
 	// Opened events create items; resolved and lapsed close them; changed and
 	// reassigned update their state. It returns the assessment's id so ticket events
 	// recorded later can be attributed to the same run.
-	Record(ctx context.Context, a Assessment, events []Event) (assessmentID int64, err error)
+	Record(ctx context.Context, a Assessment, events []Event, marks []Mark) (assessmentID int64, err error)
 	// Append writes events against an assessment already recorded.
 	Append(ctx context.Context, assessmentID int64, events []Event) error
 	// Events returns events in [since, until), oldest first.

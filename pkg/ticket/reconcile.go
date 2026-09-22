@@ -128,6 +128,11 @@ type ReconcileInput struct {
 	// The zero value closes nothing, which is the safe default for a caller that
 	// has not thought about it.
 	Config config.JiraConfig
+	// RecentlyReported are repositories absent from this assessment that the
+	// history record saw a run or two ago and has not yet given up on. A ticket for
+	// one is held rather than told its coverage is gone: a provider that drops an
+	// image from one response and returns it in the next has not lost coverage.
+	RecentlyReported map[string]bool
 }
 
 // Reconcile turns the difference between drafts and open tickets into actions.
@@ -258,6 +263,14 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 					Kind: ActionHold, TicketKey: t.Key,
 					Why: "cannot tell whether this is done: no available version could be " +
 						"resolved for " + strings.Join(unproven, ", "),
+				})
+				continue
+			}
+			if recent := recentlyReported(images, byImage, in.RecentlyReported); len(recent) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key,
+					Why: "absent from this assessment but reported recently; waiting to see whether " +
+						"the provider brings it back before saying anything: " + strings.Join(recent, ", "),
 				})
 				continue
 			}
@@ -498,6 +511,18 @@ func unknownImages(images []string, byImage map[string]sink.FindingView) []strin
 
 // policySkipped returns the reasons configuration declined to ticket this ticket's
 // images, if it did.
+// recentlyReported lists a ticket's images that are missing from the assessment
+// but inside the history's grace period.
+func recentlyReported(images []string, byImage map[string]sink.FindingView, recent map[string]bool) []string {
+	var out []string
+	for _, img := range images {
+		if _, present := byImage[img]; !present && recent[img] {
+			out = append(out, img)
+		}
+	}
+	return out
+}
+
 func policySkipped(images []string, skips []Skip) []string {
 	byImage := map[string]string{}
 	for _, s := range skips {

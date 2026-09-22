@@ -227,7 +227,7 @@ func newServeCmd() *cobra.Command {
 					DSN: dsn, Auth: postgres.Auth(cfg.History.Auth), Password: os.Getenv(envHistoryPassword),
 				})
 				defer store.Close()
-				srv = srv.WithHistory(store, retention)
+				srv = srv.WithHistory(store, retention).WithLapseAfter(cfg.History.LapseAfter)
 				slog.InfoContext(cmd.Context(), "history enabled",
 					"retention", cfg.History.Retention, "auth", authSummary(cfg.History.Auth))
 			}

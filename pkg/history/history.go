@@ -165,7 +165,28 @@ type State struct {
 	Opened Snapshot `json:"opened"`
 	// Current is the latest snapshot recorded for it.
 	Current Snapshot `json:"current"`
+	// Missing is how many consecutive assessments the item has been absent from
+	// without evidence of resolution, and MissingSince when that began. An item
+	// lapses only once Missing reaches the grace period; a provider that drops a
+	// repository from one hourly response and returns it in the next has not told
+	// us anything about the work.
+	Missing      int        `json:"missing,omitempty"`
+	MissingSince *time.Time `json:"missing_since,omitempty"`
 }
+
+// Mark is a change to an open item's missing counter, recorded alongside the
+// events of the same run. Zero Missing clears it: the item is back.
+type Mark struct {
+	ItemID       int64
+	Missing      int
+	MissingSince *time.Time
+}
+
+// DefaultLapseAfter is the grace period when none is configured: the number of
+// consecutive assessments an item must be absent from before it lapses. Three
+// hourly runs absorbs the jitter a scan provider's responses carry between calls,
+// and still lapses a genuinely removed image within the working morning.
+const DefaultLapseAfter = 3
 
 // Event is one transition.
 type Event struct {
@@ -196,6 +217,10 @@ type Payload struct {
 	Closed *Snapshot `json:"closed,omitempty"`
 	// DaysOpen is the age at resolution or lapse.
 	DaysOpen *int `json:"days_open,omitempty"`
+	// MissingSince and MissedRuns say, on a lapse, how long the item had been absent
+	// before the grace period ran out.
+	MissingSince *time.Time `json:"missing_since,omitempty"`
+	MissedRuns   int        `json:"missed_runs,omitempty"`
 	// Ticketed is whether an open ticket covered the item when it resolved or lapsed.
 	Ticketed bool `json:"ticketed,omitempty"`
 	// Evidence is the observed state that justified a resolution.
@@ -409,13 +434,20 @@ type Input struct {
 	// with why. A ticket gone from the open index without an entry here was closed
 	// by a person.
 	ClosedReasons map[string]string
-	Now           time.Time
+	// LapseAfter is the grace period in consecutive absent assessments. Zero means
+	// DefaultLapseAfter. Resolution with evidence is never delayed by it.
+	LapseAfter int
+	Now        time.Time
 }
 
 // Diff compares the open items against the current assessment and returns the
-// transitions, in a stable order. Events for existing items carry their ItemID;
-// opened events carry none.
-func Diff(in Input) []Event {
+// transitions, in a stable order, and the missing-counter marks to apply. Events
+// for existing items carry their ItemID; opened events carry none.
+func Diff(in Input) ([]Event, []Mark) {
+	lapseAfter := in.LapseAfter
+	if lapseAfter <= 0 {
+		lapseAfter = DefaultLapseAfter
+	}
 	current := map[string]Snapshot{}
 	for _, s := range in.Current {
 		current[s.Key] = s
@@ -430,6 +462,7 @@ func Diff(in Input) []Event {
 	}
 
 	var events []Event
+	var marks []Mark
 	claimed := map[string]bool{} // current keys explained by a reassignment
 
 	// Items that left the queue. Checked before openings so a reassignment can claim
@@ -444,6 +477,21 @@ func Diff(in Input) []Event {
 			continue
 		}
 		ev := closed(st, byRepo, in.Now)
+		if ev.Kind == KindLapsed && st.Missing+1 < lapseAfter {
+			// Absent, but not for long enough to mean anything. Count it and wait;
+			// no event, because a provider hiccup is not movement.
+			since := st.MissingSince
+			if since == nil {
+				t := in.Now
+				since = &t
+			}
+			marks = append(marks, Mark{ItemID: st.ID, Missing: st.Missing + 1, MissingSince: since})
+			continue
+		}
+		if ev.Kind == KindLapsed && st.MissingSince != nil {
+			ev.Payload.MissingSince = st.MissingSince
+			ev.Payload.MissedRuns = st.Missing + 1
+		}
 		events = append(events, ev)
 		events = append(events, ticketsClosed(st, ticketsFor(st.Current, in.OpenTickets), ev.Kind == KindResolved, in.ClosedReasons, in.Now)...)
 	}
@@ -458,12 +506,17 @@ func Diff(in Input) []Event {
 			events = append(events, Event{Key: s.Key, Kind: KindOpened, At: in.Now, Payload: Payload{Snapshot: &snap}})
 			continue
 		}
+		if st.Missing > 0 {
+			// Back within the grace period: nothing happened, as far as the record
+			// is concerned.
+			marks = append(marks, Mark{ItemID: st.ID})
+		}
 		if ev, changed := changed(st, s, in.Now); changed {
 			events = append(events, ev)
 		}
 		events = append(events, ticketsClosed(st, s.Tickets, false, in.ClosedReasons, in.Now)...)
 	}
-	return events
+	return events, marks
 }
 
 // ticketsFor lists the tickets still open for an item's repository.

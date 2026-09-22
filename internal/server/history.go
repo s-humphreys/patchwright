@@ -25,8 +25,9 @@ import (
 const defaultHistorySince = 90 * 24 * time.Hour
 
 type historyRecorder struct {
-	store     history.Store
-	retention time.Duration
+	store      history.Store
+	retention  time.Duration
+	lapseAfter int
 
 	mu sync.Mutex
 	// assessmentID and open are from the most recent record, so ticket events
@@ -47,8 +48,34 @@ func (s *Server) WithHistory(store history.Store, retention time.Duration) *Serv
 	if store == nil {
 		return s
 	}
-	s.history = &historyRecorder{store: store, retention: retention}
+	s.history = &historyRecorder{store: store, retention: retention, lapseAfter: history.DefaultLapseAfter}
 	return s
+}
+
+// WithLapseAfter sets the grace period before an absent item lapses.
+func (s *Server) WithLapseAfter(runs int) *Server {
+	if s.history != nil && runs > 0 {
+		s.history.lapseAfter = runs
+	}
+	return s
+}
+
+// recentlyMissing lists the repositories of open items that were absent from the
+// latest assessment but are still inside the grace period. Ticket reconciliation
+// holds tickets for those rather than telling them coverage is gone.
+func (s *Server) recentlyMissing() map[string]bool {
+	if s.history == nil {
+		return nil
+	}
+	s.history.mu.Lock()
+	defer s.history.mu.Unlock()
+	out := map[string]bool{}
+	for _, st := range s.history.open {
+		if st.Missing > 0 {
+			out[st.Current.Repository] = true
+		}
+	}
+	return out
 }
 
 // recordHistory diffs a published snapshot against the open items and writes the
@@ -73,12 +100,12 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	// error the grant had already fixed.
 	rec.clearError()
 	current := history.Snapshots(snap.views, tickets)
-	events := history.Diff(history.Input{
+	events, marks := history.Diff(history.Input{
 		Open: open, Current: current, Views: snap.views, OpenTickets: tickets,
-		ClosedReasons: closedReasons, Now: snap.generatedAt,
+		ClosedReasons: closedReasons, LapseAfter: rec.lapseAfter, Now: snap.generatedAt,
 	})
 	a := history.Summarise(started, snap.generatedAt, snap.views, current, snap.summary)
-	id, err := rec.store.Record(ctx, a, events)
+	id, err := rec.store.Record(ctx, a, events, marks)
 	if err != nil {
 		rec.fail(ctx, "record assessment", err)
 		return
@@ -94,8 +121,14 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	for _, e := range events {
 		counts[e.Kind]++
 	}
+	missing := 0
+	for _, m := range marks {
+		if m.Missing > 0 {
+			missing++
+		}
+	}
 	slog.InfoContext(ctx, "history: recorded assessment",
-		"assessment_id", id, "items", len(current),
+		"assessment_id", id, "items", len(current), "missing", missing,
 		"opened", counts[history.KindOpened], "resolved", counts[history.KindResolved],
 		"lapsed", counts[history.KindLapsed], "changed", counts[history.KindChanged],
 		"reassigned", counts[history.KindReassigned], "tickets_closed", counts[history.KindTicketClosed])

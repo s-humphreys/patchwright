@@ -43,13 +43,18 @@ func (m *memStore) Open(context.Context) ([]history.State, error) {
 	return out, nil
 }
 
-func (m *memStore) Record(_ context.Context, a history.Assessment, events []history.Event) (int64, error) {
+func (m *memStore) Record(_ context.Context, a history.Assessment, events []history.Event, marks []history.Mark) (int64, error) {
 	if m.err != nil {
 		return 0, m.err
 	}
 	m.nextAssessment++
 	a.ID = m.nextAssessment
 	m.assessments = append(m.assessments, a)
+	for _, mk := range marks {
+		if st := m.items[mk.ItemID]; st != nil {
+			st.Missing, st.MissingSince = mk.Missing, mk.MissingSince
+		}
+	}
 	return a.ID, m.apply(events)
 }
 
@@ -201,7 +206,7 @@ func TestHistoryDisabledIsExplicit(t *testing.T) {
 func TestHistoryRecordsAcrossRefreshes(t *testing.T) {
 	store := newMemStore()
 	a := &stubAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders"), upgradable("acr.io/lib:1", "billing")}}
-	s := New(a).WithHistory(store, 30*24*time.Hour)
+	s := New(a).WithHistory(store, 30*24*time.Hour).WithLapseAfter(1)
 	s.Refresh(context.Background())
 
 	if k := store.kinds(); k[history.KindOpened] != 2 || len(store.assessments) != 1 {
@@ -332,5 +337,43 @@ func TestParseHistoryRange(t *testing.T) {
 		if _, err := parseHistoryRange(req(bad), now); err == nil {
 			t.Errorf("%q should be rejected", bad)
 		}
+	}
+}
+
+// A repository missing from one assessment is neither lapsed nor told its coverage
+// is gone until the grace period is spent; the ticket for it is held meanwhile.
+func TestHistoryGraceHoldsTicketsAndDelaysLapse(t *testing.T) {
+	store := newMemStore()
+	a := &stubAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders")}}
+	s := New(a).WithHistory(store, 30*24*time.Hour).WithLapseAfter(3)
+	s.Refresh(context.Background())
+
+	// The provider drops the image for one run.
+	a.findings = nil
+	s.Refresh(context.Background())
+	if k := store.kinds(); k[history.KindLapsed] != 0 {
+		t.Fatalf("one absent run must not lapse: %v", k)
+	}
+	recent := s.recentlyMissing()
+	if !recent["app"] {
+		t.Fatalf("the missing repository should be reported as recently seen: %v", recent)
+	}
+	actions := ticket.Reconcile(ticket.ReconcileInput{
+		OpenByImage:      map[string][]ticket.Existing{"app": {{Key: "PROJ-1", Category: "new"}}},
+		RecentlyReported: recent,
+	})
+	if len(actions) != 1 || actions[0].Kind != ticket.ActionHold || !strings.Contains(actions[0].Why, "reported recently") {
+		t.Fatalf("a ticket for a recently seen image is held, not told coverage is gone: %+v", actions)
+	}
+
+	// Two more absent runs and the grace period is spent.
+	s.Refresh(context.Background())
+	s.Refresh(context.Background())
+	k := store.kinds()
+	if k[history.KindLapsed] != 1 || k[history.KindOpened] != 1 {
+		t.Fatalf("after the grace period the item lapses once: %v", k)
+	}
+	if s.recentlyMissing()["app"] {
+		t.Errorf("a lapsed item is no longer recently seen")
 	}
 }

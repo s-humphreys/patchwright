@@ -178,7 +178,8 @@ func (s *Store) migrate(ctx context.Context) error {
 func (s *Store) Open(ctx context.Context) ([]history.State, error) {
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
-	rows, err := s.pool.Query(ctx, `SELECT id, opened_at, opened, current FROM items WHERE closed_at IS NULL ORDER BY key`)
+	rows, err := s.pool.Query(ctx, `SELECT id, opened_at, opened, current, missing_runs, missing_since
+		FROM items WHERE closed_at IS NULL ORDER BY key`)
 	if err != nil {
 		return nil, fmt.Errorf("history: open items: %w", err)
 	}
@@ -187,7 +188,7 @@ func (s *Store) Open(ctx context.Context) ([]history.State, error) {
 	for rows.Next() {
 		var st history.State
 		var opened, current []byte
-		if err := rows.Scan(&st.ID, &st.OpenedAt, &opened, &current); err != nil {
+		if err := rows.Scan(&st.ID, &st.OpenedAt, &opened, &current, &st.Missing, &st.MissingSince); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(opened, &st.Opened); err != nil {
@@ -202,7 +203,7 @@ func (s *Store) Open(ctx context.Context) ([]history.State, error) {
 }
 
 // Record writes an assessment and applies its events in one transaction.
-func (s *Store) Record(ctx context.Context, a history.Assessment, events []history.Event) (int64, error) {
+func (s *Store) Record(ctx context.Context, a history.Assessment, events []history.Event, marks []history.Mark) (int64, error) {
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
 	tx, err := s.pool.Begin(ctx)
@@ -237,6 +238,12 @@ func (s *Store) Record(ctx context.Context, a history.Assessment, events []histo
 	}
 	if err := applyEvents(ctx, tx, id, events); err != nil {
 		return 0, err
+	}
+	for _, m := range marks {
+		if _, err := tx.Exec(ctx, `UPDATE items SET missing_runs = $2, missing_since = $3 WHERE id = $1 AND closed_at IS NULL`,
+			m.ItemID, m.Missing, m.MissingSince); err != nil {
+			return 0, fmt.Errorf("history: mark item %d: %w", m.ItemID, err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("history: commit: %w", err)
@@ -297,7 +304,7 @@ func applyEvents(ctx context.Context, tx pgx.Tx, assessmentID int64, events []hi
 				return fmt.Errorf("history: open item %s: %w", e.Key, err)
 			}
 		case history.KindResolved, history.KindLapsed:
-			if _, err := tx.Exec(ctx, `UPDATE items SET closed_at = $2, closed_kind = $3
+			if _, err := tx.Exec(ctx, `UPDATE items SET closed_at = $2, closed_kind = $3, missing_runs = 0, missing_since = NULL
 				WHERE id = $1 AND closed_at IS NULL`, itemID, e.At, string(e.Kind)); err != nil {
 				return fmt.Errorf("history: close item %d: %w", itemID, err)
 			}

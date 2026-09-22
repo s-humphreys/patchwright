@@ -139,7 +139,7 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 	}
 	return ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, Skipped: plan.Skips, OpenByImage: index, Findings: snap.views,
-		Config: s.ticketer.Config(),
+		Config: s.ticketer.Config(), RecentlyReported: s.recentlyMissing(),
 	}), nil
 }
 

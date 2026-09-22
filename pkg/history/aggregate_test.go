@@ -50,7 +50,10 @@ func TestAggregateClassifiesByOpeningState(t *testing.T) {
 		{FinishedAt: day(2026, 7, 30), Findings: 100, Actionable: 40, ItemCount: 2, Risk: RiskStats{Items: 2, Sum: 950}},
 		{FinishedAt: day(2026, 8, 30), Findings: 90, Actionable: 30, ItemCount: 1, Risk: RiskStats{Items: 1, Sum: 400}},
 	}
-	open := []State{{OpenedAt: day(2026, 9, 1), Current: Snapshot{Key: "k3", Signals: []string{"kev"}, Tickets: []string{"DVOP-3"}}}}
+	open := []State{
+		{OpenedAt: day(2026, 9, 1), Current: Snapshot{Key: "k3", Signals: []string{"kev"}, Tickets: []string{"DVOP-3"}}},
+		{OpenedAt: day(2026, 9, 1), Current: Snapshot{Key: "k5"}, Missing: 1},
+	}
 
 	rep := Aggregate(r, assessments, events, open, day(2026, 9, 21))
 
@@ -101,7 +104,7 @@ func TestAggregateClassifiesByOpeningState(t *testing.T) {
 		t.Errorf("august risk = %+v", rep.Risk[1])
 	}
 
-	if rep.Open.Items != 1 || rep.Open.Ticketed != 1 || rep.Open.BySignal["kev"] != 1 || rep.Open.AgeDays["7-30"] != 1 {
+	if rep.Open.Items != 2 || rep.Open.Ticketed != 1 || rep.Open.Missing != 1 || rep.Open.BySignal["kev"] != 1 || rep.Open.AgeDays["7-30"] != 2 {
 		t.Errorf("open = %+v", rep.Open)
 	}
 	if rep.Assessments != 3 || rep.SchemaVersion != SchemaVersion || !rep.Enabled {
