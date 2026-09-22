@@ -145,7 +145,7 @@ per-instance and a name that does not exist fails ticket creation.
 | `close` | the work is provably finished (needs `autoClose`), or nobody picked the ticket up and its work stopped mattering (needs `closeTransitionNoLongerActionable`) |
 | `note-stale` | the target moved on, but someone has picked the ticket up |
 | `note-done` | the finding no longer asks for anything, so the work appears done |
-| `hold` | nothing can be judged yet, because the data needed is missing, or the image was reported a run or two ago and the provider may bring it back. **Writes nothing** |
+| `hold` | nothing can be judged yet, because the data needed is missing, or the image left the queue within the last few assessments and may come back. **Writes nothing** |
 | `skip` | already covers the change correctly |
 
 **A policy decision is not the work being done.** A finding that leaves the queue because
@@ -351,8 +351,13 @@ work, and this is the second one.
 What it will not do, whatever is configured: close a ticket whose image is still
 actionable in any environment (that ticket is in a draft, not on this path); close
 one dropped by `minPriority` or an exclusion (held); close one whose available
-version could not be resolved (held); or close one whose image has left the
-assessment entirely (a comment, because absence is not evidence). Findings that only
+version could not be resolved (held); close one whose image has left the
+assessment entirely (a comment, because absence is not evidence); or, with
+[history](history.md) enabled, close one whose image left the queue within the
+grace period (held). A preview workload that scales to nothing for an hour has not
+been switched off, and closing on one run's view raised a fresh ticket for the same
+service three hours later. The close follows on the run the history lapses the
+item. Findings that only
 a fallback scanner assessed are findings like any other, so a rule they trigger keeps
 the ticket open.
 

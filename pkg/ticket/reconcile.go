@@ -128,10 +128,14 @@ type ReconcileInput struct {
 	// The zero value closes nothing, which is the safe default for a caller that
 	// has not thought about it.
 	Config config.JiraConfig
-	// RecentlyReported are repositories absent from this assessment that the
-	// history record saw a run or two ago and has not yet given up on. A ticket for
-	// one is held rather than told its coverage is gone: a provider that drops an
-	// image from one response and returns it in the next has not lost coverage.
+	// RecentlyReported are repositories that left the queue this run or a run or two
+	// ago and that the history record has not yet given up on: absent from the
+	// assessment, no longer running, or no longer matching a rule. A ticket for one
+	// is held rather than closed or commented on. A provider that drops an image
+	// from one response and returns it in the next has not lost coverage, and a
+	// preview workload that scales to nothing for an hour has not been switched off.
+	// Once the history lapses the item the repository leaves this set, and the
+	// close follows on that run.
 	RecentlyReported map[string]bool
 }
 
@@ -266,11 +270,11 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				})
 				continue
 			}
-			if recent := recentlyReported(images, byImage, in.RecentlyReported); len(recent) > 0 {
+			if recent := recentlyReported(images, in.RecentlyReported); len(recent) > 0 {
 				out = append(out, Action{
 					Kind: ActionHold, TicketKey: t.Key,
-					Why: "absent from this assessment but reported recently; waiting to see whether " +
-						"the provider brings it back before saying anything: " + strings.Join(recent, ", "),
+					Why: "left the queue within the last few assessments; waiting to see whether it " +
+						"comes back before concluding anything: " + strings.Join(recent, ", "),
 				})
 				continue
 			}
@@ -511,12 +515,12 @@ func unknownImages(images []string, byImage map[string]sink.FindingView) []strin
 
 // policySkipped returns the reasons configuration declined to ticket this ticket's
 // images, if it did.
-// recentlyReported lists a ticket's images that are missing from the assessment
-// but inside the history's grace period.
-func recentlyReported(images []string, byImage map[string]sink.FindingView, recent map[string]bool) []string {
+// recentlyReported lists a ticket's images that left the queue inside the
+// history's grace period, whether or not the assessment still reports them.
+func recentlyReported(images []string, recent map[string]bool) []string {
 	var out []string
 	for _, img := range images {
-		if _, present := byImage[img]; !present && recent[img] {
+		if recent[img] {
 			out = append(out, img)
 		}
 	}

@@ -362,7 +362,7 @@ func TestHistoryGraceHoldsTicketsAndDelaysLapse(t *testing.T) {
 		OpenByImage:      map[string][]ticket.Existing{"app": {{Key: "PROJ-1", Category: "new"}}},
 		RecentlyReported: recent,
 	})
-	if len(actions) != 1 || actions[0].Kind != ticket.ActionHold || !strings.Contains(actions[0].Why, "reported recently") {
+	if len(actions) != 1 || actions[0].Kind != ticket.ActionHold || !strings.Contains(actions[0].Why, "within the last few assessments") {
 		t.Fatalf("a ticket for a recently seen image is held, not told coverage is gone: %+v", actions)
 	}
 
