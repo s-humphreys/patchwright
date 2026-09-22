@@ -27,6 +27,7 @@ enough to matter.
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
 | `policy_report` | **The estate against your OWN rules**, by their names in your config: what each caught, what each suppression holds and when it lapses, and what no rule speaks to. For a periodic review or sign-off |
 | `exploitability_report` | **What is actually being exploited, and how much is fixable.** KEV and high-EPSS CVE counts with their fixable share, per team beside each team's urgent count, worst CVEs named |
+| `trend_report` | **Is this getting better?** How the queue moved over a period, from the [history](history.md) record: opened, resolved with evidence, lapsed without it, the risk direction, and ticketed against unticketed resolutions. Caveats first |
 | `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
 
 **A service answers to any name that identifies it.** The bare repository
@@ -357,6 +358,28 @@ answer is to set the token alongside sign-in wherever machine callers are expect
 
 Authorisation is unchanged and all-or-nothing: whatever reaches the endpoint sees the
 whole estate, because the underlying views have no per-team scoping to offer.
+
+## Movement, in words
+
+Every tool above answers from one assessment and says so. `trend_report` is the one
+that answers about a period, from the [history record](history.md), and it is built
+from the same report the history page draws, so the two cannot disagree.
+
+It returns a verdict on the risk direction (`improving`, `worsening`, `flat`, or
+`insufficient-data` when there is one period or none), the movement totals over the
+range, the per-signal, per-rule and per-team splits classified by each item's opening
+state, and a `summary` of sentences in the order a reader needs them. The first
+sentence is always when the record begins, because an agent repeating "nothing was
+resolved in July" about a July before the record existed would be wrong in the way
+that matters most.
+
+Two things it will not do. It never adds lapsed to resolved: a lapse is the record
+losing sight of an item without evidence, and a remediation figure that included it
+would improve fastest when the scanner broke. And it presents ticketed resolutions as
+a subset of resolved, never as a total of their own; the difference is work that
+landed by another route, which is the figure the report exists to show.
+
+Without a history store the tool says so, rather than answering from an empty record.
 
 ## What is deliberately absent
 

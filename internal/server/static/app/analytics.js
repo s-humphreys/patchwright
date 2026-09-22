@@ -1,4 +1,5 @@
-import { barChart, stackedBar } from './charts.js';
+import { barChart } from './charts.js';
+import { loadHistory } from './history.js';
 import { showStatus } from './status.js';
 import { $, esc } from './util.js';
 
@@ -24,15 +25,6 @@ function pct(n, d) {
   return `${Math.round((n / d) * 100)}%`;
 }
 
-/** ageStrip renders the age distribution of a team's actionable findings. */
-function ageStrip(t, order) {
-  const classes = ["age-0", "age-1", "age-2", "age-3", "age-4"];
-  const segs = (order || []).map((label, i) => ({
-    label, value: t.age_buckets?.[label] || 0, cls: classes[i] || "age-4",
-  }));
-  return stackedBar(segs, { empty: "No dated findings: no age source ran." });
-}
-
 /** shortRef trims a digest reference to something readable in a label. */
 function shortRef(ref) {
   if (!ref) return "";
@@ -41,8 +33,14 @@ function shortRef(ref) {
   return `${ref.slice(0, at)}@${ref.slice(at + 8, at + 20)}`;
 }
 
-/** winsSection ranks the base upgrades that clear the most. */
-function winsSection(wins) {
+/**
+ * winsSection ranks the base upgrades that clear the most, headed by the estate's
+ * total leverage: the one number from the old estate panel nothing else carries.
+ */
+function winsSection(wins, e = {}) {
+  const leverage = e.base_total
+    ? `<p class="sub">Across the estate a rebuild clears <strong class="ok">${e.base_clears}</strong> of ${e.base_total} CVEs (${pct(e.base_clears, e.base_total)}).</p>`
+    : "";
   if (!wins || !wins.length) {
     return `<section class="panel"><h3>Biggest wins</h3>
       <p class="muted">No base differential has run. Enable <code>remediation.baseDiff</code>.</p></section>`;
@@ -65,7 +63,7 @@ function winsSection(wins) {
         ${serviceTable(w.services)}
       </details>
     </li>`).join("");
-  return `<section class="panel"><h3>Biggest wins</h3>
+  return `<section class="panel"><h3>Biggest wins</h3>${leverage}
     ${barChart(rows, { empty: "Nothing to rank." })}
     <ul class="win-list">${detail}</ul></section>`;
 }
@@ -118,66 +116,20 @@ function issuesSection(issues) {
     <ul class="issue-list">${items}</ul></section>`;
 }
 
-/** teamTable is supporting context, not a ranking. */
-function teamTable(teams, view) {
-  const rows = (teams || []).filter((t) => t.actionable > 0 || t.unassessed > 0).map((t) => `<tr>
-      <td>${esc(t.team || t.class || "unattributed")}</td>
-      <td class="num">${t.actionable}</td>
-      <td class="num">${t.median_age_days === null ? "-" : t.median_age_days + "d"}</td>
-      <td class="num">${t.unstarted || "-"}</td>
-      <td class="num">${t.in_flight || "-"}</td>
-      <td class="num">${t.kev || "-"}</td>
-      <td class="num">${t.epss_high || "-"}</td>
-      <td class="num"${t.top_epss ? ` title="highest score ${(t.top_epss * 100).toFixed(1)}%"` : ""}>${
-        t.top_epss_percentile ? "p" + Math.round(t.top_epss_percentile * 100) : "-"}</td>
-      <td class="num">${t.unassessed || "-"}</td>
-    </tr>`).join("");
-  if (!rows) return "";
-  return `<section class="panel"><h3>By owner</h3>
-    <p class="sub">Context, not a ranking.</p>
-    <div class="scroll-x"><table class="mini">
-      <thead><tr><th>Owner</th><th class="num">Actionable</th><th class="num">Median age</th>
-      <th class="num">Not started</th><th class="num">In progress</th><th class="num">KEV</th>
-      <th class="num" title="Findings carrying a CVE at or above EPSS 0.5.">EPSS&nbsp;≥50%</th>
-      <th class="num" title="Where this owner's worst CVE ranks against every scored CVE.">Worst&nbsp;pctl</th>
-      <th class="num">Unassessed</th></tr></thead>
-      <tbody>${rows}</tbody></table></div></section>`;
-}
-
-/** render draws the whole page from one payload. */
+/**
+ * render draws the "what to fix first" half of the page: the biggest wins and the
+ * problems nobody is acting on. The team table, the estate panel and the notes
+ * that used to follow were cut once the movement section above took over what they
+ * said; a team's age profile and the estate's totals now come from the record
+ * rather than being inferred from one assessment.
+ */
 export function render(view) {
-  const teams = view.teams || [];
   const e = view.estate || {};
-  if (!teams.length) {
+  if (!e.findings && !(view.wins || []).length && !(view.issues || []).length) {
     return `<p class="muted">No findings in the latest assessment.</p>`;
   }
-
-  const estate = `<section class="panel estate">
-    <h3>Across the estate</h3>
-    <div class="dr"><dt>Actionable</dt><dd>${e.actionable} of ${e.findings}</dd></div>
-    <div class="dr"><dt>Base image leverage</dt>
-      <dd>${e.base_total
-        ? `a rebuild clears <strong class="ok">${e.base_clears}</strong> of ${e.base_total} CVEs
-           <span class="sub">(${pct(e.base_clears, e.base_total)})</span>`
-        : '<span class="unknown">not measured</span>'}</dd></div>
-    <div class="dr"><dt>Known exploited</dt><dd>${e.kev} · ${e.kev_fixable} with an upgrade available</dd></div>
-    <div class="dr"><dt>Fixes not started</dt>
-      <dd>${e.unstarted} · <span class="urgent">${e.stale_unstarted}</span> over ${view.stale_fix_days}d</dd></div>
-    <div class="age-strip"><div class="sub">Age of everything actionable</div>
-      ${ageStrip(e, view.age_bucket_order)}</div>
-  </section>`;
-
-  const notes = (view.notes || []).length
-    ? `<section class="panel notes"><h3>What this page cannot tell you</h3><ul>${
-        (view.notes || []).map((n) => `<li>${esc(n)}</li>`).join("")
-      }</ul></section>`
-    : "";
-
-  return `${estate}
-    ${winsSection(view.wins)}
-    ${issuesSection(view.issues)}
-    ${teamTable(teams, view)}
-    ${notes}`;
+  return `${winsSection(view.wins, e)}
+    ${issuesSection(view.issues)}`;
 }
 
 async function load() {
@@ -197,8 +149,9 @@ async function load() {
 
 if (typeof document !== "undefined" && $("#analytics")) {
   load();
+  loadHistory($("#history"));
   showStatus();
   // A completed assessment changes every number here, so follow it rather than
   // leaving the reader on figures the header says are stale.
-  document.addEventListener("pw:assessed", () => { load(); showStatus(); });
+  document.addEventListener("pw:assessed", () => { load(); loadHistory($("#history")); showStatus(); });
 }

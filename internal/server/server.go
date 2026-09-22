@@ -358,6 +358,7 @@ func (s *Server) assessment() mcp.Assessment {
 		Analytics:   snap.analytics,
 		Sources:     snap.sources,
 		Policy:      s.policyRules(),
+		History:     s.historySource(),
 	}
 	if snap.summary.ProviderDataNewest != nil {
 		a.ProviderDataNewest = *snap.summary.ProviderDataNewest

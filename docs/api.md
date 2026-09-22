@@ -14,7 +14,7 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | Status page: coverage, per-class and per-team breakdown, the queue, ticket state |
-| `GET /analytics` | What to fix first: the rebuilds that clear the most, and what nobody is acting on |
+| `GET /analytics` | How the queue has moved (with a [history store](history.md)), then what to fix first: the rebuilds that clear the most, and what nobody is acting on |
 | `GET /api/v1/findings` | Findings, filterable by `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved` |
 | `GET /api/v1/finding?image=<ref>` | One image's finding |
 | `GET /api/v1/owners` | Per-team triage: where the fix goes, how much is ticketed, and how much of it is the sharp end (`urgent`, `known_exploited`, `exposed`, `end_of_life`) |

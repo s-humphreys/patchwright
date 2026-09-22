@@ -143,6 +143,13 @@ Four buckets, and a report shows all four:
 
 ## Reading it
 
+The **Analytics** page opens with the report, so the page tells a story: how things
+are moving, then what to do next. It shows the caveats first, the risk direction by
+period, opened against resolved against lapsed, the four-bucket delineation, the
+per-signal, per-rule and per-team splits, and the queue as the record holds it now.
+A lookback and a bucket selector carry in the URL, so a view can be linked. The
+`trend_report` [MCP tool](mcp.md) answers the same questions in words.
+
 `GET /api/v1/history?since=90d&bucket=month` returns the report; `since` takes a
 number of days or an RFC 3339 timestamp, `until` defaults to now, `bucket` is `month`
 or `week`. `GET /api/v1/history/item?key=…` returns one work item's every event. Both

@@ -501,3 +501,11 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   /* The build serving the page. Quiet by default - it matters when a rollout has
      half happened and not otherwise. */
   .version { opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The history page. */
+.bar-fill.bar-risk, .col-fill.bar-risk { background: var(--accent); }
+.history-range { display: flex; gap: 1rem; flex-wrap: wrap; margin: 0 0 .8rem; font-size: .9rem; color: var(--muted); }
+.history-range select { margin-left: .3rem; }
+.history-notes summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
+.history-notes[open] summary { margin-bottom: .4rem; }
+

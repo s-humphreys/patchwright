@@ -57,6 +57,11 @@ type Assessment struct {
 	// reviewed as a whole. Empty when the caller could not supply it, which the
 	// report says rather than presenting a partial list as the whole policy.
 	Policy PolicyRules
+
+	// History reads the record of movement. Nil when no history store is
+	// configured, which trend_report says plainly rather than answering from an
+	// empty record.
+	History HistorySource
 }
 
 // Source provides the current assessment. The server implements this over its

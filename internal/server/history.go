@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/s-humphreys/patchwright/internal/mcp"
 	"github.com/s-humphreys/patchwright/pkg/history"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
@@ -268,22 +269,29 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}})
 		return
 	}
-	ctx := r.Context()
+	rep, err := s.historyReport(r.Context(), rng, now)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "history store: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response{s.meta(), s.historyStatus(), rep})
+}
+
+// historyReport builds the report the API, the page and the MCP tool all read, so
+// none of them can disagree about a period.
+func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.Time) (history.Report, error) {
 	store := s.history.store
 	assessments, err := store.Assessments(ctx, rng.Since, rng.Until)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "history store: "+err.Error())
-		return
+		return history.Report{}, err
 	}
 	events, err := store.Events(ctx, rng.Since, rng.Until)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "history store: "+err.Error())
-		return
+		return history.Report{}, err
 	}
 	open, err := store.Open(ctx)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "history store: "+err.Error())
-		return
+		return history.Report{}, err
 	}
 	rep := history.Aggregate(rng, assessments, events, open, now)
 	rep.RetentionDays = int(s.history.retention.Hours() / 24)
@@ -300,7 +308,18 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	rep.Caveats = append(rep.Caveats,
 		"counts are work items, classified by how each looked when the record first saw it",
 		"resolved requires evidence the work is done; lapsed is everything else, and is never remediation")
-	writeJSON(w, http.StatusOK, response{s.meta(), s.historyStatus(), rep})
+	return rep, nil
+}
+
+// historySource hands the MCP tools the same report builder, or nil when history
+// is off.
+func (s *Server) historySource() mcp.HistorySource {
+	if s.history == nil {
+		return nil
+	}
+	return func(ctx context.Context, since, until time.Time, bucket history.Bucket) (history.Report, error) {
+		return s.historyReport(ctx, history.Range{Since: since, Until: until, Bucket: bucket}, time.Now().UTC())
+	}
 }
 
 // handleHistoryItem serves GET /api/v1/history/item?key=: one work item's record.
