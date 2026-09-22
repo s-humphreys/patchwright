@@ -187,10 +187,11 @@ func TestJiraCloseUsesTheNotActionableTransition(t *testing.T) {
 	if tr["id"] != "8" {
 		t.Errorf("transitioned with %v, want 8 (the not-done one), not the Done transition", tr["id"])
 	}
-	fields, _ := ts.posted["fields"].(map[string]any)
-	pr, _ := fields["priority"].(map[string]any)
-	if pr["name"] != "Lowest" {
-		t.Errorf("priority should be replaced on the way out: %v", ts.posted["fields"])
+	if ts.editedPriority != "Lowest" {
+		t.Errorf("priority should be replaced on the way out by an edit: %q", ts.editedPriority)
+	}
+	if len(ts.comments) != 1 || !strings.Contains(ts.comments[0], "why") {
+		t.Errorf("the reason should be posted as a comment before closing: %v", ts.comments)
 	}
 }
 
@@ -200,7 +201,7 @@ func TestJiraCloseRefusesNotActionableWithoutConfiguration(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "closeTransitionNoLongerActionable") {
 		t.Fatalf("must refuse rather than fall back to Done: %v", err)
 	}
-	if ts.posted != nil {
+	if ts.posted != nil || len(ts.comments) != 0 {
 		t.Errorf("nothing should have been posted")
 	}
 }

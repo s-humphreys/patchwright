@@ -1129,6 +1129,10 @@ func Load(paths ...string) (*Config, error) {
 		if part.Dashboard.URL != "" {
 			cfg.Dashboard.URL = part.Dashboard.URL
 		}
+		// A sequence, not a list to append to: the last file that names one wins.
+		if len(part.Environments) > 0 {
+			cfg.Environments = part.Environments
+		}
 		if part.History.Retention != "" {
 			cfg.History.Retention = part.History.Retention
 		}
