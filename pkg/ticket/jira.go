@@ -505,6 +505,11 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 	if p := cfg.JiraPriority(d.Priority); p != "" {
 		fields["priority"] = map[string]string{"name": p}
 	}
+	// Only here, never in Update: the due date is the commitment made when the
+	// ticket was raised, and moving it later would hide a missed deadline.
+	if due, ok := cfg.DueDate(d.Priority, time.Now()); ok {
+		fields["duedate"] = due
+	}
 
 	labels := append([]string{}, cfg.Labels...)
 	if cfg.ImageLabel {

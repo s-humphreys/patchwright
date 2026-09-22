@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -587,6 +589,19 @@ type JiraConfig struct {
 	// project, and a name that does not exist fails ticket creation with a Jira
 	// field error. See config/policy.yaml for a worked example.
 	PriorityMap map[string]string `yaml:"-"`
+	// DueDays sets a ticket's Jira due date from its finding priority, as the number
+	// of days after creation it is due, e.g. {urgent: 7, high: 30}. A priority with
+	// no entry gets no due date, so leaving this unset changes nothing.
+	//
+	// Readable here as well as per route, unlike PriorityMap: a remediation window
+	// is a policy, not part of a board's schema, so one default can serve every
+	// tracker. Jira still rejects the field if it is not on the project's create
+	// screen.
+	//
+	// Set once, when the ticket is raised, and never moved. The date records the
+	// commitment made at the time; re-dating it on reconciliation would quietly
+	// extend every deadline a ticket was about to miss.
+	DueDays map[string]int `yaml:"dueDays"`
 	// Labels are added to every ticket, alongside any image labels.
 	Labels []string `yaml:"labels"`
 
@@ -702,7 +717,7 @@ func (j JiraConfig) isSet() bool {
 	return j.Board != 0 || j.Project != "" || j.Template != "" || j.DefaultTemplate != "" ||
 		j.ImageField != "" || j.ImageLabel || j.Epic != "" || j.IssueType != "" ||
 		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil ||
-		len(j.Exclude) > 0 || len(j.PriorityMap) > 0 || len(j.Routes) > 0 ||
+		len(j.Exclude) > 0 || len(j.PriorityMap) > 0 || len(j.DueDays) > 0 || len(j.Routes) > 0 ||
 		j.GroupBy != "" || j.MinPriority != "" || j.AutoClose || j.CloseTransition != "" ||
 		j.CloseTransitionUnworked != "" || j.ClosePriorityUnworked != "" || j.CloseTransitionNoLongerActionable != "" ||
 		j.UrgentEPSS != 0
@@ -731,6 +746,20 @@ func (j JiraConfig) JiraPriority(findingPriority string) string {
 	return j.Priority
 }
 
+// DueDate returns the Jira due date, as YYYY-MM-DD, for a ticket raised at now
+// for a finding at this priority. False means no window is configured for it and
+// the ticket should carry no due date.
+//
+// Computed in UTC so the date does not depend on the timezone of whichever host
+// happens to run the job.
+func (j JiraConfig) DueDate(priority string, now time.Time) (string, bool) {
+	days, ok := j.DueDays[priority]
+	if !ok || days <= 0 {
+		return "", false
+	}
+	return now.UTC().Add(time.Duration(days) * 24 * time.Hour).Format(time.DateOnly), true
+}
+
 // Validate checks the Jira config is usable. Called by the ticket command
 // rather than at load time, so an assess-only config need not define it.
 //
@@ -742,6 +771,11 @@ func (j JiraConfig) Validate() error {
 		return fmt.Errorf("jira config missing required field: defaultTicketTemplate")
 	}
 	if err := validateMinPriority(j.MinPriority); err != nil {
+		return err
+	}
+	// Checked here as well as per route: a route that overrides the map replaces
+	// it, so a bad top-level entry could otherwise hide behind every route.
+	if err := validateDueDays(j.DueDays); err != nil {
 		return err
 	}
 	if len(j.Routes) == 0 {
@@ -795,7 +829,23 @@ func (j JiraConfig) validateTracker() error {
 		return fmt.Errorf("closePriorityNoLongerActionable is set without closeTransitionNoLongerActionable: " +
 			"the transition is what switches the behaviour on, and the priority alone does nothing")
 	}
+	if err := validateDueDays(j.DueDays); err != nil {
+		return err
+	}
 	return validateMinPriority(j.MinPriority)
+}
+
+// validateDueDays rejects a window that is not a positive number of days.
+//
+// Zero or less would date a ticket today or earlier, so it would be overdue the
+// moment it was raised. That is a mistake in the config, not a policy anyone means.
+func validateDueDays(days map[string]int) error {
+	for _, p := range slices.Sorted(maps.Keys(days)) {
+		if days[p] <= 0 {
+			return fmt.Errorf("jira dueDays[%q] is %d: want a positive number of days after ticket creation", p, days[p])
+		}
+	}
+	return nil
 }
 
 // validateMinPriority rejects a threshold that is not on the ranked ladder.
@@ -862,6 +912,7 @@ type TicketRoute struct {
 	IssueType   string            `yaml:"issueType"`
 	Priority    string            `yaml:"priority"`
 	PriorityMap map[string]string `yaml:"priorityMap"`
+	DueDays     map[string]int    `yaml:"dueDays"`
 	Labels      []string          `yaml:"labels"`
 }
 
@@ -925,6 +976,9 @@ func (c JiraConfig) Resolve(r TicketRoute) JiraConfig {
 	}
 	if len(r.PriorityMap) > 0 {
 		out.PriorityMap = r.PriorityMap
+	}
+	if len(r.DueDays) > 0 {
+		out.DueDays = r.DueDays
 	}
 	if len(r.Labels) > 0 {
 		out.Labels = r.Labels
