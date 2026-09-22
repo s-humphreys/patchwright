@@ -147,7 +147,10 @@ The **Analytics** page opens with the report, so the page tells a story: how thi
 are moving, then what to do next. It shows the caveats first, the risk direction by
 period, opened against resolved against lapsed, the four-bucket delineation, the
 per-signal, per-rule and per-team splits, and the queue as the record holds it now.
-A lookback and a bucket selector carry in the URL, so a view can be linked. The
+A lookback and a bucket selector carry in the URL, so a view can be linked. With two
+or more periods the direction and movement panels draw interactive charts (hover for
+each period's values) using a vendored copy of uPlot; with one period a chart would
+be a single block, so the number stands alone. The
 `trend_report` [MCP tool](mcp.md) answers the same questions in words.
 
 `GET /api/v1/history?since=90d&bucket=month` returns the report; `since` takes a

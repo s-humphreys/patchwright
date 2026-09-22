@@ -780,6 +780,7 @@ components:
         until: { type: string, format: date-time }
         bucket: { type: string, enum: [month, week] }
         first_recorded: { type: string, format: date-time, description: When the record begins. Periods before it are empty because nothing was watching }
+        baseline: { type: integer, description: Work items already open when the record began, when that falls in the range }
         assessments: { type: integer }
         retention_days: { type: integer }
         risk:
@@ -832,8 +833,11 @@ components:
         period: { type: string }
         start: { type: string, format: date-time }
         end: { type: string, format: date-time }
-        opened: { type: integer }
-        resolved: { type: integer, description: Left the queue with evidence the work is done }
+        baseline: { type: integer, description: Work items already open when the record began, counted in the period it began. Not opened }
+        opened: { type: integer, description: Work items that entered the queue this period }
+        resolved: { type: integer, description: Work items that left the queue with evidence the work is done }
+        cves_resolved: { type: integer, description: Distinct CVEs carried by the items resolved this period }
+        kev_cves_resolved: { type: integer, description: Known-exploited CVEs among those }
         lapsed: { type: integer, description: Left the queue without evidence. Never remediation }
         reassigned: { type: integer }
         resolved_ticketed: { type: integer, description: Subset of resolved }

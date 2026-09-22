@@ -1,4 +1,4 @@
-import { columnChart, stackedBar } from './charts.js';
+import { mountTimeSeries, stackedBar } from './charts.js';
 import { $, esc } from './util.js';
 
 // Movement by period, from the event log, rendered at the top of the analytics
@@ -38,7 +38,7 @@ function pct(n, d) {
 /** withMovement keeps the periods in which anything happened, plus the latest. */
 function activePeriods(movement) {
   const rows = movement || [];
-  return rows.filter((m, i) => i === rows.length - 1 || m.opened || m.resolved || m.lapsed || m.tickets_closed);
+  return rows.filter((m, i) => i === rows.length - 1 || m.baseline || m.opened || m.resolved || m.lapsed || m.tickets_closed);
 }
 
 /** caveatsPanel puts the record's own caveats first, where they cannot be missed. */
@@ -54,6 +54,12 @@ function caveatsPanel(h, status) {
     items.push(`<span class="warn">The store reported an error on its last use: ${esc(status.last_error)}</span>`);
   }
   for (const c of h.caveats || []) items.push(esc(c));
+  // The definitions live here rather than under each table, so the tables carry
+  // data and this one note carries the reading of it.
+  items.push("A <strong>work item</strong> is one service, its owner and the upgrade it needs: the unit a queue row and a ticket share. Every count below is work items unless it says CVEs.");
+  items.push("<strong>Resolved</strong> means the item left the queue with evidence its work landed: every image still reported, checked, on the latest version, and running. <strong>Lapsed</strong> is leaving without that evidence, and is never counted as remediation.");
+  items.push("Each row of the direction table is the last assessment of its period. A period with one run is a point, not a trend.");
+  items.push("Splits are classified by how the item looked when the record first saw it, so a KEV resolution is one that was known-exploited when found. EPSS is a forecast; an item whose score decayed below 0.5 while open still counts under it.");
   // Collapsed by default, with the one fact that changes how the charts read kept
   // on the summary line: when the record began.
   const begins = h.first_recorded ? ` · the record begins ${esc(String(h.first_recorded).slice(0, 10))}` : "";
@@ -79,21 +85,15 @@ function directionPanel(h) {
         ? `<span class="urgent">up ${change}% since ${esc(first.period)}</span>`
         : `flat since ${esc(first.period)}`;
 
-  const cols = points.map((p) => ({
-    label: p.period, value: Math.round(p.risk?.sum || 0),
-    title: `${p.period}: risk sum ${fmt(Math.round(p.risk?.sum || 0))} across ${p.risk?.items} items, from ${p.assessments} assessment${p.assessments === 1 ? "" : "s"}`,
-    cls: "bar-risk",
-  }));
   const rows = points.map((p) => `<tr>
       <td>${esc(p.period)}</td><td>${fmt(p.risk?.items)}</td><td>${fmt(Math.round(p.risk?.sum || 0))}</td>
       <td>${fmt(p.risk?.urgent)}</td><td>${fmt(p.risk?.known_exploited)}</td>
       <td>${fmt(p.actionable)} of ${fmt(p.findings)}</td><td class="muted">${p.assessments}</td></tr>`).join("");
   return `<section class="panel"><h3>Direction</h3>
-    <div class="dr"><dt>Risk score, sum of open items</dt><dd><strong>${fmt(Math.round(last.risk?.sum || 0))}</strong> ${verdict}</dd></div>
-    ${columnChart(cols, { caption: "risk sum at the end of each period;" })}
-    <table class="mini"><thead><tr><th>Period</th><th>Items</th><th>Risk sum</th><th>Urgent</th><th>KEV</th><th>Actionable findings</th><th>Runs</th></tr></thead>
+    <div class="dr"><dt>Risk score, sum of open work items</dt><dd><strong>${fmt(Math.round(last.risk?.sum || 0))}</strong> ${verdict}</dd></div>
+    ${points.length > 1 ? `<div class="chart-slot" data-chart="direction"></div>` : ""}
+    <table class="mini"><thead><tr><th>Period</th><th title="Open work items at the last assessment of the period">Open items</th><th>Risk sum</th><th>Urgent</th><th title="Open items carrying a known-exploited CVE">KEV items</th><th>Actionable findings</th><th title="Assessments in the period">Runs</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    <p class="sub">Each row is the last assessment of its period. A period with one run is a point, not a trend.</p>
   </section>`;
 }
 
@@ -104,26 +104,23 @@ function movementPanel(h) {
     return `<section class="panel"><h3>Movement</h3><p class="muted">Nothing recorded in this range.</p></section>`;
   }
   const totals = periods.reduce((t, m) => ({
-    opened: t.opened + m.opened, resolved: t.resolved + m.resolved, lapsed: t.lapsed + m.lapsed,
-  }), { opened: 0, resolved: 0, lapsed: 0 });
+    baseline: t.baseline + (m.baseline || 0), opened: t.opened + m.opened, resolved: t.resolved + m.resolved,
+    lapsed: t.lapsed + m.lapsed, cves: t.cves + (m.cves_resolved || 0), kev: t.kev + (m.kev_cves_resolved || 0),
+  }), { baseline: 0, opened: 0, resolved: 0, lapsed: 0, cves: 0, kev: 0 });
   const rows = periods.map((m) => `<tr>
-      <td>${esc(m.period)}</td><td>${fmt(m.opened)}</td>
+      <td>${esc(m.period)}</td>${totals.baseline ? `<td class="muted">${fmt(m.baseline)}</td>` : ""}<td>${fmt(m.opened)}</td>
       <td><strong class="ok">${fmt(m.resolved)}</strong></td>
-      <td class="muted">${fmt(m.lapsed)}</td><td class="muted">${fmt(m.reassigned)}</td>
+      <td>${fmt(m.cves_resolved)}${m.kev_cves_resolved ? ` <span class="sub">(${fmt(m.kev_cves_resolved)} KEV)</span>` : ""}</td>
+      <td class="muted" title="${esc(Object.entries(m.lapse_reasons || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "no lapses")}">${fmt(m.lapsed)}</td>
+      <td class="muted">${fmt(m.reassigned)}</td>
       <td>${m.median_days_to_resolve != null ? `${Math.round(m.median_days_to_resolve)}d` : "-"}</td></tr>`).join("");
-  const reasons = {};
-  for (const m of periods) for (const [k, v] of Object.entries(m.lapse_reasons || {})) reasons[k] = (reasons[k] || 0) + v;
-  const reasonRows = Object.entries(reasons).sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `<span class="chart-key">${esc(k)} ${v}</span>`).join(" ");
-  return `<section class="panel"><h3>Movement</h3>
+  return `<section class="panel"><h3>Movement, in work items</h3>
+    ${totals.baseline ? `<div class="dr"><dt>Already open when the record began</dt><dd class="muted">${fmt(totals.baseline)}</dd></div>` : ""}
     <div class="dr"><dt>Across the range</dt>
-      <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> resolved with evidence · <span class="muted">${fmt(totals.lapsed)} lapsed</span></dd></div>
-    ${columnChart(periods.map((m) => ({ label: m.period, value: m.resolved, cls: "bar-win", title: `${m.period}: ${m.resolved} resolved, ${m.lapsed} lapsed, ${m.opened} opened` })),
-      { caption: "resolved with evidence per period;", empty: "Nothing has resolved yet." })}
-    <table class="mini"><thead><tr><th>Period</th><th>Opened</th><th>Resolved</th><th>Lapsed</th><th>Reassigned</th><th>Median days to resolve</th></tr></thead>
+      <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> resolved, clearing ${fmt(totals.cves)} CVEs${totals.kev ? ` (${fmt(totals.kev)} known-exploited)` : ""} · <span class="muted">${fmt(totals.lapsed)} lapsed</span></dd></div>
+    ${periods.length > 1 ? `<div class="chart-slot" data-chart="movement"></div>` : ""}
+    <table class="mini"><thead><tr><th>Period</th>${totals.baseline ? `<th title="Already open when the record began">Baseline</th>` : ""}<th title="Work items that entered the queue">Opened</th><th title="Left the queue with evidence the work landed">Resolved</th><th title="Distinct CVEs carried by the resolved items">CVEs cleared</th><th title="Left the queue without evidence; hover for why">Lapsed</th><th title="Owner changed">Reassigned</th><th>Median days to resolve</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    ${reasonRows ? `<p class="sub">Why lapses could not be called resolutions: ${reasonRows}</p>` : ""}
-    <p class="sub">Lapsed is never remediation: it is the record losing sight of an item without evidence its work was done.</p>
   </section>`;
 }
 
@@ -148,14 +145,13 @@ function delineationPanel(h) {
       <td class="${m.tickets_closed_finding_open ? "warn" : ""}">${fmt(m.tickets_closed_finding_open)}</td>
       <td class="muted">${fmt(m.lapsed)}</td></tr>`).join("");
   const toolRows = Object.entries(byTool).map(([k, v]) => `<span class="chart-key">${esc(k)} ${v}</span>`).join(" ");
-  return `<section class="panel"><h3>Total remediation against ticketed work</h3>
+  return `<section class="panel"><h3>Total remediation against ticketed work, in work items</h3>
     <div class="dr"><dt>Upgrades and patches landed</dt>
       <dd><strong class="ok">${fmt(unticketed + ticketed)}</strong> resolved with evidence, of which <strong>${fmt(ticketed)}</strong> (${pct(ticketed, unticketed + ticketed)}) were ticketed work</dd></div>
     ${strip}
-    <table class="mini"><thead><tr><th>Period</th><th>Resolved, unticketed</th><th>Resolved, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th>Closed, finding open</th><th>Lapsed</th></tr></thead>
+    <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Resolved, unticketed</th><th title="Ticketed work completed; a subset of resolved">Resolved, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither resolved nor lapsed">Closed, finding open</th><th>Lapsed</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    ${toolRows ? `<p class="sub">Tickets patchwright closed itself, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
-    <p class="sub">"Closed, finding open" is a ticket somebody closed while the image still ran. It is neither resolved nor lapsed.</p>
+    ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
   </section>`;
 }
 
@@ -164,7 +160,7 @@ function delineationPanel(h) {
  * the item's OPENING state. Rows are the classification's values, columns the
  * periods, so a month-on-month comparison reads across.
  */
-function splitTable(title, periods, field, rowsWanted, note) {
+function splitTable(title, periods, field, rowsWanted) {
   const keys = rowsWanted
     ? rowsWanted.map((r) => r.key)
     : [...new Set(periods.flatMap((m) => Object.keys(m[field] || {})))].sort();
@@ -180,8 +176,7 @@ function splitTable(title, periods, field, rowsWanted, note) {
     return `<tr><td>${esc(labels[k] || k)}</td>${cells}</tr>`;
   }).join("");
   return `<section class="panel"><h3>${esc(title)}</h3>
-    <table class="mini"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table>
-    <p class="sub">opened / <span class="ok">resolved</span> / lapsed, classified by how the item looked when the record first saw it. ${esc(note || "")}</p>
+    <table class="mini"><thead><tr><th class="sub">opened / <span class="ok">resolved</span> / lapsed</th>${head}</tr></thead><tbody>${body}</tbody></table>
   </section>`;
 }
 
@@ -191,10 +186,9 @@ function signalsPanel(h) {
   if (!periods.length) return "";
   const decayed = periods.reduce((n, m) => n + (m.epss_decayed || 0), 0);
   const becameKEV = periods.reduce((n, m) => n + (m.became_known_exploited || 0), 0);
-  const table = splitTable("By signal", periods, "by_signal", SIGNALS,
-    "KEV is a fact that only grows; EPSS is a forecast, and an item that left the EPSS bucket by score decay still counts under it here.");
+  const table = splitTable("Work items by signal", periods, "by_signal", SIGNALS);
   return table.replace("</section>", `
-    <div class="dr"><dt>EPSS decayed below 0.5 while open</dt><dd>${fmt(decayed)} <span class="sub">not remediation, not hidden</span></dd></div>
+    <div class="dr"><dt title="Left the EPSS bucket by score decay while open: not remediation">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
     <div class="dr"><dt>Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>
   </section>`);
 }
@@ -207,7 +201,7 @@ function openPanel(h) {
   const segs = order.map((k, i) => ({ label: `${k}d`, value: o.age_days?.[k] || 0, cls: classes[i] }));
   const signals = SIGNALS.filter((s) => o.by_signal?.[s.key]).map((s) => `${esc(s.label)} ${o.by_signal[s.key]}`).join(" · ");
   return `<section class="panel"><h3>Open now, as the record holds it</h3>
-    <div class="dr"><dt>Items</dt><dd>${fmt(o.items)} · ${fmt(o.ticketed)} ticketed${o.missing ? ` · <span class="muted">${fmt(o.missing)} absent from the latest run, inside the grace period</span>` : ""}</dd></div>
+    <div class="dr"><dt>Work items</dt><dd>${fmt(o.items)} · ${fmt(o.ticketed)} ticketed${o.missing ? ` · <span class="muted">${fmt(o.missing)} absent from the latest run, inside the grace period</span>` : ""}</dd></div>
     ${signals ? `<div class="dr"><dt>Signals</dt><dd>${signals}</dd></div>` : ""}
     <div class="age-strip"><div class="sub">How long the record has held them</div>${stackedBar(segs, { empty: "Nothing open." })}</div>
   </section>`;
@@ -227,9 +221,50 @@ export function render(body) {
     ${movementPanel(h)}
     ${delineationPanel(h)}
     ${signalsPanel(h)}
-    ${splitTable("By rule", activePeriods(h.movement), "by_rule", null, "Rule names are the policy's own; a rename shows as one row ending and another beginning.")}
-    ${splitTable("By team", activePeriods(h.movement), "by_team", null, "")}
+    ${splitTable("Work items by team", activePeriods(h.movement), "by_team", null)}
     ${openPanel(h)}`;
+}
+
+/** epoch turns a period start into seconds for the chart's time axis. */
+function epoch(iso) { return Math.floor(new Date(iso).getTime() / 1000); }
+
+/** cssVar reads a theme colour so the charts follow light and dark mode. */
+function cssVar(name, fallback) {
+  if (typeof getComputedStyle === "undefined" || typeof document === "undefined") return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+/**
+ * mountCharts draws the interactive charts into the slots render left, once the
+ * HTML is in the document. Separate from render because a chart needs a live
+ * element and render returns a string; and guarded, so a page without the chart
+ * library still shows every table.
+ */
+export function mountCharts(root, body) {
+  const h = body?.history || {};
+  const direction = root?.querySelector?.('[data-chart="direction"]');
+  if (direction && (h.risk || []).length > 1) {
+    const idx = Object.fromEntries((h.movement || []).map((m) => [m.period, m.start]));
+    mountTimeSeries(direction, {
+      x: h.risk.map((p) => epoch(idx[p.period] || p.at)),
+      series: [
+        { label: "risk sum", values: h.risk.map((p) => Math.round(p.risk?.sum || 0)), color: cssVar("--accent", "#4a6b8a") },
+        { label: "KEV items", values: h.risk.map((p) => p.risk?.known_exploited ?? null), color: cssVar("--urgent", "#a4262c") },
+      ],
+    });
+  }
+  const movement = root?.querySelector?.('[data-chart="movement"]');
+  const periods = activePeriods(h.movement);
+  if (movement && periods.length > 1) {
+    mountTimeSeries(movement, {
+      x: periods.map((m) => epoch(m.start)),
+      series: [
+        { label: "opened", values: periods.map((m) => m.opened), color: cssVar("--muted", "#6b6b66") },
+        { label: "resolved", values: periods.map((m) => m.resolved), color: cssVar("--ok", "#1f6b3a") },
+        { label: "lapsed", values: periods.map((m) => m.lapsed), color: cssVar("--high", "#b8590a") },
+      ],
+    });
+  }
 }
 
 /** rangeFromURL reads ?since= and ?bucket= so a link can carry a view. */
@@ -262,6 +297,7 @@ export async function loadHistory(el) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
     el.innerHTML = controls(range) + render(body);
+    mountCharts(el, body);
     const form = $("#historyRange");
     form?.addEventListener("change", () => {
       const data = new FormData(/** @type {HTMLFormElement} */ (form));

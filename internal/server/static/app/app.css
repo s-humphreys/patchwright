@@ -508,4 +508,7 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
 .history-range select { margin-left: .3rem; }
 .history-notes summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
 .history-notes[open] summary { margin-bottom: .4rem; }
+.chart-slot { margin: .6rem 0; min-height: 1rem; }
+.chart-slot .uplot { font: inherit; color: inherit; }
+.chart-slot .u-legend { font-size: .8rem; color: var(--muted); }
 

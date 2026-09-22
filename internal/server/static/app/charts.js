@@ -91,3 +91,55 @@ export function columnChart(cols, opts = {}) {
   return `<ul class="col-chart">${bars}</ul>
     <div class="chart-legend">${esc(opts.caption || "")} peak ${max}</div>`;
 }
+
+/**
+ * mountTimeSeries draws an interactive chart into el with uPlot, when the vendored
+ * library is loaded: hover crosshair, per-series values in the legend, and a
+ * shared time axis. Without it (a test, or a page that did not load the script)
+ * it does nothing, and the table beside the chart carries the data. A failure
+ * inside the library is swallowed for the same reason: a chart is an aid to the
+ * table, never the only copy of the numbers.
+ *
+ * Lines with points, for every series. Monthly counts are a shape to read across
+ * periods, and uPlot's bar alignment cannot lay three series side by side.
+ *
+ * spec.x is period start times as epoch seconds.
+ *
+ * @param {HTMLElement} el
+ * @param {{x: number[], series: {label: string, values: (number|null)[], color: string}[], title?: string, height?: number}} spec
+ */
+export function mountTimeSeries(el, spec) {
+  const UPlot = /** @type {any} */ (globalThis).uPlot;
+  if (!el || !UPlot || !spec?.x?.length) return null;
+  const width = Math.max(320, el.clientWidth || el.parentElement?.clientWidth || 640);
+  const series = [
+    { label: "period", value: (u, v) => (v == null ? "" : new Date(v * 1000).toISOString().slice(0, 7)) },
+    ...spec.series.map((s) => ({
+      label: s.label, stroke: s.color, width: 2, points: { show: true, size: 6 },
+      value: (u, v) => (v == null ? "-" : v.toLocaleString("en-GB")),
+    })),
+  ];
+  const opts = {
+    title: spec.title || "", width, height: spec.height || 180,
+    cursor: { drag: { x: false, y: false } },
+    legend: { live: true },
+    scales: { x: { time: true } },
+    axes: [
+      { values: (u, splits) => splits.map((v) => new Date(v * 1000).toISOString().slice(0, 7)),
+        stroke: getComputedStyle(el).color, grid: { show: false } },
+      { size: 56, stroke: getComputedStyle(el).color, grid: { stroke: "rgba(128,128,128,.15)" },
+        values: (u, splits) => splits.map((v) => v.toLocaleString("en-GB")) },
+    ],
+    series,
+  };
+  const data = [spec.x, ...spec.series.map((s) => s.values)];
+  try {
+    el.innerHTML = "";
+    return new UPlot(opts, data, el);
+  } catch (err) {
+    el.innerHTML = "";
+    console.warn("chart not drawn:", err);
+    return null;
+  }
+}
+

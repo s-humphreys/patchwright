@@ -31,6 +31,12 @@ clusters.
 
 ## e2e suite
 
+`internal/server/static/app/vendor/` holds the one third-party browser library,
+[uPlot](https://github.com/leeoniya/uPlot) (MIT, its licence beside it), vendored
+rather than fetched so the page works with no outbound calls. To update it, copy
+`dist/uPlot.iife.min.js` and `dist/uPlot.min.css` from the npm package. It is
+excluded from the type check and from the tests that assert on our own modules.
+
 The history store's tests run against a real PostgreSQL named by
 `PATCHWRIGHT_TEST_POSTGRES_DSN` and skip without one:
 
