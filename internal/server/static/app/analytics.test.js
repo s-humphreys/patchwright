@@ -44,6 +44,15 @@ function view(over = {}) {
   };
 }
 
+/** win is one base upgrade as the API reports it. */
+function win(over = {}) {
+  return {
+    from_ref: 'docker.io/python@sha256:aaaaaaaaaaaaaaaa', to_ref: 'docker.io/python:3.14',
+    images: 12, teams: 3, clears: 5860, total: 6746, introduces: 284, kev_cleared: 10,
+    ...over,
+  };
+}
+
 test('the page leads with the biggest win, not with a team', () => {
   // The earlier version ranked teams by how slow they were. That reads as an
   // accusation to whoever is on top, and it is rarely the useful question: most
@@ -102,31 +111,19 @@ test('with no base differential the wins panel explains how to turn it on', () =
   assert.match(out, /baseDiff/);
 });
 
-test('the owner table is framed as context, not a ranking', () => {
-  const out = render(view());
-  assert.match(out, /not a ranking/);
+test('base leverage heads the wins, since it is the biggest single lever', () => {
+  const out = render(view({ wins: [win()] }));
+  assert.match(out, /Across the estate a rebuild clears <strong class="ok">500<\/strong> of 1000 CVEs \(50%\)/);
 });
 
-test('unassessed findings are surfaced, since they can fake a quiet team', () => {
-  const out = render(view({ teams: [team({ unassessed: 12 })] }));
-  assert.match(out, /12/);
-  assert.match(out, /Unassessed/);
-});
-
-test('base leverage is on the estate summary, since it is the biggest single lever', () => {
-  const out = render(view());
-  assert.match(out, /clears <strong class="ok">500<\/strong> of 1000 CVEs/);
-  assert.match(out, /50%/);
-});
-
-test('the notes are rendered, not just carried in the payload', () => {
-  const out = render(view());
-  assert.match(out, /What this page cannot tell you/);
-  assert.match(out, /Ticket resolution time is not shown/);
+test('the page no longer carries a team table or notes: the movement section says it better', () => {
+  const out = render(view({ wins: [win()] }));
+  assert.doesNotMatch(out, /not a ranking/);
+  assert.doesNotMatch(out, /What this page cannot tell you/);
 });
 
 test('an empty estate says so rather than rendering an empty page', () => {
-  const out = render(view({ teams: [] }));
+  const out = render(view({ teams: [], estate: team({ findings: 0 }), wins: [], issues: [] }));
   assert.match(out, /No findings/);
 });
 

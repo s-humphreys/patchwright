@@ -54,9 +54,12 @@ function caveatsPanel(h, status) {
     items.push(`<span class="warn">The store reported an error on its last use: ${esc(status.last_error)}</span>`);
   }
   for (const c of h.caveats || []) items.push(esc(c));
-  return `<section class="panel notes"><h3>Read this first</h3><ul>${
+  // Collapsed by default, with the one fact that changes how the charts read kept
+  // on the summary line: when the record began.
+  const begins = h.first_recorded ? ` · the record begins ${esc(String(h.first_recorded).slice(0, 10))}` : "";
+  return `<details class="panel notes history-notes"><summary>Read this first${begins}</summary><ul>${
     items.map((c) => `<li>${c}</li>`).join("")
-  }</ul></section>`;
+  }</ul></details>`;
 }
 
 /** directionPanel plots the estate's risk at the end of each period. */

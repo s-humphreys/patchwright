@@ -63,11 +63,12 @@ test('a disabled store says so instead of rendering an empty record', () => {
   assert.doesNotMatch(html, /Direction/);
 });
 
-test('the caveats come first, and the record start date is on them', () => {
+test('the caveats come first, collapsed, with the record start date on the summary line', () => {
   const html = render(body());
   const first = html.indexOf('Read this first');
   const direction = html.indexOf('Direction');
   assert.ok(first >= 0 && first < direction, 'caveats must precede every chart');
+  assert.match(html, /<details class="panel notes history-notes"><summary>Read this first · the record begins 2026-08-15<\/summary>/);
   assert.match(html, /begins <strong>2026-08-15<\/strong>/);
   assert.match(html, /Retention is 365 days/);
 });
