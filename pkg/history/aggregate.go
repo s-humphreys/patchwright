@@ -120,8 +120,11 @@ type Counts struct {
 
 // OpenSummary is the open queue as the record holds it.
 type OpenSummary struct {
-	Items    int            `json:"items"`
-	Ticketed int            `json:"ticketed"`
+	Items    int `json:"items"`
+	Ticketed int `json:"ticketed"`
+	// Missing is how many open items were absent from the latest assessment and are
+	// inside the grace period: not yet lapsed, not confirmed present.
+	Missing  int            `json:"missing"`
 	BySignal map[string]int `json:"by_signal,omitempty"`
 	// AgeDays buckets open items by how long the record has held them.
 	AgeDays map[string]int `json:"age_days,omitempty"`
@@ -364,6 +367,9 @@ func openSummary(open []State, now time.Time) OpenSummary {
 	for _, st := range open {
 		if st.Current.Ticketed() {
 			out.Ticketed++
+		}
+		if st.Missing > 0 {
+			out.Missing++
 		}
 		for _, s := range st.Current.Signals {
 			out.BySignal[s]++

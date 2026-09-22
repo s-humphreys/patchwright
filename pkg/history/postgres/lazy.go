@@ -59,12 +59,12 @@ func (l *Lazy) Open(ctx context.Context) ([]history.State, error) {
 	return s.Open(ctx)
 }
 
-func (l *Lazy) Record(ctx context.Context, a history.Assessment, events []history.Event) (int64, error) {
+func (l *Lazy) Record(ctx context.Context, a history.Assessment, events []history.Event, marks []history.Mark) (int64, error) {
 	s, err := l.get(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return s.Record(ctx, a, events)
+	return s.Record(ctx, a, events, marks)
 }
 
 func (l *Lazy) Append(ctx context.Context, assessmentID int64, events []history.Event) error {

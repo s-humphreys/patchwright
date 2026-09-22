@@ -792,6 +792,7 @@ components:
           properties:
             items: { type: integer }
             ticketed: { type: integer }
+            missing: { type: integer, description: Open items absent from the latest assessment but inside the grace period }
             by_signal: { type: object, additionalProperties: { type: integer } }
             age_days: { type: object, additionalProperties: { type: integer } }
         caveats: { type: array, items: { type: string } }
