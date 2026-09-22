@@ -156,6 +156,8 @@ func newAssessor(in assessInputs) (*assessor, error) {
 				sources.BaseDiff = true
 				bd := cfg.Remediation.BaseDiff
 				popts = append(popts, pipeline.WithBaseDiffEnricher(&enrich.BaseDiffEnricher{
+					ScanExploited: bd.ScansExploited(),
+					ExploitedEPSS: bd.ExploitedEPSS,
 					Resolver: &basescan.Resolver{
 						Scanner:     &basescan.TrivyScanner{Binary: bd.Binary, Timeout: bd.Timeout},
 						Concurrency: bd.EffectiveConcurrency(),

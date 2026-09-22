@@ -272,6 +272,7 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				Live:               live,
 				Scanned:            ai.Scanned,
 				ScanError:          ai.ScanError,
+				PackagesScanned:    ai.PackagesScanned,
 				FallbackSource:     ai.FallbackSource,
 				FallbackScanned:    ai.FallbackScanned,
 				FallbackError:      ai.FallbackError,

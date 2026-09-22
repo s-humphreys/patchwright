@@ -417,10 +417,27 @@ type BaseDiffConfig struct {
 	//
 	// "never" disables expiry, for a one-shot command whose process outlives nothing.
 	MaxAge string `yaml:"maxAge"`
+
+	// ScanExploited also scans the image itself, not only its base, when it carries
+	// an exploited CVE with a fix that the base does not account for. That is the
+	// CVE a ticket must name a package for, and the base differential cannot name
+	// it because the base does not have it.
+	//
+	// Bounded by the question rather than the estate: only images carrying such a
+	// CVE are pulled, cached per reference like the bases. Off by default because
+	// it pulls first-party images, which needs credentials the base scans may not.
+	ScanExploited *bool `yaml:"scanExploited"`
+	// ExploitedEPSS is the EPSS at or above which a CVE counts as exploited for that
+	// scan, alongside CISA KEV membership. Zero means 0.5, matching the shipped
+	// policy rules.
+	ExploitedEPSS float64 `yaml:"exploitedEPSS"`
 }
 
 // On reports whether base scanning was asked for.
 func (b BaseDiffConfig) On() bool { return b.Enabled != nil && *b.Enabled }
+
+// ScansExploited reports whether images carrying exploited CVEs are scanned too.
+func (b BaseDiffConfig) ScansExploited() bool { return b.ScanExploited != nil && *b.ScanExploited }
 
 // EffectiveConcurrency is the configured bound, or a default chosen against the
 // startup budget: base scans are pure pull-and-parse latency, and at four the
@@ -671,6 +688,12 @@ type JiraConfig struct {
 	// version" for an image already on the latest wastes the assignee's time,
 	// which is how a vulnerability queue loses credibility.
 	RequireUpgrade *bool `yaml:"requireUpgrade"`
+
+	// UrgentEPSS is the EPSS at or above which a CVE is listed on a ticket as one
+	// it must clear, alongside CISA KEV membership. Zero means 0.5, which is what
+	// the shipped actionable rules use, so the list a ticket prints is the list
+	// that made the finding urgent. Set it when the policy's threshold moves.
+	UrgentEPSS float64 `yaml:"urgentEPSS"`
 }
 
 // isSet reports whether a config file actually defined a jira section, so an
@@ -681,7 +704,8 @@ func (j JiraConfig) isSet() bool {
 		j.Priority != "" || len(j.Labels) > 0 || j.RequireUpgrade != nil ||
 		len(j.Exclude) > 0 || len(j.PriorityMap) > 0 || len(j.Routes) > 0 ||
 		j.GroupBy != "" || j.MinPriority != "" || j.AutoClose || j.CloseTransition != "" ||
-		j.CloseTransitionUnworked != "" || j.ClosePriorityUnworked != "" || j.CloseTransitionNoLongerActionable != ""
+		j.CloseTransitionUnworked != "" || j.ClosePriorityUnworked != "" || j.CloseTransitionNoLongerActionable != "" ||
+		j.UrgentEPSS != 0
 }
 
 // EffectiveRequireUpgrade reports whether findings with no available upgrade
@@ -1172,6 +1196,12 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Remediation.BaseDiff.MaxAge != "" {
 			cfg.Remediation.BaseDiff.MaxAge = part.Remediation.BaseDiff.MaxAge
+		}
+		if part.Remediation.BaseDiff.ScanExploited != nil {
+			cfg.Remediation.BaseDiff.ScanExploited = part.Remediation.BaseDiff.ScanExploited
+		}
+		if part.Remediation.BaseDiff.ExploitedEPSS != 0 {
+			cfg.Remediation.BaseDiff.ExploitedEPSS = part.Remediation.BaseDiff.ExploitedEPSS
 		}
 		if part.Remediation.InFlight.Provider != "" {
 			cfg.Remediation.InFlight = part.Remediation.InFlight

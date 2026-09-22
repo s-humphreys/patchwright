@@ -351,6 +351,11 @@ If it does get OOM-killed, drop `remediation.baseDiff.concurrency` to 4 before
 lowering the limit. Halving the concurrency roughly doubles that phase, which is the
 slower outcome but not the one that loses data.
 
+`remediation.baseDiff.scanExploited` adds a pull per image that carries an exploited
+CVE its base does not explain - a few dozen on an estate of several hundred - through
+the same bounded, cached resolver. Those are first-party application images, so the
+pod's registry identity needs read access to them, not only to the bases.
+
 ## Consuming it with Flux
 
 An `OCIRepository` for the chart and a `HelmRelease` that references it:

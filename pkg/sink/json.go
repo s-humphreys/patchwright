@@ -80,6 +80,10 @@ type FindingView struct {
 	Scanned        bool   `json:"scanned"`
 	ExploitChecked bool   `json:"exploit_checked"`
 	ScanError      string `json:"scan_error,omitempty"`
+	// PackagesScanned reports that the image itself was scanned to name the
+	// packages behind its exploited CVEs. False leaves an unnamed package
+	// meaning "nothing looked", not "nothing found".
+	PackagesScanned bool `json:"packages_scanned,omitempty"`
 	// CountsSource names who produced Counts. Absent means the scan provider,
 	// which is every finding the fallback did not fill in.
 	//
@@ -251,8 +255,9 @@ type VulnView struct {
 	FixedByUpgrade   bool   `json:"fixed_by_upgrade,omitempty"`
 	OriginDetermined bool   `json:"origin_determined,omitempty"`
 
-	// Packages names what carries this CVE and what fixes it, measured by the base
-	// scan. Absent for application-introduced CVEs, whose layer nothing scanned.
+	// Packages names what carries this CVE and what fixes it, measured by a scan
+	// of the base or, for exploited CVEs when that scan is on, of the image
+	// itself. Absent when nothing scanned the layer the CVE lives in.
 	Packages []PackageView `json:"packages,omitempty"`
 }
 
@@ -263,6 +268,9 @@ type PackageView struct {
 	Name      string `json:"name"`
 	Ecosystem string `json:"ecosystem,omitempty"`
 	FixedIn   string `json:"fixed_in,omitempty"`
+	// Path is the file declaring a language package, so a ticket can say where
+	// the fix goes. Absent for an OS package.
+	Path string `json:"path,omitempty"`
 }
 
 // BaseDiffView is what scanning an image's base established.
@@ -457,6 +465,7 @@ func ToFindingView(f model.Finding) FindingView {
 		Scanned:            f.Scanned,
 		ExploitChecked:     f.ExploitChecked,
 		ScanError:          f.ScanError,
+		PackagesScanned:    f.PackagesScanned,
 		CountsSource:       f.CountsSource,
 		FallbackSource:     f.FallbackSource,
 		FallbackScanned:    f.FallbackScanned,
@@ -533,7 +542,7 @@ func toPackageViews(pkgs []model.AffectedPackage) []PackageView {
 	}
 	out := make([]PackageView, 0, len(pkgs))
 	for _, p := range pkgs {
-		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn})
+		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn, Path: p.Path})
 	}
 	return out
 }

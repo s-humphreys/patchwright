@@ -43,6 +43,10 @@ type Package struct {
 	Name         string
 	Ecosystem    string // "debian", "alpine", "azurelinux", "gobinary", "dotnet-core", ...
 	FixedVersion string
+	// Path is the file that declares a language package ("app/requirements.txt",
+	// "package-lock.json"), which is where the fix gets made. Empty for an OS
+	// package: those are installed by a package manager, not declared in a file.
+	Path string
 }
 
 // Result is what a single image reference contains.

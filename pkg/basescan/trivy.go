@@ -129,6 +129,8 @@ type refReport struct {
 	} `json:"Metadata"`
 	Results []struct {
 		Type            string `json:"Type"`
+		Class           string `json:"Class"`
+		Target          string `json:"Target"`
 		Vulnerabilities []struct {
 			VulnerabilityID string `json:"VulnerabilityID"`
 			PkgName         string `json:"PkgName"`
@@ -157,12 +159,18 @@ func parseRefReport(ref string, data []byte) (*Result, error) {
 			// belong here.
 			out.Ecosystems[eco] = true
 		}
+		// Only a language result's target is a file somebody edits. An OS result's
+		// target is the distro name, which is not where anybody makes a change.
+		var path string
+		if res.Class == "lang-pkgs" {
+			path = res.Target
+		}
 		for _, v := range res.Vulnerabilities {
 			if v.VulnerabilityID == "" {
 				continue
 			}
 			out.CVEs[v.VulnerabilityID] = append(out.CVEs[v.VulnerabilityID],
-				Package{Name: v.PkgName, Ecosystem: eco, FixedVersion: v.FixedVersion})
+				Package{Name: v.PkgName, Ecosystem: eco, FixedVersion: v.FixedVersion, Path: path})
 		}
 	}
 	return out, nil
