@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Every job starts at once. The kind suite and the image build used to wait for the
+# unit tests, which serialised the two slowest jobs behind the fastest and bought
+# nothing: a failing unit test fails the PR whether or not the image built.
 jobs:
   test:
     name: unit-tests
@@ -49,6 +52,10 @@ jobs:
         run: npm run check
       - name: Run page tests
         run: npm test
+      - name: Install a browser for the page tests
+        run: npx playwright install --with-deps chromium
+      - name: Run the page in a browser
+        run: npm run test:ui
 
   helm-lint:
     name: helm-lint
@@ -97,7 +104,6 @@ jobs:
 
   integration:
     name: integration-kind
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -115,7 +121,6 @@ jobs:
 
   build:
     name: build-image
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
