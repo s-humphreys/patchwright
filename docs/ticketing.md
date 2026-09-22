@@ -135,6 +135,11 @@ jira:
 an image is found. `priorityMap` is not defaulted — priority schemes are
 per-instance and a name that does not exist fails ticket creation.
 
+`urgentEPSS` (default 0.5) is the exploitation probability at or above which a CVE is
+listed on a ticket as one it must clear, alongside CISA KEV membership. It should
+match the threshold the policy's urgent rules use, so that the list a ticket prints
+is the list that made the finding urgent. See [Done means](#done-means).
+
 ## What a run does
 
 | Action | When |
@@ -429,6 +434,57 @@ Go `text/template`: first line `Summary: ...`, then a blank line, then the
 description. See
 [`config/templates/container-vuln.md.tmpl`](../config/templates/container-vuln.md.tmpl)
 for the available fields.
+
+### Done means
+
+A rebuild ticket used to promise that the base "has been rebuilt with the fixes",
+and on a real estate that was false for 13 of 22 tickets citing an exploited CVE:
+the CVE lived in a package the Dockerfile installed, or in a dependency, and the new
+base digest left it exactly where it was. A ticket that promises a rebuild clears
+what it does not is how a queue loses credibility.
+
+`.Urgent` is the list of CVEs the ticket exists to clear: exploited in the wild, or
+with an EPSS at or above `urgentEPSS`, with a fix published. Exploited first, then
+most likely to be. Each row carries:
+
+| Field | What it says |
+|---|---|
+| `.ID` `.Severity` `.CVSS` `.EPSS` `.KEV` `.FixedVersion` `.Reference` | the CVE itself |
+| `.Why` | what made it urgent, as words: "exploited in the wild", "EPSS 0.87", or both |
+| `.Cleared` | the proposed change removes it, as MEASURED by the base differential |
+| `.Measured` | whether that was actually checked; unmeasured is not "not cleared" |
+| `.Origin` `.Package` `.Ecosystem` `.Path` | where it lives, when a scan named it |
+| `.Where` `.Action` | the two above rendered for somebody who does not know package ecosystems |
+
+`.UrgentCleared`, `.UrgentUnknown` and `.UrgentRemaining` count the rows the change
+removes, was not measured for, and is known to leave; `.UrgentAllCleared` is true
+when the change alone is the whole job. The bundled template renders them as:
+
+```
+**Done means**
+
+This ticket closes when none of these remain in the running image:
+
+| CVE | Why it matters | Where it is | What to do |
+| --- | -------------- | ----------- | ---------- |
+| CVE-2026-53362 | exploited in the wild | Kernel headers your Dockerfile installs (linux-libc-dev) | Only needed to compile. Install linux-libc-dev in a build stage so it is not in the runtime image, or run `apt-get update && apt-get upgrade -y` after your install step to take 6.12.95-1. |
+| CVE-2026-48710 | exploited in the wild | The Python package mcp, declared in app/requirements.txt | Move mcp to 1.0.1 in app/requirements.txt and refresh the lockfile. |
+| CVE-2025-39682 | exploited in the wild | The base image | Nothing extra. The rebuild above removes it. |
+
+The change above clears 1 of 3.
+```
+
+`.Where` and `.Action` are written from the package's ecosystem: an OS package
+names the package manager command that takes the fix, a language package names the
+file it is declared in, and a handful of build-only packages (kernel headers,
+compiler tooling) say to move them into a build stage rather than upgrade them. A
+CVE nothing named says so rather than guessing, and an unmeasured one says to check
+the dashboard after the change rather than claiming either way.
+
+Naming the package behind an application CVE needs the image itself scanned, which
+is `remediation.baseDiff.scanExploited` in [scanning](scanning.md#naming-the-package-behind-an-exploited-cve).
+Without it, an application row reads "A dependency your build adds (no scan named
+it)" with the fixed version, which is honest and not much use.
 
 ### When two tickets say the same thing
 

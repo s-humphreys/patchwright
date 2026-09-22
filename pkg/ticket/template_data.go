@@ -106,6 +106,34 @@ type TemplateData struct {
 	// and KnownExploited reports CISA KEV membership.
 	MaxEPSS        float64
 	KnownExploited bool
+
+	// Urgent are the CVEs this ticket exists to clear: exploited in the wild, or
+	// with an EPSS at or above the configured threshold, with a fix published.
+	// Exploited first, then most likely to be. Each says where it lives and what
+	// closes it, in words for somebody who does not know package ecosystems.
+	//
+	// This is the list a template should call "done means". The rest of the
+	// image's CVEs are context; clearing these is what takes the finding out of
+	// the urgent band, and a ticket that promises a rebuild clears them when it
+	// does not is how the queue loses credibility.
+	Urgent []UrgentVuln
+	// UrgentCleared counts those the ticket's upgrade removes, as measured by the
+	// base differential. UrgentUnknown counts those nothing measured. When
+	// UrgentCleared equals len(Urgent) the upgrade alone is the whole job.
+	UrgentCleared int
+	UrgentUnknown int
+}
+
+// UrgentRemaining is how many urgent CVEs the upgrade is known to leave behind:
+// the rows that need a change beyond the one the ticket proposes.
+func (d TemplateData) UrgentRemaining() int {
+	return len(d.Urgent) - d.UrgentCleared - d.UrgentUnknown
+}
+
+// UrgentAllCleared reports that the proposed upgrade was measured to remove every
+// urgent CVE, so the ticket's promise is the whole truth.
+func (d TemplateData) UrgentAllCleared() bool {
+	return len(d.Urgent) > 0 && d.UrgentCleared == len(d.Urgent)
 }
 
 // Deployment is one tag of a repository and where it runs.
@@ -200,9 +228,19 @@ type UpgradeData struct {
 	Direct bool
 }
 
-func newTemplateData(tg ticketGroup, envs []config.Environment) TemplateData {
+func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float64) TemplateData {
 	group := tg.all()
 	d := TemplateData{}
+
+	d.Urgent = urgent(group, urgentEPSS)
+	for _, u := range d.Urgent {
+		switch {
+		case u.Cleared:
+			d.UrgentCleared++
+		case !u.Measured:
+			d.UrgentUnknown++
+		}
+	}
 
 	d.Deployments = deployments(group, envs)
 
