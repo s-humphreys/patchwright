@@ -1,0 +1,23 @@
+{
+  "assessment": { "generated_at": "2026-11-21T10:00:00Z", "running": false, "version": "test" },
+  "analytics": {
+    "estate": { "class": "", "team": "", "findings": 602, "actionable": 410, "base_clears": 3664, "base_total": 4890, "kev": 22, "kev_fixable": 14, "unstarted": 120, "stale_unstarted": 38 },
+    "stale_fix_days": 30,
+    "age_bucket_order": ["0-7d", "7-30d", "30-90d", "90-180d", "180d+"],
+    "wins": [
+      { "from_ref": "docker.io/python@sha256:3966b818aaaaaaaaaaaaaaaa", "to_ref": "docker.io/python:3.12.14", "images": 12, "teams": 3,
+        "clears": 3664, "total": 4890, "introduces": 93, "kev_cleared": 10,
+        "services": [ { "service": "apps/storefront", "images": 3, "team": "payments" }, { "service": "apps/insights", "images": 2, "team": "data" } ] },
+      { "from_ref": "mcr.microsoft.com/dotnet/aspnet:8.0.13", "to_ref": "mcr.microsoft.com/dotnet/aspnet:8.0.22", "images": 41, "teams": 5,
+        "clears": 1820, "total": 2100, "introduces": 0, "kev_cleared": 4,
+        "services": [ { "service": "alfred", "images": 1, "team": "qa" } ] }
+    ],
+    "issues": [
+      { "key": "kev-no-fix", "title": "Known-exploited with no upgrade available", "count": 3, "teams": 2,
+        "why": "No version to move to, so it needs a decision.",
+        "services": [ { "service": "reg/a", "images": 2, "team": "orders" }, { "service": "reg/b", "images": 1 } ] }
+    ],
+    "teams": [],
+    "notes": []
+  }
+}
