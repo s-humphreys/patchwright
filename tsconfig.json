@@ -14,5 +14,5 @@
     "types": []
   },
   "include": ["internal/server/static/app/**/*.js"],
-  "exclude": ["internal/server/static/app/**/*.test.js"]
+  "exclude": ["internal/server/static/app/**/*.test.js", "internal/server/static/app/vendor/**"]
 }

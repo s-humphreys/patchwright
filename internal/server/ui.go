@@ -117,6 +117,11 @@ func staticAppFiles() ([]string, error) {
 	}
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
+		if e.IsDir() {
+			// vendor/ holds third-party code served as-is; the assertions on "the
+			// app" are about the modules we wrote.
+			continue
+		}
 		body, err := staticFS.ReadFile("static/app/" + e.Name())
 		if err != nil {
 			return nil, err

@@ -1,0 +1,11 @@
+{
+  "assessment": { "generated_at": "2026-11-21T10:00:00Z", "running": false, "version": "test" },
+  "summary": {
+    "findings": 602, "actionable": 410, "suppressed": 190, "known_exploited": 22, "end_of_life": 9, "upgradable": 380,
+    "unique_images": 766, "provider_assessed": 598, "provider_unassessed": 4, "remediation_unresolved": 7,
+    "actionable_unassessed": 0, "fallback_scanned": 0, "fallback_failed": 0, "uncovered": 4,
+    "provider_data_newest": "2026-11-21T09:40:00Z", "scanned": 598, "exploit_checked": 598,
+    "in_flight": 3, "in_flight_possible": 3, "in_flight_stale": 0, "in_flight_checked": 598, "in_flight_unmatchable": 0,
+    "exposed": 104, "exposure_unknown": 0
+  }
+}

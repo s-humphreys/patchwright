@@ -62,7 +62,7 @@ func TestTrendReportVerdictAndTotals(t *testing.T) {
 		t.Errorf("kev split = %+v", r.BySignal["kev"])
 	}
 	joined := strings.Join(r.Summary, " ")
-	for _, want := range []string{"fell from 250000", "-20.0%", "320 work items opened and 7 resolved with evidence", "3 were ticketed work", "9 items lapsed", "no longer reported 6 and no longer running 2", "Known-exploited: 32 opened, 4 resolved", "10 items left that bucket by score decay", "1 tickets were closed while the image still ran", "Median time from first seen to resolved", "Open now: 280 items, 50 ticketed, 4 absent"} {
+	for _, want := range []string{"fell from 250000", "-20.0%", "320 work items opened and 7 resolved with evidence", "3 were ticketed work", "cleared 0 distinct CVEs", "9 items lapsed", "no longer reported 6 and no longer running 2", "Known-exploited: 32 opened, 4 resolved", "10 items left that bucket by score decay", "1 tickets were closed while the image still ran", "Median time from first seen to resolved", "Open now: 280 items, 50 ticketed, 4 absent"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("summary should say %q:\n%s", want, joined)
 		}

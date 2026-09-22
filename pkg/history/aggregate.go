@@ -38,8 +38,11 @@ type Report struct {
 	// FirstRecorded is when the record begins. A range that starts before it is
 	// reporting on a period the tool was not watching, and the caveat says so.
 	FirstRecorded *time.Time `json:"first_recorded,omitempty"`
-	Assessments   int        `json:"assessments"`
-	RetentionDays int        `json:"retention_days,omitempty"`
+	// Baseline is the items already open when the record began, when that moment
+	// falls inside the range.
+	Baseline      int `json:"baseline"`
+	Assessments   int `json:"assessments"`
+	RetentionDays int `json:"retention_days,omitempty"`
 
 	// Risk is the estate's direction: the last assessment of each period.
 	Risk []RiskPoint `json:"risk"`
@@ -71,10 +74,21 @@ type Movement struct {
 	Start  time.Time `json:"start"`
 	End    time.Time `json:"end"`
 
+	// Baseline is the items that were already open when the record began, counted
+	// in the period it began. They are not "opened": nothing happened to them that
+	// period except that something started watching. Kept apart so the first month
+	// does not read as a flood of new work.
+	Baseline   int `json:"baseline"`
 	Opened     int `json:"opened"`
 	Resolved   int `json:"resolved"`
 	Lapsed     int `json:"lapsed"`
 	Reassigned int `json:"reassigned"`
+
+	// CVEsResolved is the distinct CVEs carried by the items resolved this period,
+	// and KEVCVEsResolved the known-exploited among them. The item is the unit of
+	// work; the CVE is what security asked about, and one item can clear hundreds.
+	CVEsResolved    int `json:"cves_resolved"`
+	KEVCVEsResolved int `json:"kev_cves_resolved"`
 
 	// The delineation. ResolvedTicketed is a subset of Resolved, never a separate
 	// total; Resolved less ResolvedTicketed is work that landed by another route.
@@ -178,8 +192,9 @@ func periodLabel(start time.Time, b Bucket) string {
 }
 
 // Aggregate builds a report from the assessments and events in a range and the
-// items currently open.
-func Aggregate(r Range, assessments []Assessment, events []Event, open []State, now time.Time) Report {
+// items currently open. first is when the record began (zero when unknown): the
+// opened events of that first assessment are the baseline, not new work.
+func Aggregate(r Range, assessments []Assessment, events []Event, open []State, first, now time.Time) Report {
 	rep := Report{
 		SchemaVersion: SchemaVersion, Enabled: true,
 		Since: r.Since, Until: r.Until, Bucket: r.Bucket,
@@ -187,6 +202,15 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		Risk:        []RiskPoint{},
 		Movement:    Periods(r),
 		Open:        openSummary(open, now),
+	}
+	if !first.IsZero() {
+		f := first
+		rep.FirstRecorded = &f
+	}
+	// The first assessment's opened events all carry its timestamp; a minute of
+	// slack covers the record's own clock against the assessment's.
+	isBaseline := func(at time.Time) bool {
+		return !first.IsZero() && !at.After(first.Add(time.Minute))
 	}
 	periodOf := func(t time.Time) int {
 		for i, m := range rep.Movement {
@@ -229,6 +253,8 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 	}
 
 	days := map[int][]float64{}
+	cves := map[int]map[string]bool{}
+	kevs := map[int]map[string]bool{}
 	for _, e := range events {
 		i := periodOf(e.At)
 		if i < 0 {
@@ -237,12 +263,30 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		m := &rep.Movement[i]
 		switch e.Kind {
 		case KindOpened:
+			if isBaseline(e.At) {
+				m.Baseline++
+				rep.Baseline++
+				continue
+			}
 			m.Opened++
 			if e.Payload.Snapshot != nil {
 				m.split(*e.Payload.Snapshot, func(c *Counts) { c.Opened++ })
 			}
 		case KindResolved:
 			m.Resolved++
+			if snap := e.Payload.Closed; snap == nil {
+				snap = e.Payload.Opened
+			} else {
+				if cves[i] == nil {
+					cves[i], kevs[i] = map[string]bool{}, map[string]bool{}
+				}
+				for _, c := range snap.CVEs {
+					cves[i][c.ID] = true
+					if c.KEV {
+						kevs[i][c.ID] = true
+					}
+				}
+			}
 			if e.Payload.Ticketed {
 				m.ResolvedTicketed++
 			} else {
@@ -303,6 +347,8 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 			med := median(d)
 			rep.Movement[i].MedianDaysToResolve = &med
 		}
+		rep.Movement[i].CVEsResolved = len(cves[i])
+		rep.Movement[i].KEVCVEsResolved = len(kevs[i])
 	}
 	return rep
 }

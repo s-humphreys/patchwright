@@ -31,6 +31,20 @@ clusters.
 
 ## e2e suite
 
+`npm run test:ui` runs the pages in a real Chromium with Playwright, against a
+fixture server (`test/ui/server.js`) that serves the embedded HTML and modules and
+answers the API from `test/ui/fixtures`. It covers what jsdom cannot: a chart drawn
+to a canvas and reacting to the cursor, a details element opening, a select that
+changes the URL. A test that needs a different estate overrides a route in the
+browser rather than editing the fixtures. First run needs
+`npx playwright install chromium`.
+
+`internal/server/static/app/vendor/` holds the one third-party browser library,
+[uPlot](https://github.com/leeoniya/uPlot) (MIT, its licence beside it), vendored
+rather than fetched so the page works with no outbound calls. To update it, copy
+`dist/uPlot.iife.min.js` and `dist/uPlot.min.css` from the npm package. It is
+excluded from the type check and from the tests that assert on our own modules.
+
 The history store's tests run against a real PostgreSQL named by
 `PATCHWRIGHT_TEST_POSTGRES_DSN` and skip without one:
 

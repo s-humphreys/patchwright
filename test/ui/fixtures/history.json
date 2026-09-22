@@ -1,0 +1,92 @@
+{
+  "assessment": { "generated_at": "2026-11-21T10:00:00Z", "running": false, "version": "test" },
+  "status": { "enabled": true, "last_recorded": "2026-11-21T10:00:00Z", "retention_days": 365 },
+  "history": {
+    "schema_version": 1,
+    "enabled": true,
+    "since": "2026-08-23T00:00:00Z",
+    "until": "2026-11-21T10:00:00Z",
+    "bucket": "month",
+    "first_recorded": "2026-09-21T16:09:00Z",
+    "baseline": 303,
+    "assessments": 1450,
+    "retention_days": 365,
+    "risk": [
+      { "period": "2026-09", "at": "2026-09-30T23:00:00Z", "assessments": 220, "findings": 663, "actionable": 497,
+        "risk": { "items": 299, "sum": 245739, "p50": 825, "p90": 825, "max": 1000, "urgent": 58, "known_exploited": 31 } },
+      { "period": "2026-10", "at": "2026-10-31T23:00:00Z", "assessments": 740, "findings": 640, "actionable": 455,
+        "risk": { "items": 271, "sum": 221400, "p50": 825, "p90": 900, "max": 1000, "urgent": 49, "known_exploited": 26 } },
+      { "period": "2026-11", "at": "2026-11-21T10:00:00Z", "assessments": 490, "findings": 602, "actionable": 410,
+        "risk": { "items": 244, "sum": 198120, "p50": 800, "p90": 900, "max": 1000, "urgent": 41, "known_exploited": 22 } }
+    ],
+    "movement": [
+      { "period": "2026-08", "start": "2026-08-01T00:00:00Z", "end": "2026-09-01T00:00:00Z",
+        "baseline": 0, "opened": 0, "resolved": 0, "lapsed": 0, "reassigned": 0, "cves_resolved": 0, "kev_cves_resolved": 0,
+        "resolved_ticketed": 0, "resolved_unticketed": 0, "tickets_raised": 0, "tickets_closed": 0, "tickets_closed_finding_open": 0,
+        "epss_decayed": 0, "became_known_exploited": 0 },
+      { "period": "2026-09", "start": "2026-09-01T00:00:00Z", "end": "2026-10-01T00:00:00Z",
+        "baseline": 303, "opened": 42, "resolved": 9, "lapsed": 14, "reassigned": 3, "cves_resolved": 1180, "kev_cves_resolved": 6,
+        "resolved_ticketed": 2, "resolved_unticketed": 7, "tickets_raised": 11, "tickets_closed": 8, "tickets_closed_finding_open": 1,
+        "epss_decayed": 22, "became_known_exploited": 5, "median_days_to_resolve": 6,
+        "lapse_reasons": { "no longer reported": 9, "no longer running": 4, "upgrade still available": 1 },
+        "tickets_closed_by_tool": { "not-running": 5, "no-longer-actionable": 1 },
+        "by_signal": {
+          "kev": { "opened": 6, "resolved": 3, "lapsed": 1, "resolved_ticketed": 2 },
+          "epss-high": { "opened": 12, "resolved": 3, "lapsed": 2, "resolved_ticketed": 2 },
+          "fixable-critical": { "opened": 38, "resolved": 8, "lapsed": 10, "resolved_ticketed": 2 },
+          "end-of-life": { "opened": 2, "resolved": 1, "lapsed": 0, "resolved_ticketed": 0 },
+          "exposed": { "opened": 15, "resolved": 4, "lapsed": 3, "resolved_ticketed": 1 }
+        },
+        "by_team": {
+          "cpe": { "opened": 9, "resolved": 4, "lapsed": 3, "resolved_ticketed": 1 },
+          "cex": { "opened": 11, "resolved": 2, "lapsed": 5, "resolved_ticketed": 1 },
+          "ics": { "opened": 8, "resolved": 3, "lapsed": 2, "resolved_ticketed": 0 }
+        } },
+      { "period": "2026-10", "start": "2026-10-01T00:00:00Z", "end": "2026-11-01T00:00:00Z",
+        "baseline": 0, "opened": 31, "resolved": 47, "lapsed": 12, "reassigned": 1, "cves_resolved": 6420, "kev_cves_resolved": 19,
+        "resolved_ticketed": 21, "resolved_unticketed": 26, "tickets_raised": 14, "tickets_closed": 25, "tickets_closed_finding_open": 2,
+        "epss_decayed": 9, "became_known_exploited": 2, "median_days_to_resolve": 23,
+        "lapse_reasons": { "no longer reported": 7, "no longer running": 5 },
+        "tickets_closed_by_tool": { "upgrade-landed": 12, "not-running": 4 },
+        "by_signal": {
+          "kev": { "opened": 4, "resolved": 9, "lapsed": 1, "resolved_ticketed": 6 },
+          "epss-high": { "opened": 7, "resolved": 14, "lapsed": 2, "resolved_ticketed": 8 },
+          "fixable-critical": { "opened": 28, "resolved": 44, "lapsed": 9, "resolved_ticketed": 20 },
+          "end-of-life": { "opened": 1, "resolved": 3, "lapsed": 0, "resolved_ticketed": 1 },
+          "exposed": { "opened": 10, "resolved": 18, "lapsed": 4, "resolved_ticketed": 9 }
+        },
+        "by_team": {
+          "cpe": { "opened": 6, "resolved": 15, "lapsed": 2, "resolved_ticketed": 7 },
+          "cex": { "opened": 9, "resolved": 12, "lapsed": 4, "resolved_ticketed": 6 },
+          "ics": { "opened": 7, "resolved": 11, "lapsed": 3, "resolved_ticketed": 5 }
+        } },
+      { "period": "2026-11", "start": "2026-11-01T00:00:00Z", "end": "2026-12-01T00:00:00Z",
+        "baseline": 0, "opened": 18, "resolved": 33, "lapsed": 6, "reassigned": 0, "cves_resolved": 4110, "kev_cves_resolved": 11,
+        "resolved_ticketed": 17, "resolved_unticketed": 16, "tickets_raised": 9, "tickets_closed": 19, "tickets_closed_finding_open": 0,
+        "epss_decayed": 4, "became_known_exploited": 1, "median_days_to_resolve": 31,
+        "lapse_reasons": { "no longer reported": 4, "no longer running": 2 },
+        "tickets_closed_by_tool": { "upgrade-landed": 15, "not-running": 2 },
+        "by_signal": {
+          "kev": { "opened": 2, "resolved": 6, "lapsed": 0, "resolved_ticketed": 5 },
+          "epss-high": { "opened": 5, "resolved": 9, "lapsed": 1, "resolved_ticketed": 6 },
+          "fixable-critical": { "opened": 16, "resolved": 31, "lapsed": 5, "resolved_ticketed": 16 },
+          "end-of-life": { "opened": 0, "resolved": 2, "lapsed": 0, "resolved_ticketed": 1 },
+          "exposed": { "opened": 6, "resolved": 12, "lapsed": 2, "resolved_ticketed": 7 }
+        },
+        "by_team": {
+          "cpe": { "opened": 4, "resolved": 12, "lapsed": 1, "resolved_ticketed": 6 },
+          "cex": { "opened": 5, "resolved": 9, "lapsed": 2, "resolved_ticketed": 5 },
+          "ics": { "opened": 4, "resolved": 7, "lapsed": 1, "resolved_ticketed": 4 }
+        } }
+    ],
+    "open": { "items": 244, "ticketed": 61, "missing": 3,
+      "by_signal": { "kev": 22, "epss-high": 51, "fixable-critical": 230, "end-of-life": 9, "exposed": 104 },
+      "age_days": { "0-7": 12, "7-30": 38, "30-90": 194 } },
+    "caveats": [
+      "the record begins 2026-09-21; periods before it are empty because nothing was watching, not because nothing happened",
+      "303 work items were already open when the record began and are counted as the baseline, not as opened",
+      "counts are work items, classified by how each looked when the record first saw it",
+      "resolved requires evidence the work is done; lapsed is everything else, and is never remediation"
+    ]
+  }
+}

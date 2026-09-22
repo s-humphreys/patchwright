@@ -246,12 +246,14 @@ func TestHistoryRecordsAcrossRefreshes(t *testing.T) {
 	if !resp.Status.Enabled || resp.Status.RetentionDays != 30 || resp.Status.LastRecorded == nil {
 		t.Errorf("status = %+v", resp.Status)
 	}
-	var opened, resolved, lapsed int
+	var baseline, opened, resolved, lapsed int
 	for _, m := range resp.History.Movement {
-		opened, resolved, lapsed = opened+m.Opened, resolved+m.Resolved, lapsed+m.Lapsed
+		baseline, opened, resolved, lapsed = baseline+m.Baseline, opened+m.Opened, resolved+m.Resolved, lapsed+m.Lapsed
 	}
-	if opened != 2 || resolved != 1 || lapsed != 1 {
-		t.Errorf("movement totals = %d/%d/%d", opened, resolved, lapsed)
+	// The first run's items are the baseline: they were already open when the
+	// record began, and nothing "opened" that hour except the watching.
+	if baseline != 2 || opened != 0 || resolved != 1 || lapsed != 1 {
+		t.Errorf("movement totals = baseline %d opened %d resolved %d lapsed %d", baseline, opened, resolved, lapsed)
 	}
 	if resp.History.Assessments != 2 || len(resp.History.Risk) == 0 || resp.History.FirstRecorded == nil {
 		t.Errorf("report header = %+v", resp.History)

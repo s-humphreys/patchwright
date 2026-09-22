@@ -55,7 +55,7 @@ func TestAggregateClassifiesByOpeningState(t *testing.T) {
 		{OpenedAt: day(2026, 9, 1), Current: Snapshot{Key: "k5"}, Missing: 1},
 	}
 
-	rep := Aggregate(r, assessments, events, open, day(2026, 9, 21))
+	rep := Aggregate(r, assessments, events, open, time.Time{}, day(2026, 9, 21))
 
 	if len(rep.Movement) != 3 {
 		t.Fatalf("want 3 periods, got %d", len(rep.Movement))
@@ -126,5 +126,34 @@ func TestParseBucket(t *testing.T) {
 	}
 	if _, err := ParseBucket("fortnight"); err == nil {
 		t.Errorf("unknown bucket must be rejected")
+	}
+}
+
+// The first assessment opens everything it sees. Those items were not opened that
+// month; they were already there, and a chart that shows them as a flood of new
+// work misreads the record's start as an event in the estate.
+func TestAggregateSeparatesTheBaselineFromOpenings(t *testing.T) {
+	first := day(2026, 8, 15)
+	snap := Snapshot{Key: "k", Team: "t", Signals: []string{"kev"}, CVEs: []CVE{{ID: "CVE-1", KEV: true}, {ID: "CVE-2"}}}
+	events := []Event{
+		{Key: "a", Kind: KindOpened, At: first, Payload: Payload{Snapshot: &snap}},
+		{Key: "b", Kind: KindOpened, At: first.Add(20 * time.Second), Payload: Payload{Snapshot: &snap}},
+		{Key: "c", Kind: KindOpened, At: first.Add(time.Hour), Payload: Payload{Snapshot: &snap}},
+		{Key: "a", Kind: KindResolved, At: first.AddDate(0, 0, 3), Payload: Payload{Opened: &snap, Closed: &snap, DaysOpen: ptr(3)}},
+		{Key: "b", Kind: KindResolved, At: first.AddDate(0, 0, 4), Payload: Payload{Opened: &snap, Closed: &Snapshot{CVEs: []CVE{{ID: "CVE-2"}, {ID: "CVE-3"}}}, DaysOpen: ptr(4)}},
+	}
+	rep := Aggregate(Range{Since: day(2026, 8, 1), Until: day(2026, 9, 1), Bucket: BucketMonth}, nil, events, nil, first, day(2026, 9, 1))
+	m := rep.Movement[0]
+	if m.Baseline != 2 || rep.Baseline != 2 || m.Opened != 1 {
+		t.Errorf("baseline/opened = %d/%d, want 2/1", m.Baseline, m.Opened)
+	}
+	if m.BySignal["kev"].Opened != 1 {
+		t.Errorf("the baseline must not count as opened in the splits: %+v", m.BySignal)
+	}
+	if m.Resolved != 2 || m.CVEsResolved != 3 || m.KEVCVEsResolved != 1 {
+		t.Errorf("resolved %d, cves %d (want 3 distinct), kev cves %d (want 1)", m.Resolved, m.CVEsResolved, m.KEVCVEsResolved)
+	}
+	if rep.FirstRecorded == nil || !rep.FirstRecorded.Equal(first) {
+		t.Errorf("first recorded should be carried: %v", rep.FirstRecorded)
 	}
 }

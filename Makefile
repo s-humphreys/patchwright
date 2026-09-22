@@ -22,6 +22,9 @@ build: ## Build all packages and the patchwright binary into bin/
 	go build ./...
 	go build -o $(BIN) ./cmd/patchwright
 
+test-ui: ## Run the pages in a real browser (needs: npx playwright install chromium)
+	npm run test:ui
+
 test: ## Run unit + golden tests (no cluster required)
 	go test ./...
 

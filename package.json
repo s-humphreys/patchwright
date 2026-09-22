@@ -5,9 +5,11 @@
   "description": "Dev tooling for the embedded status page. Nothing here ships: the page is plain ES modules served from the Go binary, and these are the type checker and the test harness for them.",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test internal/server/static/app/*.test.js"
+    "test": "node --test internal/server/static/app/*.test.js",
+    "test:ui": "playwright test -c test/ui/playwright.config.js"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "jsdom": "^30.0.1",
     "typescript": "^7.0.2"
   }

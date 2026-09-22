@@ -60,7 +60,11 @@ type Direction struct {
 // TrendTotals are the movement counts summed over the range. ResolvedTicketed is a
 // subset of Resolved; Lapsed is never remediation.
 type TrendTotals struct {
+	// Baseline is items already open when the record began; not new work.
+	Baseline                 int `json:"baseline"`
 	Opened                   int `json:"opened"`
+	CVEsResolved             int `json:"cves_resolved"`
+	KEVCVEsResolved          int `json:"kev_cves_resolved"`
 	Resolved                 int `json:"resolved"`
 	ResolvedTicketed         int `json:"resolved_ticketed"`
 	ResolvedUnticketed       int `json:"resolved_unticketed"`
@@ -94,7 +98,10 @@ func NewTrendReport(rep history.Report) TrendReport {
 	var medians []weighted
 	for _, m := range rep.Movement {
 		t := &out.Movement
+		t.Baseline += m.Baseline
 		t.Opened += m.Opened
+		t.CVEsResolved += m.CVEsResolved
+		t.KEVCVEsResolved += m.KEVCVEsResolved
 		t.Resolved += m.Resolved
 		t.ResolvedTicketed += m.ResolvedTicketed
 		t.ResolvedUnticketed += m.ResolvedUnticketed
@@ -215,8 +222,11 @@ func trendSummary(r TrendReport) []string {
 			word, d.RiskStart, d.FirstPeriod, d.RiskEnd, d.LastPeriod, d.ChangePct, d.ItemsStart, d.ItemsEnd, d.KEVStart, d.KEVEnd))
 	}
 	m := r.Movement
-	out = append(out, fmt.Sprintf("%d work items opened and %d resolved with evidence, of which %d were ticketed work and %d landed by another route (an update bot, a Flux automation, a rebuild done in passing).",
-		m.Opened, m.Resolved, m.ResolvedTicketed, m.ResolvedUnticketed))
+	if m.Baseline > 0 {
+		out = append(out, fmt.Sprintf("%d work items were already open when the record began; they are the baseline, not work that opened.", m.Baseline))
+	}
+	out = append(out, fmt.Sprintf("%d work items opened and %d resolved with evidence, of which %d were ticketed work and %d landed by another route (an update bot, a Flux automation, a rebuild done in passing). A work item is one service, its owner and the upgrade it needs; the resolved ones cleared %d distinct CVEs, %d of them known-exploited (summed over periods, so a CVE cleared in two periods counts twice).",
+		m.Opened, m.Resolved, m.ResolvedTicketed, m.ResolvedUnticketed, m.CVEsResolved, m.KEVCVEsResolved))
 	if m.Lapsed > 0 {
 		out = append(out, fmt.Sprintf("%d items lapsed: they left the queue without evidence the work was done, and are not counted as remediation. Reasons: %s.",
 			m.Lapsed, describeCounts(m.LapseReasons)))

@@ -293,17 +293,26 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	if err != nil {
 		return history.Report{}, err
 	}
-	rep := history.Aggregate(rng, assessments, events, open, now)
+	first, ok, ferr := store.First(ctx)
+	if ferr != nil {
+		return history.Report{}, ferr
+	}
+	if !ok {
+		first = time.Time{}
+	}
+	rep := history.Aggregate(rng, assessments, events, open, first, now)
 	rep.RetentionDays = int(s.history.retention.Hours() / 24)
-	if first, ok, ferr := store.First(ctx); ferr == nil && ok {
-		rep.FirstRecorded = &first
-		if first.After(rng.Since) {
-			rep.Caveats = append(rep.Caveats, fmt.Sprintf(
-				"the record begins %s; periods before it are empty because nothing was watching, not because nothing happened",
-				first.Format("2006-01-02")))
-		}
-	} else if ferr == nil {
+	switch {
+	case !ok:
 		rep.Caveats = append(rep.Caveats, "the record is empty: no assessment has been recorded yet")
+	case first.After(rng.Since):
+		rep.Caveats = append(rep.Caveats, fmt.Sprintf(
+			"the record begins %s; periods before it are empty because nothing was watching, not because nothing happened",
+			first.Format("2006-01-02")))
+	}
+	if rep.Baseline > 0 {
+		rep.Caveats = append(rep.Caveats, fmt.Sprintf(
+			"%d work items were already open when the record began and are counted as the baseline, not as opened", rep.Baseline))
 	}
 	rep.Caveats = append(rep.Caveats,
 		"counts are work items, classified by how each looked when the record first saw it",
