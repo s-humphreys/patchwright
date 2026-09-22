@@ -127,8 +127,8 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
 - **Phase 7** ✅ [History](docs/history.md): an event log in PostgreSQL, off by
   default, so the tool can say what was resolved with evidence, what lapsed, how much
   was ticketed work, and which way the estate's risk is moving, from the API and
-  without a metrics stack. Remaining: the page's history view, an MCP `trend_report`,
-  and tracker dates for cycle time
+  without a metrics stack, with movement charts atop the analytics page and an MCP `trend_report` that answers
+  "is this getting better" in words. Remaining: tracker dates for cycle time
   ([design](docs/design/history.md)).
 
 ## Licence

@@ -1,7 +1,8 @@
 # Design: history, and reporting movement
 
-Status: **phase 1 built** (the event log, the store, the API and retention; see
-[docs/history.md](../history.md)). Phases 2 and 3 are not. Supersedes the storage
+Status: **phases 1 and 2 built** (the event log, the store, the API and retention;
+the movement section at the top of the analytics page and the `trend_report` MCP tool; see
+[docs/history.md](../history.md)). Phase 3, tracker dates, is not. Supersedes the storage
 section of [persistence.md](persistence.md); the problem statement and the evidence
 rule there stand.
 

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/s-humphreys/patchwright/pkg/history"
 )
 
 // NewServer builds an MCP server whose tools answer from src.
@@ -56,6 +58,10 @@ func register(s *sdk.Server, src Source) {
 	}
 	type cveArgs struct {
 		ID string `json:"id" jsonschema:"the CVE identifier, e.g. CVE-2026-31431"`
+	}
+	type trendArgs struct {
+		SinceDays int    `json:"since_days,omitempty" jsonschema:"how far back to look, in days (default 90)"`
+		Bucket    string `json:"bucket,omitempty" jsonschema:"period to group by: month (default) or week"`
 	}
 
 	sdk.AddTool(s, &sdk.Tool{
@@ -191,6 +197,37 @@ func register(s *sdk.Server, src Source) {
 			return textResult(errNoAssessment), nil, nil
 		}
 		return result(NewExploitabilityReport(a, args.EPSSThreshold))
+	})
+
+	sdk.AddTool(s, &sdk.Tool{
+		Name: "trend_report",
+		Description: "Is this getting better? How the queue has MOVED over a period, from the history " +
+			"record rather than from today's assessment: what opened, what was resolved WITH evidence " +
+			"the work landed, what lapsed without it, and which way the estate's risk score is going. " +
+			"Counts are work items classified by how each looked when the record first saw it, so a " +
+			"KEV resolution is one that was known-exploited when found. Resolved and lapsed are never " +
+			"summed; ticketed resolutions are a subset of resolved. Use this for 'what did we fix last " +
+			"month', 'how much of it was ticketed work', or 'is the risk going down'. The caveats " +
+			"come first: the record begins on a date, and a period before it is unwatched, not quiet.",
+	}, func(ctx context.Context, req *sdk.CallToolRequest, args trendArgs) (*sdk.CallToolResult, any, error) {
+		a := src()
+		if a.History == nil {
+			return textResult("history is not enabled on this deployment: no store is configured, so nothing about movement is recorded. Every other tool answers from the current assessment."), nil, nil
+		}
+		bucket, err := history.ParseBucket(args.Bucket)
+		if err != nil {
+			return textResult(err.Error()), nil, nil
+		}
+		days := args.SinceDays
+		if days <= 0 {
+			days = 90
+		}
+		now := time.Now().UTC()
+		rep, err := a.History(ctx, now.Add(-time.Duration(days)*24*time.Hour), now, bucket)
+		if err != nil {
+			return textResult("the history store could not be read: " + err.Error()), nil, nil
+		}
+		return result(NewTrendReport(rep))
 	})
 
 	sdk.AddTool(s, &sdk.Tool{

@@ -1,4 +1,5 @@
 import { barChart, stackedBar } from './charts.js';
+import { loadHistory } from './history.js';
 import { showStatus } from './status.js';
 import { $, esc } from './util.js';
 
@@ -197,8 +198,9 @@ async function load() {
 
 if (typeof document !== "undefined" && $("#analytics")) {
   load();
+  loadHistory($("#history"));
   showStatus();
   // A completed assessment changes every number here, so follow it rather than
   // leaving the reader on figures the header says are stale.
-  document.addEventListener("pw:assessed", () => { load(); showStatus(); });
+  document.addEventListener("pw:assessed", () => { load(); loadHistory($("#history")); showStatus(); });
 }

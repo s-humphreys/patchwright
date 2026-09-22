@@ -66,10 +66,11 @@ paths:
       tags: [operations]
       summary: Security analytics page
       description: |
-        HTML. Per-team responsiveness: who is working through their findings and who is
-        sitting on them. A page of its own because its subject is how teams are
-        RESPONDING, not what is wrong - a different question read by different people.
-        Reads GET /api/v1/analytics.
+        HTML. Opens with how the queue has moved (from GET /api/v1/history, when a
+        history store is configured), then what to fix first and who is responding.
+        A page of its own because its subject is movement and response, not what is
+        wrong - a different question read by different people. Reads
+        GET /api/v1/analytics and GET /api/v1/history.
       responses:
         "200":
           description: The analytics page
