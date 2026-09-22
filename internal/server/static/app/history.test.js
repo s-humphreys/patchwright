@@ -158,3 +158,38 @@ test('the open summary shows items in the grace period as absent, not gone', () 
   const html = render(body());
   assert.match(html, /280 · 50 ticketed · <span class="muted">4 absent from the latest run, inside the grace period<\/span>/);
 });
+
+test('closes are measured against the due date only once a ticket carried one', () => {
+  const html = render(body());
+  assert.doesNotMatch(html, /Closed on time \/ overdue/);
+  assert.doesNotMatch(html, /Against the due date/);
+  assert.doesNotMatch(html, /past their due date/);
+});
+
+test('closes against the due date are split per period, with the weighted mean', () => {
+  const b = body();
+  b.history.movement[1] = { ...b.history.movement[1], tickets_closed: 4, tickets_closed_on_time: 3, tickets_closed_overdue: 1, mean_days_to_due_at_close: 2 };
+  b.history.movement[2] = { ...b.history.movement[2], tickets_closed_on_time: 1, tickets_closed_overdue: 1, mean_days_to_due_at_close: -5 };
+  const html = render(b);
+  assert.match(html, /Closed on time \/ overdue<\/th>/);
+  assert.match(html, /<td class="warn">3 \/ 1<\/td>/);
+  assert.match(html, /<td class="warn">1 \/ 1<\/td>/);
+  // 4 of 6 on time. Weighted by closes, (2*4 - 5*2) / 6 = -0.3 days; the unweighted
+  // mean of the two periods would be -1.5.
+  assert.match(html, /Against the due date: 4 of 6 \(67%\) closed on time\. On average 0\.3 days late\./);
+});
+
+test('a period whose tickets all closed early reads as days to spare', () => {
+  const b = body();
+  b.history.movement[2] = { ...b.history.movement[2], tickets_closed_on_time: 2, tickets_closed_overdue: 0, mean_days_to_due_at_close: 3.25 };
+  const html = render(b);
+  assert.match(html, /<td class="">2 \/ 0<\/td>/);
+  assert.match(html, /On average 3\.3 days to spare\./);
+});
+
+test('open tickets past their due date are called out in the open summary', () => {
+  const b = body();
+  b.history.open = { ...b.history.open, tickets_overdue_open: 5 };
+  const html = render(b);
+  assert.match(html, /<span class="warn">5 tickets past their due date<\/span>/);
+});

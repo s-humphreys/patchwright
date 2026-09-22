@@ -51,7 +51,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 	var v int
-	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 3 {
+	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 4 {
 		t.Errorf("schema version = %d (%v)", v, err)
 	}
 }
@@ -241,5 +241,79 @@ func TestMarksPersistAndClearOnClose(t *testing.T) {
 	open, _ = s.Open(ctx)
 	if open[0].Missing != 0 || open[0].MissingSince != nil {
 		t.Fatalf("a zero mark clears: %+v", open[0])
+	}
+}
+
+// A ticket's due date is held on the item so a close can be measured against it,
+// and is never moved once recorded.
+func TestTicketDueRoundTripsAndIsNeverMoved(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	a := snap("eng|orders|app|svc", "app", "orders")
+	b := snap("eng|billing|lib|svc", "lib", "billing")
+	id, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0}, []history.Event{
+		{Key: a.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &a}},
+		{Key: b.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &b}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, _ := s.Open(ctx)
+	byKey := map[string]history.State{}
+	for _, st := range open {
+		byKey[st.Current.Key] = st
+	}
+	due := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	if err := s.Append(ctx, id, []history.Event{
+		{ItemID: byKey[a.Key].ID, Key: a.Key, Kind: history.KindTicketRaised, At: t0,
+			Payload: history.Payload{Ticket: "DVOP-1", Action: "create", DueDate: &due}},
+		{ItemID: byKey[b.Key].ID, Key: b.Key, Kind: history.KindTicketRaised, At: t0,
+			Payload: history.Payload{Ticket: "DVOP-2", Action: "create"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A later create for the same key, and an extend, must leave the date alone.
+	t1 := t0.Add(time.Hour)
+	id2, err := s.Record(ctx, history.Assessment{StartedAt: t1, FinishedAt: t1}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := due.AddDate(0, 0, 30)
+	if err := s.Append(ctx, id2, []history.Event{
+		{ItemID: byKey[a.Key].ID, Key: a.Key, Kind: history.KindTicketRaised, At: t1,
+			Payload: history.Payload{Ticket: "DVOP-1", Action: "create", DueDate: &later}},
+		{ItemID: byKey[b.Key].ID, Key: b.Key, Kind: history.KindTicketRaised, At: t1,
+			Payload: history.Payload{Ticket: "DVOP-1", Action: "extend"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	open, _ = s.Open(ctx)
+	for _, st := range open {
+		switch st.Current.Key {
+		case a.Key:
+			if got, ok := st.TicketDue["DVOP-1"]; !ok || !got.Equal(due) || len(st.TicketDue) != 1 {
+				t.Errorf("a.TicketDue = %v, want DVOP-1 due %v", st.TicketDue, due)
+			}
+		case b.Key:
+			if st.TicketDue != nil {
+				t.Errorf("b.TicketDue = %v, want nil: neither write carried a due date", st.TicketDue)
+			}
+		}
+	}
+	events, _ := s.Events(ctx, t0, t1.Add(time.Minute))
+	var raised int
+	for _, e := range events {
+		if e.Kind == history.KindTicketRaised && e.Payload.Ticket == "DVOP-1" && e.Payload.Action == "create" {
+			raised++
+			if e.Payload.DueDate == nil {
+				t.Errorf("ticket_raised create lost its due_date: %+v", e.Payload)
+			}
+		}
+	}
+	if raised != 2 {
+		t.Errorf("recorded %d DVOP-1 creates, want 2", raised)
 	}
 }

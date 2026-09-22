@@ -75,8 +75,20 @@ test.describe('analytics page', () => {
     await expect(panel).toContainText('89');
     await expect(panel).toContainText('40');
     await expect(panel).toContainText('(45%) were ticketed work');
-    await expect(panel.locator('td.warn')).toHaveCount(2);
+    // Two closed with the finding open, and October's overdue closes.
+    await expect(panel.locator('td.warn')).toHaveCount(3);
     await expect(panel).toContainText('upgrade-landed 27');
+  });
+
+  test('ticket closes are measured against the due date, and overdue open tickets are called out', async ({ page }) => {
+    await page.goto('/analytics');
+    const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
+    await expect(panel.locator('th', { hasText: 'Closed on time / overdue' })).toHaveCount(1);
+    await expect(panel.locator('tbody tr', { hasText: '2026-10' })).toContainText('19 / 3');
+    // 34 of 37 on time; (4.5 * 22 + 9 * 15) / 37 = 6.3 days to spare.
+    await expect(panel).toContainText('Against the due date: 34 of 37 (92%) closed on time. On average 6.3 days to spare.');
+    const open = page.locator('section.panel', { hasText: 'Open now, as the record holds it' });
+    await expect(open).toContainText('4 tickets past their due date');
   });
 
   test('by rule is gone and the signal table is in work items with EPSS decay apart', async ({ page }) => {

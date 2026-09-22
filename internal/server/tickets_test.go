@@ -51,9 +51,9 @@ func (s *stubTicketer) OpenByImage(context.Context) (map[string][]ticket.Existin
 	return s.open, s.openErr
 }
 
-func (s *stubTicketer) Create(_ context.Context, d ticket.Draft) (string, error) {
+func (s *stubTicketer) Create(_ context.Context, d ticket.Draft) (ticket.Created, error) {
 	s.created = append(s.created, d)
-	return "PROJ-NEW", nil
+	return ticket.Created{Key: "PROJ-NEW"}, nil
 }
 
 func (s *stubTicketer) AddImages(_ context.Context, key string, images []string) error {

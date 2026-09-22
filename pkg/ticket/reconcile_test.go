@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -184,6 +185,8 @@ type recorder struct {
 	closedUnworked   map[string]bool
 	alreadyCommented map[string]bool
 	failOn           ActionKind
+	// due is what Create reports as the due date it set.
+	due *time.Time
 }
 
 func newRecorder() *recorder {
@@ -220,12 +223,12 @@ func (r *recorder) Update(_ context.Context, key string, d Draft) error {
 	return nil
 }
 
-func (r *recorder) Create(_ context.Context, d Draft) (string, error) {
+func (r *recorder) Create(_ context.Context, d Draft) (Created, error) {
 	if r.failOn == ActionCreate {
-		return "", errors.New("boom")
+		return Created{}, errors.New("boom")
 	}
 	r.created = append(r.created, d)
-	return "PROJ-NEW", nil
+	return Created{Key: "PROJ-NEW", DueDate: r.due}, nil
 }
 
 func (r *recorder) AddImages(_ context.Context, key string, images []string) error {
@@ -271,6 +274,31 @@ func TestApplyPerformsEachActionKind(t *testing.T) {
 	}
 	if counts := Summarize(results); counts[ActionCreate] != 1 || counts[ActionSkip] != 1 {
 		t.Errorf("summary = %v", counts)
+	}
+}
+
+// History measures closes against the deadline a ticket was raised with, so the
+// date has to reach the result. Only a create has one: an extend never moves it.
+func TestApplySurfacesTheDueDateOnCreateOnly(t *testing.T) {
+	due := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+	rec := newRecorder()
+	rec.due = &due
+	results := Apply(context.Background(), rec, []Action{
+		{Kind: ActionCreate, Draft: draft("new", []string{"a/b"}, "2.0.0")},
+		{Kind: ActionExtend, TicketKey: "PROJ-1", Images: []string{"a/c"}},
+	})
+	if got := results[0].DueDate; got == nil || !got.Equal(due) {
+		t.Errorf("create DueDate = %v, want %v", got, due)
+	}
+	if got := results[1].DueDate; got != nil {
+		t.Errorf("extend DueDate = %v, want nil", got)
+	}
+
+	rec = newRecorder()
+	if got := Apply(context.Background(), rec, []Action{
+		{Kind: ActionCreate, Draft: draft("new", []string{"a/b"}, "2.0.0")},
+	})[0].DueDate; got != nil {
+		t.Errorf("create without a window: DueDate = %v, want nil", got)
 	}
 }
 

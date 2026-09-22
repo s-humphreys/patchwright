@@ -141,6 +141,28 @@ Four buckets, and a report shows all four:
 
 `resolved_unticketed + resolved_ticketed` is total upgrades and patches.
 
+### Deadlines
+
+When [`dueDays`](ticketing.md#configuration) gives tickets a due date, the date a
+create set is recorded on its `ticket_raised` event and held on the item. When the
+ticket closes, `ticket_closed` repeats `due_date` and adds `days_to_due` (the due date
+less the close date in whole UTC days, negative when late) and `overdue`. A ticket
+closed at any time on its due day is on time.
+
+| Field | Where | Meaning |
+|---|---|---|
+| `tickets_closed_on_time` | per period | Closed on or before the recorded due date |
+| `tickets_closed_overdue` | per period | Closed after it |
+| `mean_days_to_due_at_close` | per period | Mean of `days_to_due` over those closes; negative is late. Absent when none had a due date |
+| `tickets_overdue_open` | `open` | Distinct open tickets past their due date now, counted per ticket rather than per item |
+
+Only the due date patchwright set is measured. A ticket raised before `dueDays` was
+configured, or for a priority with no window, has none and is in neither on-time nor
+overdue, so the two need not add up to `tickets_closed`. The date is never moved, so a
+due date somebody edits in Jira afterwards is not what this measures against. An
+extend does not carry a due date either: an item a ticket only came to cover later has
+no deadline recorded against it.
+
 ## Reading it
 
 The **Analytics** page opens with the report, so the page tells a story: how things

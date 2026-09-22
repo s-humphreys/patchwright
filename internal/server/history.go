@@ -163,7 +163,7 @@ func (s *Server) recordTicketWrites(ctx context.Context, results []ticket.Result
 		}
 		switch r.Action.Kind {
 		case ticket.ActionCreate:
-			writes = append(writes, history.TicketWrite{Key: r.Key, Action: string(r.Action.Kind), Images: r.Action.Draft.Images})
+			writes = append(writes, history.TicketWrite{Key: r.Key, Action: string(r.Action.Kind), Images: r.Action.Draft.Images, DueDate: r.DueDate})
 		case ticket.ActionExtend:
 			writes = append(writes, history.TicketWrite{Key: r.Key, Action: string(r.Action.Kind), Images: r.Action.Images})
 		case ticket.ActionClose:

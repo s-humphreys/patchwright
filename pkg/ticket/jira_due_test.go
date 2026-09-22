@@ -49,9 +49,10 @@ func TestCreateSetsTheDueDateFromPriority(t *testing.T) {
 			j := &Jira{BaseURL: srv.URL, Client: srv.Client(), cfg: tc.cfg,
 				byRoute: map[string]config.JiraConfig{route.Name: tc.cfg.Resolve(route)}}
 			before := time.Now()
-			if _, err := j.Create(context.Background(), Draft{
+			created, err := j.Create(context.Background(), Draft{
 				Summary: "x", Description: "y", Images: []string{"a/b"}, Priority: tc.priority, Route: tc.route,
-			}); err != nil {
+			})
+			if err != nil {
 				t.Fatalf("Create: %v", err)
 			}
 			after := time.Now()
@@ -61,6 +62,9 @@ func TestCreateSetsTheDueDateFromPriority(t *testing.T) {
 				if present {
 					t.Errorf("duedate = %v, want it absent so existing deployments are unaffected", due)
 				}
+				if created.DueDate != nil {
+					t.Errorf("Created.DueDate = %v, want nil", created.DueDate)
+				}
 				return
 			}
 			// Either side of the call, in case it straddled midnight UTC.
@@ -69,6 +73,10 @@ func TestCreateSetsTheDueDateFromPriority(t *testing.T) {
 			hi := after.UTC().Add(day).Format(time.DateOnly)
 			if due != lo && due != hi {
 				t.Errorf("duedate = %v, want %s", due, hi)
+			}
+			// What Create reports is what it sent, so history and Jira agree.
+			if created.DueDate == nil || created.DueDate.Format(time.DateOnly) != due {
+				t.Errorf("Created.DueDate = %v, want %v", created.DueDate, due)
 			}
 		})
 	}

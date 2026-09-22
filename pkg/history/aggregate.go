@@ -103,6 +103,14 @@ type Movement struct {
 	// (upgrade-landed, not-running, no-longer-actionable). The remainder of
 	// TicketsClosed were closed by people.
 	TicketsClosedByTool map[string]int `json:"tickets_closed_by_tool,omitempty"`
+	// TicketsClosedOnTime and TicketsClosedOverdue split the closed tickets that had
+	// a due date recorded by whether they closed on or before it. Tickets without one
+	// are in neither, so the two need not sum to TicketsClosed.
+	TicketsClosedOnTime  int `json:"tickets_closed_on_time"`
+	TicketsClosedOverdue int `json:"tickets_closed_overdue"`
+	// MeanDaysToDueAtClose is the mean of due date less close date over those same
+	// tickets: positive is closing early, negative late. Nil when none had a due date.
+	MeanDaysToDueAtClose *float64 `json:"mean_days_to_due_at_close,omitempty"`
 
 	// EPSSDecayed is items that left the EPSS bucket because the score fell while
 	// they were open. Not remediation, and not hidden.
@@ -138,8 +146,11 @@ type OpenSummary struct {
 	Ticketed int `json:"ticketed"`
 	// Missing is how many open items were absent from the latest assessment and are
 	// inside the grace period: not yet lapsed, not confirmed present.
-	Missing  int            `json:"missing"`
-	BySignal map[string]int `json:"by_signal,omitempty"`
+	Missing int `json:"missing"`
+	// TicketsOverdueOpen is distinct open tickets whose recorded due date has passed.
+	// Counted per ticket rather than per item, since one ticket can cover several.
+	TicketsOverdueOpen int            `json:"tickets_overdue_open"`
+	BySignal           map[string]int `json:"by_signal,omitempty"`
 	// AgeDays buckets open items by how long the record has held them.
 	AgeDays map[string]int `json:"age_days,omitempty"`
 }
@@ -253,6 +264,7 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 	}
 
 	days := map[int][]float64{}
+	toDue := map[int][]float64{}
 	cves := map[int]map[string]bool{}
 	kevs := map[int]map[string]bool{}
 	for _, e := range events {
@@ -339,6 +351,14 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 				}
 				m.TicketsClosedByTool[e.Payload.Reason]++
 			}
+			if d := e.Payload.DaysToDue; d != nil {
+				if *d < 0 {
+					m.TicketsClosedOverdue++
+				} else {
+					m.TicketsClosedOnTime++
+				}
+				toDue[i] = append(toDue[i], float64(*d))
+			}
 		}
 	}
 	for i := range rep.Movement {
@@ -346,6 +366,14 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 			sort.Float64s(d)
 			med := median(d)
 			rep.Movement[i].MedianDaysToResolve = &med
+		}
+		if d := toDue[i]; len(d) > 0 {
+			mean := 0.0
+			for _, x := range d {
+				mean += x
+			}
+			mean /= float64(len(d))
+			rep.Movement[i].MeanDaysToDueAtClose = &mean
 		}
 		rep.Movement[i].CVEsResolved = len(cves[i])
 		rep.Movement[i].KEVCVEsResolved = len(kevs[i])
@@ -410,7 +438,15 @@ var ageBuckets = []int{7, 30, 90, 180}
 
 func openSummary(open []State, now time.Time) OpenSummary {
 	out := OpenSummary{Items: len(open), BySignal: map[string]int{}, AgeDays: map[string]int{}}
+	overdue := map[string]bool{}
 	for _, st := range open {
+		// Only tickets still covering the item: a due date outlives its ticket on
+		// the item row, and a closed ticket is not overdue work.
+		for _, key := range st.Current.Tickets {
+			if due, ok := st.TicketDue[key]; ok && DaysToDue(due, now) < 0 {
+				overdue[key] = true
+			}
+		}
 		if st.Current.Ticketed() {
 			out.Ticketed++
 		}
@@ -422,6 +458,7 @@ func openSummary(open []State, now time.Time) OpenSummary {
 		}
 		out.AgeDays[ageBucket(int(now.Sub(st.OpenedAt).Hours()/24))]++
 	}
+	out.TicketsOverdueOpen = len(overdue)
 	if len(out.BySignal) == 0 {
 		out.BySignal = nil
 	}

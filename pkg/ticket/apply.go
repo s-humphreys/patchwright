@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/s-humphreys/patchwright/internal/metrics"
 )
@@ -11,7 +12,7 @@ import (
 // Applier performs the Jira side of reconciliation. *Jira satisfies it; tests
 // provide a recorder so what would happen can be asserted without a Jira.
 type Applier interface {
-	Create(ctx context.Context, d Draft) (string, error)
+	Create(ctx context.Context, d Draft) (Created, error)
 	AddImages(ctx context.Context, key string, images []string) error
 	Comment(ctx context.Context, key, body string) error
 	// Update rewrites an existing ticket's summary and description from a fresh
@@ -23,6 +24,14 @@ type Applier interface {
 	// CommentOnce posts a comment unless one with the same dedupe reference is
 	// already present, reporting whether it posted. An empty dedupe always posts.
 	CommentOnce(ctx context.Context, key, dedupe, body string) (bool, error)
+}
+
+// Created is what raising a ticket produced.
+type Created struct {
+	Key string
+	// DueDate is the due date the ticket was raised with, at midnight UTC, and nil
+	// when none was configured for its priority.
+	DueDate *time.Time
 }
 
 // CloseRequest is everything closing a ticket needs. A struct rather than a
@@ -53,6 +62,10 @@ type Result struct {
 	// already present, say. Distinguished from success so a log does not claim a
 	// write that did not happen.
 	NoOp bool
+	// DueDate is the due date a create gave the ticket, nil for every other action
+	// and for a create without one. Surfaced so history can measure closes against
+	// the deadline without reading it back from the tracker.
+	DueDate *time.Time
 }
 
 // Apply performs the actions. ActionSkip does nothing by design, and is returned
@@ -63,8 +76,8 @@ func Apply(ctx context.Context, a Applier, actions []Action) []Result {
 		r := Result{Action: act, Key: act.TicketKey}
 		switch act.Kind {
 		case ActionCreate:
-			key, err := a.Create(ctx, act.Draft)
-			r.Key, r.Err = key, err
+			c, err := a.Create(ctx, act.Draft)
+			r.Key, r.DueDate, r.Err = c.Key, c.DueDate, err
 		case ActionExtend:
 			// Add the images first, then explain why: if the comment fails the
 			// ticket is still correct, whereas the reverse leaves an explanation
