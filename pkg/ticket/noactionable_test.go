@@ -150,6 +150,19 @@ func TestNoLongerActionableGuards(t *testing.T) {
 			t.Fatalf("absent data is a comment, never a close: %+v", got)
 		}
 	})
+	t.Run("inside the history's grace period", func(t *testing.T) {
+		// Present, not running, and the history record has only just noticed:
+		// held, not closed. A preview workload scaling to nothing for an hour is
+		// not a decommissioning.
+		got := Reconcile(ReconcileInput{
+			Config: cfg, OpenByImage: open,
+			Findings:         []sink.FindingView{notRunning("acme/app")},
+			RecentlyReported: map[string]bool{"acme/app": true},
+		})
+		if len(got) != 1 || got[0].Kind != ActionHold || !strings.Contains(got[0].Why, "within the last few assessments") {
+			t.Fatalf("a ticket inside the grace period is held, not closed: %+v", got)
+		}
+	})
 	t.Run("liveness unknown is not not-running", func(t *testing.T) {
 		f := notRunning("acme/app")
 		f.Liveness = nil

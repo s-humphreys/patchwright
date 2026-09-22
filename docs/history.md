@@ -84,9 +84,10 @@ Resolution with evidence is never delayed, because evidence is positive data rat
 than absence. The open summary reports how many items are currently in that limbo
 as `missing`.
 
-Ticket reconciliation reads the same state: a ticket whose image is absent from this
-assessment but was reported inside the grace period is held, rather than told its
-coverage is gone.
+Ticket reconciliation reads the same state: a ticket whose image left the queue
+inside the grace period, whether absent, no longer running or no longer matching a
+rule, is held rather than closed or commented on. The close follows on the run the
+item lapses.
 
 Each item's snapshot carries what a later question is likely to need: its rule,
 priority and signals; its risk score and worst counts per severity; where it runs
