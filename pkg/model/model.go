@@ -136,14 +136,15 @@ type Vulnerability struct {
 	OriginDetermined bool
 
 	// Packages names the packages carrying this CVE, and the version that fixes
-	// each. Populated only for CVEs the base scan found, where a scanner measured
-	// both in the same pass.
+	// each, measured by a scanner that saw name and version in the same pass.
 	//
-	// Empty for application-introduced CVEs: their packages live in a layer
-	// nothing scanned, so there is nothing to name. Empty is the honest answer,
-	// and specifically better than the alternative that was tried - the provider
-	// reports a package per CVE from a generic remediation record, and 66% of
-	// those name an ecosystem the image does not contain.
+	// Populated for CVEs the base scan found and, when the exploited-image scan
+	// is on, for the exploited CVEs the image itself carries. Otherwise empty:
+	// an application-introduced CVE lives in a layer nothing scanned, so there is
+	// nothing to name. Empty is the honest answer, and specifically better than
+	// the alternative that was tried - the provider reports a package per CVE
+	// from a generic remediation record, and 66% of those name an ecosystem the
+	// image does not contain.
 	Packages []AffectedPackage
 
 	// RiskScore is a scanner's own composite ranking for this CVE, on whatever
@@ -303,6 +304,12 @@ type AssessedImage struct {
 	Scanned   bool
 	ScanError string
 
+	// PackagesScanned is true once the image itself, not only its base, was scanned
+	// to name the packages behind its exploited CVEs. Without it a ticket can say
+	// "an application dependency, fix in 1.0.1" and nothing more, which sends the
+	// assignee on a lockfile hunt with no name to look for.
+	PackagesScanned bool
+
 	// Fallback* record a scan run ONLY because the scan provider never assessed
 	// this image, so that a coverage gap is answered with something rather than
 	// with nothing.
@@ -420,6 +427,8 @@ type AffectedPackage struct {
 	Name      string
 	Ecosystem string
 	FixedIn   string
+	// Path is the file declaring a language package, empty for an OS package.
+	Path string
 }
 
 // BaseDiff is what scanning an image's base established: how much of its
@@ -613,6 +622,9 @@ type Finding struct {
 	Scanned        bool
 	ScanError      string
 	ExploitChecked bool
+	// PackagesScanned mirrors the assessed image: the image itself was scanned to
+	// name the packages behind its exploited CVEs.
+	PackagesScanned bool
 
 	// Fallback* and CountsSource mirror the assessed image: a scan run only
 	// because the provider never assessed this image, and who produced Counts.

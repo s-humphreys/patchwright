@@ -188,11 +188,37 @@ since-fixed CVEs to the application.
 
 It also names the package. For a CVE the base scan found, the package and the
 version that fixes it come from the same pass, so the version always belongs to the
-named package's ecosystem. Application-introduced CVEs carry no package: nothing
-scanned that layer, and the provider's own per-CVE package field names an ecosystem
-the image does not even contain 66% of the time - see
+named package's ecosystem. Application-introduced CVEs carry no package by default:
+nothing scanned that layer, and the provider's own per-CVE package field names an
+ecosystem the image does not even contain 66% of the time - see
 [docs/design/package-attribution.md](design/package-attribution.md) for the
 measurement.
+
+### Naming the package behind an exploited CVE
+
+The one application CVE a team cannot leave unnamed is the exploited one, because
+that is the CVE the ticket exists to clear, and "an application dependency, fix in
+1.0.1" sends the assignee on a lockfile hunt with no name to look for.
+
+```yaml
+remediation:
+  baseDiff:
+    enabled: true
+    scanExploited: true   # default false
+    exploitedEPSS: 0.5    # default; alongside CISA KEV membership
+```
+
+With it on, an image carrying an exploited, fixable CVE that its base does not
+account for is scanned itself, and every CVE on it the base scan left unnamed gets
+its package, ecosystem and, for a language package, the file that declares it
+(`packages[].path`). The pull is gated on the exploited CVE; the naming, once paid
+for, covers the lot. Images whose exploited CVEs the base already explains are not
+pulled, and an image the scanner cannot read is left unnamed with
+`packages_scanned` false, so "nothing looked" stays distinct from "nothing found".
+
+The cost is bounded by the question rather than the estate: on the estate above,
+around thirty images against 678, cached per reference like the bases. It needs
+pull access to the first-party images, which the base scans may not have needed.
 
 Needs the `trivy` binary (it ships in the image) and pull access to the base
 images. Credentials are resolved through patchwright's own registry keychains and

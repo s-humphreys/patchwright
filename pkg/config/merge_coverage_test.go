@@ -32,6 +32,8 @@ remediation:
     timeout: 9m
     concurrency: 6
     maxAge: 8h
+    scanExploited: true
+    exploitedEPSS: 0.6
   upgrade:
     strategy: patch
     rules:

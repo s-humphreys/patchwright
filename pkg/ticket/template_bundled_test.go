@@ -17,8 +17,7 @@ func TestBundledTemplateThroughADF(t *testing.T) {
 		t.Fatal(err)
 	}
 	tm := template.Must(template.New("t").Parse(string(raw)))
-	var sb strings.Builder
-	if err := tm.Execute(&sb, TemplateData{
+	base := TemplateData{
 		ServiceName: "svc", Priority: "urgent", ImageCount: 1, WorkloadCount: 4,
 		ProviderAssessed: true, CriticalCount: 2, HighCount: 9,
 		Deployments: []Deployment{
@@ -27,7 +26,24 @@ func TestBundledTemplateThroughADF(t *testing.T) {
 		},
 		Upgrades:   []ImageUpgrade{{Repo: "svc", Current: "1.2.3", Latest: "1.3.0", Direct: true}},
 		BuildRepos: []string{"org/svc"},
-	}); err != nil {
+	}
+	withUrgent := base
+	withUrgent.Upgrade = &UpgradeData{Kind: "base", Name: "example.io/base", Current: "aaa", Latest: "bbb"}
+	withUrgent.Urgent = []UrgentVuln{
+		{Vuln: Vuln{ID: "CVE-1", KEV: true}, Why: "exploited in the wild", Cleared: true, Measured: true,
+			Where: "The base image", Action: "Nothing extra. The rebuild above removes it.", Reference: "https://www.cve.org/CVERecord?id=CVE-1"},
+		{Vuln: Vuln{ID: "CVE-2", EPSS: 0.9}, Why: "EPSS 0.90", Measured: true,
+			Where: "The Python package mcp, declared in requirements.txt", Action: "Move mcp to 1.0.1 in requirements.txt and refresh the lockfile.", Reference: "https://www.cve.org/CVERecord?id=CVE-2"},
+	}
+	withUrgent.UrgentCleared = 1
+	for name, data := range map[string]TemplateData{"plain": base, "urgent": withUrgent} {
+		t.Run(name, func(t *testing.T) { checkBundledADF(t, tm, data) })
+	}
+}
+
+func checkBundledADF(t *testing.T, tm *template.Template, data TemplateData) {
+	var sb strings.Builder
+	if err := tm.Execute(&sb, data); err != nil {
 		t.Fatal(err)
 	}
 	body := sb.String()
@@ -35,6 +51,14 @@ func TestBundledTemplateThroughADF(t *testing.T) {
 	b, _ := json.Marshal(ADFDocument(body))
 	if !strings.Contains(string(b), `"type":"table"`) {
 		t.Fatalf("bundled template did not produce a table:\n%s", body)
+	}
+	if len(data.Urgent) > 0 {
+		if strings.Count(string(b), `"type":"table"`) < 2 {
+			t.Fatalf("urgent rows did not render as a table:\n%s", body)
+		}
+		if !strings.Contains(body, "clears 1 of 2") {
+			t.Errorf("body does not sum what the change clears:\n%s", body)
+		}
 	}
 	var doc struct {
 		Content []struct {

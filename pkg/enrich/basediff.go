@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/s-humphreys/patchwright/pkg/basescan"
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -21,7 +22,30 @@ type BaseDiffEnricher struct {
 	// them are separately bounded by the resolver, and shared: most images here
 	// are waiting on a base somebody else is already scanning.
 	Concurrency int
+
+	// ScanExploited also scans the IMAGE, not only its base, when it carries an
+	// exploited CVE with a fix that the base does not account for. That is the
+	// CVE a ticket has to name a package for: "an application dependency, fix in
+	// 1.0.1" sends the assignee on a lockfile hunt with no name to look for, and
+	// the base differential cannot name it because the base does not have it.
+	//
+	// Bounded by what it asks about rather than by the estate: only images with
+	// such a CVE are scanned, cached per reference like the bases. Off by default
+	// because it pulls first-party images, which needs credentials the base scans
+	// may not.
+	ScanExploited bool
+	// ExploitedEPSS is the EPSS at or above which a CVE counts as exploited for
+	// that purpose, alongside CISA KEV membership. Zero means DefaultExploitedEPSS.
+	ExploitedEPSS float64
+
+	// imagesScanned counts images scanned for their own packages, for the run log.
+	imagesScanned atomic.Int64
 }
+
+// DefaultExploitedEPSS is the probability at which a CVE is worth naming a
+// package for when nothing says otherwise: a coin-flip chance of exploitation
+// in the next 30 days, matching the threshold the shipped policy rules use.
+const DefaultExploitedEPSS = 0.5
 
 // EnrichImages annotates each image with its base differential.
 //
@@ -41,14 +65,15 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 
 	for i := range images {
 		img := &images[i]
-		up := img.Upgrade
-		if up == nil || up.Kind != "base" || up.FromRef == "" {
-			continue
-		}
 		// Nothing to attribute. Scanning a base for an image whose own scan failed
 		// would spend a pull to compare against an empty set, and report every
 		// base CVE as "not present in the app".
 		if !img.Scanned || len(img.Vulns) == 0 {
+			continue
+		}
+		up := img.Upgrade
+		hasBase := up != nil && up.Kind == "base" && up.FromRef != ""
+		if !hasBase && !e.ScanExploited {
 			continue
 		}
 		wg.Add(1)
@@ -60,7 +85,14 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 			case <-ctx.Done():
 				return
 			}
-			e.diff(ctx, img, up)
+			// The differential first: it decides which exploited CVEs the base
+			// already explains, and those need no scan of the image to name.
+			if hasBase {
+				e.diff(ctx, img, up)
+			}
+			if e.ScanExploited {
+				e.namePackages(ctx, img)
+			}
 		}()
 	}
 	wg.Wait()
@@ -70,8 +102,62 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 	// ones, and a single count reads the same for both.
 	slog.InfoContext(ctx, "base differential complete",
 		"base_images_scanned", e.Resolver.Scanned(),
-		"base_images_rescanned", e.Resolver.Rescanned(), "images", len(images))
+		"base_images_rescanned", e.Resolver.Rescanned(),
+		"images_scanned_for_packages", e.imagesScanned.Load(), "images", len(images))
 	return nil
+}
+
+// exploitedThreshold is the configured EPSS bound, or the default.
+func (e *BaseDiffEnricher) exploitedThreshold() float64 {
+	if e.ExploitedEPSS > 0 {
+		return e.ExploitedEPSS
+	}
+	return DefaultExploitedEPSS
+}
+
+// wantsPackages reports whether this image carries an exploited, fixable CVE the
+// base differential did not name a package for. Those are the CVEs a ticket will
+// have to tell somebody to fix, so they are the ones worth a pull.
+func (e *BaseDiffEnricher) wantsPackages(img *model.AssessedImage) bool {
+	thr := e.exploitedThreshold()
+	for _, v := range img.Vulns {
+		if !v.FixAvailable || !(v.KEV || v.EPSS >= thr) {
+			continue
+		}
+		if len(v.Packages) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// namePackages scans the image itself and names the packages behind every CVE
+// the base scan left unnamed.
+//
+// Every unnamed CVE is filled, not only the exploited ones: the pull has been
+// paid for, and a package name on a non-exploited CVE costs nothing. It is the
+// DECISION to pull that the exploited CVEs gate.
+func (e *BaseDiffEnricher) namePackages(ctx context.Context, img *model.AssessedImage) {
+	if !e.wantsPackages(img) {
+		return
+	}
+	res, err := e.Resolver.Scan(ctx, img.Image.Ref)
+	if err != nil {
+		// Unnamed rather than failed, for the same reason an unreadable base is:
+		// one image the scanner cannot pull should cost that image its package
+		// names, not the run. PackagesScanned stays false, so a consumer can tell
+		// "nothing looked" from "nothing found".
+		slog.DebugContext(ctx, "exploited image scan failed", "image", img.Image.Ref, "err", err)
+		return
+	}
+	e.imagesScanned.Add(1)
+	img.PackagesScanned = true
+	for i := range img.Vulns {
+		if len(img.Vulns[i].Packages) > 0 {
+			continue
+		}
+		img.Vulns[i].Packages = affected(res.CVEs[img.Vulns[i].ID])
+	}
 }
 
 // affected converts scanned packages to the model, deduplicated and ordered so
@@ -86,16 +172,23 @@ func affected(pkgs []basescan.Package) []model.AffectedPackage {
 		if p.Name == "" {
 			continue
 		}
-		key := p.Ecosystem + "\x00" + p.Name
+		// The path is part of the identity: the same package declared in two
+		// lockfiles is two places to make the change.
+		key := p.Ecosystem + "\x00" + p.Name + "\x00" + p.Path
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 		out = append(out, model.AffectedPackage{
-			Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedVersion,
+			Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedVersion, Path: p.Path,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Path < out[j].Path
+	})
 	return out
 }
 

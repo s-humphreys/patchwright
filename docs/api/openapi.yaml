@@ -1271,6 +1271,13 @@ components:
         scanned: { type: boolean }
         exploit_checked: { type: boolean }
         scan_error: { type: string }
+        packages_scanned:
+          type: boolean
+          description: |
+            The image itself, not only its base, was scanned to name the packages
+            behind its exploited CVEs (`remediation.baseDiff.scanExploited`). When
+            absent, an unnamed package on a CVE means nothing looked, not that
+            nothing carries it.
         counts_source:
           type: string
           description: |
@@ -1686,8 +1693,9 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AffectedPackage" }
           description: |
-            The packages carrying this CVE in the base image, and the version that
-            fixes each. Measured by scanning the base, so the name and the version
+            The packages carrying this CVE, and the version that fixes each. Measured
+            by scanning the base or, for exploited CVEs when `packages_scanned` is
+            set, the image itself, so the name and the version
             come from the same pass and always belong to the same ecosystem.
 
             Absent for `origin: app`: those packages live in a layer nothing scanned.
@@ -1708,6 +1716,12 @@ components:
           description: |
             The version fixing this CVE for this package, from the same scan as the
             name. Absent when the scanner knows of no fix.
+        path:
+          type: string
+          description: |
+            The file declaring a language package ("app/requirements.txt",
+            "package-lock.json"), which is where the fix goes. Absent for an OS
+            package, which is installed rather than declared anywhere.
 
     BaseDiff:
       type: object

@@ -159,3 +159,28 @@ func TestDockerConfigIsRemovedAfterUse(t *testing.T) {
 		t.Errorf("credential directory survived cleanup: %v", err)
 	}
 }
+
+// A language result's target is the file the fix goes in; an OS result's target
+// is the distro name, which is nowhere anybody edits, so it is not recorded.
+func TestParseRecordsTheDeclaringFileForLanguagePackagesOnly(t *testing.T) {
+	const rep = `{
+	  "Results": [
+	    {"Type": "debian", "Class": "os-pkgs", "Target": "debian 12.5", "Vulnerabilities": [
+	      {"VulnerabilityID": "CVE-1", "PkgName": "git", "FixedVersion": "1:2.39.5"}
+	    ]},
+	    {"Type": "pip", "Class": "lang-pkgs", "Target": "app/requirements.txt", "Vulnerabilities": [
+	      {"VulnerabilityID": "CVE-2", "PkgName": "mcp", "FixedVersion": "1.0.1"}
+	    ]}
+	  ]
+	}`
+	got, err := parseRefReport("app:1", []byte(rep))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := got.CVEs["CVE-1"][0]; p.Path != "" {
+		t.Errorf("OS package recorded a path %q; the distro name is not a file", p.Path)
+	}
+	if p := got.CVEs["CVE-2"][0]; p.Path != "app/requirements.txt" || p.Ecosystem != "pip" {
+		t.Errorf("language package = %+v, want path app/requirements.txt in pip", p)
+	}
+}

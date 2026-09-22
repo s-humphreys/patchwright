@@ -78,6 +78,9 @@ type Planner struct {
 	// envs is the estate's release sequence, for ordering a ticket's deployments
 	// and naming where each runs. Empty means the built-in sequence.
 	envs []config.Environment
+	// urgentEPSS is the threshold at or above which a CVE is listed as one the
+	// ticket must clear. Zero takes the default.
+	urgentEPSS float64
 }
 
 // WithEnvironments sets the release sequence a ticket describes deployments
@@ -135,7 +138,8 @@ func NewPlannerWithDashboard(cfg config.JiraConfig, dash config.DashboardConfig)
 	if err != nil {
 		return nil, err
 	}
-	return &Planner{cfg: cfg, dash: dash, tmpl: tmpl, tmpls: tmpls, routes: routed, excluded: excluded}, nil
+	return &Planner{cfg: cfg, dash: dash, tmpl: tmpl, tmpls: tmpls, routes: routed, excluded: excluded,
+		urgentEPSS: cfg.UrgentEPSS}, nil
 }
 
 // Plan decides which findings become tickets, groups them, and renders each.
@@ -281,7 +285,7 @@ func (p *Planner) disambiguate(drafts []Draft, sources []rendered) error {
 func disambiguatorsBy(drafts []Draft, sources []rendered, idx []int, f func(TemplateData) string) []string {
 	out := make([]string, 0, len(idx))
 	for _, i := range idx {
-		out = append(out, f(newTemplateData(sources[i].group, nil)))
+		out = append(out, f(newTemplateData(sources[i].group, nil, 0)))
 	}
 	return out
 }
@@ -554,7 +558,7 @@ func collapseObjectRef(source string) string {
 // render executes the template for one ticket group. disambiguator is empty on
 // the first pass and set only for the tickets that turn out to share a summary.
 func (p *Planner) render(group ticketGroup, route, disambiguator string) (Draft, error) {
-	data := newTemplateData(group, p.envs)
+	data := newTemplateData(group, p.envs, p.urgentEPSS)
 	data.Disambiguator = disambiguator
 	// A deep link back to the evidence. A ticket that says "14 criticals" is a
 	// claim; a link to the queue entry behind it is the claim plus its working.

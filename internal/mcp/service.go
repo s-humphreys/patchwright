@@ -184,8 +184,9 @@ type Remainder struct {
 }
 
 // ApplicationCVE is one CVE the build introduced, with what a caller needs to act on
-// it. There is no package name - nothing scanned that layer - so the identifier is the
-// handle, and FixedVersion is what to move to where the provider published one.
+// it. The identifier is the handle and FixedVersion is what to move to where the
+// provider published one; Packages names the carrier only when the image itself was
+// scanned, since the base differential cannot see the layer these live in.
 type ApplicationCVE struct {
 	ID           string  `json:"id"`
 	Severity     string  `json:"severity,omitempty"`
@@ -195,6 +196,10 @@ type ApplicationCVE struct {
 	FixAvailable bool    `json:"fix_available"`
 	FixedVersion string  `json:"fixed_version,omitempty"`
 	Reference    string  `json:"reference"`
+	// Packages names what carries it, as "ecosystem/name" with the declaring file
+	// in brackets where one is known. Present only when the image itself was
+	// scanned (remediation.baseDiff.scanExploited); absent means nothing looked.
+	Packages []string `json:"packages,omitempty"`
 }
 
 // PackageCount is one package and how many of the remaining CVEs it accounts for.
@@ -588,11 +593,19 @@ func upgradeState(u *sink.UpgradeView) string {
 // exploited records one known-exploited CVE and whether this move deals with it.
 // applicationCVE carries one build-introduced CVE out of the classification.
 func applicationCVE(v sink.VulnView) ApplicationCVE {
-	return ApplicationCVE{
+	out := ApplicationCVE{
 		ID: v.ID, Severity: v.Severity, CVSS: v.CVSS, EPSS: v.EPSS, KEV: v.KEV,
 		FixAvailable: v.FixAvailable, FixedVersion: v.FixedVersion,
 		Reference: "https://www.cve.org/CVERecord?id=" + v.ID,
 	}
+	for _, p := range v.Packages {
+		s := p.Ecosystem + "/" + p.Name
+		if p.Path != "" {
+			s += " (" + p.Path + ")"
+		}
+		out.Packages = append(out.Packages, s)
+	}
+	return out
 }
 
 // topApplicationCVEs orders the build-introduced remainder worst first and caps it.
@@ -726,8 +739,24 @@ func caveats(a Assessment, r ServiceReport) []string {
 				"not by being clean.", suppressed, len(r.Deployments)))
 	}
 	if r.Upgrade != nil && r.Upgrade.Remainder != nil && r.Upgrade.Remainder.FromApplication > 0 {
-		out = append(out, "Application-introduced CVEs carry no package name, because nothing "+
-			"scanned that layer. They are listed by identifier in remainder.application_cves.")
+		if applicationNamed(r.Upgrade.Remainder.Application) {
+			out = append(out, "Application-introduced CVEs are listed in remainder.application_cves. "+
+				"Those with a packages entry were named by scanning the image itself; the rest "+
+				"live in a layer nothing scanned.")
+		} else {
+			out = append(out, "Application-introduced CVEs carry no package name, because nothing "+
+				"scanned that layer. They are listed by identifier in remainder.application_cves.")
+		}
 	}
 	return out
+}
+
+// applicationNamed reports whether any application CVE carries a package name.
+func applicationNamed(cves []ApplicationCVE) bool {
+	for _, c := range cves {
+		if len(c.Packages) > 0 {
+			return true
+		}
+	}
+	return false
 }

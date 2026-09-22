@@ -163,8 +163,10 @@ would clear 17,571. A team cannot act on a number that is impossible on its face
 because at that size the question is which upstream package is holding the line. The
 application remainder is listed CVE by CVE with its fix version, because that half is
 the only part the team can patch in its own repository, and a bare count there is a
-task nobody can start. Neither side is a package list *and* a CVE list: nothing scans
-the application layer, so those CVEs have identifiers but no package name.
+task nobody can start. An application CVE carries a package name only when the image
+itself was scanned for it (`remediation.baseDiff.scanExploited`, which pulls an image
+only when an exploited CVE needs naming); otherwise nothing scanned that layer and
+it has an identifier alone.
 
 The two exceptions name their unit rather than hiding it. A rebuild win reports
 `clears_cve_occurrences`, because a CVE on sixty images is sixty fixes and that is what
