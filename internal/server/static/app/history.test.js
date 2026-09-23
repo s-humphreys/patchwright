@@ -193,3 +193,51 @@ test('open tickets past their due date are called out in the open summary', () =
   const html = render(b);
   assert.match(html, /<span class="warn">5 tickets past their due date<\/span>/);
 });
+
+test('without tracker data there is no cycle-time table and no closed-ticket ages', () => {
+  const html = render(body());
+  assert.doesNotMatch(html, /Cycle time/);
+  assert.doesNotMatch(html, /Ticket closed, finding open/);
+});
+
+test('cycle time reads the tracker, including periods before the record, and only periods that have data', () => {
+  const b = body();
+  b.history.tracker = { source: 'tracker', tickets: 40, first_created: '2026-06-02T09:00:00Z', last_synced: '2026-09-21T23:00:00Z' };
+  // July is before the record began: the tracker's counts are the backfill.
+  b.history.movement[0] = { ...b.history.movement[0], tracker_tickets_raised: 4, tracker_tickets_closed: 2 };
+  b.history.movement[1] = { ...b.history.movement[1], tracker_tickets_raised: 0, tracker_tickets_closed: 0 };
+  b.history.movement[2] = { ...b.history.movement[2], tracker_tickets_raised: 6, tracker_tickets_closed: 5,
+    median_days_told: 1.5, median_days_told_n: 2, median_days_to_start: 3, median_days_to_start_n: 5, median_days_worked: 12.5, median_days_worked_n: 1 };
+  const html = render(b);
+  const table = html.slice(html.indexOf('<h4>Cycle time, from the tracker</h4>'), html.indexOf('</table>', html.indexOf('<h4>Cycle time')));
+  assert.ok(table.length > 0, 'the cycle-time table should render');
+  assert.ok(html.indexOf('Cycle time') > html.indexOf('Total remediation against ticketed work'), 'it belongs in the ticketed panel');
+  assert.match(table, /<td>2026-07<\/td><td>4<\/td><td>2<\/td>/);
+  // August had nothing from the tracker, so no row.
+  assert.doesNotMatch(table, /2026-08/);
+  assert.match(table, /Finding to ticket, median days/);
+  assert.match(table, /1\.5 <span class="sub">n=2<\/span>/);
+  assert.match(table, /12\.5 <span class="sub">n=1<\/span>/);
+  assert.match(table, /median over 5 tickets resolved in 2026-09/);
+  // July resolved nothing with known endpoints: a dash, not a zero.
+  assert.match(table, /<td>2026-07<\/td><td>4<\/td><td>2<\/td>\s*<td class="muted">-<\/td>/);
+});
+
+test('tracker counts without any cycle time leave the median columns out', () => {
+  const b = body();
+  b.history.tracker = { source: 'tracker', tickets: 3, last_synced: '2026-09-21T23:00:00Z' };
+  b.history.movement[2] = { ...b.history.movement[2], tracker_tickets_raised: 3, tracker_tickets_closed: 1 };
+  const html = render(b);
+  assert.match(html, /Cycle time, from the tracker/);
+  assert.doesNotMatch(html, /median days/);
+});
+
+test('the open summary dates tickets closed while the finding stayed open', () => {
+  const b = body();
+  b.history.open = { ...b.history.open, closed_ticket_finding_open: 3, closed_ticket_age_days: { '0-7': 1, '30-90': 2 } };
+  const html = render(b);
+  assert.match(html, /Ticket closed, finding open<\/dt>\s*<dd><span class="warn">3<\/span> · since the close: 0-7 days 1 · 30-90 days 2<\/dd>/);
+
+  b.history.open = { ...b.history.open, closed_ticket_finding_open: 0, closed_ticket_age_days: undefined };
+  assert.doesNotMatch(render(b), /Ticket closed, finding open/);
+});

@@ -344,6 +344,7 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .panel { background: var(--card); border: 1px solid var(--line); border-radius: 6px;
     padding: .75rem 1rem; margin-bottom: 1rem; }
   .panel h3 { margin: 0 0 .3rem; font-size: .95rem; }
+  .panel h4 { margin: .8rem 0 .3rem; font-size: .88rem; }
   .panel .sub { color: var(--muted); font-size: .85rem; }
   .notes ul { margin: .3rem 0 0; padding-left: 1.1rem; }
   .notes li { margin: .2rem 0; color: var(--muted); }

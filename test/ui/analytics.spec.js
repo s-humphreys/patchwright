@@ -84,11 +84,36 @@ test.describe('analytics page', () => {
     await page.goto('/analytics');
     const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
     await expect(panel.locator('th', { hasText: 'Closed on time / overdue' })).toHaveCount(1);
-    await expect(panel.locator('tbody tr', { hasText: '2026-10' })).toContainText('19 / 3');
+    await expect(panel.locator('table.mini:not(.cycle-time) tbody tr', { hasText: '2026-10' })).toContainText('19 / 3');
     // 34 of 37 on time; (4.5 * 22 + 9 * 15) / 37 = 6.3 days to spare.
     await expect(panel).toContainText('Against the due date: 34 of 37 (92%) closed on time. On average 6.3 days to spare.');
     const open = page.locator('section.panel', { hasText: 'Open now, as the record holds it' });
     await expect(open).toContainText('4 tickets past their due date');
+  });
+
+  test('cycle time from the tracker sits in the ticketed panel, reaches back before the record, and dates closes on open items', async ({ page }) => {
+    await page.goto('/analytics');
+    const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
+    await expect(panel.locator('h4')).toHaveText('Cycle time, from the tracker');
+    const table = panel.locator('table.cycle-time');
+    await expect(table.locator('th')).toHaveText([
+      'Period', 'Tickets raised', 'Tickets closed',
+      'Finding to ticket, median days', 'Ticket to In Progress, median days', 'In Progress to resolved, median days',
+    ]);
+    // August is before the record began: the tracker's own counts are the backfill,
+    // with no cycle time because nothing it resolved had both endpoints known.
+    const august = table.locator('tbody tr', { hasText: '2026-08' });
+    await expect(august.locator('td')).toHaveText(['2026-08', '7', '5', '-', '-', '-']);
+    const october = table.locator('tbody tr', { hasText: '2026-10' });
+    await expect(october).toContainText('1.5 n=14');
+    await expect(october).toContainText('9.5 n=20');
+    await expect(october.locator('td[title="median over 20 tickets resolved in 2026-10"]')).toHaveCount(2);
+    // The table adds nothing to the warnings the delineation already counts.
+    await expect(panel.locator('td.warn')).toHaveCount(3);
+
+    const open = page.locator('section.panel', { hasText: 'Open now, as the record holds it' });
+    await expect(open).toContainText('Ticket closed, finding open');
+    await expect(open).toContainText('3 · since the close: 0-7 days 1 · 30-90 days 2');
   });
 
   test('by rule is gone and the signal table is in work items with EPSS decay apart', async ({ page }) => {

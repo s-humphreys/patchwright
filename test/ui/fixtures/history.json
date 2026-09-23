@@ -23,11 +23,13 @@
       { "period": "2026-08", "start": "2026-08-01T00:00:00Z", "end": "2026-09-01T00:00:00Z",
         "baseline": 0, "opened": 0, "resolved": 0, "lapsed": 0, "reassigned": 0, "cves_resolved": 0, "kev_cves_resolved": 0,
         "resolved_ticketed": 0, "resolved_unticketed": 0, "tickets_raised": 0, "tickets_closed": 0, "tickets_closed_finding_open": 0,
-        "epss_decayed": 0, "became_known_exploited": 0 },
+        "epss_decayed": 0, "became_known_exploited": 0, "tracker_tickets_raised": 7, "tracker_tickets_closed": 5 },
       { "period": "2026-09", "start": "2026-09-01T00:00:00Z", "end": "2026-10-01T00:00:00Z",
         "baseline": 303, "opened": 42, "resolved": 9, "lapsed": 14, "reassigned": 3, "cves_resolved": 1180, "kev_cves_resolved": 6,
         "resolved_ticketed": 2, "resolved_unticketed": 7, "tickets_raised": 11, "tickets_closed": 8, "tickets_closed_finding_open": 1,
         "epss_decayed": 22, "became_known_exploited": 5, "median_days_to_resolve": 6,
+        "tracker_tickets_raised": 12, "tracker_tickets_closed": 9,
+        "median_days_to_start": 4.5, "median_days_to_start_n": 6, "median_days_worked": 11, "median_days_worked_n": 6,
         "lapse_reasons": { "no longer reported": 9, "no longer running": 4, "upgrade still available": 1 },
         "tickets_closed_by_tool": { "not-running": 5, "no-longer-actionable": 1 },
         "by_signal": {
@@ -47,6 +49,8 @@
         "resolved_ticketed": 21, "resolved_unticketed": 26, "tickets_raised": 14, "tickets_closed": 25, "tickets_closed_finding_open": 2,
         "tickets_closed_on_time": 19, "tickets_closed_overdue": 3, "mean_days_to_due_at_close": 4.5,
         "epss_decayed": 9, "became_known_exploited": 2, "median_days_to_resolve": 23,
+        "tracker_tickets_raised": 15, "tracker_tickets_closed": 24, "median_days_told": 1.5, "median_days_told_n": 14,
+        "median_days_to_start": 3, "median_days_to_start_n": 20, "median_days_worked": 9.5, "median_days_worked_n": 20,
         "lapse_reasons": { "no longer reported": 7, "no longer running": 5 },
         "tickets_closed_by_tool": { "upgrade-landed": 12, "not-running": 4 },
         "by_signal": {
@@ -66,6 +70,8 @@
         "resolved_ticketed": 17, "resolved_unticketed": 16, "tickets_raised": 9, "tickets_closed": 19, "tickets_closed_finding_open": 0,
         "tickets_closed_on_time": 15, "tickets_closed_overdue": 0, "mean_days_to_due_at_close": 9,
         "epss_decayed": 4, "became_known_exploited": 1, "median_days_to_resolve": 31,
+        "tracker_tickets_raised": 9, "tracker_tickets_closed": 18, "median_days_told": 0.8, "median_days_told_n": 16,
+        "median_days_to_start": 2, "median_days_to_start_n": 17, "median_days_worked": 7, "median_days_worked_n": 17,
         "lapse_reasons": { "no longer reported": 4, "no longer running": 2 },
         "tickets_closed_by_tool": { "upgrade-landed": 15, "not-running": 2 },
         "by_signal": {
@@ -83,12 +89,15 @@
     ],
     "open": { "items": 244, "ticketed": 61, "missing": 3, "tickets_overdue_open": 4,
       "by_signal": { "kev": 22, "epss-high": 51, "fixable-critical": 230, "end-of-life": 9, "exposed": 104 },
-      "age_days": { "0-7": 12, "7-30": 38, "30-90": 194 } },
+      "age_days": { "0-7": 12, "7-30": 38, "30-90": 194 },
+      "closed_ticket_finding_open": 3, "closed_ticket_age_days": { "0-7": 1, "30-90": 2 } },
+    "tracker": { "source": "tracker", "tickets": 62, "first_created": "2026-06-02T09:00:00Z", "last_synced": "2026-11-21T10:00:00Z" },
     "caveats": [
       "the record begins 2026-09-21; periods before it are empty because nothing was watching, not because nothing happened",
       "303 work items were already open when the record began and are counted as the baseline, not as opened",
       "counts are work items, classified by how each looked when the record first saw it",
-      "resolved requires evidence the work is done; lapsed is everything else, and is never remediation"
+      "resolved requires evidence the work is done; lapsed is everything else, and is never remediation",
+      "tracker_tickets_raised and tracker_tickets_closed come from the tracker, not the record: every ticket on the configured projects and issue type by its own created and resolution dates, including tickets raised by hand or before the record began. They are tickets, not resolutions, and carry no rule or signal"
     ]
   }
 }

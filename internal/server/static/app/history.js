@@ -158,7 +158,39 @@ function delineationPanel(h) {
     <tbody>${rows}</tbody></table>
     ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
     ${measured ? `<p class="sub">Against the due date: ${fmt(onTime)} of ${fmt(measured)} (${pct(onTime, measured)}) closed on time.${meanDaysToDue(periods)}</p>` : ""}
+    ${cycleTimeTable(h)}
   </section>`;
+}
+
+/**
+ * cycleTimeTable reads the tracker's own dates rather than the record: tickets
+ * raised and closed, and the three intervals kept apart because each blames
+ * something different. Its periods can reach back before the record began, which
+ * is the backfill, so it chooses its own rows instead of the active periods: any
+ * period the tracker has something for, and no other.
+ */
+function cycleTimeTable(h) {
+  if (!h.tracker) return "";
+  const rows = (h.movement || []).filter((m) => m.tracker_tickets_raised || m.tracker_tickets_closed
+    || m.median_days_told_n || m.median_days_to_start_n || m.median_days_worked_n);
+  if (!rows.length) return "";
+  const medians = rows.some((m) => m.median_days_told_n || m.median_days_to_start_n || m.median_days_worked_n);
+  const days = (m, key) => {
+    const d = m[key], n = m[`${key}_n`];
+    if (d == null || !n) return `<td class="muted">-</td>`;
+    return `<td title="${esc(`median over ${n} ticket${n === 1 ? "" : "s"} resolved in ${m.period}`)}">${fmt(d)} <span class="sub">n=${fmt(n)}</span></td>`;
+  };
+  const body = rows.map((m) => `<tr>
+      <td>${esc(m.period)}</td><td>${fmt(m.tracker_tickets_raised)}</td><td>${fmt(m.tracker_tickets_closed)}</td>
+      ${medians ? days(m, "median_days_told") + days(m, "median_days_to_start") + days(m, "median_days_worked") : ""}</tr>`).join("");
+  return `<h4>Cycle time, from the tracker</h4>
+    <table class="mini cycle-time"><thead><tr><th>Period</th>
+      <th title="Every ticket on the configured projects, by the tracker's created date: tickets, not resolutions">Tickets raised</th>
+      <th title="By the tracker's resolution date">Tickets closed</th>
+      ${medians ? `<th title="Work item first seen to ticket raised: long means nobody was told">Finding to ticket, median days</th>
+      <th title="Ticket raised to its first In Progress status: long means told, not prioritised">Ticket to In Progress, median days</th>
+      <th title="First In Progress to resolved: long means being worked, slowly">In Progress to resolved, median days</th>` : ""}
+    </tr></thead><tbody>${body}</tbody></table>`;
 }
 
 /**
@@ -227,8 +259,23 @@ function openPanel(h) {
   return `<section class="panel"><h3>Open now, as the record holds it</h3>
     <div class="dr"><dt>Work items</dt><dd>${fmt(o.items)} · ${fmt(o.ticketed)} ticketed${o.missing ? ` · <span class="muted">${fmt(o.missing)} absent from the latest run, inside the grace period</span>` : ""}${o.tickets_overdue_open ? ` · <span class="warn">${fmt(o.tickets_overdue_open)} tickets past their due date</span>` : ""}</dd></div>
     ${signals ? `<div class="dr"><dt>Signals</dt><dd>${signals}</dd></div>` : ""}
+    ${closedTicketAges(o)}
     <div class="age-strip"><div class="sub">How long the record has held them</div>${stackedBar(segs, { empty: "Nothing open." })}</div>
   </section>`;
+}
+
+/**
+ * closedTicketAges dates the "ticket closed, finding open" bucket from the tracker:
+ * items still open whose ticket somebody closed, by days since the close. Nothing
+ * when there are none, or when the tracker has never been read.
+ */
+function closedTicketAges(o) {
+  if (!o.closed_ticket_finding_open) return "";
+  const order = ["0-7", "7-30", "30-90", "90-180", "180+"];
+  const ages = order.filter((k) => o.closed_ticket_age_days?.[k])
+    .map((k) => `${k} days ${fmt(o.closed_ticket_age_days[k])}`).join(" · ");
+  return `<div class="dr"><dt title="Open items whose latest ticket was closed while the finding stayed open, with no ticket now">Ticket closed, finding open</dt>
+    <dd><span class="warn">${fmt(o.closed_ticket_finding_open)}</span>${ages ? ` · since the close: ${ages}` : ""}</dd></div>`;
 }
 
 /** render builds the page from the /api/v1/history response body. */
