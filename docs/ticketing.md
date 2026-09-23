@@ -210,6 +210,34 @@ gives each package its own object (a Crossplane `ProviderRevision` per provider)
 the object name is collapsed so a family groups. A grouped ticket never claims a
 single target version unless every image shares one.
 
+## Dates read back from the tracker
+
+With [history](history.md) enabled, `serve` also reads the tracker's own dates after
+every run, which is the only part of ticketing that looks at closed tickets. The index
+above ignores anything done because its job is to avoid duplicates; measuring how long
+a ticket took needs the opposite. It writes nothing to Jira.
+
+For every ticket on every route's project and issue type, closed ones included, it
+reads when the ticket was **created**, when it **first moved into an In Progress**
+status (any status in Jira's `indeterminate` category, found in the change history),
+when it was **resolved**, and its due date and status. A ticket counts as resolved only
+while it is in the done category: Jira's resolution date where the workflow sets one,
+otherwise the moment it moved into done. A ticket reopened without its resolution
+being cleared is open work.
+
+The first read takes everything, back to when ticketing was switched on; after that
+only tickets updated in the last two days, or since the last read if that was longer
+ago. `patchwright history backfill-tickets -c <config>` rereads everything on demand,
+for instance after adding a route. Reading the change history needs the status list
+(`GET /rest/api/3/status`) to tell which statuses are In Progress; if that call is
+refused, tickets in progress now are dated by their status category change and the
+rest are left without a start, and the report says so.
+
+A ticket is matched to the work item whose repository is in its image field, as
+reconciliation matches it to findings. That is best effort: a ticket whose item had
+already closed before the first read stays unmatched, and is reported as a ticket and
+never as a resolution. Nothing personal is read: no assignee, reporter or comment.
+
 ## Work already in flight
 
 A dependency bot raising pull requests for the same upgrades makes patchwright's tickets

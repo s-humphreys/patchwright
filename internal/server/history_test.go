@@ -23,11 +23,12 @@ type memStore struct {
 	closed                   map[int64]history.Kind
 	events                   []history.Event
 	assessments              []history.Assessment
+	tickets                  map[string]history.TrackerTicket
 	err                      error
 }
 
 func newMemStore() *memStore {
-	return &memStore{items: map[int64]*history.State{}, closed: map[int64]history.Kind{}}
+	return &memStore{items: map[int64]*history.State{}, closed: map[int64]history.Kind{}, tickets: map[string]history.TrackerTicket{}}
 }
 
 func (m *memStore) Open(context.Context) ([]history.State, error) {
@@ -154,10 +155,71 @@ func (m *memStore) First(context.Context) (time.Time, bool, error) {
 	return m.assessments[0].FinishedAt, true, nil
 }
 
-func (m *memStore) Prune(context.Context, time.Time) (history.Pruned, error) {
-	return history.Pruned{}, nil
+// Prune only mirrors the tickets part of the postgres store: nothing here reads
+// pruned events or items back.
+func (m *memStore) Prune(_ context.Context, before time.Time) (history.Pruned, error) {
+	var p history.Pruned
+	for k, t := range m.tickets {
+		if t.ResolvedAt != nil && t.ResolvedAt.Before(before) {
+			delete(m.tickets, k)
+			p.Tickets++
+		}
+	}
+	return p, nil
 }
 func (m *memStore) Close() {}
+
+func (m *memStore) UpsertTickets(_ context.Context, tickets []history.TrackerTicket) error {
+	if m.err != nil {
+		return m.err
+	}
+	// The same merge as the postgres upsert: a match is held once made, and a
+	// changelog start survives a weaker or missing one.
+	for _, t := range tickets {
+		if prev, ok := m.tickets[t.Key]; ok {
+			if prev.ItemKey != "" {
+				t.ItemKey, t.ItemOpenedAt = prev.ItemKey, prev.ItemOpenedAt
+			}
+			keepStart := (prev.StartedFrom == history.StartedFromChangelog && t.StartedFrom != history.StartedFromChangelog) ||
+				t.StartedAt == nil
+			if keepStart {
+				t.StartedAt, t.StartedFrom = prev.StartedAt, prev.StartedFrom
+			}
+		}
+		m.tickets[t.Key] = t
+	}
+	return nil
+}
+
+func (m *memStore) Tickets(_ context.Context, since, until time.Time) ([]history.TrackerTicket, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	in := func(t time.Time) bool { return !t.Before(since) && t.Before(until) }
+	var out []history.TrackerTicket
+	for _, t := range m.tickets {
+		if in(t.CreatedAt) || (t.ResolvedAt != nil && (in(*t.ResolvedAt) || t.ItemKey != "")) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) TicketsIndexed(context.Context) (history.TicketIndexState, error) {
+	if m.err != nil {
+		return history.TicketIndexState{}, m.err
+	}
+	st := history.TicketIndexState{Tickets: len(m.tickets)}
+	for _, t := range m.tickets {
+		if st.FirstCreated.IsZero() || t.CreatedAt.Before(st.FirstCreated) {
+			st.FirstCreated = t.CreatedAt
+		}
+		if t.LastSeenAt.After(st.LastSynced) {
+			st.LastSynced = t.LastSeenAt
+		}
+	}
+	return st, nil
+}
 
 func (m *memStore) kinds() map[history.Kind]int {
 	out := map[history.Kind]int{}
@@ -419,5 +481,111 @@ func TestHistoryGraceHoldsTicketsAndDelaysLapse(t *testing.T) {
 	}
 	if s.recentlyMissing()["app"] {
 		t.Errorf("a lapsed item is no longer recently seen")
+	}
+}
+
+// trackerIndex is an open-ticket index that can also date the tracker's tickets,
+// as *ticket.Jira does.
+type trackerIndex struct {
+	stubTickets
+	dated   []ticket.Dated
+	err     error
+	windows []time.Duration
+}
+
+func (t *trackerIndex) DatedTickets(_ context.Context, within time.Duration) ([]ticket.Dated, error) {
+	t.windows = append(t.windows, within)
+	return t.dated, t.err
+}
+
+// After each run the tracker is read into the record: everything the first time,
+// incrementally after, and the report carries the tracker's figures marked as such.
+func TestHistorySyncsTheTrackerAfterEachRun(t *testing.T) {
+	store := newMemStore()
+	now := time.Now().UTC()
+	created, started := now.Add(-72*time.Hour), now.Add(-48*time.Hour)
+	idx := &trackerIndex{dated: []ticket.Dated{
+		{Key: "DVOP-1", Project: "DVOP", Images: []string{"app"}, Status: "In Progress", Category: "indeterminate",
+			Created: created, Started: &started, StartedFrom: ticket.StartedFromChangelog},
+		{Key: "DVOP-9", Project: "DVOP", Images: []string{"elsewhere"}, Status: "To Do", Category: "new", Created: created},
+	}}
+	s := New(&stubAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders")}}).
+		WithHistory(store, 400*24*time.Hour).WithTickets(idx, "")
+	s.Refresh(context.Background())
+
+	// Somebody closes DVOP-1 while the image still runs.
+	resolved := time.Now().UTC()
+	idx.dated[0].Status, idx.dated[0].Category, idx.dated[0].Resolved = "Done", "done", &resolved
+	s.Refresh(context.Background())
+
+	if len(idx.windows) != 2 || idx.windows[0] != 0 || idx.windows[1] != 48*time.Hour {
+		t.Fatalf("windows = %v, want a backfill then two days", idx.windows)
+	}
+	got := store.tickets["DVOP-1"]
+	if got.ItemKey != history.Key("engineering", "orders", "app", "svc") || got.ItemOpenedAt == nil || got.StartedAt == nil || got.ResolvedAt == nil {
+		t.Errorf("DVOP-1 stored as %+v, want matched to the app item", got)
+	}
+	if store.tickets["DVOP-9"].ItemKey != "" {
+		t.Errorf("DVOP-9 covers nothing open and must stay unmatched")
+	}
+
+	var resp struct {
+		History history.Report `json:"history"`
+	}
+	if code := getJSON(t, s.Handler(), "/api/v1/history?since=30d", &resp); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	rep := resp.History
+	if rep.Tracker == nil || rep.Tracker.Source != "tracker" || rep.Tracker.Tickets != 2 {
+		t.Fatalf("tracker summary = %+v", rep.Tracker)
+	}
+	var raised, closed, worked int
+	for _, m := range rep.Movement {
+		if m.TrackerTicketsRaised != nil {
+			raised += *m.TrackerTicketsRaised
+		}
+		if m.TrackerTicketsClosed != nil {
+			closed += *m.TrackerTicketsClosed
+		}
+		worked += m.MedianDaysWorkedN
+	}
+	if raised != 2 || closed != 1 || worked != 1 {
+		t.Errorf("tracker raised/closed/worked n = %d/%d/%d, want 2/1/1", raised, closed, worked)
+	}
+	// DVOP-1 closed while the app item is still open and no ticket covers it now.
+	if rep.Open.ClosedTicketFindingOpen == nil || *rep.Open.ClosedTicketFindingOpen != 1 {
+		t.Errorf("closed ticket, finding open = %v, want 1", rep.Open.ClosedTicketFindingOpen)
+	} else if rep.Open.ClosedTicketAgeDays["0-7"] != 1 {
+		t.Errorf("closed ticket ages = %v, want one closed today", rep.Open.ClosedTicketAgeDays)
+	}
+	found := false
+	for _, c := range rep.Caveats {
+		if strings.Contains(c, "tickets, not resolutions") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("caveats must say tracker counts are tickets, not resolutions: %v", rep.Caveats)
+	}
+}
+
+func TestHistoryTrackerFailureDoesNotCostTheAssessment(t *testing.T) {
+	store := newMemStore()
+	idx := &trackerIndex{err: errors.New("jira: 401")}
+	s := New(&stubAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders")}}).
+		WithHistory(store, 24*time.Hour).WithTickets(idx, "")
+	s.Refresh(context.Background())
+
+	if k := store.kinds(); k[history.KindOpened] != 1 {
+		t.Fatalf("the assessment must still be recorded: %v", k)
+	}
+	if st := s.historyStatus(); !strings.Contains(st.LastError, "401") {
+		t.Errorf("status should carry the tracker error: %+v", st)
+	}
+	var resp struct {
+		History history.Report `json:"history"`
+	}
+	if code := getJSON(t, s.Handler(), "/api/v1/history", &resp); code != http.StatusOK || resp.History.Tracker != nil {
+		t.Errorf("never read, so no tracker block: %d %+v", code, resp.History.Tracker)
 	}
 }

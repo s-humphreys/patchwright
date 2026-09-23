@@ -34,9 +34,20 @@ type Store interface {
 	Item(ctx context.Context, key string) (*ItemHistory, error)
 	// First is when the record begins, and false when it is empty.
 	First(ctx context.Context) (time.Time, bool, error)
-	// Prune removes events and closed items older than before, and assessments
-	// older than before. It reports what it removed.
+	// Prune removes events and closed items older than before, assessments older
+	// than before, and tracker tickets resolved before it. It reports what it
+	// removed.
 	Prune(ctx context.Context, before time.Time) (Pruned, error)
+	// UpsertTickets writes tickets read from the tracker, keyed by issue key. The
+	// item a ticket was first matched to is held: a later write neither clears it
+	// nor moves it to another item.
+	UpsertTickets(ctx context.Context, tickets []TrackerTicket) error
+	// Tickets returns the tickets created or resolved in [since, until), and every
+	// resolved ticket matched to an item, whose close the open summary dates.
+	Tickets(ctx context.Context, since, until time.Time) ([]TrackerTicket, error)
+	// TicketsIndexed says how many tickets are held, the oldest, and when the
+	// tracker was last read. Zero Tickets means it never has been.
+	TicketsIndexed(ctx context.Context) (TicketIndexState, error)
 	Close()
 }
 
@@ -63,4 +74,5 @@ type Pruned struct {
 	Events      int64 `json:"events"`
 	Items       int64 `json:"items"`
 	Assessments int64 `json:"assessments"`
+	Tickets     int64 `json:"tickets"`
 }

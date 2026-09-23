@@ -163,12 +163,57 @@ due date somebody edits in Jira afterwards is not what this measures against. An
 extend does not carry a due date either: an item a ticket only came to cover later has
 no deadline recorded against it.
 
+### Tracker dates
+
+The record knows when patchwright raised a ticket and when it saw one close. It does
+not know when a person picked one up, and before the record began it knows nothing at
+all. With ticketing configured, each run therefore also reads the tracker's own dates
+for every ticket on the configured projects, closed ones included, into a `tickets`
+table (see [ticketing.md](ticketing.md#dates-read-back-from-the-tracker) for exactly
+what is read and when). A resolved ticket is pruned with the rest of the record once
+its resolution is older than `retention`; an open one is kept.
+
+Three things come of it, all marked as coming from the tracker by a `tracker` block
+on the report (`source: "tracker"`):
+
+| Field | Where | Meaning |
+|---|---|---|
+| `median_days_told` | per period | Work item opened, as the record first saw it, to ticket raised. Long means nobody was told |
+| `median_days_to_start` | per period | Ticket raised to its first In Progress status. Long means told, not prioritised |
+| `median_days_worked` | per period | First In Progress to resolved. Long means being worked, slowly |
+| `tracker_tickets_raised`, `tracker_tickets_closed` | per period | Tickets created and resolved, by the tracker's dates |
+| `closed_ticket_finding_open`, `closed_ticket_age_days` | `open` | Open items whose latest ticket closed while they stayed open and that have no ticket now, bucketed by days since the close |
+
+Each median is over the tickets **resolved** in the period whose two endpoints are
+known, with `_n` saying how many that is. The three are kept apart because each one
+blames something different, and one number would flatter whichever part a team is good
+at. `told` needs the ticket matched to a work item the record saw open: an item that
+was already open when the record began has no known opening, so its tickets have no
+`told` interval. A ticket that never passed through In Progress has neither of the
+other two.
+
+`tracker_tickets_raised` and `tracker_tickets_closed` are the backfill. Jira holds
+created and resolution dates for every ticket since ticketing was switched on, so
+these reach back before the record did. They count **tickets, not resolutions**: every
+ticket on the configured projects and issue type, raised by patchwright or by hand,
+with no rule or signal attached, because none can be attached with any confidence.
+They sit beside `tickets_raised` and `tickets_closed`, which are events on work items
+the record watched, and the two are not the same number. A period that ended before
+the oldest ticket the tracker holds carries neither field, since that is before
+ticketing, not a period in which nothing was raised.
+
+`closed_ticket_finding_open` dates the third bucket of the delineation from the
+tracker's resolution date. An item that has been ticketed again since is left out:
+somebody is on it, whatever happened to the first ticket.
+
 ## Reading it
 
 The **Analytics** page opens with the report, so the page tells a story: how things
 are moving, then what to do next. It shows the caveats first, the risk direction by
 period, opened against resolved against lapsed, the four-bucket delineation, the
 per-signal, per-rule and per-team splits, and the queue as the record holds it now.
+Once the tracker has been read, the ticketed panel adds a cycle-time table and the
+tracker's own ticket counts, each only for the periods that have them.
 A lookback and a bucket selector carry in the URL, so a view can be linked. With two
 or more periods the direction and movement panels draw interactive charts (hover for
 each period's values) using a vendored copy of uPlot; with one period a chart would
@@ -179,7 +224,8 @@ be a single block, so the number stands alone. The
 number of days or an RFC 3339 timestamp, `until` defaults to now, `bucket` is `month`
 or `week`. `GET /api/v1/history/item?key=…` returns one work item's every event. Both
 are in the [API reference](api.md) and carry a `schema_version`, because the shape
-will move and a consumer should be told rather than find out.
+will move and a consumer should be told rather than find out. Fields are added without a bump, as the tracker fields were; the version moves
+when a field a consumer already reads would change meaning.
 
 Every report leads with its caveats. The one to read first: **the record begins when
 history was switched on.** Periods before that are empty because nothing was watching,

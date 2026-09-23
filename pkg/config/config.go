@@ -770,6 +770,17 @@ func (j JiraConfig) Validate() error {
 	if j.DefaultTemplate == "" {
 		return fmt.Errorf("jira config missing required field: defaultTicketTemplate")
 	}
+	return j.validateRoutes(true)
+}
+
+// ValidateRead is Validate for a command that only reads the tracker, such as the
+// history backfill: it needs every project and image field, and no template, since
+// it will never raise a ticket.
+func (j JiraConfig) ValidateRead() error {
+	return j.validateRoutes(false)
+}
+
+func (j JiraConfig) validateRoutes(writing bool) error {
 	if err := validateMinPriority(j.MinPriority); err != nil {
 		return err
 	}
@@ -796,7 +807,7 @@ func (j JiraConfig) Validate() error {
 		// Validated as the configuration it actually becomes, since a route is a
 		// merge and can only break the result by overriding into an invalid
 		// combination. That has to fail at load rather than at the first ticket.
-		if err := j.Resolve(r).validateTracker(); err != nil {
+		if err := j.Resolve(r).validateTracker(writing); err != nil {
 			return fmt.Errorf("jira route %q: %w", r.Name, err)
 		}
 	}
@@ -804,8 +815,8 @@ func (j JiraConfig) Validate() error {
 }
 
 // validateTracker checks one resolved route: everything needed to raise a ticket
-// on a specific board.
-func (j JiraConfig) validateTracker() error {
+// on a specific board, or with writing false only what reading its tickets needs.
+func (j JiraConfig) validateTracker(writing bool) error {
 	var missing []string
 	if j.Board == 0 {
 		missing = append(missing, "board")
@@ -813,7 +824,7 @@ func (j JiraConfig) validateTracker() error {
 	if j.Project == "" {
 		missing = append(missing, "project")
 	}
-	if j.Template == "" {
+	if writing && j.Template == "" {
 		missing = append(missing, "template (or jira.defaultTicketTemplate)")
 	}
 	if len(missing) > 0 {

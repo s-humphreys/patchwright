@@ -123,6 +123,30 @@ func (l *Lazy) Prune(ctx context.Context, before time.Time) (history.Pruned, err
 	return s.Prune(ctx, before)
 }
 
+func (l *Lazy) UpsertTickets(ctx context.Context, tickets []history.TrackerTicket) error {
+	s, err := l.get(ctx)
+	if err != nil {
+		return err
+	}
+	return s.UpsertTickets(ctx, tickets)
+}
+
+func (l *Lazy) Tickets(ctx context.Context, since, until time.Time) ([]history.TrackerTicket, error) {
+	s, err := l.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.Tickets(ctx, since, until)
+}
+
+func (l *Lazy) TicketsIndexed(ctx context.Context) (history.TicketIndexState, error) {
+	s, err := l.get(ctx)
+	if err != nil {
+		return history.TicketIndexState{}, err
+	}
+	return s.TicketsIndexed(ctx)
+}
+
 func (l *Lazy) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()

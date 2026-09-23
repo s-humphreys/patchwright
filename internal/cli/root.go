@@ -116,6 +116,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newAssessCmd())
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newTicketCmd())
+	root.AddCommand(newHistoryCmd())
 	return root
 }
 

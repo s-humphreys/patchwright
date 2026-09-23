@@ -1,8 +1,9 @@
 # Design: history, and reporting movement
 
-Status: **phases 1 and 2 built** (the event log, the store, the API and retention;
-the movement section at the top of the analytics page and the `trend_report` MCP tool; see
-[docs/history.md](../history.md)). Phase 3, tracker dates, is not. Supersedes the storage
+Status: **phases 1, 2 and 3 built** (the event log, the store, the API and retention;
+the movement section at the top of the analytics page and the `trend_report` MCP tool;
+tracker dates, cycle time and the ticketed backfill; see
+[docs/history.md](../history.md)). Supersedes the storage
 section of [persistence.md](persistence.md); the problem statement and the evidence
 rule there stand.
 
@@ -157,6 +158,7 @@ zero-dependency local store is met by the feature being optional.
 assessments   id, started_at, finished_at, provider_data_age, coverage counts
 items         key, repository, class, team, upgrade_kind, first_opened_at
 events        id, item_key, assessment_id, kind, at, payload jsonb
+tickets       key, project, item_key, created_at, started_at, resolved_at, due_at, status, raw jsonb
 ```
 
 `payload` carries the per-kind columns from the events table above. Everything a
@@ -231,6 +233,32 @@ configured epics, so phase 3 can reconstruct ticketed-work history from the day
 ticketing was switched on. It cannot attach a rule or signal to those tickets with
 any confidence, and should not try. That history is reported as tickets, not as
 resolutions.
+
+## Learned building phase 3: the tracker's dates need reading as carefully as the scanner's
+
+Three things surprised, and each would have skewed a figure quietly:
+
+- **A resolution date is not a close.** Some workflows reach done without setting a
+  resolution, so `resolutiondate` is empty on a closed ticket; others reopen a ticket
+  without clearing it, so the date sits on open work. A ticket is taken as resolved
+  only while it is in the done category, dated by its resolution where set and by the
+  move into done otherwise.
+- **"In Progress" is a category, not a status.** Status names are per board, and the
+  change history names status ids, not categories. Mapping the ids needs the site's
+  status list, one call per sync. The search also expands only the newest page of a
+  ticket's history, newest first, so on a busy ticket the page can hold a later move
+  into progress and not the first. A truncated history is therefore always read in
+  full from the oldest entry, not only when the page shows no start. Where the status list cannot be read, a ticket in
+  progress now falls back to its status category change date, which is when it last
+  entered the category rather than first, and the report counts and says so.
+- **The finding's opening is only known for work the record saw open.** An item in the
+  baseline carries the record's first run as its opening, so its tickets have no
+  "told" interval rather than a short one.
+
+The item match is by image, the way reconciliation matches tickets, and is held once
+made: a ticket whose item has since closed keeps the match rather than losing it on
+the next read. The item's opening time is stored with the ticket for the same reason,
+so the interval survives the item row being pruned.
 
 ## Learned on day one: absence needs a grace period
 
