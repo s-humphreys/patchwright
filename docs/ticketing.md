@@ -113,6 +113,9 @@ deployment serving two teams has two of each.
 jira:
   defaultTicketTemplate: config/templates/container-vuln.md.tmpl
   priority: Medium                     # fallback for anything unmapped
+  dueDays:                             # days from creation; unset means no due date
+    urgent: 7
+    high: 30
   requireUpgrade: true                 # default
   autoClose: false                     # default
   routes:
@@ -129,11 +132,34 @@ jira:
         high: High
         medium: Medium
         low: Low
+    - name: sre
+      when: "owner['team'] == 'sre'"
+      project: SRE
+      board: 42
+      imageLabel: true
+      dueDays:                         # replaces the default above, it does not merge
+        urgent: 3
 ```
 
 `imageField` (or the label) is the idempotency key: it is how an existing ticket for
 an image is found. `priorityMap` is not defaulted — priority schemes are
 per-instance and a name that does not exist fails ticket creation.
+
+`dueDays` sets Jira's `duedate` from the finding's priority: the number of days after
+the ticket is raised that it falls due, as a UTC date. A priority with no entry gets no
+due date, and leaving the map unset changes nothing, so existing deployments are
+unaffected. Unlike `priorityMap` it can be set at the top level, since a remediation
+window is a policy rather than part of a board's schema; a route that sets its own map
+replaces the default whole. Values must be positive.
+
+The date is set once, at creation, and never moved: an `update` rewrites the wording
+only. The due date records the commitment made when the ticket was raised, and
+re-dating it on each run would quietly extend every deadline a ticket was about to
+miss.
+
+The **Due date** field must be on the project's create screen, or Jira rejects the
+create request with a field error. Add it there before configuring `dueDays` for a
+project.
 
 `urgentEPSS` (default 0.5) is the exploitation probability at or above which a CVE is
 listed on a ticket as one it must clear, alongside CISA KEV membership. It should

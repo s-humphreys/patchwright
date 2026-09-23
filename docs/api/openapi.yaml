@@ -795,6 +795,7 @@ components:
             items: { type: integer }
             ticketed: { type: integer }
             missing: { type: integer, description: Open items absent from the latest assessment but inside the grace period }
+            tickets_overdue_open: { type: integer, description: Distinct open tickets whose recorded due date has passed. Per ticket, not per item }
             by_signal: { type: object, additionalProperties: { type: integer } }
             age_days: { type: object, additionalProperties: { type: integer } }
         caveats: { type: array, items: { type: string } }
@@ -849,6 +850,9 @@ components:
           type: object
           description: Tickets patchwright itself closed, by reason (upgrade-landed, not-running, no-longer-actionable). The rest of tickets_closed were closed by people.
           additionalProperties: { type: integer }
+        tickets_closed_on_time: { type: integer, description: Closed on or before the due date recorded when the ticket was raised. Tickets with no due date are in neither this nor tickets_closed_overdue }
+        tickets_closed_overdue: { type: integer, description: Closed after the recorded due date }
+        mean_days_to_due_at_close: { type: number, description: Mean of due date less close date in whole UTC days over tickets that had one; negative is late. Absent when none did }
         epss_decayed: { type: integer, description: Left the EPSS bucket by score decay, not by a patch }
         became_known_exploited: { type: integer }
         median_days_to_resolve: { type: number, description: Over resolved items only }
@@ -883,7 +887,15 @@ components:
               key: { type: string }
               kind: { type: string, enum: [opened, changed, reassigned, ticket_raised, ticket_closed, resolved, lapsed] }
               at: { type: string, format: date-time }
-              payload: { type: object }
+              payload:
+                type: object
+                description: |
+                  What the kind needs; fields a kind does not use are omitted. On
+                  ticket_raised for a create, `due_date` is the due date the ticket was
+                  raised with. On ticket_closed, `due_date` is repeated, `days_to_due` is
+                  the due date less the close date in whole UTC days (negative when
+                  late) and `overdue` is the same as a flag. All three are absent when
+                  no due date was recorded, which is not the same as on time.
     AssessmentMeta:
       type: object
       required: [generated_at, running]

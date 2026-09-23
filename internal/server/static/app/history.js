@@ -131,6 +131,10 @@ function delineationPanel(h) {
   const sum = (k) => periods.reduce((n, m) => n + (m[k] || 0), 0);
   const unticketed = sum("resolved_unticketed"), ticketed = sum("resolved_ticketed");
   const closedOpen = sum("tickets_closed_finding_open"), lapsed = sum("lapsed");
+  // Only once some ticket carried a due date: before that the column would be all
+  // zeros that read as "nothing was late" rather than "nothing was measured".
+  const onTime = sum("tickets_closed_on_time"), overdue = sum("tickets_closed_overdue");
+  const measured = onTime + overdue;
   const byTool = {};
   for (const m of periods) for (const [k, v] of Object.entries(m.tickets_closed_by_tool || {})) byTool[k] = (byTool[k] || 0) + v;
   const strip = stackedBar([
@@ -143,16 +147,36 @@ function delineationPanel(h) {
       <td>${esc(m.period)}</td><td>${fmt(m.resolved_unticketed)}</td><td>${fmt(m.resolved_ticketed)}</td>
       <td>${fmt(m.tickets_raised)}</td><td>${fmt(m.tickets_closed)}</td>
       <td class="${m.tickets_closed_finding_open ? "warn" : ""}">${fmt(m.tickets_closed_finding_open)}</td>
+      ${measured ? `<td class="${m.tickets_closed_overdue ? "warn" : ""}">${fmt(m.tickets_closed_on_time)} / ${fmt(m.tickets_closed_overdue)}</td>` : ""}
       <td class="muted">${fmt(m.lapsed)}</td></tr>`).join("");
   const toolRows = Object.entries(byTool).map(([k, v]) => `<span class="chart-key">${esc(k)} ${v}</span>`).join(" ");
   return `<section class="panel"><h3>Total remediation against ticketed work, in work items</h3>
     <div class="dr"><dt>Upgrades and patches landed</dt>
       <dd><strong class="ok">${fmt(unticketed + ticketed)}</strong> resolved with evidence, of which <strong>${fmt(ticketed)}</strong> (${pct(ticketed, unticketed + ticketed)}) were ticketed work</dd></div>
     ${strip}
-    <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Resolved, unticketed</th><th title="Ticketed work completed; a subset of resolved">Resolved, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither resolved nor lapsed">Closed, finding open</th><th>Lapsed</th></tr></thead>
+    <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Resolved, unticketed</th><th title="Ticketed work completed; a subset of resolved">Resolved, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither resolved nor lapsed">Closed, finding open</th>${measured ? `<th title="Closed against the due date set when the ticket was raised; tickets without one are in neither">Closed on time / overdue</th>` : ""}<th>Lapsed</th></tr></thead>
     <tbody>${rows}</tbody></table>
     ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
+    ${measured ? `<p class="sub">Against the due date: ${fmt(onTime)} of ${fmt(measured)} (${pct(onTime, measured)}) closed on time.${meanDaysToDue(periods)}</p>` : ""}
   </section>`;
+}
+
+/**
+ * meanDaysToDue weights each period's mean by the closes it covers, since a mean of
+ * means would let a quiet month count as much as a busy one.
+ */
+function meanDaysToDue(periods) {
+  let total = 0, n = 0;
+  for (const m of periods) {
+    const k = (m.tickets_closed_on_time || 0) + (m.tickets_closed_overdue || 0);
+    if (m.mean_days_to_due_at_close == null || !k) continue;
+    total += m.mean_days_to_due_at_close * k;
+    n += k;
+  }
+  if (!n) return "";
+  const d = Math.round((total / n) * 10) / 10;
+  const days = (x) => `${fmt(x)} day${x === 1 ? "" : "s"}`;
+  return d < 0 ? ` On average ${days(-d)} late.` : ` On average ${days(d)} to spare.`;
 }
 
 /**
@@ -201,7 +225,7 @@ function openPanel(h) {
   const segs = order.map((k, i) => ({ label: `${k}d`, value: o.age_days?.[k] || 0, cls: classes[i] }));
   const signals = SIGNALS.filter((s) => o.by_signal?.[s.key]).map((s) => `${esc(s.label)} ${o.by_signal[s.key]}`).join(" · ");
   return `<section class="panel"><h3>Open now, as the record holds it</h3>
-    <div class="dr"><dt>Work items</dt><dd>${fmt(o.items)} · ${fmt(o.ticketed)} ticketed${o.missing ? ` · <span class="muted">${fmt(o.missing)} absent from the latest run, inside the grace period</span>` : ""}</dd></div>
+    <div class="dr"><dt>Work items</dt><dd>${fmt(o.items)} · ${fmt(o.ticketed)} ticketed${o.missing ? ` · <span class="muted">${fmt(o.missing)} absent from the latest run, inside the grace period</span>` : ""}${o.tickets_overdue_open ? ` · <span class="warn">${fmt(o.tickets_overdue_open)} tickets past their due date</span>` : ""}</dd></div>
     ${signals ? `<div class="dr"><dt>Signals</dt><dd>${signals}</dd></div>` : ""}
     <div class="age-strip"><div class="sub">How long the record has held them</div>${stackedBar(segs, { empty: "Nothing open." })}</div>
   </section>`;

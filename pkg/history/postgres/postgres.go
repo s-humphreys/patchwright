@@ -178,7 +178,7 @@ func (s *Store) migrate(ctx context.Context) error {
 func (s *Store) Open(ctx context.Context) ([]history.State, error) {
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
-	rows, err := s.pool.Query(ctx, `SELECT id, opened_at, opened, current, missing_runs, missing_since
+	rows, err := s.pool.Query(ctx, `SELECT id, opened_at, opened, current, missing_runs, missing_since, ticket_due
 		FROM items WHERE closed_at IS NULL ORDER BY key`)
 	if err != nil {
 		return nil, fmt.Errorf("history: open items: %w", err)
@@ -187,8 +187,8 @@ func (s *Store) Open(ctx context.Context) ([]history.State, error) {
 	var out []history.State
 	for rows.Next() {
 		var st history.State
-		var opened, current []byte
-		if err := rows.Scan(&st.ID, &st.OpenedAt, &opened, &current, &st.Missing, &st.MissingSince); err != nil {
+		var opened, current, due []byte
+		if err := rows.Scan(&st.ID, &st.OpenedAt, &opened, &current, &st.Missing, &st.MissingSince, &due); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(opened, &st.Opened); err != nil {
@@ -196,6 +196,12 @@ func (s *Store) Open(ctx context.Context) ([]history.State, error) {
 		}
 		if err := json.Unmarshal(current, &st.Current); err != nil {
 			return nil, fmt.Errorf("history: item %d current: %w", st.ID, err)
+		}
+		if err := json.Unmarshal(due, &st.TicketDue); err != nil {
+			return nil, fmt.Errorf("history: item %d ticket_due: %w", st.ID, err)
+		}
+		if len(st.TicketDue) == 0 {
+			st.TicketDue = nil
 		}
 		out = append(out, st)
 	}
@@ -313,6 +319,16 @@ func applyEvents(ctx context.Context, tx pgx.Tx, assessmentID int64, events []hi
 				snap, _ := json.Marshal(e.Payload.Snapshot)
 				if _, err := tx.Exec(ctx, `UPDATE items SET current = $2 WHERE id = $1`, itemID, snap); err != nil {
 					return fmt.Errorf("history: update item %d: %w", itemID, err)
+				}
+			}
+		case history.KindTicketRaised:
+			if e.Payload.DueDate != nil && e.Payload.Ticket != "" {
+				due, _ := json.Marshal(e.Payload.DueDate)
+				// The recorded date wins over a new one: a due date is never moved, so
+				// a replayed or repeated create must not rewrite it.
+				if _, err := tx.Exec(ctx, `UPDATE items SET ticket_due = jsonb_build_object($2::text, $3::jsonb) || ticket_due
+					WHERE id = $1`, itemID, e.Payload.Ticket, due); err != nil {
+					return fmt.Errorf("history: record due date on item %d: %w", itemID, err)
 				}
 			}
 		case history.KindReassigned:

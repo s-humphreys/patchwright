@@ -45,6 +45,7 @@
       { "period": "2026-10", "start": "2026-10-01T00:00:00Z", "end": "2026-11-01T00:00:00Z",
         "baseline": 0, "opened": 31, "resolved": 47, "lapsed": 12, "reassigned": 1, "cves_resolved": 6420, "kev_cves_resolved": 19,
         "resolved_ticketed": 21, "resolved_unticketed": 26, "tickets_raised": 14, "tickets_closed": 25, "tickets_closed_finding_open": 2,
+        "tickets_closed_on_time": 19, "tickets_closed_overdue": 3, "mean_days_to_due_at_close": 4.5,
         "epss_decayed": 9, "became_known_exploited": 2, "median_days_to_resolve": 23,
         "lapse_reasons": { "no longer reported": 7, "no longer running": 5 },
         "tickets_closed_by_tool": { "upgrade-landed": 12, "not-running": 4 },
@@ -63,6 +64,7 @@
       { "period": "2026-11", "start": "2026-11-01T00:00:00Z", "end": "2026-12-01T00:00:00Z",
         "baseline": 0, "opened": 18, "resolved": 33, "lapsed": 6, "reassigned": 0, "cves_resolved": 4110, "kev_cves_resolved": 11,
         "resolved_ticketed": 17, "resolved_unticketed": 16, "tickets_raised": 9, "tickets_closed": 19, "tickets_closed_finding_open": 0,
+        "tickets_closed_on_time": 15, "tickets_closed_overdue": 0, "mean_days_to_due_at_close": 9,
         "epss_decayed": 4, "became_known_exploited": 1, "median_days_to_resolve": 31,
         "lapse_reasons": { "no longer reported": 4, "no longer running": 2 },
         "tickets_closed_by_tool": { "upgrade-landed": 15, "not-running": 2 },
@@ -79,7 +81,7 @@
           "ics": { "opened": 4, "resolved": 7, "lapsed": 1, "resolved_ticketed": 4 }
         } }
     ],
-    "open": { "items": 244, "ticketed": 61, "missing": 3,
+    "open": { "items": 244, "ticketed": 61, "missing": 3, "tickets_overdue_open": 4,
       "by_signal": { "kev": 22, "epss-high": 51, "fixable-critical": 230, "end-of-life": 9, "exposed": 104 },
       "age_days": { "0-7": 12, "7-30": 38, "30-90": 194 } },
     "caveats": [

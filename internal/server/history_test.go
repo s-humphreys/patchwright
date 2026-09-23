@@ -76,6 +76,15 @@ func (m *memStore) apply(events []history.Event) error {
 			m.closed[e.ItemID] = e.Kind
 		case history.KindChanged, history.KindReassigned:
 			m.items[e.ItemID].Current = *e.Payload.Snapshot
+		case history.KindTicketRaised:
+			if st := m.items[e.ItemID]; st != nil && e.Payload.DueDate != nil {
+				if _, ok := st.TicketDue[e.Payload.Ticket]; !ok {
+					if st.TicketDue == nil {
+						st.TicketDue = map[string]time.Time{}
+					}
+					st.TicketDue[e.Payload.Ticket] = *e.Payload.DueDate
+				}
+			}
 		}
 		if e.ItemID == 0 {
 			return errors.New("event without item")
@@ -290,6 +299,39 @@ func TestHistoryAttributesTicketWrites(t *testing.T) {
 	}
 	if len(raised) != 1 || raised[0].Payload.Ticket != "DVOP-1" || raised[0].Payload.Action != "create" {
 		t.Errorf("want one ticket_raised for DVOP-1, got %+v", raised)
+	}
+}
+
+// The due date a create set has to reach the record, and the item, so the close
+// can be measured against it later. An extend carries none.
+func TestHistoryRecordsTheDueDateOfACreate(t *testing.T) {
+	store := newMemStore()
+	s := New(&stubAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders")}}).WithHistory(store, 24*time.Hour)
+	s.Refresh(context.Background())
+
+	due := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+	s.recordTicketWrites(context.Background(), []ticket.Result{
+		{Action: ticket.Action{Kind: ticket.ActionCreate, Draft: ticket.Draft{Images: []string{"acr.io/app:1"}}}, Key: "DVOP-1", DueDate: &due},
+		{Action: ticket.Action{Kind: ticket.ActionExtend, Images: []string{"acr.io/app:1"}}, Key: "DVOP-2"},
+	})
+	for _, e := range store.events {
+		if e.Kind != history.KindTicketRaised {
+			continue
+		}
+		switch e.Payload.Ticket {
+		case "DVOP-1":
+			if e.Payload.DueDate == nil || !e.Payload.DueDate.Equal(due) {
+				t.Errorf("create due_date = %v, want %v", e.Payload.DueDate, due)
+			}
+		case "DVOP-2":
+			if e.Payload.DueDate != nil {
+				t.Errorf("extend due_date = %v, want absent", e.Payload.DueDate)
+			}
+		}
+	}
+	open, _ := store.Open(context.Background())
+	if len(open) != 1 || !open[0].TicketDue["DVOP-1"].Equal(due) || len(open[0].TicketDue) != 1 {
+		t.Errorf("item should hold DVOP-1's due date only: %+v", open)
 	}
 }
 

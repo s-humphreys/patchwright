@@ -172,6 +172,11 @@ type State struct {
 	// us anything about the work.
 	Missing      int        `json:"missing,omitempty"`
 	MissingSince *time.Time `json:"missing_since,omitempty"`
+	// TicketDue is the due date each ticket covering the item was raised with, by
+	// issue key, so a close can be measured against it. Held on the item rather than
+	// read back from the tracker: the date is set once at creation and never moved,
+	// so the one patchwright recorded is the one that counts.
+	TicketDue map[string]time.Time `json:"ticket_due,omitempty"`
 }
 
 // Mark is a change to an open item's missing counter, recorded alongside the
@@ -251,6 +256,15 @@ type Payload struct {
 	Ticket          string `json:"ticket,omitempty"`
 	Action          string `json:"action,omitempty"`
 	EvidenceAtClose *bool  `json:"evidence_at_close,omitempty"`
+
+	// DueDate is the ticket's due date: on ticket_raised for a create that set one,
+	// and repeated on ticket_closed so the close carries its own deadline. DaysToDue
+	// is the due date less the close date in whole UTC days, negative when overdue,
+	// and Overdue says the same as a flag. All absent when no due date was recorded,
+	// which is not the same as on time.
+	DueDate   *time.Time `json:"due_date,omitempty"`
+	DaysToDue *int       `json:"days_to_due,omitempty"`
+	Overdue   *bool      `json:"overdue,omitempty"`
 }
 
 // Owner is a class and team pair.
@@ -704,12 +718,29 @@ func ticketsClosed(st State, nowTickets []string, evidence bool, reasons map[str
 	out := make([]Event, 0, len(gone))
 	for _, key := range gone {
 		e := evidence
+		p := Payload{Ticket: key, EvidenceAtClose: &e, Reason: reasons[key]}
+		if due, ok := st.TicketDue[key]; ok {
+			d := due
+			days := DaysToDue(due, at)
+			overdue := days < 0
+			p.DueDate, p.DaysToDue, p.Overdue = &d, &days, &overdue
+		}
 		out = append(out, Event{
-			ItemID: st.ID, Key: st.Current.Key, Kind: KindTicketClosed, At: at,
-			Payload: Payload{Ticket: key, EvidenceAtClose: &e, Reason: reasons[key]},
+			ItemID: st.ID, Key: st.Current.Key, Kind: KindTicketClosed, At: at, Payload: p,
 		})
 	}
 	return out
+}
+
+// DaysToDue is whole calendar days from at until due, in UTC, negative once the
+// due date has passed. A due date is a day rather than an instant, so a ticket
+// closed at any time on its due day is on time (zero), not a fraction late.
+func DaysToDue(due, at time.Time) int {
+	day := func(t time.Time) time.Time {
+		t = t.UTC()
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	return int(day(due).Sub(day(at)).Hours() / 24)
 }
 
 // TicketWrite is one successful create or extend from ticket reconciliation, in the
@@ -718,6 +749,9 @@ type TicketWrite struct {
 	Key    string
 	Action string
 	Images []string
+	// DueDate is set only on a create that gave the ticket one. An extend leaves
+	// it nil: adding images to a ticket does not move its deadline.
+	DueDate *time.Time
 }
 
 // TicketEvents attributes ticket writes to the open items whose images they cover.
@@ -735,7 +769,7 @@ func TicketEvents(open []State, writes []TicketWrite, at time.Time) []Event {
 				if covered[img] {
 					out = append(out, Event{
 						ItemID: st.ID, Key: st.Current.Key, Kind: KindTicketRaised, At: at,
-						Payload: Payload{Ticket: w.Key, Action: w.Action},
+						Payload: Payload{Ticket: w.Key, Action: w.Action, DueDate: w.DueDate},
 					})
 					break
 				}

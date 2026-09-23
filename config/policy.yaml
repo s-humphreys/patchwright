@@ -55,6 +55,16 @@ scan:
 #   defaultTicketTemplate: config/templates/container-vuln.md.tmpl
 #   priority: Medium        # fallback for anything a route's priorityMap misses
 #
+#   # Sets Jira's due date from the finding's priority: days after the ticket is
+#   # raised. A priority with no entry gets no due date; unset means none at all.
+#   # Set once at creation and never moved, so the date stays the commitment made
+#   # at the time. The Due date field must be on the project's create screen, or
+#   # Jira rejects the ticket. A route can set its own map, which replaces this one.
+#   dueDays:
+#     urgent: 7
+#     high: 30
+#     medium: 90
+#
 #   # Keep findings out of ticket creation without hiding them. Unlike suppress
 #   # below, an excluded finding stays in the assessment and the queue and is
 #   # reported as skipped with the reason — it is work tracked somewhere else,
@@ -130,6 +140,10 @@ scan:
 #       priorityMap:
 #         urgent: Blocker
 #         high: Major
+#       # Replaces dueDays above whole rather than merging with it, so this team's
+#       # high and medium findings get no due date.
+#       dueDays:
+#         urgent: 3
 #     - name: platform
 #       when: "owner['class'] == 'platform'"
 #       project: PROJ

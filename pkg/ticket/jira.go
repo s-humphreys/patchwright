@@ -486,8 +486,8 @@ func ImageLabel(image string) string {
 	return "patchwright-" + safe
 }
 
-// Create raises a ticket and returns its key.
-func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
+// Create raises a ticket and returns its key, with the due date it was given.
+func (j *Jira) Create(ctx context.Context, d Draft) (Created, error) {
 	// The tracker comes from the draft's route: the planner already decided whose
 	// board this belongs on, and re-deciding it here would let the two disagree.
 	cfg := j.cfgForRoute(d.Route)
@@ -504,6 +504,15 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 	// what stops the queue flattening to one priority.
 	if p := cfg.JiraPriority(d.Priority); p != "" {
 		fields["priority"] = map[string]string{"name": p}
+	}
+	// Only here, never in Update: the due date is the commitment made when the
+	// ticket was raised, and moving it later would hide a missed deadline.
+	var dueDate *time.Time
+	if due, ok := cfg.DueDate(d.Priority, time.Now()); ok {
+		fields["duedate"] = due
+		if t, err := time.Parse(time.DateOnly, due); err == nil {
+			dueDate = &t
+		}
 	}
 
 	labels := append([]string{}, cfg.Labels...)
@@ -522,9 +531,9 @@ func (j *Jira) Create(ctx context.Context, d Draft) (string, error) {
 		Key string `json:"key"`
 	}
 	if err := j.do(ctx, http.MethodPost, "/rest/api/3/issue", map[string]any{"fields": fields}, &resp); err != nil {
-		return "", fmt.Errorf("create ticket %q in project %s: %w", d.Summary, cfg.Project, err)
+		return Created{}, fmt.Errorf("create ticket %q in project %s: %w", d.Summary, cfg.Project, err)
 	}
-	return resp.Key, nil
+	return Created{Key: resp.Key, DueDate: dueDate}, nil
 }
 
 // Update rewrites a ticket's summary and description to match a fresh draft.
