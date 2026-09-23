@@ -137,9 +137,9 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	pruned, perr := rec.store.Prune(ctx, snap.generatedAt.Add(-rec.retention))
 	if perr != nil {
 		slog.WarnContext(ctx, "history: retention pass failed", "error", perr)
-	} else if pruned.Events+pruned.Items+pruned.Assessments > 0 {
+	} else if pruned.Events+pruned.Items+pruned.Assessments+pruned.Tickets > 0 {
 		slog.InfoContext(ctx, "history: retention applied",
-			"events", pruned.Events, "items", pruned.Items, "assessments", pruned.Assessments,
+			"events", pruned.Events, "items", pruned.Items, "assessments", pruned.Assessments, "tickets", pruned.Tickets,
 			"before", snap.generatedAt.Add(-rec.retention).Format(time.RFC3339))
 	}
 
@@ -190,6 +190,52 @@ func (s *Server) recordTicketWrites(ctx context.Context, results []ticket.Result
 		return
 	}
 	slog.InfoContext(ctx, "history: recorded ticket events", "events", len(events))
+}
+
+// TrackerSource reads the tracker's own dates for every ticket, closed ones
+// included. *ticket.Jira satisfies it. The ticket index is asked for it rather than
+// configured separately: the dates come from the same trackers the index searches.
+type TrackerSource interface {
+	DatedTickets(ctx context.Context, within time.Duration) ([]ticket.Dated, error)
+}
+
+// syncTracker reads what changed in the tracker into the record, after ticket
+// writes so the tickets this run raised are read with the items they cover. Like
+// the rest of the record it never fails the assessment.
+func (s *Server) syncTracker(ctx context.Context) {
+	rec := s.history
+	src, ok := s.tickets.(TrackerSource)
+	if rec == nil || !ok {
+		return
+	}
+	res, err := SyncTrackerTickets(ctx, rec.store, src, false)
+	if err != nil {
+		rec.fail(ctx, "sync tracker tickets", err)
+		return
+	}
+	slog.InfoContext(ctx, "history: synced tracker tickets",
+		"full", res.Full, "window", res.Window.String(), "fetched", res.Fetched, "matched", res.Matched)
+}
+
+// SyncTrackerTickets reads the tracker into a store: incrementally, or everything
+// when full is set or nothing has been read yet. Exported for the backfill command.
+func SyncTrackerTickets(ctx context.Context, store history.Store, src TrackerSource, full bool) (history.TicketSync, error) {
+	fetch := func(ctx context.Context, within time.Duration) ([]history.TrackerTicket, error) {
+		dated, err := src.DatedTickets(ctx, within)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]history.TrackerTicket, 0, len(dated))
+		for _, d := range dated {
+			out = append(out, history.TrackerTicket{
+				Key: d.Key, Project: d.Project, Images: d.Images, CreatedAt: d.Created,
+				StartedAt: d.Started, StartedFrom: d.StartedFrom, ResolvedAt: d.Resolved, DueAt: d.Due,
+				Status: d.Status, StatusCategory: d.Category, Raw: d.Fields,
+			})
+		}
+		return out, nil
+	}
+	return history.SyncTickets(ctx, store, fetch, full, time.Now().UTC())
 }
 
 func (r *historyRecorder) clearError() {
@@ -302,6 +348,17 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	}
 	rep := history.Aggregate(rng, assessments, events, open, first, now)
 	rep.RetentionDays = int(s.history.retention.Hours() / 24)
+	idx, err := store.TicketsIndexed(ctx)
+	if err != nil {
+		return history.Report{}, err
+	}
+	if idx.Tickets > 0 {
+		tickets, err := store.Tickets(ctx, rng.Since, rng.Until)
+		if err != nil {
+			return history.Report{}, err
+		}
+		rep.AddTracker(tickets, idx, open, first, now)
+	}
 	switch {
 	case !ok:
 		rep.Caveats = append(rep.Caveats, "the record is empty: no assessment has been recorded yet")
@@ -317,6 +374,26 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	rep.Caveats = append(rep.Caveats,
 		"counts are work items, classified by how each looked when the record first saw it",
 		"resolved requires evidence the work is done; lapsed is everything else, and is never remediation")
+	if tr := rep.Tracker; tr != nil {
+		rep.Caveats = append(rep.Caveats,
+			"tracker_tickets_raised and tracker_tickets_closed come from the tracker, not the record: every ticket on the "+
+				"configured projects and issue type by its own created and resolution dates, including tickets raised by hand "+
+				"or before the record began. They are tickets, not resolutions, and carry no rule or signal",
+			"cycle times are medians in days over the tickets resolved in each period whose two endpoints are known; "+
+				"the finding's opening is when the record first saw it, so a ticket on an item already open when the record "+
+				"began has no told interval")
+		if tr.FirstCreated != nil && tr.FirstCreated.After(rng.Since) {
+			rep.Caveats = append(rep.Caveats, fmt.Sprintf(
+				"the oldest ticket the tracker holds was raised %s; periods before it carry no tracker counts",
+				tr.FirstCreated.Format("2006-01-02")))
+		}
+		if tr.StartedFromStatusCategory > 0 {
+			rep.Caveats = append(rep.Caveats, fmt.Sprintf(
+				"%d tickets are dated into progress by their status category change rather than their change history, "+
+					"which could not be read; for those, first In Progress is when they last entered it",
+				tr.StartedFromStatusCategory))
+		}
+	}
 	return rep, nil
 }
 

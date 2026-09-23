@@ -50,6 +50,9 @@ type Report struct {
 	Movement []Movement `json:"movement"`
 	// Open is the queue as the record holds it now.
 	Open OpenSummary `json:"open"`
+	// Tracker is set when tickets have been read from the tracker, and says which
+	// fields came from there. Nil when the tracker has never been read.
+	Tracker *TrackerSummary `json:"tracker,omitempty"`
 
 	Caveats []string `json:"caveats,omitempty"`
 }
@@ -121,6 +124,25 @@ type Movement struct {
 	// MedianDaysToResolve is over resolved items only, dated from when the record
 	// first saw them. Nil when nothing resolved.
 	MedianDaysToResolve *float64 `json:"median_days_to_resolve,omitempty"`
+
+	// Read from the tracker, not the record: tickets raised and resolved in the
+	// period by the tracker's own dates, on every configured project and issue type,
+	// whoever raised them and whenever the record began. Tickets, not resolutions:
+	// no rule or signal is attached. Nil for a period that ended before the first
+	// indexed ticket, or when the tracker has never been read.
+	TrackerTicketsRaised *int `json:"tracker_tickets_raised,omitempty"`
+	TrackerTicketsClosed *int `json:"tracker_tickets_closed,omitempty"`
+	// Cycle time, as medians in days over the tickets resolved in the period whose
+	// two endpoints are known, each with how many tickets it rests on. Told is the
+	// work item opening (as the record first saw it) to the ticket being raised; to
+	// start is raised to first In Progress; worked is first In Progress to resolved.
+	// One number for all three would flatter whichever part a team is good at.
+	MedianDaysTold     *float64 `json:"median_days_told,omitempty"`
+	MedianDaysToldN    int      `json:"median_days_told_n,omitempty"`
+	MedianDaysToStart  *float64 `json:"median_days_to_start,omitempty"`
+	MedianDaysToStartN int      `json:"median_days_to_start_n,omitempty"`
+	MedianDaysWorked   *float64 `json:"median_days_worked,omitempty"`
+	MedianDaysWorkedN  int      `json:"median_days_worked_n,omitempty"`
 	// LapseReasons says why lapses could not be called resolutions.
 	LapseReasons map[string]int `json:"lapse_reasons,omitempty"`
 
@@ -149,8 +171,14 @@ type OpenSummary struct {
 	Missing int `json:"missing"`
 	// TicketsOverdueOpen is distinct open tickets whose recorded due date has passed.
 	// Counted per ticket rather than per item, since one ticket can cover several.
-	TicketsOverdueOpen int            `json:"tickets_overdue_open"`
-	BySignal           map[string]int `json:"by_signal,omitempty"`
+	TicketsOverdueOpen int `json:"tickets_overdue_open"`
+	// ClosedTicketFindingOpen is open items whose latest ticket the tracker resolved
+	// while the item stayed open, with no ticket covering it now, and
+	// ClosedTicketAgeDays buckets them by days since that close. Nil when the
+	// tracker has never been read.
+	ClosedTicketFindingOpen *int           `json:"closed_ticket_finding_open,omitempty"`
+	ClosedTicketAgeDays     map[string]int `json:"closed_ticket_age_days,omitempty"`
+	BySignal                map[string]int `json:"by_signal,omitempty"`
 	// AgeDays buckets open items by how long the record has held them.
 	AgeDays map[string]int `json:"age_days,omitempty"`
 }

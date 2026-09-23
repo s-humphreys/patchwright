@@ -27,7 +27,7 @@ enough to matter.
 | `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
 | `policy_report` | **The estate against your OWN rules**, by their names in your config: what each caught, what each suppression holds and when it lapses, and what no rule speaks to. For a periodic review or sign-off |
 | `exploitability_report` | **What is actually being exploited, and how much is fixable.** KEV and high-EPSS CVE counts with their fixable share, per team beside each team's urgent count, worst CVEs named |
-| `trend_report` | **Is this getting better?** How the queue moved over a period, from the [history](history.md) record: opened, resolved with evidence, lapsed without it, the risk direction, and ticketed against unticketed resolutions. Caveats first |
+| `trend_report` | **Is this getting better?** How the queue moved over a period, from the [history](history.md) record: opened, resolved with evidence, lapsed without it, the risk direction, ticketed against unticketed resolutions, and cycle time from the tracker's dates. Caveats first |
 | `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
 
 **A service answers to any name that identifies it.** The bare repository
@@ -380,6 +380,16 @@ losing sight of an item without evidence, and a remediation figure that included
 would improve fastest when the scanner broke. And it presents ticketed resolutions as
 a subset of resolved, never as a total of their own; the difference is work that
 landed by another route, which is the figure the report exists to show.
+
+Once the tracker has been read, the totals also carry cycle time as three separate
+medians, `median_days_told` (finding to ticket), `median_days_to_start` (ticket to
+first In Progress) and `median_days_worked` (In Progress to resolved), each with the
+number of tickets it rests on, and `tracker_tickets_raised` and
+`tracker_tickets_closed` by the tracker's own dates. The range medians combine the
+per-period medians weighted by those counts, the way `median_days_to_resolve` does.
+The summary states the three intervals apart, because one number would flatter
+whichever part a team is good at, and says of the tracker counts that they are
+tickets, not resolutions. Without tracker data none of this appears.
 
 Without a history store the tool says so, rather than answering from an empty record.
 

@@ -80,6 +80,20 @@ type TrendTotals struct {
 	MedianDaysToResolve *float64       `json:"median_days_to_resolve,omitempty"`
 	LapseReasons        map[string]int `json:"lapse_reasons,omitempty"`
 	TicketsClosedByTool map[string]int `json:"tickets_closed_by_tool,omitempty"`
+
+	// Read from the tracker, not the record: tickets raised and resolved by the
+	// tracker's own dates. Tickets, not resolutions. Nil when the tracker has never
+	// been read.
+	TrackerTicketsRaised *int `json:"tracker_tickets_raised,omitempty"`
+	TrackerTicketsClosed *int `json:"tracker_tickets_closed,omitempty"`
+	// Cycle time: the per-period medians combined, weighted by how many tickets each
+	// rests on, and the total they rest on.
+	MedianDaysTold     *float64 `json:"median_days_told,omitempty"`
+	MedianDaysToldN    int      `json:"median_days_told_n,omitempty"`
+	MedianDaysToStart  *float64 `json:"median_days_to_start,omitempty"`
+	MedianDaysToStartN int      `json:"median_days_to_start_n,omitempty"`
+	MedianDaysWorked   *float64 `json:"median_days_worked,omitempty"`
+	MedianDaysWorkedN  int      `json:"median_days_worked_n,omitempty"`
 }
 
 // flatBand is how far the risk sum can move and still be called flat.
@@ -95,9 +109,14 @@ func NewTrendReport(rep history.Report) TrendReport {
 	}
 	out.Direction = direction(rep.Risk)
 
-	var medians []weighted
+	var medians, told, toStart, worked []weighted
 	for _, m := range rep.Movement {
 		t := &out.Movement
+		addOpt(&t.TrackerTicketsRaised, m.TrackerTicketsRaised)
+		addOpt(&t.TrackerTicketsClosed, m.TrackerTicketsClosed)
+		told = appendMedian(told, m.MedianDaysTold, m.MedianDaysToldN)
+		toStart = appendMedian(toStart, m.MedianDaysToStart, m.MedianDaysToStartN)
+		worked = appendMedian(worked, m.MedianDaysWorked, m.MedianDaysWorkedN)
 		t.Baseline += m.Baseline
 		t.Opened += m.Opened
 		t.CVEsResolved += m.CVEsResolved
@@ -128,6 +147,9 @@ func NewTrendReport(rep history.Report) TrendReport {
 	if med, ok := weightedMedian(medians); ok {
 		out.Movement.MedianDaysToResolve = &med
 	}
+	out.Movement.MedianDaysTold, out.Movement.MedianDaysToldN = combined(told)
+	out.Movement.MedianDaysToStart, out.Movement.MedianDaysToStartN = combined(toStart)
+	out.Movement.MedianDaysWorked, out.Movement.MedianDaysWorkedN = combined(worked)
 	if len(out.Movement.LapseReasons) == 0 {
 		out.Movement.LapseReasons = nil
 	}
@@ -147,6 +169,35 @@ func sumCounts(into map[string]history.Counts, from map[string]history.Counts) {
 		c.ResolvedTicketed += v.ResolvedTicketed
 		into[k] = c
 	}
+}
+
+func addOpt(into **int, v *int) {
+	if v == nil {
+		return
+	}
+	if *into == nil {
+		*into = new(int)
+	}
+	**into += *v
+}
+
+func appendMedian(ws []weighted, med *float64, n int) []weighted {
+	if med == nil || n == 0 {
+		return ws
+	}
+	return append(ws, weighted{*med, n})
+}
+
+func combined(ws []weighted) (*float64, int) {
+	med, ok := weightedMedian(ws)
+	if !ok {
+		return nil, 0
+	}
+	n := 0
+	for _, w := range ws {
+		n += w.weight
+	}
+	return &med, n
 }
 
 type weighted struct {
@@ -245,9 +296,46 @@ func trendSummary(r TrendReport) []string {
 	if m.MedianDaysToResolve != nil {
 		out = append(out, fmt.Sprintf("Median time from first seen to resolved, over resolved items only: %.0f days.", *m.MedianDaysToResolve))
 	}
+	if s := cycleTimeSentence(m); s != "" {
+		out = append(out, s)
+	}
+	if m.TrackerTicketsRaised != nil {
+		out = append(out, fmt.Sprintf("By the tracker's own dates, %d tickets were raised and %d closed in this range, including any raised by hand or before the record began; those are tickets, not resolutions, and carry no rule or signal.",
+			*m.TrackerTicketsRaised, deref(m.TrackerTicketsClosed)))
+	}
+	if n := r.Open.ClosedTicketFindingOpen; n != nil && *n > 0 {
+		out = append(out, fmt.Sprintf("%d open items had their ticket closed while the finding stayed open and have no ticket now (days since the close: %s).",
+			*n, describeCounts(r.Open.ClosedTicketAgeDays)))
+	}
 	out = append(out, fmt.Sprintf("Open now: %d items, %d ticketed%s.", r.Open.Items, r.Open.Ticketed,
 		map[bool]string{true: fmt.Sprintf(", %d absent from the latest run and inside the grace period", r.Open.Missing), false: ""}[r.Open.Missing > 0]))
 	return out
+}
+
+// cycleTimeSentence states the three intervals separately, because one number for
+// all three would flatter whichever part a team is good at.
+func cycleTimeSentence(m TrendTotals) string {
+	var parts []string
+	add := func(med *float64, n int, what string) {
+		if med != nil {
+			parts = append(parts, fmt.Sprintf("%s %.1f days (over %d tickets)", what, *med, n))
+		}
+	}
+	add(m.MedianDaysTold, m.MedianDaysToldN, "finding to ticket")
+	add(m.MedianDaysToStart, m.MedianDaysToStartN, "ticket to first In Progress")
+	add(m.MedianDaysWorked, m.MedianDaysWorkedN, "In Progress to resolved")
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Median cycle time for tickets resolved in this range, from the tracker's dates: " + joinAnd(parts) +
+		". Each interval blames something different: nobody told, told but not prioritised, and being worked."
+}
+
+func deref(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func describeCounts(m map[string]int) string {

@@ -461,6 +461,13 @@ paths:
         difference is work that landed by another route. `lapsed` is never
         remediation. `tickets_closed_finding_open` is a ticket somebody closed while
         the image still ran. See docs/history.md.
+
+        When the tracker has been read, `tracker` is present and marks the fields
+        that come from it (`source: tracker`): `tracker_tickets_raised`,
+        `tracker_tickets_closed` and the three cycle-time medians per period, and
+        `closed_ticket_finding_open` on `open`. Those count tickets by the tracker's
+        own dates, including tickets raised by hand or before the record began. They
+        are tickets, not resolutions, and carry no rule or signal.
       parameters:
         - name: since
           in: query
@@ -796,9 +803,34 @@ components:
             ticketed: { type: integer }
             missing: { type: integer, description: Open items absent from the latest assessment but inside the grace period }
             tickets_overdue_open: { type: integer, description: Distinct open tickets whose recorded due date has passed. Per ticket, not per item }
+            closed_ticket_finding_open:
+              type: integer
+              description: >-
+                From the tracker. Open items whose latest ticket was resolved while the item stayed open, with no
+                ticket covering it now. Absent when the tracker has never been read
+            closed_ticket_age_days:
+              type: object
+              description: Those items by days since their ticket closed, in the buckets age_days uses
+              additionalProperties: { type: integer }
             by_signal: { type: object, additionalProperties: { type: integer } }
             age_days: { type: object, additionalProperties: { type: integer } }
+        tracker: { $ref: "#/components/schemas/HistoryTracker" }
         caveats: { type: array, items: { type: string } }
+    HistoryTracker:
+      type: object
+      description: >-
+        Present when tickets have been read from the tracker. Marks the fields that come from it rather than from
+        the record: tickets, whoever raised them, with no rule or signal attached.
+      properties:
+        source: { type: string, enum: [tracker] }
+        tickets: { type: integer, description: Tickets the index holds }
+        first_created: { type: string, format: date-time, description: The oldest indexed ticket. Periods that end before it carry no tracker counts }
+        last_synced: { type: string, format: date-time }
+        started_from_status_category:
+          type: integer
+          description: >-
+            Tickets behind this report's cycle times whose first In Progress is their status category change date,
+            because the change history could not be read
     HistoryRiskStats:
       type: object
       properties:
@@ -856,6 +888,22 @@ components:
         epss_decayed: { type: integer, description: Left the EPSS bucket by score decay, not by a patch }
         became_known_exploited: { type: integer }
         median_days_to_resolve: { type: number, description: Over resolved items only }
+        tracker_tickets_raised:
+          type: integer
+          description: >-
+            From the tracker. Tickets created this period on the configured projects and issue type, by the tracker's
+            own date. Tickets, not resolutions. Absent for a period that ended before the first indexed ticket
+        tracker_tickets_closed: { type: integer, description: From the tracker. Tickets resolved this period, by the tracker's resolution date }
+        median_days_told:
+          type: number
+          description: >-
+            From the tracker. Median days from the work item opening (as the record first saw it) to the ticket being
+            raised, over tickets resolved this period whose item is known
+        median_days_told_n: { type: integer, description: Tickets median_days_told rests on }
+        median_days_to_start: { type: number, description: From the tracker. Median days from raised to first In Progress, over tickets resolved this period }
+        median_days_to_start_n: { type: integer }
+        median_days_worked: { type: number, description: From the tracker. Median days from first In Progress to resolved, over tickets resolved this period }
+        median_days_worked_n: { type: integer }
         lapse_reasons: { type: object, additionalProperties: { type: integer } }
         by_signal: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryCounts" } }
         by_rule: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryCounts" } }

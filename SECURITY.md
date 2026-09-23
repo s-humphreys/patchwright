@@ -20,7 +20,7 @@ requests, and does not change cluster state.
 | CVE metadata, EPSS scores, KEV membership | Public | In memory only |
 | Jira credentials, API token | **Secret** | Environment variables from Secrets |
 | Registry credentials for base-image scanning | **Secret** | Minted per scan, written to a private file under `/tmp` for the length of one scan, then deleted |
-| History: work items, when they opened and closed, tickets, evidence | Internal, security record | PostgreSQL, only when `PATCHWRIGHT_HISTORY_DSN` is set; pruned to `history.retention` |
+| History: work items, when they opened and closed, tickets and their tracker dates and status, evidence | Internal, security record | PostgreSQL, only when `PATCHWRIGHT_HISTORY_DSN` is set; pruned to `history.retention` |
 | History database connection string | **Secret** | Environment variable from a Secret; never logged or written |
 
 No personal data is processed. Nothing is written to disk except Trivy's cache and
@@ -30,8 +30,9 @@ and rebuilds it on refresh.
 
 **With [history](docs/history.md) enabled that changes.** A PostgreSQL database then
 holds an append-only record of how work items moved between assessments: image
-references, CVE identifiers, team names, versions, ticket keys, and when each item
-opened and closed. That is a history of which services carried exploitable
+references, CVE identifiers, team names, versions, ticket keys, when each item
+opened and closed, and each ticket's created, In Progress, resolved and due dates as
+the tracker holds them. That is a history of which services carried exploitable
 vulnerabilities and for how long, useful to an attacker and subject to whatever
 retention applies to security records. Still no personal data. Retention is a
 required setting applied after every assessment; the connection string is read from

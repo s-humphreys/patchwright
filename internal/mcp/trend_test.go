@@ -103,3 +103,51 @@ func TestTrendReportEmptyRange(t *testing.T) {
 		t.Errorf("empty = %+v", r)
 	}
 }
+
+func TestTrendReportCycleTime(t *testing.T) {
+	rep := trendFixture()
+	f := func(v float64) *float64 { return &v }
+	i := func(v int) *int { return &v }
+	rep.Movement[1].TrackerTicketsRaised, rep.Movement[1].TrackerTicketsClosed = i(4), i(1)
+	rep.Movement[1].MedianDaysTold, rep.Movement[1].MedianDaysToldN = f(2), 1
+	rep.Movement[1].MedianDaysWorked, rep.Movement[1].MedianDaysWorkedN = f(10), 1
+	rep.Movement[2].TrackerTicketsRaised, rep.Movement[2].TrackerTicketsClosed = i(6), i(5)
+	rep.Movement[2].MedianDaysTold, rep.Movement[2].MedianDaysToldN = f(4), 3
+	rep.Movement[2].MedianDaysToStart, rep.Movement[2].MedianDaysToStartN = f(1.5), 4
+	n := 2
+	rep.Open.ClosedTicketFindingOpen, rep.Open.ClosedTicketAgeDays = &n, map[string]int{"0-7": 1, "30-90": 1}
+
+	r := NewTrendReport(rep)
+	m := r.Movement
+	if m.TrackerTicketsRaised == nil || *m.TrackerTicketsRaised != 10 || *m.TrackerTicketsClosed != 6 {
+		t.Errorf("tracker totals = %v/%v, want 10/6", m.TrackerTicketsRaised, m.TrackerTicketsClosed)
+	}
+	// Weighted by the tickets each rests on: one at 2 days, three at 4.
+	if m.MedianDaysTold == nil || *m.MedianDaysTold != 4 || m.MedianDaysToldN != 4 {
+		t.Errorf("told = %v over %d, want 4 over 4", m.MedianDaysTold, m.MedianDaysToldN)
+	}
+	if m.MedianDaysToStart == nil || *m.MedianDaysToStart != 1.5 || m.MedianDaysWorkedN != 1 {
+		t.Errorf("to start / worked = %+v", m)
+	}
+	joined := strings.Join(r.Summary, " ")
+	for _, want := range []string{
+		"finding to ticket 4.0 days (over 4 tickets)", "ticket to first In Progress 1.5 days (over 4 tickets)",
+		"In Progress to resolved 10.0 days (over 1 tickets)", "10 tickets were raised and 6 closed",
+		"tickets, not resolutions", "2 open items had their ticket closed while the finding stayed open",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("summary should say %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestTrendReportWithoutTheTrackerSaysNothingOfIt(t *testing.T) {
+	r := NewTrendReport(trendFixture())
+	if r.Movement.TrackerTicketsRaised != nil || r.Movement.MedianDaysTold != nil {
+		t.Errorf("no tracker data: %+v", r.Movement)
+	}
+	joined := strings.Join(r.Summary, " ")
+	if strings.Contains(joined, "cycle time") || strings.Contains(joined, "tracker") {
+		t.Errorf("summary mentions the tracker without data: %s", joined)
+	}
+}

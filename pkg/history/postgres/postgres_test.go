@@ -28,10 +28,10 @@ func testStore(t *testing.T) *Store {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = s.pool.Exec(ctx, `TRUNCATE events, items, assessments RESTART IDENTITY`)
+		_, _ = s.pool.Exec(ctx, `TRUNCATE events, items, assessments, tickets RESTART IDENTITY`)
 		s.Close()
 	})
-	if _, err := s.pool.Exec(ctx, `TRUNCATE events, items, assessments RESTART IDENTITY`); err != nil {
+	if _, err := s.pool.Exec(ctx, `TRUNCATE events, items, assessments, tickets RESTART IDENTITY`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return s
@@ -51,7 +51,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 	var v int
-	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 4 {
+	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 5 {
 		t.Errorf("schema version = %d (%v)", v, err)
 	}
 }
@@ -315,5 +315,78 @@ func TestTicketDueRoundTripsAndIsNeverMoved(t *testing.T) {
 	}
 	if raised != 2 {
 		t.Errorf("recorded %d DVOP-1 creates, want 2", raised)
+	}
+}
+
+// Tickets are rewritten from the tracker on every sync, except that a match to an
+// item survives a sync that matched nothing, and a first In Progress read from the
+// change history is not replaced by the status-category fallback.
+func TestTrackerTicketsUpsertReadAndPrune(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	jul := func(d int) time.Time { return time.Date(2026, 7, d, 9, 0, 0, 0, time.UTC) }
+	ptrT := func(t time.Time) *time.Time { return &t }
+
+	idx, err := s.TicketsIndexed(ctx)
+	if err != nil || idx.Tickets != 0 {
+		t.Fatalf("empty index = %+v (%v)", idx, err)
+	}
+	opened := jul(1)
+	if err := s.UpsertTickets(ctx, []history.TrackerTicket{
+		{Key: "DVOP-1", Project: "DVOP", ItemKey: "eng|orders|app|svc", ItemOpenedAt: &opened, CreatedAt: jul(2),
+			StartedAt: ptrT(jul(3)), StartedFrom: history.StartedFromChangelog, Status: "In Progress",
+			StatusCategory: "indeterminate", LastSeenAt: jul(3), Raw: []byte(`{"customfield_1":["app"]}`)},
+		{Key: "DVOP-2", Project: "DVOP", CreatedAt: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+			ResolvedAt: ptrT(time.Date(2026, 3, 9, 0, 0, 0, 0, time.UTC)), Status: "Done", StatusCategory: "done", LastSeenAt: jul(3)},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// The next sync: DVOP-1 resolved, its item closed so nothing matched it, and the
+	// history could not be read so only the fallback start is known.
+	due := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
+	if err := s.UpsertTickets(ctx, []history.TrackerTicket{
+		{Key: "DVOP-1", Project: "DVOP", CreatedAt: jul(2), StartedAt: ptrT(jul(8)), StartedFrom: history.StartedFromStatusCategory,
+			ResolvedAt: ptrT(jul(10)), DueAt: &due, Status: "Done", StatusCategory: "done", LastSeenAt: jul(11)},
+	}); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+
+	got, err := s.Tickets(ctx, jul(1), jul(31))
+	if err != nil {
+		t.Fatalf("tickets: %v", err)
+	}
+	if len(got) != 1 || got[0].Key != "DVOP-1" {
+		t.Fatalf("July window = %+v, want DVOP-1 only: DVOP-2 was created and resolved in March and matched nothing", got)
+	}
+	d := got[0]
+	if d.ItemKey != "eng|orders|app|svc" || d.ItemOpenedAt == nil || !d.ItemOpenedAt.Equal(opened) {
+		t.Errorf("the item match was forgotten: %q %v", d.ItemKey, d.ItemOpenedAt)
+	}
+	if d.StartedAt == nil || !d.StartedAt.Equal(jul(3)) || d.StartedFrom != history.StartedFromChangelog {
+		t.Errorf("started = %v from %q, want the changelog's %v", d.StartedAt, d.StartedFrom, jul(3))
+	}
+	if d.ResolvedAt == nil || !d.ResolvedAt.Equal(jul(10)) || d.DueAt == nil || !d.DueAt.Equal(due) || d.StatusCategory != "done" {
+		t.Errorf("tracker fields not rewritten: %+v", d)
+	}
+
+	// A resolved ticket matched to an item is read whatever the window, so the open
+	// summary can date a close older than the range.
+	got, err = s.Tickets(ctx, jul(20), jul(31))
+	if err != nil || len(got) != 1 || got[0].Key != "DVOP-1" {
+		t.Errorf("a matched close outside the window should still be read: %+v (%v)", got, err)
+	}
+
+	idx, err = s.TicketsIndexed(ctx)
+	if err != nil || idx.Tickets != 2 || !idx.FirstCreated.Equal(time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)) || !idx.LastSynced.Equal(jul(11)) {
+		t.Errorf("index = %+v (%v)", idx, err)
+	}
+
+	p, err := s.Prune(ctx, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil || p.Tickets != 1 {
+		t.Fatalf("prune = %+v (%v), want DVOP-2 only: resolved before the cutoff", p, err)
+	}
+	if idx, _ := s.TicketsIndexed(ctx); idx.Tickets != 1 {
+		t.Errorf("after prune the index holds %d tickets, want 1", idx.Tickets)
 	}
 }

@@ -245,6 +245,7 @@ func (s *Server) Refresh(ctx context.Context) {
 		if published {
 			s.recordHistory(ctx, snap, started)
 			s.recordTicketWrites(ctx, s.autoReconcile(ctx))
+			s.syncTracker(ctx)
 		}
 	}()
 

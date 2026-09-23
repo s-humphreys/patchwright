@@ -530,7 +530,120 @@ func (s *Store) Prune(ctx context.Context, before time.Time) (history.Pruned, er
 		return p, fmt.Errorf("history: prune assessments: %w", err)
 	}
 	p.Assessments = tag.RowsAffected()
+	// Open tickets are current state like open items; a resolved one is history.
+	tag, err = tx.Exec(ctx, `DELETE FROM tickets WHERE resolved_at IS NOT NULL AND resolved_at < $1`, before)
+	if err != nil {
+		return p, fmt.Errorf("history: prune tickets: %w", err)
+	}
+	p.Tickets = tag.RowsAffected()
 	return p, tx.Commit(ctx)
+}
+
+// UpsertTickets writes tickets read from the tracker in one transaction.
+func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTicket) error {
+	if len(tickets) == 0 {
+		return nil
+	}
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("history: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	batch := &pgx.Batch{}
+	for _, t := range tickets {
+		raw := []byte(t.Raw)
+		if len(raw) == 0 {
+			raw = []byte("{}")
+		}
+		var itemKey *string
+		if t.ItemKey != "" {
+			k := t.ItemKey
+			itemKey = &k
+		}
+		// A sync that matched nothing must not forget an earlier match: the item may
+		// simply have closed since. A first In Progress read from the change history
+		// is not replaced by the weaker status-category fallback.
+		batch.Queue(`INSERT INTO tickets
+			(key, project, item_key, item_opened_at, created_at, started_at, started_from, resolved_at, due_at,
+			 status, status_category, last_seen_at, raw)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			ON CONFLICT (key) DO UPDATE SET
+				project = EXCLUDED.project,
+				item_key = COALESCE(EXCLUDED.item_key, tickets.item_key),
+				item_opened_at = CASE WHEN EXCLUDED.item_key IS NULL THEN tickets.item_opened_at ELSE EXCLUDED.item_opened_at END,
+				created_at = EXCLUDED.created_at,
+				started_at = CASE WHEN tickets.started_from = 'changelog' AND EXCLUDED.started_from <> 'changelog'
+					THEN tickets.started_at ELSE COALESCE(EXCLUDED.started_at, tickets.started_at) END,
+				started_from = CASE WHEN tickets.started_from = 'changelog' AND EXCLUDED.started_from <> 'changelog'
+					THEN tickets.started_from WHEN EXCLUDED.started_at IS NULL THEN tickets.started_from ELSE EXCLUDED.started_from END,
+				resolved_at = EXCLUDED.resolved_at,
+				due_at = EXCLUDED.due_at,
+				status = EXCLUDED.status,
+				status_category = EXCLUDED.status_category,
+				last_seen_at = EXCLUDED.last_seen_at,
+				raw = EXCLUDED.raw`,
+			t.Key, t.Project, itemKey, t.ItemOpenedAt, t.CreatedAt, t.StartedAt, t.StartedFrom, t.ResolvedAt, t.DueAt,
+			t.Status, t.StatusCategory, t.LastSeenAt, raw)
+	}
+	br := tx.SendBatch(ctx, batch)
+	for _, t := range tickets {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
+			return fmt.Errorf("history: upsert ticket %s: %w", t.Key, err)
+		}
+	}
+	if err := br.Close(); err != nil {
+		return fmt.Errorf("history: upsert tickets: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// Tickets returns the tickets a report over [since, until) reads.
+func (s *Store) Tickets(ctx context.Context, since, until time.Time) ([]history.TrackerTicket, error) {
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	rows, err := s.pool.Query(ctx, `SELECT key, project, COALESCE(item_key, ''), item_opened_at, created_at, started_at,
+		started_from, resolved_at, due_at, status, status_category, last_seen_at
+		FROM tickets
+		WHERE (created_at >= $1 AND created_at < $2)
+		   OR (resolved_at >= $1 AND resolved_at < $2)
+		   OR (resolved_at IS NOT NULL AND item_key IS NOT NULL)
+		ORDER BY created_at, key`, since, until)
+	if err != nil {
+		return nil, fmt.Errorf("history: tickets: %w", err)
+	}
+	defer rows.Close()
+	var out []history.TrackerTicket
+	for rows.Next() {
+		var t history.TrackerTicket
+		if err := rows.Scan(&t.Key, &t.Project, &t.ItemKey, &t.ItemOpenedAt, &t.CreatedAt, &t.StartedAt,
+			&t.StartedFrom, &t.ResolvedAt, &t.DueAt, &t.Status, &t.StatusCategory, &t.LastSeenAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// TicketsIndexed reports what the tickets table holds.
+func (s *Store) TicketsIndexed(ctx context.Context) (history.TicketIndexState, error) {
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	var st history.TicketIndexState
+	var first, last *time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*), MIN(created_at), MAX(last_seen_at) FROM tickets`).
+		Scan(&st.Tickets, &first, &last); err != nil {
+		return st, fmt.Errorf("history: tickets indexed: %w", err)
+	}
+	if first != nil {
+		st.FirstCreated = *first
+	}
+	if last != nil {
+		st.LastSynced = *last
+	}
+	return st, nil
 }
 
 var _ history.Store = (*Store)(nil)
