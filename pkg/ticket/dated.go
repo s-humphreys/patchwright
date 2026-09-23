@@ -153,7 +153,9 @@ func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, within time.D
 		q := url.Values{}
 		q.Set("jql", jql)
 		q.Set("fields", "summary,created,resolutiondate,duedate,status,statuscategorychangedate,"+jiraImageFieldName(cfg))
-		q.Set("maxResults", "100")
+		// Half the usual page: each issue carries its change history, and a
+		// project with long-lived tickets makes a hundred of them a large body.
+		q.Set("maxResults", "50")
 		if categories != nil {
 			q.Set("expand", "changelog")
 		}
