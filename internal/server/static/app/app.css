@@ -389,6 +389,7 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
   .stacked .seg { display: block; height: 100%; }
   .chart-legend { margin-top: .3rem; font-size: .78rem; color: var(--muted); }
   .chart-key { margin-right: .6rem; white-space: nowrap; }
+  .chart-key:last-child { margin-right: 0; }
   .chart-swatch { display: inline-block; width: .6rem; height: .6rem; margin-right: .25rem;
     border-radius: 2px; vertical-align: baseline; }
   .seg.age-0, .chart-swatch.age-0 { background: var(--ok); }
