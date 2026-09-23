@@ -100,3 +100,16 @@ export function ago(iso, now = Date.now()) {
   return rtf.format(Math.round(v), "year");
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * utcDay renders a UTC day as "1 Sep 2026", or "1 Sep" without the year. Spelled
+ * out by hand because toLocaleDateString's month abbreviations differ between ICU
+ * builds ("Sep" or "Sept"), and the page and its tests should agree everywhere.
+ *
+ * @param {Date} d
+ */
+export function utcDay(d, year = true) {
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}${year ? ` ${d.getUTCFullYear()}` : ""}`;
+}

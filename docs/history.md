@@ -221,7 +221,9 @@ are moving, then what to do next. It shows the caveats first, the risk direction
 period, opened against resolved against lapsed, the four-bucket delineation, the
 per-signal, per-rule and per-team splits, and the queue as the record holds it now.
 Once the tracker has been read, the ticketed panel adds a cycle-time table and the
-tracker's own ticket counts, each only for the periods that have them.
+tracker's own ticket counts, each only for the periods that have them, and a chart of
+tickets created per day whatever the bucket: click a day, or pick it from the buttons
+under the chart, for the tickets behind it.
 A lookback and a bucket selector carry in the URL, so a view can be linked. With two
 or more periods the direction and movement panels draw interactive charts (hover for
 each period's values) using a vendored copy of uPlot; with one period a chart would

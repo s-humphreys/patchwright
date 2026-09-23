@@ -513,3 +513,17 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
 .chart-slot .uplot { font: inherit; color: inherit; }
 .chart-slot .u-legend { font-size: .8rem; color: var(--muted); }
 
+/* Tickets created per day: the chart, a button per day for the keyboard, and the
+   day's tickets under both. */
+.day-picks { list-style: none; margin: .4rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .3rem; }
+.day-pick { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
+  padding: .1rem .45rem; font: inherit; font-size: .8rem; cursor: pointer; font-variant-numeric: tabular-nums; }
+.day-pick .n { color: var(--muted); margin-left: .2rem; }
+.day-pick:hover { background: var(--hover); }
+.day-pick[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--card)); }
+.day-pick[aria-pressed="true"] .n { color: var(--fg); }
+.ticket-day-list { margin: .6rem 0 0; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+.ticket-day-head { display: flex; align-items: center; gap: .8rem; margin-bottom: .3rem; font-size: .9rem; }
+.ticket-day-head .linkish { margin-left: auto; }
+.ticket-day td.wrap { white-space: normal; min-width: 16rem; }
+.ticket-day a { color: var(--accent); }
