@@ -155,8 +155,17 @@ func (m *memStore) First(context.Context) (time.Time, bool, error) {
 	return m.assessments[0].FinishedAt, true, nil
 }
 
-func (m *memStore) Prune(context.Context, time.Time) (history.Pruned, error) {
-	return history.Pruned{}, nil
+// Prune only mirrors the tickets part of the postgres store: nothing here reads
+// pruned events or items back.
+func (m *memStore) Prune(_ context.Context, before time.Time) (history.Pruned, error) {
+	var p history.Pruned
+	for k, t := range m.tickets {
+		if t.ResolvedAt != nil && t.ResolvedAt.Before(before) {
+			delete(m.tickets, k)
+			p.Tickets++
+		}
+	}
+	return p, nil
 }
 func (m *memStore) Close() {}
 
@@ -164,22 +173,34 @@ func (m *memStore) UpsertTickets(_ context.Context, tickets []history.TrackerTic
 	if m.err != nil {
 		return m.err
 	}
+	// The same merge as the postgres upsert: an earlier match survives a sync that
+	// matched nothing, and a changelog start survives a weaker or missing one.
 	for _, t := range tickets {
-		if prev, ok := m.tickets[t.Key]; ok && t.ItemKey == "" {
-			t.ItemKey, t.ItemOpenedAt = prev.ItemKey, prev.ItemOpenedAt
+		if prev, ok := m.tickets[t.Key]; ok {
+			if t.ItemKey == "" {
+				t.ItemKey, t.ItemOpenedAt = prev.ItemKey, prev.ItemOpenedAt
+			}
+			keepStart := (prev.StartedFrom == history.StartedFromChangelog && t.StartedFrom != history.StartedFromChangelog) ||
+				t.StartedAt == nil
+			if keepStart {
+				t.StartedAt, t.StartedFrom = prev.StartedAt, prev.StartedFrom
+			}
 		}
 		m.tickets[t.Key] = t
 	}
 	return nil
 }
 
-func (m *memStore) Tickets(context.Context, time.Time, time.Time) ([]history.TrackerTicket, error) {
+func (m *memStore) Tickets(_ context.Context, since, until time.Time) ([]history.TrackerTicket, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+	in := func(t time.Time) bool { return !t.Before(since) && t.Before(until) }
 	var out []history.TrackerTicket
 	for _, t := range m.tickets {
-		out = append(out, t)
+		if in(t.CreatedAt) || (t.ResolvedAt != nil && (in(*t.ResolvedAt) || t.ItemKey != "")) {
+			out = append(out, t)
+		}
 	}
 	return out, nil
 }
