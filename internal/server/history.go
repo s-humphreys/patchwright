@@ -390,7 +390,7 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	if tr := rep.Tracker; tr != nil {
 		rep.Caveats = append(rep.Caveats,
 			"tracker_tickets_raised and tracker_tickets_closed come from the tracker, not the record: every ticket on the "+
-				"configured projects and issue type by its own created and resolution dates, including tickets raised by hand "+
+				"routes' epics by its own created and resolution dates, including tickets raised by hand on those epics "+
 				"or before the record began. They are tickets, not resolutions, and carry no rule or signal",
 			"cycle times are medians in days over the tickets resolved in each period whose two endpoints are known; "+
 				"the finding's opening is when the record first saw it, so a ticket on an item already open when the record "+
