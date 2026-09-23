@@ -38,8 +38,9 @@ type Store interface {
 	// than before, and tracker tickets resolved before it. It reports what it
 	// removed.
 	Prune(ctx context.Context, before time.Time) (Pruned, error)
-	// UpsertTickets writes tickets read from the tracker, keyed by issue key. A
-	// ticket that matched no item keeps the item an earlier write matched it to.
+	// UpsertTickets writes tickets read from the tracker, keyed by issue key. The
+	// item a ticket was first matched to is held: a later write neither clears it
+	// nor moves it to another item.
 	UpsertTickets(ctx context.Context, tickets []TrackerTicket) error
 	// Tickets returns the tickets created or resolved in [since, until), and every
 	// resolved ticket matched to an item, whose close the open summary dates.

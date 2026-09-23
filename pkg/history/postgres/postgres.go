@@ -562,17 +562,19 @@ func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTick
 			k := t.ItemKey
 			itemKey = &k
 		}
-		// A sync that matched nothing must not forget an earlier match: the item may
-		// simply have closed since. A first In Progress read from the change history
-		// is not replaced by the weaker status-category fallback.
+		// A match is held once made. A sync that matched nothing must not forget it,
+		// since the item may simply have closed; and a later sync must not move it to
+		// a newer span of the same repository, because the ticket was raised about
+		// the span open when it was first seen. A first In Progress read from the
+		// change history is not replaced by the weaker status-category fallback.
 		batch.Queue(`INSERT INTO tickets
 			(key, project, item_key, item_opened_at, created_at, started_at, started_from, resolved_at, due_at,
 			 status, status_category, last_seen_at, raw)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			ON CONFLICT (key) DO UPDATE SET
 				project = EXCLUDED.project,
-				item_key = COALESCE(EXCLUDED.item_key, tickets.item_key),
-				item_opened_at = CASE WHEN EXCLUDED.item_key IS NULL THEN tickets.item_opened_at ELSE EXCLUDED.item_opened_at END,
+				item_key = COALESCE(tickets.item_key, EXCLUDED.item_key),
+				item_opened_at = CASE WHEN tickets.item_key IS NULL THEN EXCLUDED.item_opened_at ELSE tickets.item_opened_at END,
 				created_at = EXCLUDED.created_at,
 				started_at = CASE WHEN tickets.started_from = 'changelog' AND EXCLUDED.started_from <> 'changelog'
 					THEN tickets.started_at ELSE COALESCE(EXCLUDED.started_at, tickets.started_at) END,

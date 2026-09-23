@@ -173,11 +173,11 @@ func (m *memStore) UpsertTickets(_ context.Context, tickets []history.TrackerTic
 	if m.err != nil {
 		return m.err
 	}
-	// The same merge as the postgres upsert: an earlier match survives a sync that
-	// matched nothing, and a changelog start survives a weaker or missing one.
+	// The same merge as the postgres upsert: a match is held once made, and a
+	// changelog start survives a weaker or missing one.
 	for _, t := range tickets {
 		if prev, ok := m.tickets[t.Key]; ok {
-			if t.ItemKey == "" {
+			if prev.ItemKey != "" {
 				t.ItemKey, t.ItemOpenedAt = prev.ItemKey, prev.ItemOpenedAt
 			}
 			keepStart := (prev.StartedFrom == history.StartedFromChangelog && t.StartedFrom != history.StartedFromChangelog) ||

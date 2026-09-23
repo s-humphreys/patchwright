@@ -352,8 +352,15 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	if err != nil {
 		return history.Report{}, err
 	}
+	periods := history.Periods(rng)
 	if idx.Tickets > 0 {
-		tickets, err := store.Tickets(ctx, rng.Since, rng.Until)
+		// The first period is calendar-aligned and can start before the range, and a
+		// tracker count labelled with a month should cover the whole month.
+		from := rng.Since
+		if len(periods) > 0 && periods[0].Start.Before(from) {
+			from = periods[0].Start
+		}
+		tickets, err := store.Tickets(ctx, from, rng.Until)
 		if err != nil {
 			return history.Report{}, err
 		}
@@ -370,6 +377,11 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	if rep.Baseline > 0 {
 		rep.Caveats = append(rep.Caveats, fmt.Sprintf(
 			"%d work items were already open when the record began and are counted as the baseline, not as opened", rep.Baseline))
+	}
+	if len(periods) > 0 && periods[0].Start.Before(rng.Since) {
+		rep.Caveats = append(rep.Caveats, fmt.Sprintf(
+			"%s is partial for record-derived counts: it is read from %s, not from its start",
+			periods[0].Period, rng.Since.Format("2006-01-02")))
 	}
 	rep.Caveats = append(rep.Caveats,
 		"counts are work items, classified by how each looked when the record first saw it",

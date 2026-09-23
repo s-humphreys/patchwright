@@ -111,8 +111,8 @@ func SyncTickets(ctx context.Context, store Store, fetch TicketFetcher, full boo
 // MatchTickets attributes each ticket to an open work item whose repository is one
 // of the ticket's images, the way reconciliation matches a ticket to findings.
 // Where several items share a repository, the one whose snapshot already lists the
-// ticket wins, then the one opened first. A ticket that matches nothing keeps
-// whatever an earlier sync matched it to.
+// ticket wins, then the one opened first. The store holds the first match it was
+// given, so a later sync neither clears it nor moves it to a newer span.
 func MatchTickets(tickets []TrackerTicket, open []State) []TrackerTicket {
 	byRepo := map[string][]State{}
 	for _, st := range sortedStates(open) {

@@ -103,6 +103,15 @@ func ticketStoreContract(t *testing.T, s history.Store) {
 		t.Errorf("tracker fields not rewritten: %+v", d1)
 	}
 
+	// DVOP-1 matched to a newer span of the same repository: the first match holds,
+	// because the ticket was raised about the span open when it was first seen.
+	later := jul(9)
+	upsert(history.TrackerTicket{Key: "DVOP-1", Project: "DVOP", ItemKey: "k1-later", ItemOpenedAt: &later, CreatedAt: jul(2),
+		ResolvedAt: at(jul(10)), StatusCategory: "done", LastSeenAt: jul(11)})
+	if d1 = byKey("DVOP-1"); d1.ItemKey != "k1" || d1.ItemOpenedAt == nil || !d1.ItemOpenedAt.Equal(opened) {
+		t.Errorf("a later match replaced the first: %q %v", d1.ItemKey, d1.ItemOpenedAt)
+	}
+
 	// DVOP-1 again, no start at all this time: the stored one stands.
 	upsert(history.TrackerTicket{Key: "DVOP-1", Project: "DVOP", CreatedAt: jul(2), ResolvedAt: at(jul(10)),
 		StatusCategory: "done", LastSeenAt: jul(11)})
