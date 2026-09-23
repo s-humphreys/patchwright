@@ -902,6 +902,11 @@ func (j *Jira) raw(ctx context.Context, method, path string) ([]byte, error) {
 	return out, nil
 }
 
+// maxResponseBytes bounds a Jira response body. A search page with change
+// histories expanded runs to several megabytes for a project with long-lived
+// tickets, so the cap is a guard against a runaway body, not a size to plan for.
+const maxResponseBytes = 32 << 20
+
 func (j *Jira) do(ctx context.Context, method, path string, body, out any) error {
 	var rdr io.Reader
 	if body != nil {
@@ -949,9 +954,15 @@ func (j *Jira) do(ctx context.Context, method, path string, body, out any) error
 	// worth being able to see.
 	metrics.JiraRequest(jiraOperation(method, path), resp.StatusCode, nil)
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return err
+	}
+	// A body cut at the cap is not a decode error, and must not look like one: the
+	// first symptom of the cap in production was "unexpected end of JSON input" on a
+	// search page whose change histories pushed it past the old 1 MiB.
+	if len(data) > maxResponseBytes {
+		return fmt.Errorf("jira %s %s: response larger than %d MiB", method, path, maxResponseBytes>>20)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Include the body: Jira's field-level validation errors are the useful
