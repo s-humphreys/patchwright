@@ -757,12 +757,20 @@ type TicketWrite struct {
 // TicketEvents attributes ticket writes to the open items whose images they cover.
 // Called after reconciliation, which runs after the lifecycle diff, so the items
 // here are the ones the store holds open for this assessment.
+//
+// A write names its images the way the ticket does, as bare repositories, which is
+// also how a work item is keyed. The full references an item lists are matched too,
+// for a caller that has them; matching on those alone recorded no ticket_raised
+// event at all in production, because a draft never carries a tag or registry.
 func TicketEvents(open []State, writes []TicketWrite, at time.Time) []Event {
 	var out []Event
 	for _, st := range sortedStates(open) {
 		covered := map[string]bool{}
 		for _, img := range st.Current.Images {
 			covered[img] = true
+		}
+		if st.Current.Repository != "" {
+			covered[st.Current.Repository] = true
 		}
 		for _, w := range writes {
 			for _, img := range w.Images {

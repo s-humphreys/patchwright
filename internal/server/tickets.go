@@ -264,7 +264,10 @@ func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 			// Which tracker, now that a deployment can write to several: "created
 			// PROJ-1" is not an audit trail if it cannot say whose board that was.
 			"route", r.Action.Draft.Route,
-			"images", r.Action.Images, "why", r.Action.Why)
+			// A create carries its images on the draft; only an extend lists them
+			// on the action. Logging the action's alone printed null for every
+			// ticket this tool ever raised.
+			"images", writeImages(r.Action), "why", r.Action.Why)
 	}
 	attrs := []any{"source", source}
 	// Every kind, by iteration: a hand-written list drops a new kind silently and
@@ -274,6 +277,13 @@ func auditWrites(ctx context.Context, source string, results []ticket.Result) {
 	}
 	attrs = append(attrs, "already_present", ticket.NoOps(results), "failed", failed)
 	slog.InfoContext(ctx, "ticket reconciliation complete", attrs...)
+}
+
+func writeImages(a ticket.Action) []string {
+	if a.Kind == ticket.ActionCreate {
+		return a.Draft.Images
+	}
+	return a.Images
 }
 
 func (s *Server) viewActions(actions []ticket.Action, results []ticket.Result) []actionView {

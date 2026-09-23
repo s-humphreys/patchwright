@@ -259,6 +259,22 @@ func TestTicketEventsAttributeByImage(t *testing.T) {
 	}
 }
 
+// A ticket draft names bare repositories, never a tag or a registry: this is what a
+// real create looks like, and what the item must be found by.
+func TestTicketEventsAttributeByBareRepository(t *testing.T) {
+	f := view("acr.io/umbraco:1.2.3", "eng", "orders", "high")
+	f.Registry, f.Repository, f.Tag = "acr.io", "umbraco", "1.2.3"
+	other := view("acr.io/other:1", "eng", "orders", "high")
+	other.Registry, other.Repository = "acr.io", "other"
+	a := Snapshots([]sink.FindingView{f}, nil)[0]
+	b := Snapshots([]sink.FindingView{other}, nil)[0]
+	open := []State{openState(1, a, t0), openState(2, b, t0)}
+	events := TicketEvents(open, []TicketWrite{{Key: "DVOP-4475", Action: "create", Images: []string{"umbraco"}}}, t0)
+	if len(events) != 1 || events[0].ItemID != 1 || events[0].Payload.Ticket != "DVOP-4475" {
+		t.Fatalf("want one ticket_raised on the umbraco item, got %+v", events)
+	}
+}
+
 func TestRiskStats(t *testing.T) {
 	items := []Snapshot{{Risk: 10}, {Risk: 30, Priority: "urgent", Signals: []string{"kev"}}, {Risk: 20}}
 	r := Risk(items)
