@@ -51,7 +51,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 	var v int
-	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 5 {
+	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 6 {
 		t.Errorf("schema version = %d (%v)", v, err)
 	}
 }
@@ -333,7 +333,7 @@ func TestTrackerTicketsUpsertReadAndPrune(t *testing.T) {
 	}
 	opened := jul(1)
 	if err := s.UpsertTickets(ctx, []history.TrackerTicket{
-		{Key: "DVOP-1", Project: "DVOP", ItemKey: "eng|orders|app|svc", ItemOpenedAt: &opened, CreatedAt: jul(2),
+		{Key: "DVOP-1", Project: "DVOP", Summary: "Upgrade app to 1.1", ItemKey: "eng|orders|app|svc", ItemOpenedAt: &opened, CreatedAt: jul(2),
 			StartedAt: ptrT(jul(3)), StartedFrom: history.StartedFromChangelog, Status: "In Progress",
 			StatusCategory: "indeterminate", LastSeenAt: jul(3), Raw: []byte(`{"customfield_1":["app"]}`)},
 		{Key: "DVOP-2", Project: "DVOP", CreatedAt: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
@@ -368,6 +368,16 @@ func TestTrackerTicketsUpsertReadAndPrune(t *testing.T) {
 	}
 	if d.ResolvedAt == nil || !d.ResolvedAt.Equal(jul(10)) || d.DueAt == nil || !d.DueAt.Equal(due) || d.StatusCategory != "done" {
 		t.Errorf("tracker fields not rewritten: %+v", d)
+	}
+	// The second read carried no title: the stored one stands.
+	if d.Summary != "Upgrade app to 1.1" {
+		t.Errorf("summary = %q, want the title from the first read", d.Summary)
+	}
+	// A ticket read without a title is NULL, not an empty string that would look
+	// like a title somebody left blank.
+	var summary *string
+	if err := s.pool.QueryRow(ctx, `SELECT summary FROM tickets WHERE key = 'DVOP-2'`).Scan(&summary); err != nil || summary != nil {
+		t.Errorf("DVOP-2 summary = %v (%v), want NULL", summary, err)
 	}
 
 	// A resolved ticket matched to an item is read whatever the window, so the open

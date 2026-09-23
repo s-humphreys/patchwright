@@ -50,6 +50,7 @@ func (ds *datedServer) jira(t *testing.T, routes []config.TicketRoute) *Jira {
 			if r.URL.Query().Get("nextPageToken") == "" {
 				_, _ = w.Write([]byte(`{"issues":[
 				  {"key":"PROJ-1","fields":{
+				     "summary":"Upgrade app to 1.1",
 				     "created":"2026-07-01T10:00:00.000+0100",
 				     "resolutiondate":"2026-07-10T16:30:00.000+0000",
 				     "duedate":"2026-07-15",
@@ -134,7 +135,7 @@ func TestDatedTicketsReadsTheTrackersDates(t *testing.T) {
 			t.Errorf("a backfill has no updated window: %s", jql)
 		}
 	}
-	for _, want := range []string{"created", "resolutiondate", "duedate", "status", "statuscategorychangedate", "customfield_1"} {
+	for _, want := range []string{"summary", "created", "resolutiondate", "duedate", "status", "statuscategorychangedate", "customfield_1"} {
 		if !strings.Contains(ds.fields, want) {
 			t.Errorf("fields %q do not request %s", ds.fields, want)
 		}
@@ -151,6 +152,9 @@ func TestDatedTicketsReadsTheTrackersDates(t *testing.T) {
 	p1 := byKey["PROJ-1"]
 	if p1.Project != "PROJ" || !p1.Created.Equal(at("2026-07-01T09:00:00Z")) {
 		t.Errorf("PROJ-1 project/created = %q %v", p1.Project, p1.Created)
+	}
+	if p1.Summary != "Upgrade app to 1.1" {
+		t.Errorf("PROJ-1 summary = %q", p1.Summary)
 	}
 	// The earliest move into any indeterminate status, not the latest and not the
 	// first entry in the list.

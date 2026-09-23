@@ -220,7 +220,7 @@ a ticket took needs the opposite. It writes nothing to Jira.
 For every ticket on every route's project and issue type, closed ones included, it
 reads when the ticket was **created**, when it **first moved into an In Progress**
 status (any status in Jira's `indeterminate` category, found in the change history),
-when it was **resolved**, and its due date and status. A ticket counts as resolved only
+when it was **resolved**, and its title, due date and status. A ticket counts as resolved only
 while it is in the done category: Jira's resolution date where the workflow sets one,
 otherwise the moment it moved into done. A ticket reopened without its resolution
 being cleared is open work.

@@ -206,6 +206,14 @@ ticketing, not a period in which nothing was raised.
 tracker's resolution date. An item that has been ticketed again since is left out:
 somebody is on it, whatever happened to the first ticket.
 
+`GET /api/v1/history/tickets?since=90d` lists the same tickets by the day they were
+created: every UTC calendar day of the range, a day with none included, each with the
+tickets raised that day, their title, current status, the work item they matched and
+a link to the tracker. It is always per day, whatever bucket the report uses, and the
+first day is counted whole. The title is read with the dates; tickets last read before
+it was stay untitled until the tracker is read in full, so run
+`patchwright history backfill-tickets` once after upgrading.
+
 ## Reading it
 
 The **Analytics** page opens with the report, so the page tells a story: how things

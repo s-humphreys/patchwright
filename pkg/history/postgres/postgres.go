@@ -566,13 +566,15 @@ func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTick
 		// since the item may simply have closed; and a later sync must not move it to
 		// a newer span of the same repository, because the ticket was raised about
 		// the span open when it was first seen. A first In Progress read from the
-		// change history is not replaced by the weaker status-category fallback.
+		// change history is not replaced by the weaker status-category fallback, and
+		// a read without a title does not erase one.
 		batch.Queue(`INSERT INTO tickets
 			(key, project, item_key, item_opened_at, created_at, started_at, started_from, resolved_at, due_at,
-			 status, status_category, last_seen_at, raw)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			 status, status_category, last_seen_at, raw, summary)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14, ''))
 			ON CONFLICT (key) DO UPDATE SET
 				project = EXCLUDED.project,
+				summary = COALESCE(EXCLUDED.summary, tickets.summary),
 				item_key = COALESCE(tickets.item_key, EXCLUDED.item_key),
 				item_opened_at = CASE WHEN tickets.item_key IS NULL THEN EXCLUDED.item_opened_at ELSE tickets.item_opened_at END,
 				created_at = EXCLUDED.created_at,
@@ -587,7 +589,7 @@ func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTick
 				last_seen_at = EXCLUDED.last_seen_at,
 				raw = EXCLUDED.raw`,
 			t.Key, t.Project, itemKey, t.ItemOpenedAt, t.CreatedAt, t.StartedAt, t.StartedFrom, t.ResolvedAt, t.DueAt,
-			t.Status, t.StatusCategory, t.LastSeenAt, raw)
+			t.Status, t.StatusCategory, t.LastSeenAt, raw, t.Summary)
 	}
 	br := tx.SendBatch(ctx, batch)
 	for _, t := range tickets {
@@ -606,7 +608,7 @@ func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTick
 func (s *Store) Tickets(ctx context.Context, since, until time.Time) ([]history.TrackerTicket, error) {
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
-	rows, err := s.pool.Query(ctx, `SELECT key, project, COALESCE(item_key, ''), item_opened_at, created_at, started_at,
+	rows, err := s.pool.Query(ctx, `SELECT key, project, COALESCE(summary, ''), COALESCE(item_key, ''), item_opened_at, created_at, started_at,
 		started_from, resolved_at, due_at, status, status_category, last_seen_at
 		FROM tickets
 		WHERE (created_at >= $1 AND created_at < $2)
@@ -620,7 +622,7 @@ func (s *Store) Tickets(ctx context.Context, since, until time.Time) ([]history.
 	var out []history.TrackerTicket
 	for rows.Next() {
 		var t history.TrackerTicket
-		if err := rows.Scan(&t.Key, &t.Project, &t.ItemKey, &t.ItemOpenedAt, &t.CreatedAt, &t.StartedAt,
+		if err := rows.Scan(&t.Key, &t.Project, &t.Summary, &t.ItemKey, &t.ItemOpenedAt, &t.CreatedAt, &t.StartedAt,
 			&t.StartedFrom, &t.ResolvedAt, &t.DueAt, &t.Status, &t.StatusCategory, &t.LastSeenAt); err != nil {
 			return nil, err
 		}

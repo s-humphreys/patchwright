@@ -16,6 +16,9 @@ import (
 type TrackerTicket struct {
 	Key     string `json:"key"`
 	Project string `json:"project"`
+	// Summary is the ticket's title. Empty for a ticket last read before titles
+	// were, until the tracker is read in full again.
+	Summary string `json:"summary,omitempty"`
 	// ItemKey is the work item the ticket was matched to by image, best effort, and
 	// ItemOpenedAt when that item's current span opened. Empty for a ticket whose
 	// images match nothing open, which is every ticket on an item that closed before
