@@ -83,6 +83,15 @@ func newTicketCmd() *cobra.Command {
 }
 
 func loadTicketConfig(paths []string) (*config.Config, error) {
+	return loadJiraConfig(paths, config.JiraConfig.Validate)
+}
+
+// loadTrackerConfig is loadTicketConfig for a command that only reads the tracker.
+func loadTrackerConfig(paths []string) (*config.Config, error) {
+	return loadJiraConfig(paths, config.JiraConfig.ValidateRead)
+}
+
+func loadJiraConfig(paths []string, validate func(config.JiraConfig) error) (*config.Config, error) {
 	expanded, err := expandConfigPaths(paths)
 	if err != nil {
 		return nil, err
@@ -94,7 +103,7 @@ func loadTicketConfig(paths []string) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.Jira.Validate(); err != nil {
+	if err := validate(cfg.Jira); err != nil {
 		return nil, err
 	}
 	return cfg, nil

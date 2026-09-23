@@ -42,7 +42,7 @@ func newBackfillTicketsCmd() *cobra.Command {
 			if dsn == "" {
 				return fmt.Errorf("%s is not set: there is no history store to backfill", envHistoryDSN)
 			}
-			cfg, err := loadTicketConfig(configPaths)
+			cfg, err := loadTrackerConfig(configPaths)
 			if err != nil {
 				return err
 			}
