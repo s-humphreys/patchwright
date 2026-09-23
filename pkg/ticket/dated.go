@@ -108,9 +108,22 @@ func (j *Jira) statusCategories(ctx context.Context) (map[string]string, error) 
 type changeHistory struct {
 	Created string `json:"created"`
 	Items   []struct {
-		Field string `json:"field"`
-		To    string `json:"to"`
+		// fieldId is the stable identifier; field is the display name, which a
+		// site can translate. Older entries may carry only the name.
+		FieldID string `json:"fieldId"`
+		Field   string `json:"field"`
+		To      string `json:"to"`
 	} `json:"items"`
+}
+
+func (h changeHistory) statusTargets() []string {
+	var out []string
+	for _, it := range h.Items {
+		if it.FieldID == "status" || (it.FieldID == "" && it.Field == "status") {
+			out = append(out, it.To)
+		}
+	}
+	return out
 }
 
 func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, within time.Duration, categories map[string]string) ([]Dated, error) {
@@ -158,11 +171,15 @@ func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, within time.D
 				return nil, err
 			}
 			if categories != nil && issue.Changelog != nil {
-				d.Started = firstStarted(issue.Changelog.Histories, categories)
-				if d.Started == nil && issue.Changelog.Total > len(issue.Changelog.Histories) {
+				// The expanded page is the newest history, so on a truncated one its
+				// earliest move into progress need not be the first: a reopened
+				// ticket has a recent re-entry there and its real start past the end.
+				if issue.Changelog.Total > len(issue.Changelog.Histories) {
 					if d.Started, err = j.firstStartedPaged(ctx, issue.Key, categories); err != nil {
 						return nil, err
 					}
+				} else {
+					d.Started = firstStarted(issue.Changelog.Histories, categories)
 				}
 				if d.Started != nil {
 					d.StartedFrom = StartedFromChangelog
@@ -252,8 +269,8 @@ func statusCategoryChanged(raw json.RawMessage) *time.Time {
 func firstStarted(histories []changeHistory, categories map[string]string) *time.Time {
 	var first *time.Time
 	for _, h := range histories {
-		for _, it := range h.Items {
-			if it.Field != "status" || categories[it.To] != "indeterminate" {
+		for _, to := range h.statusTargets() {
+			if categories[to] != "indeterminate" {
 				continue
 			}
 			t, err := time.Parse(jiraTime, h.Created)

@@ -246,8 +246,9 @@ Three things surprised, and each would have skewed a figure quietly:
 - **"In Progress" is a category, not a status.** Status names are per board, and the
   change history names status ids, not categories. Mapping the ids needs the site's
   status list, one call per sync. The search also expands only the newest page of a
-  ticket's history, which on a busy ticket can miss the first move into progress, so a
-  truncated history is read in full. Where the status list cannot be read, a ticket in
+  ticket's history, newest first, so on a busy ticket the page can hold a later move
+  into progress and not the first. A truncated history is therefore always read in
+  full from the oldest entry, not only when the page shows no start. Where the status list cannot be read, a ticket in
   progress now falls back to its status category change date, which is when it last
   entered the category rather than first, and the report counts and says so.
 - **The finding's opening is only known for work the record saw open.** An item in the
