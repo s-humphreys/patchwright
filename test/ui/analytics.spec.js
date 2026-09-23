@@ -94,7 +94,7 @@ test.describe('analytics page', () => {
   test('cycle time from the tracker sits in the ticketed panel, reaches back before the record, and dates closes on open items', async ({ page }) => {
     await page.goto('/analytics');
     const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
-    await expect(panel.locator('h4')).toHaveText('Cycle time, from the tracker');
+    await expect(panel.locator('h4')).toHaveText(['Cycle time, from the tracker', 'Tickets created, per day']);
     const table = panel.locator('table.cycle-time');
     await expect(table.locator('th')).toHaveText([
       'Period', 'Tickets raised', 'Tickets closed',
@@ -116,6 +116,78 @@ test.describe('analytics page', () => {
     await expect(open).toContainText('3 · since the close: 0-7 days 1 · 30-90 days 2');
   });
 
+  test('tickets created per day: clicking a bar lists that day\'s tickets, and clicking it again hides them', async ({ page }) => {
+    const { tickets } = await fixture('history-tickets.json');
+    const day = tickets.days.findIndex((d) => d.date === '2026-10-06');
+    await page.goto('/analytics');
+    const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
+    await expect(panel.locator('h4', { hasText: 'Tickets created, per day' })).toHaveCount(1);
+    const chart = panel.locator('[data-chart="tickets-per-day"]');
+    await expect(chart.locator('canvas')).toHaveCount(1);
+
+    const list = panel.locator('#ticketDayList');
+    await expect(list).toBeHidden();
+    const over = chart.locator('.u-over');
+    // The panel is below the fold, and the mouse only reaches what is on screen.
+    await over.scrollIntoViewIfNeeded();
+    const box = await over.boundingBox();
+    // One bar per day across the plot, each centred in its slot.
+    const x = box.x + box.width * ((day + 0.5) / tickets.days.length);
+    await page.mouse.move(x, box.y + box.height * 0.8);
+    // Hover names the day and its count, as the other charts do.
+    await expect(chart.locator('.u-legend .u-value').nth(0)).toHaveText('2026-10-06');
+    await expect(chart.locator('.u-legend .u-value').nth(1)).toHaveText('3');
+    await page.mouse.click(x, box.y + box.height * 0.8);
+
+    await expect(list).toBeVisible();
+    await expect(list).toContainText('3 tickets created 6 Oct 2026');
+    await expect(list.locator('tbody tr')).toHaveCount(3);
+    const link = list.locator('a', { hasText: 'DVOP-4351' });
+    await expect(link).toHaveAttribute('href', /\/browse\/DVOP-4351$/);
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener');
+    await expect(list.locator('tbody tr', { hasText: 'DVOP-4352' })).toContainText('engineering|payments|payments-api|payments-api');
+    await expect(panel.locator('.day-pick[data-day="2026-10-06"]')).toHaveAttribute('aria-pressed', 'true');
+
+    await page.mouse.click(x, box.y + box.height * 0.8);
+    await expect(list).toBeHidden();
+    await expect(panel.locator('.day-pick[data-day="2026-10-06"]')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('tickets created per day can be reached from the keyboard, and Close hands focus back', async ({ page }) => {
+    await page.goto('/analytics');
+    const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
+    const picks = panel.locator('.day-pick');
+    // A button per day that had tickets, and none for the empty days.
+    await expect(picks).toHaveCount(6);
+    const pick = panel.locator('.day-pick[data-day="2026-10-20"]');
+    await pick.focus();
+    await page.keyboard.press('Enter');
+    const list = panel.locator('#ticketDayList');
+    await expect(list).toBeVisible();
+    await expect(list).toContainText('Upgrade grafana to 12.3');
+    await list.getByRole('button', { name: 'Close' }).press('Enter');
+    await expect(list).toBeHidden();
+    await expect(pick).toBeFocused();
+  });
+
+  test('no tickets in the range means no tickets chart, and a failed tickets request costs nothing else', async ({ page }) => {
+    const { tickets } = await fixture('history-tickets.json');
+    const empty = { status: { enabled: true }, tickets: { ...tickets, total: 0, days: tickets.days.map((d) => ({ ...d, created: 0, tickets: [] })) } };
+    await page.route('**/api/v1/history/tickets*', (route) => route.fulfill({ json: empty }));
+    await page.goto('/analytics');
+    const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
+    await expect(panel.locator('h4', { hasText: 'Cycle time' })).toHaveCount(1);
+    await expect(panel.locator('[data-chart="tickets-per-day"]')).toHaveCount(0);
+
+    await page.unroute('**/api/v1/history/tickets*');
+    await page.route('**/api/v1/history/tickets*', (route) => route.fulfill({ status: 503, json: { error: 'history store: down' } }));
+    await page.reload();
+    await expect(panel.locator('h4', { hasText: 'Cycle time' })).toHaveCount(1);
+    await expect(panel.locator('[data-chart="tickets-per-day"]')).toHaveCount(0);
+    await expect(page.locator('#history')).not.toContainText('Could not load history');
+  });
+
   test('by rule is gone and the signal table is in work items with EPSS decay apart', async ({ page }) => {
     await page.goto('/analytics');
     await expect(page.locator('h3', { hasText: 'By rule' })).toHaveCount(0);
@@ -132,8 +204,9 @@ test.describe('analytics page', () => {
     await page.route('**/api/v1/history*', (route) => route.fulfill({ json: body }));
     await page.goto('/analytics');
     await expect(page.locator('section.panel', { hasText: 'Direction' })).toContainText('a point, not a direction');
-    await expect(page.locator('.chart-slot')).toHaveCount(0);
-    await expect(page.locator('canvas')).toHaveCount(0);
+    // The tickets chart is per day, not per period, so it is the one chart left.
+    await expect(page.locator('.chart-slot:not([data-chart="tickets-per-day"])')).toHaveCount(0);
+    await expect(page.locator('[data-chart="direction"] canvas, [data-chart="movement"] canvas')).toHaveCount(0);
   });
 
   test('history switched off says so and leaves the rest of the page intact', async ({ page }) => {
@@ -175,6 +248,7 @@ test.describe('analytics page', () => {
     const page = await ctx.newPage();
     await page.goto('/analytics');
     await expect(page.locator('[data-chart="direction"] canvas')).toHaveCount(1);
+    await expect(page.locator('[data-chart="tickets-per-day"] canvas')).toHaveCount(1);
     await ctx.close();
   });
 });

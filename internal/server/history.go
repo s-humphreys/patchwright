@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -228,7 +229,7 @@ func SyncTrackerTickets(ctx context.Context, store history.Store, src TrackerSou
 		out := make([]history.TrackerTicket, 0, len(dated))
 		for _, d := range dated {
 			out = append(out, history.TrackerTicket{
-				Key: d.Key, Project: d.Project, Images: d.Images, CreatedAt: d.Created,
+				Key: d.Key, Project: d.Project, Summary: d.Summary, Images: d.Images, CreatedAt: d.Created,
 				StartedAt: d.Started, StartedFrom: d.StartedFrom, ResolvedAt: d.Resolved, DueAt: d.Due,
 				Status: d.Status, StatusCategory: d.Category, Raw: d.Fields,
 			})
@@ -444,6 +445,117 @@ func (s *Server) handleHistoryItem(w http.ResponseWriter, r *http.Request) {
 		Assessment assessmentMeta       `json:"assessment"`
 		Item       *history.ItemHistory `json:"item"`
 	}{s.meta(), item})
+}
+
+// ticketsPerDay is tickets created per UTC calendar day, every day of the range
+// present so a chart of it has no gaps.
+type ticketsPerDay struct {
+	// Since is the start of the first day, which can be before the range asked for:
+	// a bar labelled with a date should count the whole of it.
+	Since        time.Time   `json:"since"`
+	Until        time.Time   `json:"until"`
+	Days         []ticketDay `json:"days"`
+	Total        int         `json:"total"`
+	FirstCreated *time.Time  `json:"first_created,omitempty"`
+	LastSynced   *time.Time  `json:"last_synced,omitempty"`
+	Caveats      []string    `json:"caveats,omitempty"`
+}
+
+type ticketDay struct {
+	Date    string          `json:"date"`
+	Created int             `json:"created"`
+	Tickets []createdTicket `json:"tickets"`
+}
+
+type createdTicket struct {
+	Key            string    `json:"key"`
+	Project        string    `json:"project"`
+	Summary        string    `json:"summary,omitempty"`
+	Status         string    `json:"status,omitempty"`
+	StatusCategory string    `json:"status_category,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	Item           string    `json:"item,omitempty"`
+	URL            string    `json:"url,omitempty"`
+}
+
+// handleHistoryTickets serves GET /api/v1/history/tickets: tickets created per day,
+// by the tracker's own created date, with the tickets behind each day. since and
+// until are read as for /api/v1/history; there is no bucket, it is always per day.
+// Disabled history answers 200 with enabled=false, as /api/v1/history does.
+func (s *Server) handleHistoryTickets(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC()
+	rng, err := parseHistoryRange(r, now)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	type response struct {
+		Status  historyStatus `json:"status"`
+		Tickets ticketsPerDay `json:"tickets"`
+	}
+	from := rng.Since.Truncate(24 * time.Hour)
+	if s.history == nil {
+		writeJSON(w, http.StatusOK, response{s.historyStatus(), ticketsPerDay{
+			Since: from, Until: rng.Until, Days: []ticketDay{},
+			Caveats: []string{"history is not enabled: no store is configured, so no tickets are read"},
+		}})
+		return
+	}
+	out, err := s.ticketsCreatedPerDay(r.Context(), from, rng.Until)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "history store: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response{s.historyStatus(), out})
+}
+
+func (s *Server) ticketsCreatedPerDay(ctx context.Context, from, until time.Time) (ticketsPerDay, error) {
+	store := s.history.store
+	out := ticketsPerDay{Since: from, Until: until, Days: []ticketDay{}}
+	idx, err := store.TicketsIndexed(ctx)
+	if err != nil {
+		return out, err
+	}
+	tickets, err := store.Tickets(ctx, from, until)
+	if err != nil {
+		return out, err
+	}
+	for d := from; d.Before(until); d = d.Add(24 * time.Hour) {
+		out.Days = append(out.Days, ticketDay{Date: d.Format(time.DateOnly), Tickets: []createdTicket{}})
+	}
+	sort.Slice(tickets, func(i, j int) bool {
+		if !tickets[i].CreatedAt.Equal(tickets[j].CreatedAt) {
+			return tickets[i].CreatedAt.Before(tickets[j].CreatedAt)
+		}
+		return tickets[i].Key < tickets[j].Key
+	})
+	// Tickets also returns closes in the range and matched closes of any date; only
+	// the creations belong here.
+	for _, t := range tickets {
+		created := t.CreatedAt.UTC()
+		if created.Before(from) || !created.Before(until) {
+			continue
+		}
+		day := &out.Days[int(created.Sub(from)/(24*time.Hour))]
+		day.Created++
+		day.Tickets = append(day.Tickets, createdTicket{
+			Key: t.Key, Project: t.Project, Summary: t.Summary, Status: t.Status, StatusCategory: t.StatusCategory,
+			CreatedAt: created, Item: t.ItemKey, URL: s.ticketURL(t.Key),
+		})
+		out.Total++
+	}
+	if idx.Tickets == 0 {
+		out.Caveats = append(out.Caveats, "the tracker has not been read yet, so no day has any tickets")
+		return out, nil
+	}
+	first, last := idx.FirstCreated, idx.LastSynced
+	out.FirstCreated, out.LastSynced = &first, &last
+	if first.After(from) {
+		out.Caveats = append(out.Caveats, fmt.Sprintf(
+			"the oldest ticket the tracker holds was raised %s; days before it are before ticketing, not days with none",
+			first.Format(time.DateOnly)))
+	}
+	return out, nil
 }
 
 func parseHistoryRange(r *http.Request, now time.Time) (history.Range, error) {

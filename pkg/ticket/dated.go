@@ -20,6 +20,8 @@ import (
 type Dated struct {
 	Key     string
 	Project string
+	// Summary is the issue's title.
+	Summary string
 	// Images are what the ticket covers, read from the route's image field.
 	Images   []string
 	Status   string
@@ -150,7 +152,7 @@ func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, within time.D
 		}
 		q := url.Values{}
 		q.Set("jql", jql)
-		q.Set("fields", "created,resolutiondate,duedate,status,statuscategorychangedate,"+jiraImageFieldName(cfg))
+		q.Set("fields", "summary,created,resolutiondate,duedate,status,statuscategorychangedate,"+jiraImageFieldName(cfg))
 		q.Set("maxResults", "100")
 		if categories != nil {
 			q.Set("expand", "changelog")
@@ -201,6 +203,7 @@ func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, within time.D
 
 func parseDated(cfg config.JiraConfig, key string, raw json.RawMessage) (Dated, error) {
 	var f struct {
+		Summary        string  `json:"summary"`
 		Created        string  `json:"created"`
 		ResolutionDate *string `json:"resolutiondate"`
 		DueDate        *string `json:"duedate"`
@@ -220,7 +223,7 @@ func parseDated(cfg config.JiraConfig, key string, raw json.RawMessage) (Dated, 
 	}
 	project, _, _ := strings.Cut(key, "-")
 	d := Dated{
-		Key: key, Project: project, Created: created,
+		Key: key, Project: project, Summary: f.Summary, Created: created,
 		Status: f.Status.Name, Category: f.Status.StatusCategory.Key, Fields: raw,
 	}
 	var loose map[string]json.RawMessage

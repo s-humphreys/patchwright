@@ -28,6 +28,7 @@ const api = {
   '/api/v1/summary': 'summary.json',
   '/api/v1/analytics': 'analytics.json',
   '/api/v1/history': 'history.json',
+  '/api/v1/history/tickets': 'history-tickets.json',
   '/api/v1/findings': 'findings.json',
   '/api/v1/items': 'items.json',
   '/api/v1/owners': 'owners.json',

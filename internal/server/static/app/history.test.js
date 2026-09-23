@@ -241,3 +241,97 @@ test('the open summary dates tickets closed while the finding stayed open', () =
   b.history.open = { ...b.history.open, closed_ticket_finding_open: 0, closed_ticket_age_days: undefined };
   assert.doesNotMatch(render(b), /Ticket closed, finding open/);
 });
+
+function ticketsBody(over = {}) {
+  const day = (date, tickets = []) => ({ date, created: tickets.length, tickets });
+  return {
+    status: { enabled: true },
+    tickets: {
+      since: '2026-09-01T00:00:00Z', until: '2026-09-04T10:00:00Z', total: 3,
+      days: [
+        day('2026-09-01', [{ key: 'DVOP-1', project: 'DVOP', summary: 'Upgrade <app>', status: 'To Do', status_category: 'new',
+          item: 'eng|orders|app|svc', url: 'https://jira.example.com/browse/DVOP-1' }]),
+        day('2026-09-02'),
+        day('2026-09-03', [
+          { key: 'SEC-2', project: 'SEC', status: 'In Progress', status_category: 'indeterminate', url: 'javascript:alert(1)' },
+          { key: 'DVOP-3', project: 'DVOP', summary: 'Upgrade lib', status: 'Done', status_category: 'done', url: 'https://jira.example.com/browse/DVOP-3' },
+        ]),
+        day('2026-09-04'),
+      ],
+      ...over,
+    },
+  };
+}
+
+test('tickets per day sit in the ticketed panel, say they are per day, and offer a button per day that had any', () => {
+  const html = render(body(), ticketsBody());
+  const panel = html.slice(html.indexOf('Total remediation against ticketed work'), html.indexOf('Work items by signal'));
+  assert.match(panel, /<h4>Tickets created, per day<\/h4>/);
+  assert.match(panel, /Per day whatever the period above/);
+  assert.match(panel, /3 in the range/);
+  assert.match(panel, /data-chart="tickets-per-day"/);
+  const picks = [...panel.matchAll(/data-day="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(picks, ['2026-09-01', '2026-09-03'], 'zero days get a bar, not a button');
+  assert.match(panel, /<div class="ticket-day-list" id="ticketDayList" hidden><\/div>/);
+});
+
+test('no tickets in the range, or no tickets response at all, renders nothing', () => {
+  const empty = ticketsBody({ total: 0, days: [{ date: '2026-09-01', created: 0, tickets: [] }] });
+  for (const t of [empty, null, undefined, { status: { enabled: false }, tickets: { days: [], total: 0 } }]) {
+    const html = render(body(), t);
+    assert.doesNotMatch(html, /Tickets created, per day/);
+    assert.doesNotMatch(html, /tickets-per-day/);
+  }
+});
+
+test('a day list links each key to the tracker in a new tab and escapes what the tracker says', async () => {
+  const { dayList } = await import('./history.js');
+  const html = dayList(ticketsBody().tickets.days[0]);
+  assert.match(html, /1 ticket created 1 Sep 2026/);
+  assert.match(html, /<a href="https:\/\/jira\.example\.com\/browse\/DVOP-1" target="_blank" rel="noopener">DVOP-1<\/a>/);
+  assert.match(html, /Upgrade &lt;app&gt;/);
+  assert.match(html, /<td title="new">To Do<\/td>/);
+  assert.match(html, /<code>eng\|orders\|app\|svc<\/code>/);
+  assert.match(html, /data-close-day/);
+
+  const third = dayList(ticketsBody().tickets.days[2]);
+  assert.match(third, /2 tickets created 3 Sep 2026/);
+  // A link that is not http(s) is dropped rather than rendered.
+  assert.doesNotMatch(third, /javascript:/);
+  assert.match(third, /<tr><td>SEC-2<\/td>/);
+  // No title and no match: dashes, not blanks.
+  assert.match(third, /<td class="wrap"><span class="muted">-<\/span><\/td>/);
+
+  assert.match(dayList(ticketsBody().tickets.days[1]), /No tickets were created 2 Sep 2026/);
+});
+
+test('choosing a day opens its list, the same day again or Close hides it, without the chart library', async () => {
+  const { mountCharts } = await import('./history.js');
+  const tickets = ticketsBody();
+  const root = document.createElement('div');
+  root.innerHTML = render(body(), tickets);
+  document.body.appendChild(root);
+  mountCharts(root, body(), tickets);
+
+  const list = root.querySelector('#ticketDayList');
+  const [first, third] = root.querySelectorAll('.day-pick');
+  first.click();
+  assert.equal(list.hidden, false);
+  assert.equal(first.getAttribute('aria-pressed'), 'true');
+  assert.equal(list.querySelector('a').getAttribute('href'), 'https://jira.example.com/browse/DVOP-1');
+
+  third.click();
+  assert.equal(first.getAttribute('aria-pressed'), 'false');
+  assert.equal(third.getAttribute('aria-pressed'), 'true');
+  assert.equal(list.querySelectorAll('tbody tr').length, 2);
+
+  third.click();
+  assert.equal(list.hidden, true);
+  assert.equal(third.getAttribute('aria-pressed'), 'false');
+
+  first.click();
+  list.querySelector('[data-close-day]').click();
+  assert.equal(list.hidden, true);
+  assert.equal(document.activeElement, first, 'closing returns focus to the day that opened it');
+  root.remove();
+});

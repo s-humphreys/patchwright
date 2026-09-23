@@ -1,4 +1,4 @@
-import { esc } from './util.js';
+import { esc, utcDay } from './util.js';
 
 // Charts as HTML and CSS rather than SVG.
 //
@@ -143,3 +143,62 @@ export function mountTimeSeries(el, spec) {
   }
 }
 
+
+/**
+ * mountBars draws one series of daily counts as bars with uPlot, under the same
+ * rules as mountTimeSeries: nothing without the library, and a failure inside it
+ * swallowed, because the list beside the chart carries every number.
+ *
+ * spec.onSelect is called with the index of a clicked bar. The click is read off
+ * the plot's overlay from the cursor, which uPlot has already snapped to the
+ * nearest bar, so a click in the gap beside a thin bar still picks its day.
+ *
+ * @param {HTMLElement} el
+ * @param {{x: number[], values: number[], label: string, color: string, height?: number, onSelect?: (idx: number) => void}} spec
+ */
+export function mountBars(el, spec) {
+  const UPlot = /** @type {any} */ (globalThis).uPlot;
+  if (!el || !UPlot || !spec?.x?.length) return null;
+  const width = Math.max(320, el.clientWidth || el.parentElement?.clientWidth || 640);
+  const day = 86400;
+  const opts = {
+    width, height: spec.height || 160,
+    cursor: { drag: { x: false, y: false }, points: { show: false } },
+    legend: { live: true },
+    // Half a day either side, or the first and last bars are cut in half at the edge.
+    scales: {
+      x: { time: true, range: (u, min, max) => [min - day / 2, max + day / 2] },
+      y: { range: (u, min, max) => [0, Math.max(1, max)] },
+    },
+    axes: [
+      { values: (u, splits) => splits.map((v) => utcDay(new Date(v * 1000), false)), stroke: getComputedStyle(el).color, grid: { show: false } },
+      { size: 40, stroke: getComputedStyle(el).color, grid: { stroke: "rgba(128,128,128,.15)" },
+        incrs: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+        values: (u, splits) => splits.map((v) => v.toLocaleString("en-GB")) },
+    ],
+    series: [
+      { label: "day", value: (u, v) => (v == null ? "" : new Date(v * 1000).toISOString().slice(0, 10)) },
+      { label: spec.label, stroke: spec.color, fill: spec.color, width: 0, points: { show: false },
+        paths: UPlot.paths.bars({ size: [0.8, 24] }),
+        value: (u, v) => (v == null ? "-" : v.toLocaleString("en-GB")) },
+    ],
+    hooks: {
+      init: [(u) => {
+        if (!spec.onSelect) return;
+        u.over.style.cursor = "pointer";
+        u.over.addEventListener("click", () => {
+          const idx = u.cursor.idx;
+          if (idx != null) spec.onSelect(idx);
+        });
+      }],
+    },
+  };
+  try {
+    el.innerHTML = "";
+    return new UPlot(opts, [spec.x, spec.values], el);
+  } catch (err) {
+    el.innerHTML = "";
+    console.warn("chart not drawn:", err);
+    return null;
+  }
+}

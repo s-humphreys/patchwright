@@ -79,11 +79,11 @@ func ticketStoreContract(t *testing.T, s history.Store) {
 
 	opened := jul(1)
 	upsert(
-		history.TrackerTicket{Key: "DVOP-1", Project: "DVOP", ItemKey: "k1", ItemOpenedAt: &opened, CreatedAt: jul(2),
+		history.TrackerTicket{Key: "DVOP-1", Project: "DVOP", Summary: "Upgrade app to 1.1", ItemKey: "k1", ItemOpenedAt: &opened, CreatedAt: jul(2),
 			StartedAt: at(jul(3)), StartedFrom: history.StartedFromChangelog, StatusCategory: "indeterminate", LastSeenAt: jul(3)},
 		history.TrackerTicket{Key: "DVOP-2", Project: "DVOP", CreatedAt: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
 			ResolvedAt: at(time.Date(2026, 3, 9, 0, 0, 0, 0, time.UTC)), StatusCategory: "done", LastSeenAt: jul(3)},
-		history.TrackerTicket{Key: "DVOP-3", Project: "DVOP", CreatedAt: jul(4), StartedAt: at(jul(6)),
+		history.TrackerTicket{Key: "DVOP-3", Project: "DVOP", Summary: "Upgrade lib", CreatedAt: jul(4), StartedAt: at(jul(6)),
 			StartedFrom: history.StartedFromStatusCategory, StatusCategory: "indeterminate", LastSeenAt: jul(3)},
 		history.TrackerTicket{Key: "DVOP-4", Project: "DVOP", CreatedAt: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC),
 			ResolvedAt: at(jul(15)), StatusCategory: "done", LastSeenAt: jul(3)},
@@ -102,6 +102,12 @@ func ticketStoreContract(t *testing.T, s history.Store) {
 	if d1.ResolvedAt == nil || !d1.ResolvedAt.Equal(jul(10)) || d1.StatusCategory != "done" {
 		t.Errorf("tracker fields not rewritten: %+v", d1)
 	}
+	if d1.Summary != "Upgrade app to 1.1" {
+		t.Errorf("a read without a title erased the stored one: %q", d1.Summary)
+	}
+	if d2 := byKey("DVOP-2"); d2.Summary != "" {
+		t.Errorf("a ticket never read with a title has none, not a placeholder: %q", d2.Summary)
+	}
 
 	// DVOP-1 matched to a newer span of the same repository: the first match holds,
 	// because the ticket was raised about the span open when it was first seen.
@@ -119,11 +125,14 @@ func ticketStoreContract(t *testing.T, s history.Store) {
 		t.Errorf("a missing start erased the stored one: %v from %q", d1.StartedAt, d1.StartedFrom)
 	}
 
-	// DVOP-3: the changelog is read at last and replaces the fallback.
-	upsert(history.TrackerTicket{Key: "DVOP-3", Project: "DVOP", CreatedAt: jul(4), StartedAt: at(jul(5)),
+	// DVOP-3: the changelog is read at last and replaces the fallback, and the
+	// ticket has been retitled.
+	upsert(history.TrackerTicket{Key: "DVOP-3", Project: "DVOP", Summary: "Retitled", CreatedAt: jul(4), StartedAt: at(jul(5)),
 		StartedFrom: history.StartedFromChangelog, StatusCategory: "indeterminate", LastSeenAt: jul(11)})
 	if d3 := byKey("DVOP-3"); d3.StartedAt == nil || !d3.StartedAt.Equal(jul(5)) || d3.StartedFrom != history.StartedFromChangelog {
 		t.Errorf("the changelog start did not replace the fallback: %v from %q", d3.StartedAt, d3.StartedFrom)
+	} else if d3.Summary != "Retitled" {
+		t.Errorf("a new title did not replace the old: %q", d3.Summary)
 	}
 
 	// Created or resolved in the window, plus every matched close whatever its date.

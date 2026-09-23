@@ -173,12 +173,15 @@ func (m *memStore) UpsertTickets(_ context.Context, tickets []history.TrackerTic
 	if m.err != nil {
 		return m.err
 	}
-	// The same merge as the postgres upsert: a match is held once made, and a
-	// changelog start survives a weaker or missing one.
+	// The same merge as the postgres upsert: a match is held once made, a changelog
+	// start survives a weaker or missing one, and a missing title keeps the old one.
 	for _, t := range tickets {
 		if prev, ok := m.tickets[t.Key]; ok {
 			if prev.ItemKey != "" {
 				t.ItemKey, t.ItemOpenedAt = prev.ItemKey, prev.ItemOpenedAt
+			}
+			if t.Summary == "" {
+				t.Summary = prev.Summary
 			}
 			keepStart := (prev.StartedFrom == history.StartedFromChangelog && t.StartedFrom != history.StartedFromChangelog) ||
 				t.StartedAt == nil
@@ -588,4 +591,160 @@ func TestHistoryTrackerFailureDoesNotCostTheAssessment(t *testing.T) {
 	if code := getJSON(t, s.Handler(), "/api/v1/history", &resp); code != http.StatusOK || resp.History.Tracker != nil {
 		t.Errorf("never read, so no tracker block: %d %+v", code, resp.History.Tracker)
 	}
+}
+
+type ticketsPerDayResponse struct {
+	Status  historyStatus `json:"status"`
+	Tickets ticketsPerDay `json:"tickets"`
+}
+
+func TestHistoryTicketsDisabledIsExplicit(t *testing.T) {
+	var resp ticketsPerDayResponse
+	if code := getJSON(t, newTestServer(t), "/api/v1/history/tickets?since=30d", &resp); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if resp.Status.Enabled || resp.Tickets.Days == nil || len(resp.Tickets.Days) != 0 || resp.Tickets.Total != 0 {
+		t.Errorf("disabled history must say so with an empty, non-null list: %+v", resp)
+	}
+	if len(resp.Tickets.Caveats) == 0 || !strings.Contains(resp.Tickets.Caveats[0], "not enabled") {
+		t.Errorf("caveats = %v", resp.Tickets.Caveats)
+	}
+}
+
+// Every UTC day of the range is present, the first one whole; only creations count,
+// in created order; and each ticket links to the tracker when its base URL is known.
+func TestHistoryTicketsPerDay(t *testing.T) {
+	store := newMemStore()
+	sep := func(d, h, m int) time.Time { return time.Date(2026, 9, d, h, m, 0, 0, time.UTC) }
+	resolved := sep(2, 12, 0)
+	opened := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	for _, tk := range []history.TrackerTicket{
+		{Key: "DVOP-1", Project: "DVOP", Summary: "Upgrade app", CreatedAt: sep(1, 3, 0), Status: "To Do", StatusCategory: "new"},
+		{Key: "DVOP-2", Project: "DVOP", Summary: "Upgrade lib", CreatedAt: sep(3, 10, 0), Status: "In Progress",
+			StatusCategory: "indeterminate", ItemKey: "engineering|orders|lib|svc", ItemOpenedAt: &opened},
+		// Created in a different zone: the day is the UTC one.
+		{Key: "SEC-3", Project: "SEC", CreatedAt: time.Date(2026, 9, 3, 10, 0, 0, 0, time.FixedZone("BST", 3600))},
+		{Key: "DVOP-4", Project: "DVOP", CreatedAt: sep(1, 0, 0).Add(-time.Minute)},
+		{Key: "DVOP-5", Project: "DVOP", CreatedAt: sep(5, 7, 0)},
+		// Resolved in the range and matched: the store returns it, but it was not
+		// created in the range.
+		{Key: "DVOP-6", Project: "DVOP", CreatedAt: time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC), ResolvedAt: &resolved,
+			ItemKey: "engineering|orders|app|svc", ItemOpenedAt: &opened, LastSeenAt: sep(4, 0, 0)},
+	} {
+		store.tickets[tk.Key] = tk
+	}
+	s := New(&stubAssessor{}).WithHistory(store, 400*24*time.Hour).WithTickets(stubTickets{}, "https://jira.example.com/")
+
+	var resp ticketsPerDayResponse
+	path := "/api/v1/history/tickets?since=2026-09-01T12:00:00Z&until=2026-09-05T06:00:00Z"
+	if code := getJSON(t, s.Handler(), path, &resp); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	got := resp.Tickets
+	if !got.Since.Equal(sep(1, 0, 0)) || !got.Until.Equal(sep(5, 6, 0)) {
+		t.Errorf("range = %v to %v, want the first day whole", got.Since, got.Until)
+	}
+	var dates []string
+	var counts []int
+	for _, d := range got.Days {
+		dates = append(dates, d.Date)
+		counts = append(counts, d.Created)
+		if d.Tickets == nil || len(d.Tickets) != d.Created {
+			t.Errorf("%s: %d created but %d listed", d.Date, d.Created, len(d.Tickets))
+		}
+	}
+	if joined := strings.Join(dates, ","); joined != "2026-09-01,2026-09-02,2026-09-03,2026-09-04,2026-09-05" {
+		t.Errorf("days = %s, want every day of the range", joined)
+	}
+	if want := []int{1, 0, 2, 0, 0}; !equalInts(counts, want) {
+		t.Errorf("created per day = %v, want %v", counts, want)
+	}
+	if got.Total != 3 {
+		t.Errorf("total = %d, want 3", got.Total)
+	}
+	third := got.Days[2].Tickets
+	if third[0].Key != "SEC-3" || third[1].Key != "DVOP-2" {
+		t.Fatalf("3 September = %+v, want SEC-3 (09:00 UTC) before DVOP-2", third)
+	}
+	d2 := third[1]
+	if d2.URL != "https://jira.example.com/browse/DVOP-2" || d2.Summary != "Upgrade lib" || d2.Status != "In Progress" ||
+		d2.StatusCategory != "indeterminate" || d2.Item != "engineering|orders|lib|svc" || d2.Project != "DVOP" {
+		t.Errorf("DVOP-2 = %+v", d2)
+	}
+	if got.FirstCreated == nil || !got.FirstCreated.Equal(time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC)) || got.LastSynced == nil {
+		t.Errorf("index = %v %v", got.FirstCreated, got.LastSynced)
+	}
+	if len(got.Caveats) != 0 {
+		t.Errorf("tickets predate the range, so no caveat: %v", got.Caveats)
+	}
+
+	// Without a base URL there is no link rather than a broken one.
+	s = New(&stubAssessor{}).WithHistory(store, 400*24*time.Hour)
+	var bare ticketsPerDayResponse
+	if code := getJSON(t, s.Handler(), path, &bare); code != http.StatusOK || bare.Tickets.Days[0].Tickets[0].URL != "" {
+		t.Errorf("url without a base = %q (%d)", bare.Tickets.Days[0].Tickets[0].URL, code)
+	}
+}
+
+func TestHistoryTicketsRange(t *testing.T) {
+	store := newMemStore()
+	s := New(&stubAssessor{}).WithHistory(store, 400*24*time.Hour)
+	h := s.Handler()
+
+	var resp ticketsPerDayResponse
+	before := time.Now().UTC()
+	if code := getJSON(t, h, "/api/v1/history/tickets?since=7d", &resp); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	// Seven days back from now, from the start of that day: eight days, today partial.
+	if n := len(resp.Tickets.Days); n != 8 {
+		t.Errorf("7d = %d days, want 8", n)
+	}
+	if want := before.Add(-7 * 24 * time.Hour).Truncate(24 * time.Hour).Format(time.DateOnly); resp.Tickets.Days[0].Date != want {
+		t.Errorf("first day = %s, want %s", resp.Tickets.Days[0].Date, want)
+	}
+	if len(resp.Tickets.Caveats) != 1 || !strings.Contains(resp.Tickets.Caveats[0], "not been read") {
+		t.Errorf("an unread tracker must say so: %v", resp.Tickets.Caveats)
+	}
+	if resp.Tickets.FirstCreated != nil || resp.Tickets.LastSynced != nil {
+		t.Errorf("nothing indexed, so no index dates: %+v", resp.Tickets)
+	}
+
+	// A ticketed estate whose tracker starts inside the range says the days before
+	// it are before ticketing.
+	store.tickets["DVOP-1"] = history.TrackerTicket{Key: "DVOP-1", Project: "DVOP", CreatedAt: before.Add(-24 * time.Hour), LastSeenAt: before}
+	resp = ticketsPerDayResponse{}
+	if code := getJSON(t, h, "/api/v1/history/tickets?since=7d", &resp); code != http.StatusOK || resp.Tickets.Total != 1 {
+		t.Fatalf("status %d, total %d", code, resp.Tickets.Total)
+	}
+	if len(resp.Tickets.Caveats) != 1 || !strings.Contains(resp.Tickets.Caveats[0], "before ticketing") {
+		t.Errorf("caveats = %v", resp.Tickets.Caveats)
+	}
+
+	for _, bad := range []string{"since=yesterday", "since=0d", "until=notatime", "since=2026-08-01T00:00:00Z&until=2026-07-01T00:00:00Z"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/history/tickets?"+bad, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%q = %d, want 400", bad, rec.Code)
+		}
+	}
+
+	store.err = errors.New("connection refused")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/history/tickets", nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "connection refused") {
+		t.Errorf("store failure = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

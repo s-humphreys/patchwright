@@ -521,6 +521,45 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { description: The history store could not be read }
 
+  /api/v1/history/tickets:
+    get:
+      tags: [operations]
+      summary: Tickets created per day, with the tickets behind each day
+      description: |
+        Tickets created per UTC calendar day by the tracker's own created date, for
+        the analytics page's per-day chart and its drill-down. Every day of the range
+        is present, a day with none carrying `created: 0` and an empty list, so a
+        chart of it has no gaps. The first day is counted whole, so `since` in the
+        response is the start of that day and can be earlier than asked for.
+
+        Like the tracker counts on `/api/v1/history`, these are tickets, not
+        resolutions: every ticket on the configured projects and issue type, raised by
+        patchwright or by hand. `url` links each to the tracker and is absent when its
+        base URL is not configured. Off unless a history store is configured, in which
+        case `status.enabled` is false, `days` is empty and the caveat says so.
+      parameters:
+        - name: since
+          in: query
+          description: Start of the range, as a number of days back (`90d`, the default) or RFC 3339.
+          schema: { type: string }
+        - name: until
+          in: query
+          description: End of the range, RFC 3339. Default now.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: "Tickets per day, or an empty list with `enabled: false` when history is off"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { $ref: "#/components/schemas/HistoryStatus" }
+                  tickets: { $ref: "#/components/schemas/HistoryTicketsPerDay" }
+        "400": { description: A parameter could not be parsed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { description: The history store could not be read }
+
   /api/v1/exploitability:
     get:
       tags: [operations]
@@ -831,6 +870,39 @@ components:
           description: >-
             Tickets behind this report's cycle times whose first In Progress is their status category change date,
             because the change history could not be read
+    HistoryTicketsPerDay:
+      type: object
+      properties:
+        since: { type: string, format: date-time, description: Start of the first day, UTC midnight }
+        until: { type: string, format: date-time }
+        days:
+          type: array
+          description: Every UTC day from since to until, oldest first
+          items: { $ref: "#/components/schemas/HistoryTicketDay" }
+        total: { type: integer, description: Tickets created in the range }
+        first_created: { type: string, format: date-time, description: The oldest indexed ticket. Days before it are before ticketing }
+        last_synced: { type: string, format: date-time, description: When the tracker was last read. Absent when it never has been }
+        caveats: { type: array, items: { type: string } }
+    HistoryTicketDay:
+      type: object
+      properties:
+        date: { type: string, format: date, description: The UTC calendar day }
+        created: { type: integer }
+        tickets:
+          type: array
+          description: The tickets created that day, oldest first
+          items: { $ref: "#/components/schemas/HistoryCreatedTicket" }
+    HistoryCreatedTicket:
+      type: object
+      properties:
+        key: { type: string }
+        project: { type: string }
+        summary: { type: string, description: The ticket's title. Absent for a ticket last read before titles were, until the tracker is read in full again }
+        status: { type: string, description: The status now, not when it was created }
+        status_category: { type: string, enum: [new, indeterminate, done] }
+        created_at: { type: string, format: date-time }
+        item: { type: string, description: The work item the ticket was matched to by image, best effort. Absent when unmatched }
+        url: { type: string, description: The ticket in the tracker. Absent when the tracker's base URL is not configured }
     HistoryRiskStats:
       type: object
       properties:

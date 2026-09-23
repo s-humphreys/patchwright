@@ -251,9 +251,12 @@ func TestSpecCoversEverySupportField(t *testing.T) {
 func TestSpecCoversEveryHistoryField(t *testing.T) {
 	spec := loadSpec(t)
 	for name, typ := range map[string]reflect.Type{
-		"HistoryReport":   reflect.TypeOf(history.Report{}),
-		"HistoryMovement": reflect.TypeOf(history.Movement{}),
-		"HistoryTracker":  reflect.TypeOf(history.TrackerSummary{}),
+		"HistoryReport":        reflect.TypeOf(history.Report{}),
+		"HistoryMovement":      reflect.TypeOf(history.Movement{}),
+		"HistoryTracker":       reflect.TypeOf(history.TrackerSummary{}),
+		"HistoryTicketsPerDay": reflect.TypeOf(ticketsPerDay{}),
+		"HistoryTicketDay":     reflect.TypeOf(ticketDay{}),
+		"HistoryCreatedTicket": reflect.TypeOf(createdTicket{}),
 	} {
 		schema, ok := spec.Components.Schemas[name]
 		if !ok {

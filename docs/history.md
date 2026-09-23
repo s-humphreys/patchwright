@@ -206,6 +206,14 @@ ticketing, not a period in which nothing was raised.
 tracker's resolution date. An item that has been ticketed again since is left out:
 somebody is on it, whatever happened to the first ticket.
 
+`GET /api/v1/history/tickets?since=90d` lists the same tickets by the day they were
+created: every UTC calendar day of the range, a day with none included, each with the
+tickets raised that day, their title, current status, the work item they matched and
+a link to the tracker. It is always per day, whatever bucket the report uses, and the
+first day is counted whole. The title is read with the dates; tickets last read before
+it was stay untitled until the tracker is read in full, so run
+`patchwright history backfill-tickets` once after upgrading.
+
 ## Reading it
 
 The **Analytics** page opens with the report, so the page tells a story: how things
@@ -213,7 +221,9 @@ are moving, then what to do next. It shows the caveats first, the risk direction
 period, opened against resolved against lapsed, the four-bucket delineation, the
 per-signal, per-rule and per-team splits, and the queue as the record holds it now.
 Once the tracker has been read, the ticketed panel adds a cycle-time table and the
-tracker's own ticket counts, each only for the periods that have them.
+tracker's own ticket counts, each only for the periods that have them, and a chart of
+tickets created per day whatever the bucket: click a day, or pick it from the buttons
+under the chart, for the tickets behind it.
 A lookback and a bucket selector carry in the URL, so a view can be linked. With two
 or more periods the direction and movement panels draw interactive charts (hover for
 each period's values) using a vendored copy of uPlot; with one period a chart would

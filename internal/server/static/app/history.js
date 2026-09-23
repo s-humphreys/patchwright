@@ -1,5 +1,5 @@
-import { mountTimeSeries, stackedBar } from './charts.js';
-import { $, esc } from './util.js';
+import { mountBars, mountTimeSeries, stackedBar } from './charts.js';
+import { $, esc, utcDay } from './util.js';
 
 // Movement by period, from the event log, rendered at the top of the analytics
 // page so that page reads as a story: how things are moving, then what to do next.
@@ -125,7 +125,7 @@ function movementPanel(h) {
 }
 
 /** delineationPanel is the four buckets security asked to see apart. */
-function delineationPanel(h) {
+function delineationPanel(h, tickets) {
   const periods = activePeriods(h.movement);
   if (!periods.length) return "";
   const sum = (k) => periods.reduce((n, m) => n + (m[k] || 0), 0);
@@ -159,7 +159,56 @@ function delineationPanel(h) {
     ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
     ${measured ? `<p class="sub">Against the due date: ${fmt(onTime)} of ${fmt(measured)} (${pct(onTime, measured)}) closed on time.${meanDaysToDue(periods)}</p>` : ""}
     ${cycleTimeTable(h)}
+    ${ticketsPerDay(tickets)}
   </section>`;
+}
+
+/** dayLabel renders a UTC calendar date, "2026-09-01", as "1 Sep 2026". */
+function dayLabel(date, year = true) {
+  return utcDay(new Date(`${date}T00:00:00Z`), year) || String(date);
+}
+
+/**
+ * ticketsPerDay is the slot for the per-day chart, and the keyboard's way into the
+ * same drill-down: a button per day that had tickets, since a canvas cannot take
+ * focus. Nothing when the range holds no tickets, including when the tracker was
+ * never read or the tickets endpoint failed.
+ */
+function ticketsPerDay(body) {
+  const t = body?.tickets;
+  if (!t?.total || !(t.days || []).length) return "";
+  const picks = t.days.filter((d) => d.created).map((d) => `<li><button type="button" class="day-pick"
+      data-day="${esc(d.date)}" aria-pressed="false" aria-controls="ticketDayList"
+      title="${esc(`${d.created} created ${dayLabel(d.date)}`)}">${esc(dayLabel(d.date, false))} <span class="n">${fmt(d.created)}</span></button></li>`).join("");
+  return `<h4>Tickets created, per day</h4>
+    <p class="sub">Per day whatever the period above, by the tracker's created date: ${fmt(t.total)} in the range. Click a day, or choose one below, for its tickets.</p>
+    <div class="chart-slot" data-chart="tickets-per-day"></div>
+    <ul class="day-picks" aria-label="Days with tickets created">${picks}</ul>
+    <div class="ticket-day-list" id="ticketDayList" hidden></div>`;
+}
+
+/** safeURL keeps a link only if it is http(s), so a stray value is never a script. */
+function safeURL(u) {
+  return typeof u === "string" && /^https?:\/\//i.test(u) ? u : "";
+}
+
+/** dayList renders the tickets created on one day, with a control to close it. */
+export function dayList(day) {
+  const head = `<div class="ticket-day-head"><strong>${day.created
+    ? `${fmt(day.created)} ticket${day.created === 1 ? "" : "s"} created ${esc(dayLabel(day.date))}`
+    : `No tickets were created ${esc(dayLabel(day.date))}`}</strong>
+    <button type="button" class="linkish" data-close-day>Close</button></div>`;
+  if (!day.created) return head;
+  const rows = (day.tickets || []).map((t) => {
+    const url = safeURL(t.url);
+    const key = url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(t.key)}</a>` : esc(t.key);
+    return `<tr><td>${key}</td><td>${esc(t.project)}</td><td class="wrap">${t.summary ? esc(t.summary) : `<span class="muted">-</span>`}</td>
+      <td title="${esc(t.status_category || "")}">${esc(t.status || "-")}</td>
+      <td>${t.item ? `<code>${esc(t.item)}</code>` : `<span class="muted">-</span>`}</td></tr>`;
+  }).join("");
+  return `${head}<table class="mini ticket-day"><thead><tr><th>Key</th><th>Project</th><th>Summary</th>
+    <th title="Its status now, not when it was raised">Status</th>
+    <th title="The work item it was matched to by image, best effort">Work item</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 /**
@@ -278,8 +327,11 @@ function closedTicketAges(o) {
     <dd><span class="warn">${fmt(o.closed_ticket_finding_open)}</span>${ages ? ` · since the close: ${ages}` : ""}</dd></div>`;
 }
 
-/** render builds the page from the /api/v1/history response body. */
-export function render(body) {
+/**
+ * render builds the page from the /api/v1/history response body, and tickets from
+ * the /api/v1/history/tickets one when it loaded.
+ */
+export function render(body, tickets) {
   const h = body?.history || {};
   const status = body?.status || {};
   if (!h.enabled) {
@@ -290,7 +342,7 @@ export function render(body) {
   return `${caveatsPanel(h, status)}
     ${directionPanel(h)}
     ${movementPanel(h)}
-    ${delineationPanel(h)}
+    ${delineationPanel(h, tickets)}
     ${signalsPanel(h)}
     ${splitTable("Work items by team", activePeriods(h.movement), "by_team", null)}
     ${openPanel(h)}`;
@@ -311,8 +363,9 @@ function cssVar(name, fallback) {
  * element and render returns a string; and guarded, so a page without the chart
  * library still shows every table.
  */
-export function mountCharts(root, body) {
+export function mountCharts(root, body, tickets) {
   const h = body?.history || {};
+  mountTicketsPerDay(root, tickets);
   const direction = root?.querySelector?.('[data-chart="direction"]');
   if (direction && (h.risk || []).length > 1) {
     const idx = Object.fromEntries((h.movement || []).map((m) => [m.period, m.start]));
@@ -336,6 +389,40 @@ export function mountCharts(root, body) {
       ],
     });
   }
+}
+
+/**
+ * mountTicketsPerDay wires the per-day drill-down: a bar or a day button opens that
+ * day's tickets under the chart, the same day again or Close hides them. The
+ * buttons work without the chart library, so the list never depends on a canvas.
+ */
+export function mountTicketsPerDay(root, body) {
+  const days = body?.tickets?.days || [];
+  const list = root?.querySelector?.("#ticketDayList");
+  if (!list || !days.length) return;
+  const picks = [...root.querySelectorAll(".day-pick")];
+  let open = "";
+  const select = (date) => {
+    open = open === date ? "" : date;
+    const day = days.find((d) => d.date === open);
+    list.hidden = !day;
+    list.innerHTML = day ? dayList(day) : "";
+    for (const b of picks) b.setAttribute("aria-pressed", String(b.dataset.day === open));
+  };
+  for (const b of picks) b.addEventListener("click", () => select(b.dataset.day || ""));
+  list.addEventListener("click", (e) => {
+    if (!/** @type {Element} */ (e.target).closest?.("[data-close-day]")) return;
+    const from = picks.find((b) => b.dataset.day === open);
+    select(open);
+    from?.focus();
+  });
+  mountBars(root.querySelector('[data-chart="tickets-per-day"]'), {
+    x: days.map((d) => epoch(`${d.date}T00:00:00Z`)),
+    values: days.map((d) => d.created),
+    label: "tickets created",
+    color: cssVar("--accent", "#4a6b8a"),
+    onSelect: (i) => select(days[i].date),
+  });
 }
 
 /** rangeFromURL reads ?since= and ?bucket= so a link can carry a view. */
@@ -364,11 +451,16 @@ export async function loadHistory(el) {
   if (!el) return;
   const range = rangeFromURL();
   try {
-    const res = await fetch(`/api/v1/history?since=${encodeURIComponent(range.since)}&bucket=${encodeURIComponent(range.bucket)}`);
+    const since = encodeURIComponent(range.since);
+    // The per-day tickets are an extra: if they fail, the report still renders.
+    const [res, tickets] = await Promise.all([
+      fetch(`/api/v1/history?since=${since}&bucket=${encodeURIComponent(range.bucket)}`),
+      fetch(`/api/v1/history/tickets?since=${since}`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
-    el.innerHTML = controls(range) + render(body);
-    mountCharts(el, body);
+    el.innerHTML = controls(range) + render(body, tickets);
+    mountCharts(el, body, tickets);
     const form = $("#historyRange");
     form?.addEventListener("change", () => {
       const data = new FormData(/** @type {HTMLFormElement} */ (form));
