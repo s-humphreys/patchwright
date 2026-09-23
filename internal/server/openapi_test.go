@@ -1,16 +1,19 @@
 package server
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/s-humphreys/patchwright/pkg/analytics"
+	"github.com/s-humphreys/patchwright/pkg/history"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -241,4 +244,101 @@ func TestSpecCoversEverySupportField(t *testing.T) {
 			t.Errorf("support field %q is served but undocumented in %s", field, specPath)
 		}
 	}
+}
+
+// The history report gained tracker fields on four types at once; none of the
+// history schemas were guarded, so check them the same way as the rest.
+func TestSpecCoversEveryHistoryField(t *testing.T) {
+	spec := loadSpec(t)
+	for name, typ := range map[string]reflect.Type{
+		"HistoryReport":   reflect.TypeOf(history.Report{}),
+		"HistoryMovement": reflect.TypeOf(history.Movement{}),
+		"HistoryTracker":  reflect.TypeOf(history.TrackerSummary{}),
+	} {
+		schema, ok := spec.Components.Schemas[name]
+		if !ok {
+			t.Errorf("the spec has no %s schema", name)
+			continue
+		}
+		for _, field := range jsonFieldNames(typ) {
+			if _, ok := schema.Properties[field]; !ok {
+				t.Errorf("%s field %q is served but undocumented in %s", name, field, specPath)
+			}
+		}
+	}
+	open := historyOpenProperties(t, spec)
+	for _, field := range jsonFieldNames(reflect.TypeOf(history.OpenSummary{})) {
+		if _, ok := open[field]; !ok {
+			t.Errorf("HistoryReport.open field %q is served but undocumented in %s", field, specPath)
+		}
+	}
+}
+
+// The other direction: every tracker field the spec names is what a report with
+// tracker data actually emits, so a renamed JSON tag cannot leave the docs behind.
+func TestSpecTrackerFieldsAreEmitted(t *testing.T) {
+	spec := loadSpec(t)
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	opened := now.AddDate(0, 0, -20)
+	created, started, resolved := now.AddDate(0, 0, -15), now.AddDate(0, 0, -10), now.AddDate(0, 0, -5)
+	open := []history.State{{OpenedAt: opened, Current: history.Snapshot{Key: "k", Repository: "app"}}}
+	rep := history.Aggregate(history.Range{Since: now.AddDate(0, 0, -30), Until: now, Bucket: history.BucketMonth}, nil, nil, open, opened.AddDate(0, 0, -1), now)
+	rep.AddTracker([]history.TrackerTicket{{
+		Key: "T-1", ItemKey: "k", ItemOpenedAt: &opened, CreatedAt: created,
+		StartedAt: &started, StartedFrom: history.StartedFromStatusCategory, ResolvedAt: &resolved,
+	}}, history.TicketIndexState{Tickets: 1, FirstCreated: created, LastSynced: now}, open, opened.AddDate(0, 0, -1), now)
+
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Movement []map[string]any `json:"movement"`
+		Open     map[string]any   `json:"open"`
+		Tracker  map[string]any   `json:"tracker"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	emitted := map[string]bool{}
+	for _, m := range got.Movement {
+		for k := range m {
+			emitted[k] = true
+		}
+	}
+	for _, field := range []string{
+		"tracker_tickets_raised", "tracker_tickets_closed",
+		"median_days_told", "median_days_told_n", "median_days_to_start", "median_days_to_start_n",
+		"median_days_worked", "median_days_worked_n",
+	} {
+		if _, ok := spec.Components.Schemas["HistoryMovement"].Properties[field]; !ok {
+			t.Errorf("HistoryMovement.%s is not in the spec", field)
+		}
+		if !emitted[field] {
+			t.Errorf("the spec documents movement.%s but a report with tracker data does not emit it: %s", field, raw)
+		}
+	}
+	for _, field := range []string{"closed_ticket_finding_open", "closed_ticket_age_days"} {
+		if _, ok := historyOpenProperties(t, spec)[field]; !ok {
+			t.Errorf("HistoryReport.open.%s is not in the spec", field)
+		}
+		if _, ok := got.Open[field]; !ok {
+			t.Errorf("the spec documents open.%s but it is not emitted: %s", field, raw)
+		}
+	}
+	for field := range spec.Components.Schemas["HistoryTracker"].Properties {
+		if _, ok := got.Tracker[field]; !ok {
+			t.Errorf("the spec documents tracker.%s but it is not emitted: %s", field, raw)
+		}
+	}
+}
+
+func historyOpenProperties(t *testing.T, spec openAPISpec) map[string]any {
+	t.Helper()
+	open, _ := spec.Components.Schemas["HistoryReport"].Properties["open"].(map[string]any)
+	props, _ := open["properties"].(map[string]any)
+	if props == nil {
+		t.Fatal("the spec's HistoryReport has no open.properties")
+	}
+	return props
 }
