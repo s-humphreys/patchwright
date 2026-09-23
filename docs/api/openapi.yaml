@@ -466,8 +466,9 @@ paths:
         that come from it (`source: tracker`): `tracker_tickets_raised`,
         `tracker_tickets_closed` and the three cycle-time medians per period, and
         `closed_ticket_finding_open` on `open`. Those count tickets by the tracker's
-        own dates, including tickets raised by hand or before the record began. They
-        are tickets, not resolutions, and carry no rule or signal.
+        own dates: every ticket on the routes' epics, including ones raised by hand
+        there or before the record began. They are tickets, not resolutions, and
+        carry no rule or signal.
       parameters:
         - name: since
           in: query

@@ -195,8 +195,12 @@ other two.
 `tracker_tickets_raised` and `tracker_tickets_closed` are the backfill. Jira holds
 created and resolution dates for every ticket since ticketing was switched on, so
 these reach back before the record did. They count **tickets, not resolutions**: every
-ticket on the configured projects and issue type, raised by patchwright or by hand,
-with no rule or signal attached, because none can be attached with any confidence.
+ticket of the configured issue type on the routes' epics, raised by patchwright or by
+hand, with no rule or signal attached, because none can be attached with any
+confidence. A route with no epic files at the project root, so its project is read
+whole. The first production read had no epic scope and returned every Task three
+projects had ever raised, which made the cycle time the backlog's; the scope is what
+keeps these numbers about vulnerability work.
 They sit beside `tickets_raised` and `tickets_closed`, which are events on work items
 the record watched, and the two are not the same number. A period that ended before
 the oldest ticket the tracker holds carries neither field, since that is before

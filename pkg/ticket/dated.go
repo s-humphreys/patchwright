@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,16 +67,41 @@ func (j *Jira) DatedTickets(ctx context.Context, within time.Duration) ([]Dated,
 		slog.WarnContext(ctx, "jira: could not map statuses to categories; first In Progress falls back to the status category change date of tickets in progress now", "error", err)
 		categories = nil
 	}
-	var out []Dated
-	seenSearch := map[string]bool{}
-	seenTicket := map[string]bool{}
+	// One search per project, issue type and image field, scoped to the epics the
+	// routes on it file under. The first production read without that scope
+	// returned every Task three projects had ever raised, and reported the whole
+	// engineering backlog's cycle time as vulnerability work. A route with no epic
+	// files at the project root, so its group searches the whole project as before.
+	type group struct {
+		cfg   config.JiraConfig
+		epics []string
+		open  bool
+	}
+	var order []string
+	groups := map[string]*group{}
 	for _, cfg := range j.searchConfigs() {
 		key := cfg.Project + "\x00" + cfg.EffectiveIssueType() + "\x00" + jiraImageFieldName(cfg)
-		if seenSearch[key] {
-			continue
+		g, ok := groups[key]
+		if !ok {
+			g = &group{cfg: cfg}
+			groups[key] = g
+			order = append(order, key)
 		}
-		seenSearch[key] = true
-		found, err := j.datedIn(ctx, cfg, within, categories)
+		if cfg.Epic == "" {
+			g.open = true
+		} else if !slices.Contains(g.epics, cfg.Epic) {
+			g.epics = append(g.epics, cfg.Epic)
+		}
+	}
+	var out []Dated
+	seenTicket := map[string]bool{}
+	for _, key := range order {
+		g := groups[key]
+		epics := g.epics
+		if g.open {
+			epics = nil
+		}
+		found, err := j.datedIn(ctx, g.cfg, epics, within, categories)
 		if err != nil {
 			return nil, err
 		}
@@ -128,8 +154,15 @@ func (h changeHistory) statusTargets() []string {
 	return out
 }
 
-func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, within time.Duration, categories map[string]string) ([]Dated, error) {
+func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, epics []string, within time.Duration, categories map[string]string) ([]Dated, error) {
 	jql := fmt.Sprintf(`project = %q AND issuetype = %q`, cfg.Project, cfg.EffectiveIssueType())
+	if len(epics) > 0 {
+		quoted := make([]string, len(epics))
+		for i, e := range epics {
+			quoted[i] = quoteJQL(e)
+		}
+		jql += ` AND parent in (` + strings.Join(quoted, ", ") + `)`
+	}
 	if within > 0 {
 		jql += fmt.Sprintf(` AND updated >= -%dm`, int(math.Ceil(within.Minutes())))
 	}

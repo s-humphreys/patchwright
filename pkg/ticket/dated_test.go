@@ -102,8 +102,37 @@ func (ds *datedServer) jira(t *testing.T, routes []config.TicketRoute) *Jira {
 func sharedRoutes() []config.TicketRoute {
 	// Two routes on one board: one search, not two.
 	return []config.TicketRoute{
-		{Name: "a", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1"},
-		{Name: "b", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1"},
+		{Name: "a", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1", Epic: "PROJ-100"},
+		{Name: "b", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1", Epic: "PROJ-100"},
+	}
+}
+
+// The tracker holds every Task a project ever raised. Only the ones filed under the
+// routes' epics are patchwright's to count, or the cycle time is the backlog's.
+func TestDatedTicketsAreScopedToTheRoutesEpics(t *testing.T) {
+	ds := &datedServer{}
+	routes := []config.TicketRoute{
+		{Name: "a", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1", Epic: "PROJ-100"},
+		{Name: "b", When: "true", Board: 1, Project: "PROJ", ImageField: "customfield_1", Epic: "PROJ-200"},
+		{Name: "c", When: "true", Board: 2, Project: "OTHER", ImageField: "customfield_1"},
+	}
+	if _, err := ds.jira(t, routes).DatedTickets(context.Background(), 0); err != nil {
+		t.Fatalf("DatedTickets: %v", err)
+	}
+	var proj, other string
+	for _, jql := range ds.jqls {
+		switch {
+		case strings.HasPrefix(jql, `project = "PROJ"`):
+			proj = jql
+		case strings.HasPrefix(jql, `project = "OTHER"`):
+			other = jql
+		}
+	}
+	if !strings.Contains(proj, `parent in ("PROJ-100", "PROJ-200")`) {
+		t.Errorf("PROJ search = %s, want both epics in one parent clause", proj)
+	}
+	if strings.Contains(other, "parent") {
+		t.Errorf("OTHER search = %s: a route with no epic files at the project root and must search the whole project", other)
 	}
 }
 
@@ -130,6 +159,9 @@ func TestDatedTicketsReadsTheTrackersDates(t *testing.T) {
 	for _, jql := range ds.jqls {
 		if strings.Contains(jql, "statusCategory") {
 			t.Errorf("the backfill must include closed tickets: %s", jql)
+		}
+		if !strings.Contains(jql, `parent in ("PROJ-100")`) {
+			t.Errorf("jql = %s, want the search scoped to the routes' epic", jql)
 		}
 		if strings.Contains(jql, "updated") {
 			t.Errorf("a backfill has no updated window: %s", jql)
