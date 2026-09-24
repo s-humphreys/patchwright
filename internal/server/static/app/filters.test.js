@@ -311,7 +311,7 @@ test('picking the kev signal lists KEV CVEs, not every CVE on a KEV finding', ()
 });
 
 test('a finding-level signal still filters findings rather than CVEs', () => {
-  // Exposure, in-flight and the rest describe the image or its deployment.
+  // In-flight, end-of-life and the rest describe the image or its deployment.
   // Filtering individual CVEs by those would be meaningless, so they narrow the
   // findings and every CVE on a surviving finding is listed.
   setUp();
