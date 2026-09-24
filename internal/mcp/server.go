@@ -47,7 +47,6 @@ func register(s *sdk.Server, src Source) {
 	type queueArgs struct {
 		Team     string `json:"team,omitempty" jsonschema:"only items owned by this team"`
 		Priority string `json:"priority,omitempty" jsonschema:"only this priority: urgent, high, medium or low"`
-		Exposure string `json:"exposure,omitempty" jsonschema:"only this exposure: public, internal or unknown"`
 		Limit    int    `json:"limit,omitempty" jsonschema:"how many items to return (default 25, max 100)"`
 	}
 	type teamArgs struct {
@@ -129,19 +128,19 @@ func register(s *sdk.Server, src Source) {
 	sdk.AddTool(s, &sdk.Tool{
 		Name: "worst_first",
 		Description: "The work queue, worst first: one row per service and upgrade, with why it " +
-			"ranks where it does and what the upgrade would clear. Filter by team, priority or " +
-			"exposure. Use this for 'what should we do next' and 'what does team X owe'.",
+			"ranks where it does and what the upgrade would clear. Filter by team or priority. " +
+			"Use this for 'what should we do next' and 'what does team X owe'.",
 	}, func(ctx context.Context, req *sdk.CallToolRequest, args queueArgs) (*sdk.CallToolResult, any, error) {
 		a := src()
 		if !a.ready() {
 			return textResult(errNoAssessment), nil, nil
 		}
-		return result(worstFirst(a, args.Team, args.Priority, args.Exposure, args.Limit))
+		return result(worstFirst(a, args.Team, args.Priority, args.Limit))
 	})
 
 	sdk.AddTool(s, &sdk.Tool{
 		Name: "team_report",
-		Description: "One team's whole position: what they own, how much is urgent or exposed, " +
+		Description: "One team's whole position: what they own, how much is urgent, " +
 			"what is already in progress, what their rebuilds would clear, and their top items. " +
 			"Distinguishes an open pull request from a stale one nobody merged.",
 	}, func(ctx context.Context, req *sdk.CallToolRequest, args teamArgs) (*sdk.CallToolResult, any, error) {
@@ -232,7 +231,7 @@ func register(s *sdk.Server, src Source) {
 
 	sdk.AddTool(s, &sdk.Tool{
 		Name: "list_facets",
-		Description: "The vocabulary of this assessment: every team, owner class, priority, exposure " +
+		Description: "The vocabulary of this assessment: every team, owner class, priority " +
 			"and signal that actually appears, with counts. Call this before filtering or before " +
 			"reporting on a team whose exact name you are unsure of, rather than guessing a value " +
 			"and reading an empty result as an empty queue.",
@@ -246,8 +245,8 @@ func register(s *sdk.Server, src Source) {
 
 	sdk.AddTool(s, &sdk.Tool{
 		Name: "explain_cve",
-		Description: "One CVE across the whole estate: which services and teams carry it, whether " +
-			"any of them is internet-facing, its exploitability, whether a fix is published, and how " +
+		Description: "One CVE across the whole estate: which services and teams carry it, " +
+			"its exploitability, whether a fix is published, and how " +
 			"many affected deployments a base rebuild would actually clear it on.",
 	}, func(ctx context.Context, req *sdk.CallToolRequest, args cveArgs) (*sdk.CallToolResult, any, error) {
 		a := src()

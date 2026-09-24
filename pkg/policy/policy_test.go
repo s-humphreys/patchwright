@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
@@ -77,5 +78,31 @@ func TestNoCriticalIsNotActionable(t *testing.T) {
 	}
 	if len(f.Reasons) == 0 {
 		t.Error("expected an explanatory reason")
+	}
+}
+
+// Rules written before exposure was removed must fail at load and say why. The
+// signal form matters most: it would otherwise compile and never match.
+func TestRulesUsingRemovedExposureAreRejectedAtLoad(t *testing.T) {
+	for _, when := range []string{
+		"exposure == 'public'",
+		"counts['critical'] > 0 && exposure != 'internal'",
+		"'exposed' in signals",
+		"signals.exists(s, s == 'exposed')",
+	} {
+		_, err := New([]config.PolicyRule{{Name: "old", When: when, Priority: "urgent"}}, nil)
+		if err == nil {
+			t.Errorf("%q was accepted", when)
+			continue
+		}
+		if !strings.Contains(err.Error(), "internet exposure was removed") || !strings.Contains(err.Error(), `"old"`) {
+			t.Errorf("%q: error does not name the rule and the removal: %v", when, err)
+		}
+	}
+}
+
+func TestAnUnrelatedExposedStringIsNotMistakenForTheSignal(t *testing.T) {
+	if _, err := New([]config.PolicyRule{{Name: "ns", When: "dimensions['namespace'].exists(n, n == 'exposed')", Priority: "low"}}, nil); err != nil {
+		t.Errorf("a rule not reading signals must be left alone: %v", err)
 	}
 }

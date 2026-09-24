@@ -112,7 +112,6 @@ type resourceVulnRow struct {
 	Platform      string  `json:"platform"`
 	ReportID      string  `json:"report_id"`
 	ClusterName   string  `json:"k8s_cluster_name"`
-	PublicAccess  bool    `json:"public_accessible"`
 	RiskScore     float64 `json:"riskscore"`
 	CriticalCount int     `json:"critical_count"`
 	HighCount     int     `json:"high_count"`
@@ -209,13 +208,12 @@ func (p *apiProvider) post(ctx context.Context, path string, out any) error {
 // interpreted.
 func rowToOccurrence(r *resourceVulnRow) model.Occurrence {
 	dims := map[string]string{
-		"cloud":             r.Cloud,
-		"account":           r.Account,
-		"account_id":        r.AccountID,
-		"namespace":         namespaceFromResourceID(r.ResourceID),
-		"resource_type":     r.ResourceType,
-		"resource_name":     r.ResourceName,
-		"public_accessible": fmt.Sprintf("%t", r.PublicAccess),
+		"cloud":         r.Cloud,
+		"account":       r.Account,
+		"account_id":    r.AccountID,
+		"namespace":     namespaceFromResourceID(r.ResourceID),
+		"resource_type": r.ResourceType,
+		"resource_name": r.ResourceName,
 	}
 	// Only from the API: the cluster, and the platform the image was built for.
 	// Kept out of the map when empty so a rule matching on them cannot succeed
@@ -263,7 +261,6 @@ func rowToOccurrence(r *resourceVulnRow) model.Occurrence {
 			Labels:     map[string]string{}, // the API does not carry them; live reconciliation supplies them
 		},
 		Counts:           counts,
-		Exposed:          &r.PublicAccess,
 		RiskScore:        r.RiskScore,
 		LastSeen:         assessmentTime(r),
 		Assessed:         assessed,

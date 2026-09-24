@@ -43,7 +43,6 @@ func benchEstate() []sink.FindingView {
 			},
 			Counts:           map[string]int{"critical": i % 9, "high": i % 30},
 			Priority:         []string{"urgent", "high", "medium", "low"}[i%4],
-			Exposure:         []string{"public", "internal", "unknown"}[i%3],
 			Scanned:          true,
 			ProviderAssessed: true,
 			ExploitChecked:   true,

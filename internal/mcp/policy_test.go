@@ -19,7 +19,6 @@ func policyFixture() Assessment {
 			Rule:     rule,
 			RuleKind: kind,
 			Priority: priority,
-			Exposure: "internal",
 			// Assessed, so a zero count is a measurement rather than a coverage gap
 			// and the caveats under test are the policy ones.
 			ProviderAssessed: true,

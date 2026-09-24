@@ -7,7 +7,7 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/group"
 )
 
-// Facets is the vocabulary of this assessment: the team names, priorities, exposures
+// Facets is the vocabulary of this assessment: the team names, priorities, signals
 // and classes that actually appear, with counts.
 //
 // It exists because a miss was not recoverable. Asked about "the payments team", a
@@ -24,7 +24,6 @@ type Facets struct {
 	Teams      []Facet `json:"teams"`
 	Classes    []Facet `json:"owner_classes"`
 	Priorities []Facet `json:"priorities"`
-	Exposures  []Facet `json:"exposures"`
 	Signals    []Facet `json:"signals"`
 
 	// Unattributed is work items with no owning team. Reported as its own number
@@ -43,7 +42,7 @@ type Facet struct {
 
 func facets(a Assessment) Facets {
 	out := Facets{Freshness: freshness(a)}
-	teams, classes, priorities, exposures, signals := counter{}, counter{}, counter{}, counter{}, counter{}
+	teams, classes, priorities, signals := counter{}, counter{}, counter{}, counter{}
 	for _, it := range a.items() {
 		if it.Team == "" {
 			out.Unattributed++
@@ -52,7 +51,6 @@ func facets(a Assessment) Facets {
 		}
 		classes.add(it.Class)
 		priorities.add(it.Priority)
-		exposures.add(it.Exposure)
 		for _, s := range it.Signals {
 			signals.add(s)
 		}
@@ -60,7 +58,6 @@ func facets(a Assessment) Facets {
 	out.Teams = teams.sorted()
 	out.Classes = classes.sorted()
 	out.Priorities = priorities.sorted()
-	out.Exposures = exposures.sorted()
 	out.Signals = signals.sorted()
 	if out.Unattributed > 0 {
 		out.Caveats = append(out.Caveats, "Some work items have no owning team, so no team_report includes "+

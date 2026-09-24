@@ -40,7 +40,6 @@ function summarise(groups) {
       `high=${g.counts.high}`,
       `deployments=${g.findings.length}`,
       `assessed=${g.assessedOf[0]}`,
-      `exposure=${g.exposure}`,
       `signals=${[...g.signals].sort().join('+')}`,
       `inflight_checked=${g.in_flight_checked}`,
       `tags=${[...g.tags].sort().join(',')}`,

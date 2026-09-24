@@ -34,7 +34,6 @@ type Configuration struct {
 	Remediation      bool `json:"upgrades_looked_for"`
 	BaseDifferential bool `json:"base_differential"`
 	InFlight         bool `json:"pull_requests_matched"`
-	Exposure         bool `json:"exposure_measured"`
 }
 
 const notConfigured = "none"
@@ -51,7 +50,6 @@ func configuration(a Assessment) Configuration {
 		Remediation:      s.Remediation,
 		BaseDifferential: s.BaseDiff,
 		InFlight:         s.InFlight,
-		Exposure:         s.Exposure,
 	}
 }
 
@@ -106,11 +104,6 @@ func configCaveats(a Assessment, cov Coverage) []string {
 	case cov.BaseDiffs == 0:
 		out = append(out, "The base differential is enabled and yet measured no deployment. Base images could "+
 			"not be resolved or scanned - registry access is the usual cause.")
-	}
-
-	if !s.Exposure {
-		out = append(out, "Internet exposure was not measured (it needs a live source that can read Services "+
-			"and routes), so any exposure value here comes from the scan provider and may be constant.")
 	}
 	return out
 }

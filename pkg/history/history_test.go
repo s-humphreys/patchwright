@@ -1,6 +1,7 @@
 package history
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -21,7 +22,6 @@ func view(image, class, team, priority string) sink.FindingView {
 		RemediationChecked: true,
 		Upgrade:            &sink.UpgradeView{Kind: "helm", Name: "nginx", Current: "1.0", Latest: "1.2", Available: true, Resolved: true},
 		Liveness:           &sink.LivenessView{Live: true},
-		Exposure:           "public",
 		Dimensions:         map[string][]string{"account": {"Production UK"}, "namespace": {"orders"}},
 		Vulns: []sink.VulnView{
 			{ID: "CVE-2026-1", Severity: "critical", KEV: true, EPSS: 0.7},
@@ -69,7 +69,7 @@ func TestSnapshotsGroupByTargetNameNotVersion(t *testing.T) {
 	if len(orders.Images) != 2 || orders.Critical != 2 || orders.Counts["high"] != 5 || orders.Kind != "helm" {
 		t.Errorf("images/counts/kind wrong: %+v", orders)
 	}
-	if orders.Exposure != "public" || !reflect.DeepEqual(orders.Accounts, []string{"Production UK"}) || !reflect.DeepEqual(orders.Namespaces, []string{"orders"}) {
+	if !reflect.DeepEqual(orders.Accounts, []string{"Production UK"}) || !reflect.DeepEqual(orders.Namespaces, []string{"orders"}) {
 		t.Errorf("placement wrong: %+v", orders)
 	}
 	if len(orders.CVEs) != 2 || orders.CVEs[0].ID != "CVE-2026-1" || !orders.CVEs[0].KEV || orders.CVEs[0].EPSS != 0.7 || !orders.CVEs[1].FixAvailable {
@@ -154,6 +154,41 @@ func TestDiffRecordsChangesWhileOpen(t *testing.T) {
 	if len(again) != 0 {
 		t.Errorf("no movement should produce no events, got %+v", again)
 	}
+}
+
+func TestSnapshotsStoredWithExposureStillReadAndDoNotChange(t *testing.T) {
+	v := view("acr.io/app:1", "eng", "orders", "high")
+	v.Signals = []string{"kev"}
+	cur := Snapshots([]sink.FindingView{v}, nil)
+
+	// A row written before exposure was removed: the field is unknown now and the
+	// signal is no longer derived.
+	stored := strings.Replace(mustJSON(t, cur[0]), `"signals":[`, `"exposure":"public","signals":["exposed",`, 1)
+	var prev Snapshot
+	if err := json.Unmarshal([]byte(stored), &prev); err != nil {
+		t.Fatalf("an old snapshot must still decode: %v", err)
+	}
+	if !prev.Has("exposed") {
+		t.Fatalf("fixture did not carry the retired signal: %s", stored)
+	}
+
+	st := openState(3, prev, t0.AddDate(0, 0, -1))
+	events, _ := Diff(Input{Open: []State{st}, Current: cur, Views: []sink.FindingView{v}, Now: t0})
+	if len(events) != 0 {
+		t.Errorf("losing a retired signal is not movement, got %+v", events)
+	}
+	if got := openSummary([]State{st}, t0).BySignal; got["exposed"] != 0 || got["kev"] != 1 {
+		t.Errorf("open by_signal = %v, want kev only", got)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestDiffResolvesWithEvidence(t *testing.T) {

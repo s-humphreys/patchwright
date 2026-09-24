@@ -45,7 +45,7 @@ func newExclusions(rules []config.ExcludeRule) (*exclusions, error) {
 		if r.When == "" {
 			return nil, fmt.Errorf("jira exclude rule %q missing when expression", r.Name)
 		}
-		prg, err := celx.CompileBool(env, r.When)
+		prg, err := policy.CompileFindingRule(env, r.When)
 		if err != nil {
 			return nil, fmt.Errorf("jira exclude rule %q: %w", r.Name, err)
 		}

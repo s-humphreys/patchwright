@@ -55,10 +55,7 @@ type Item struct {
 	AssessedImages int `json:"assessed_images"`
 	ScannedImages  int `json:"scanned_images"`
 
-	// Exposure is public when any deployment is reachable from the internet,
-	// internal when all reporting ones are internal, unknown when none reported.
-	Exposure string   `json:"exposure"`
-	Signals  []string `json:"signals,omitempty"`
+	Signals []string `json:"signals,omitempty"`
 
 	// InFlight is an open pull request applying the upgrade, and InFlightChecked is
 	// true only when every deployment was checked.
@@ -137,7 +134,6 @@ func item(k string, members []sink.FindingView) Item {
 	it.PriorityWhere = discriminatingWhere(members, lead)
 
 	accounts, namespaces, signals := &set{}, &set{}, &set{}
-	exposedAny, internalKnown := false, false
 	for _, f := range members {
 		it.Tags = append(it.Tags, f.Tag)
 		it.Images = append(it.Images, f.Image)
@@ -157,12 +153,6 @@ func item(k string, members []sink.FindingView) Item {
 		if !f.InFlightChecked {
 			it.InFlightChecked = false
 		}
-		switch f.Exposure {
-		case "public":
-			exposedAny = true
-		case "internal":
-			internalKnown = true
-		}
 		for _, s := range f.Signals {
 			signals.add(s)
 		}
@@ -172,14 +162,6 @@ func item(k string, members []sink.FindingView) Item {
 		for _, n := range f.Dimensions["namespace"] {
 			namespaces.add(n)
 		}
-	}
-	switch {
-	case exposedAny:
-		it.Exposure = "public"
-	case internalKnown:
-		it.Exposure = "internal"
-	default:
-		it.Exposure = "unknown"
 	}
 	it.Signals, it.Accounts, it.Namespaces = signals.sorted(), accounts.sorted(), namespaces.sorted()
 	sort.Strings(it.Tags)

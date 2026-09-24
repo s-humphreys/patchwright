@@ -6,11 +6,13 @@
 package policy
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"cel.dev/cel-go/cel"
+	celast "cel.dev/cel-go/common/ast"
 
 	"github.com/s-humphreys/patchwright/internal/celx"
 	"github.com/s-humphreys/patchwright/pkg/config"
@@ -52,13 +54,8 @@ func FindingEnv() (*cel.Env, error) {
 		// whose version is controlled by a chart/operator, since bumping them
 		// directly isn't the remediation.
 		cel.Variable("upgrade_available", cel.BoolType),
-		// exposure is "public", "internal" or "unknown" — reachability from the
-		// internet, where something reports it. A string rather than a bool because
-		// nothing reporting it is a third answer, and a bool would make an estate
-		// nobody has assessed look entirely internal.
-		cel.Variable("exposure", cel.StringType),
-		// signals are the notable facts about a finding: exposed, kev, in-flight,
-		// stale-fix, unassessed, suppressed, end-of-life. Each is a positive
+		// signals are the notable facts about a finding: kev, in-flight,
+		// stale-fix, unassessed, fallback-scan, suppressed, end-of-life. Each is a positive
 		// statement, so absence asserts nothing.
 		cel.Variable("signals", cel.ListType(cel.StringType)),
 		// end_of_life is true when the base image's line is no longer maintained, so
@@ -68,6 +65,54 @@ func FindingEnv() (*cel.Env, error) {
 		cel.Variable("end_of_life", cel.BoolType),
 	)
 }
+
+// CompileFindingRule compiles a boolean expression against a FindingEnv.
+//
+// It refuses names that were removed from the language rather than leaving CEL to
+// report them. An old `exposure` reference would otherwise fail as a bare
+// "undeclared reference", and an old `"exposed" in signals` would not fail at all:
+// it would compile, never match, and the rule would look configured while doing
+// nothing.
+func CompileFindingRule(env *cel.Env, expr string) (cel.Program, error) {
+	parsed, iss := env.Parse(expr)
+	if iss == nil || iss.Err() == nil {
+		if err := retiredReference(parsed); err != nil {
+			return nil, err
+		}
+	}
+	return celx.CompileBool(env, expr)
+}
+
+// retiredReference reports the first use of a removed variable or signal.
+//
+// The "exposed" literal counts only in an expression that also reads `signals`, so
+// a rule comparing some unrelated string to "exposed" is left alone.
+func retiredReference(parsed *cel.Ast) error {
+	exposureVar, exposedLiteral, readsSignals := false, false, false
+	celast.PreOrderVisit(parsed.NativeRep().Expr(), celast.NewExprVisitor(func(e celast.Expr) {
+		switch e.Kind() {
+		case celast.IdentKind:
+			switch e.AsIdent() {
+			case "exposure":
+				exposureVar = true
+			case "signals":
+				readsSignals = true
+			}
+		case celast.LiteralKind:
+			if s, ok := e.AsLiteral().Value().(string); ok && s == "exposed" {
+				exposedLiteral = true
+			}
+		}
+	}))
+	if exposureVar || (exposedLiteral && readsSignals) {
+		return errRetiredExposure
+	}
+	return nil
+}
+
+var errRetiredExposure = errors.New("internet exposure was removed from patchwright: the `exposure` " +
+	"variable and the \"exposed\" signal no longer exist, so this rule can never match as written; " +
+	"remove the exposure condition from it")
 
 // New compiles actionable and suppress rules into an Evaluator.
 func New(actionable, suppress []config.PolicyRule) (*Evaluator, error) {
@@ -118,7 +163,7 @@ func (e *Evaluator) Expired(now time.Time) []config.PolicyRule {
 func compileRules(env *cel.Env, rules []config.PolicyRule, kind string) ([]compiledRule, error) {
 	out := make([]compiledRule, 0, len(rules))
 	for _, r := range rules {
-		prg, err := celx.CompileBool(env, r.When)
+		prg, err := CompileFindingRule(env, r.When)
 		if err != nil {
 			return nil, fmt.Errorf("%s rule %q: when: %w", kind, r.Name, err)
 		}
@@ -226,7 +271,6 @@ func findingActivation(f model.Finding) map[string]any {
 		"reconciled":        f.Reconciled,
 		"live":              live,
 		"upgrade_available": f.Upgrade != nil && f.Upgrade.Available && f.Upgrade.Actionable,
-		"exposure":          f.Exposure(),
 		"signals":           f.Signals(),
 		"end_of_life":       endOfLife(f),
 	}

@@ -54,9 +54,9 @@ func summarise(items []group.Item) string {
 	lines := make([]string, 0, len(items))
 	for _, it := range items {
 		lines = append(lines, fmt.Sprintf(
-			"%s/%s target=%s priority=%s where=%s rule=%s crit=%d high=%d deployments=%d assessed=%d exposure=%s signals=%s inflight_checked=%t tags=%s",
+			"%s/%s target=%s priority=%s where=%s rule=%s crit=%d high=%d deployments=%d assessed=%d signals=%s inflight_checked=%t tags=%s",
 			it.Team, it.Repository, target(it), it.Priority, it.PriorityWhere, it.Rule,
-			it.Critical, it.High, it.Deployments, it.AssessedImages, it.Exposure,
+			it.Critical, it.High, it.Deployments, it.AssessedImages,
 			strings.Join(it.Signals, "+"), it.InFlightChecked, strings.Join(it.Tags, ",")))
 	}
 	sort.Strings(lines)
@@ -118,9 +118,6 @@ func TestPartialCoverageIsVisible(t *testing.T) {
 		}
 		if it.InFlightChecked {
 			t.Error("one deployment was never checked, so the item must not claim it was")
-		}
-		if it.Exposure != "public" {
-			t.Errorf("exposure = %q; exposed anywhere is exposed", it.Exposure)
 		}
 		if it.Priority != "urgent" || it.PriorityWhere != "Production NA" {
 			t.Errorf("worst verdict = %q in %q, want urgent in Production NA", it.Priority, it.PriorityWhere)

@@ -14,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/s-humphreys/patchwright/pkg/enrich"
 )
 
 func podSpec(image string) corev1.PodSpec {
@@ -200,5 +202,17 @@ func TestAPodListErrorFailsEvenWhenForbidden(t *testing.T) {
 
 	if _, err := collectRunningImages(context.Background(), "test", client, map[string]int{}); err == nil {
 		t.Fatal("pods are the floor of liveness; without them nothing can be said")
+	}
+}
+
+// A deployment still passing the removed exposure options must keep starting.
+func TestRemovedExposureOptionsAreAcceptedAndIgnored(t *testing.T) {
+	src, err := enrich.NewLiveSource("kube", enrich.Options{
+		"publicHostnames":   "example.com",
+		"internalHostnames": "internal.example.com",
+		"internalGateways":  "gateway-system/private",
+	})
+	if err != nil || src == nil {
+		t.Fatalf("removed options must not refuse the source: %v", err)
 	}
 }

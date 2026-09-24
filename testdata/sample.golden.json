@@ -24,7 +24,6 @@
     ],
     "rule": "production-critical",
     "rule_kind": "actionable",
-    "exposure": "internal",
     "workload_count": 2,
     "provider_assessed": true,
     "scanned": false,
@@ -45,9 +44,6 @@
       ],
       "namespace": [
         "orders"
-      ],
-      "public_accessible": [
-        "0"
       ],
       "resource_name": [
         "rewards"
@@ -82,7 +78,6 @@
     ],
     "rule": "production-critical",
     "rule_kind": "actionable",
-    "exposure": "internal",
     "workload_count": 1,
     "provider_assessed": true,
     "scanned": false,
@@ -101,9 +96,6 @@
       ],
       "namespace": [
         "flux-system"
-      ],
-      "public_accessible": [
-        "0"
       ],
       "resource_name": [
         "source-controller"
@@ -136,7 +128,6 @@
     ],
     "rule": "any-critical",
     "rule_kind": "actionable",
-    "exposure": "internal",
     "workload_count": 1,
     "provider_assessed": true,
     "scanned": false,
@@ -155,9 +146,6 @@
       ],
       "namespace": [
         "signup"
-      ],
-      "public_accessible": [
-        "0"
       ],
       "resource_name": [
         "onboarding"
@@ -190,7 +178,6 @@
     ],
     "rule": "cloud-provider-managed",
     "rule_kind": "suppress",
-    "exposure": "internal",
     "signals": [
       "suppressed"
     ],
@@ -212,9 +199,6 @@
       ],
       "namespace": [
         "kube-system"
-      ],
-      "public_accessible": [
-        "0"
       ],
       "resource_name": [
         "livenessprobe"
@@ -246,7 +230,6 @@
       "no actionable rule matched"
     ],
     "rule_kind": "none",
-    "exposure": "internal",
     "workload_count": 1,
     "provider_assessed": true,
     "scanned": false,
@@ -265,9 +248,6 @@
       ],
       "namespace": [
         "billing"
-      ],
-      "public_accessible": [
-        "0"
       ],
       "resource_name": [
         "cards"

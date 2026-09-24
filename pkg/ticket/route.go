@@ -58,7 +58,7 @@ func newRoutes(rules []config.TicketRoute) (*routes, error) {
 		if r.When == "" {
 			return nil, fmt.Errorf("jira route %q missing when", r.Name)
 		}
-		prg, err := celx.CompileBool(env, r.When)
+		prg, err := policy.CompileFindingRule(env, r.When)
 		if err != nil {
 			return nil, fmt.Errorf("jira route %q: %w", r.Name, err)
 		}
