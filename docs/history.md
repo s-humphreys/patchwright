@@ -62,7 +62,7 @@ one as a lapse.
 | `changed` | Its rule, priority, signals or target moved while open |
 | `reassigned` | Its owner changed but the service and target did not. Not a close and an open |
 | `ticket_raised` | Reconciliation created or extended a ticket covering it |
-| `ticket_closed` | A ticket that covered it is no longer open, with whether patchwright had evidence the work was done at the time, and the reason when patchwright closed it itself (`upgrade-landed`, `not-running`, `no-longer-actionable`) |
+| `ticket_closed` | A ticket that covered it is no longer open, with whether patchwright had evidence the work was done at the time, and the reason when patchwright closed it itself (`upgrade-landed`, `not-running`, `no-longer-actionable`, `upgrade-clears-nothing`) |
 | `resolved` | It left the queue **with evidence**: every image still reported, checked for a newer version, on the latest, with liveness reconciled. The test auto-close uses |
 | `lapsed` | It left the queue without that evidence: no longer reported, no longer running, or the data to judge it missing |
 

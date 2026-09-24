@@ -192,6 +192,14 @@ type UpgradeView struct {
 	// comparison means the reference is a floating tag, so current and latest are
 	// short digests rather than versions.
 	Comparison string `json:"comparison,omitempty"`
+	// ImageCurrent and ImageLatest are the image's own tag before and after, for an
+	// upgrade that versions something else (a chart). ImageLatest absent means it
+	// could not be established; equal to ImageCurrent means the upgrade provably
+	// leaves this image where it is. ImagePinned marks a tag our own release values
+	// set, which no chart bump moves.
+	ImageCurrent string `json:"image_current,omitempty"`
+	ImageLatest  string `json:"image_latest,omitempty"`
+	ImagePinned  bool   `json:"image_pinned,omitempty"`
 	// Reason explains an unresolved upgrade: what stopped the lookup, and therefore
 	// what would fix it. An unreadable registry and an image that never recorded its
 	// base need different people to do different things.
@@ -416,6 +424,9 @@ func ToFindingView(f model.Finding) FindingView {
 			Support:        toSupportView(f.Upgrade.Support),
 			HeldBack:       f.Upgrade.HeldBack,
 			Comparison:     f.Upgrade.Comparison,
+			ImageCurrent:   f.Upgrade.ImageCurrent,
+			ImageLatest:    f.Upgrade.ImageLatest,
+			ImagePinned:    f.Upgrade.ImagePinned,
 			Actionable:     f.Upgrade.Actionable,
 			Managed:        f.Upgrade.Managed, Manager: f.Upgrade.Manager,
 			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,

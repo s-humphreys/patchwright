@@ -269,6 +269,43 @@ can take only urgent work while another takes everything. A value that is not on
 ranked ladder (`urgent` > `high` > `medium` > `low`) fails at load: a typo would rank
 below everything and silently ticket the lot.
 
+## Only ticket what the change fixes
+
+A ticket is raised only when the change it proposes clears at least one of the CVEs
+that made its findings actionable. A change measured to clear none of them gets no
+ticket: its findings stay in the queue, and are listed as skipped with the change
+named and the reason.
+
+The **actionable CVEs** are the ticket's urgent ones (exploited, or EPSS at or above
+`urgentEPSS`, with a fix: the list "Done means" is drawn from) when there are any,
+and its fixable criticals otherwise, for a finding a coarser rule made actionable.
+Grouped tickets are judged across all their images: one ticket, one change, raised
+if it clears an actionable CVE on any of them.
+
+What the change clears is known for two kinds of change:
+
+- **A base rebuild** is measured by the [base differential](scanning.md), which
+  scans the base being moved onto: a CVE it no longer carries is cleared.
+- **A Helm chart bump** is measured by reading the target chart version's
+  `values.yaml` for the image tags it would deploy. An image whose tag is the same
+  in the target chart, or whose tag the HelmRelease's own `spec.values` pins, is
+  not moved by the bump, so the bump clears nothing on it. Only values are read, not
+  templates: an image the target chart names beside an explicit tag is answered;
+  one whose tag is empty (left to the chart's `appVersion`), one in a subchart, or
+  one two places name with different tags is unknown. `valuesFrom` is not read.
+- **An image tag bump** is not measured: nothing scans the target image.
+
+Only "measured, and clears none" withholds a ticket. A change nothing could measure
+is raised as before, but the ticket makes no claim about what it clears: no count,
+and no "Done means" rows for CVEs nobody measured.
+
+A ticket already open for a change that turns out to clear nothing is closed, the
+same way as one whose work [stopped mattering](#updating-and-closing): through
+`closeTransitionNoLongerActionable` when nobody has picked it up, with a comment
+saying the proposed upgrade does not clear any of the vulnerabilities that raised
+it, and with a comment only when somebody is working it or no such transition is
+configured. The close is recorded with the reason `upgrade-clears-nothing`.
+
 ## Skips
 
 No ticket is raised for a finding with nothing to upgrade to; `requireUpgrade: false`
@@ -389,6 +426,9 @@ ticket's images leave the queue without that proof while still being assessed:
 - **No longer actionable.** Something is still live and no policy rule asks for
   anything on it any more. The CVEs that raised the ticket are gone from what runs,
   even if a newer version still exists.
+- **Upgrade clears nothing.** Still actionable, but the change the ticket asks for
+  was measured to clear none of the CVEs that raised it. See
+  [only ticket what the change fixes](#only-ticket-what-the-change-fixes).
 
 ```yaml
 jira:
@@ -497,48 +537,54 @@ the CVE lived in a package the Dockerfile installed, or in a dependency, and the
 base digest left it exactly where it was. A ticket that promises a rebuild clears
 what it does not is how a queue loses credibility.
 
-`.Urgent` is the list of CVEs the ticket exists to clear: exploited in the wild, or
-with an EPSS at or above `urgentEPSS`, with a fix published. Exploited first, then
-most likely to be. Each row carries:
+`.Urgent` is the list of CVEs the ticket's change was measured to clear: exploited
+in the wild, or with an EPSS at or above `urgentEPSS`, with a fix published.
+Exploited first, then most likely to be. **Only what the change clears is listed.**
+A CVE the change leaves behind, or that nothing measured, is omitted entirely, so a
+ticket never waits on something its own change cannot touch and its close
+condition is one the assignee can meet. Empty when nothing was measured, which is
+not a claim that the change clears nothing. Each row carries:
 
 | Field | What it says |
 |---|---|
 | `.ID` `.Severity` `.CVSS` `.EPSS` `.KEV` `.FixedVersion` `.Reference` | the CVE itself |
 | `.Why` | what made it urgent, as words: "exploited in the wild", "EPSS 0.87", or both |
-| `.Cleared` | the proposed change removes it, as MEASURED by the base differential |
-| `.Measured` | whether that was actually checked; unmeasured is not "not cleared" |
+| `.Cleared` `.Measured` | always true on a listed row |
 | `.Origin` `.Package` `.Ecosystem` `.Path` | where it lives, when a scan named it |
 | `.Where` `.Action` | the two above rendered for somebody who does not know package ecosystems |
 
-`.UrgentCleared`, `.UrgentUnknown` and `.UrgentRemaining` count the rows the change
-removes, was not measured for, and is known to leave; `.UrgentAllCleared` is true
-when the change alone is the whole job. The bundled template renders them as:
+`.UrgentCleared`, `.UrgentUnknown`, `.UrgentRemaining` and `.UrgentAllCleared` are
+kept for templates written against the earlier contract, when `.Urgent` also held
+CVEs the change left or nobody measured; they are now `len(.Urgent)`, 0, 0 and
+"non-empty". The bundled template renders the list as:
 
 ```
 **Done means**
 
-This ticket closes when none of these remain in the running image:
+The change above was measured to clear each of these. This ticket closes when none of them remain in the running image:
 
 | CVE | Why it matters | Where it is | What to do |
 | --- | -------------- | ----------- | ---------- |
-| CVE-2026-53362 | exploited in the wild | Kernel headers your Dockerfile installs (linux-libc-dev) | Only needed to compile. Install linux-libc-dev in a build stage so it is not in the runtime image, or run `apt-get update && apt-get upgrade -y` after your install step to take 6.12.95-1. |
-| CVE-2026-48710 | exploited in the wild | The Python package mcp, declared in app/requirements.txt | Move mcp to 1.0.1 in app/requirements.txt and refresh the lockfile. |
 | CVE-2025-39682 | exploited in the wild | The base image | Nothing extra. The rebuild above removes it. |
-
-The change above clears 1 of 3.
 ```
 
-`.Where` and `.Action` are written from the package's ecosystem: an OS package
-names the package manager command that takes the fix, a language package names the
-file it is declared in, and a handful of build-only packages (kernel headers,
-compiler tooling) say to move them into a build stage rather than upgrade them. A
-CVE nothing named says so rather than guessing, and an unmeasured one says to check
-the dashboard after the change rather than claiming either way.
+A ticket with no measured list has no "Done means" section, and its acceptance
+criteria fall back to running the target version everywhere listed.
 
-Naming the package behind an application CVE needs the image itself scanned, which
-is `remediation.baseDiff.scanExploited` in [scanning](scanning.md#naming-the-package-behind-an-exploited-cve).
-Without it, an application row reads "A dependency your build adds (no scan named
-it)" with the fixed version, which is honest and not much use.
+### The upgrade rows
+
+`.Upgrades` has one row per image the change moves, and `.Current` and `.Latest`
+are that image's own tags. Where a Helm chart owns the version, `.Chart`,
+`.ChartCurrent` and `.ChartLatest` name the chart and its versions, and `.Latest`
+is empty when the target chart's tag for the image could not be read. An image the
+bump was measured to leave on its tag is not listed: a row saying it moves would be
+false. The summary still names the chart version, which is what somebody changes:
+
+```
+Summary: Upgrade retool to 6.11.33
+
+* ghcr.io/acme/agent: 1.4.0 -> 1.5.0 (set by the retool chart, which moves 6.11.32 -> 6.11.33)
+```
 
 ### When two tickets say the same thing
 

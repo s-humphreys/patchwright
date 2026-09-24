@@ -27,8 +27,9 @@ type UrgentVuln struct {
 	// the wild", "EPSS 0.87", or both.
 	Why string
 	// Cleared reports that the ticket's upgrade removes it. Measured reports that
-	// this was actually checked by a base differential; when false, Cleared is
-	// false through ignorance, and the two must not render the same way.
+	// this was actually checked, by a base differential or by the upgrade provably
+	// leaving the image where it is; when false, Cleared is false through
+	// ignorance, and the two must not render the same way.
 	Cleared  bool
 	Measured bool
 	// Origin is "base", "app", or "" when no base scan attributed it.
@@ -60,7 +61,7 @@ func urgent(group []sink.FindingView, epss float64) []UrgentVuln {
 	var order []string
 	for _, f := range group {
 		for _, v := range f.Vulns {
-			if !v.FixAvailable || !(v.KEV || v.EPSS >= epss) {
+			if !isUrgent(v, epss) {
 				continue
 			}
 			u := byID[v.ID]
@@ -76,9 +77,9 @@ func urgent(group []sink.FindingView, epss float64) []UrgentVuln {
 				byID[v.ID] = u
 				order = append(order, v.ID)
 			}
-			if v.OriginDetermined {
+			if measured, fixed := verdict(f, v); measured {
 				u.Measured = true
-				u.Cleared = u.Cleared && v.FixedByUpgrade
+				u.Cleared = u.Cleared && fixed
 			}
 			if u.Origin == "" {
 				u.Origin = v.Origin
@@ -112,6 +113,91 @@ func urgent(group []sink.FindingView, epss float64) []UrgentVuln {
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+func isUrgent(v sink.VulnView, epss float64) bool {
+	return v.FixAvailable && (v.KEV || v.EPSS >= epss)
+}
+
+func isFixableCritical(v sink.VulnView) bool {
+	return v.Severity == "critical" && v.FixAvailable
+}
+
+// verdict says whether the proposed change was measured against one CVE on one
+// image, and if so whether it removes it. Two things measure it: a base
+// differential, which scanned the base being moved onto, and an upgrade that
+// provably leaves the image exactly as it is, which removes nothing from it.
+func verdict(f sink.FindingView, v sink.VulnView) (measured, fixed bool) {
+	if unmoved(f) {
+		return true, false
+	}
+	return v.OriginDetermined, v.FixedByUpgrade
+}
+
+// unmoved reports that the finding's upgrade was measured to leave its image on
+// the tag it already runs: a chart bump whose target chart deploys the same tag,
+// or whose tag our own release values pin.
+func unmoved(f sink.FindingView) bool {
+	u := f.Upgrade
+	return u != nil && u.Kind == "chart" && u.ImageCurrent != "" && u.ImageLatest == u.ImageCurrent
+}
+
+// clearsNone reports that the proposed change was measured to clear none of the
+// CVEs that make this group actionable, so a ticket for it would ask for work
+// that fixes nothing.
+//
+// The actionable CVEs are the urgent ones when there are any, since those are
+// what the shipped rules raise a ticket for and what "Done means" lists, and the
+// fixable criticals otherwise, for a group a coarser rule made actionable. A
+// change that moves no image at all clears nothing whatever the CVEs are.
+//
+// Judged per image: every image carrying one of those CVEs has to have been
+// measured and found to keep it. An image nothing measured might lose it, and not
+// knowing is never a reason to withhold a ticket.
+func clearsNone(group []sink.FindingView, epss float64) bool {
+	if len(group) == 0 {
+		return false
+	}
+	moved := false
+	for _, f := range group {
+		if !unmoved(f) {
+			moved = true
+		}
+	}
+	if !moved {
+		return true
+	}
+	if epss <= 0 {
+		epss = DefaultUrgentEPSS
+	}
+	pick := func(v sink.VulnView) bool { return isUrgent(v, epss) }
+	if !carries(group, pick) {
+		pick = isFixableCritical
+	}
+	picked := false
+	for _, f := range group {
+		for _, v := range f.Vulns {
+			if !pick(v) {
+				continue
+			}
+			picked = true
+			if measured, fixed := verdict(f, v); !measured || fixed {
+				return false
+			}
+		}
+	}
+	return picked
+}
+
+func carries(group []sink.FindingView, pick func(sink.VulnView) bool) bool {
+	for _, f := range group {
+		for _, v := range f.Vulns {
+			if pick(v) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func why(v sink.VulnView, epss float64) string {

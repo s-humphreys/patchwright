@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -34,6 +35,15 @@ type HelmChecker struct {
 	HTTP *http.Client
 	// ociTags lists the tags of an OCI chart artifact; injectable for tests.
 	ociTags func(ctx context.Context, repo string) ([]string, error)
+	// ociChart opens the packaged chart of an OCI artifact ("repo:version");
+	// injectable for tests.
+	ociChart func(ctx context.Context, ref string) (io.ReadCloser, error)
+
+	// urls remembers where each chart version of an HTTP repository is published,
+	// read from the index Check already fetched, so reading a target chart's
+	// values does not fetch a large index a second time.
+	mu   sync.Mutex
+	urls map[string][]string
 }
 
 // NewHelmChecker returns a HelmChecker with sensible defaults.
@@ -43,13 +53,15 @@ func NewHelmChecker() *HelmChecker {
 		ociTags: func(ctx context.Context, repo string) ([]string, error) {
 			return crane.ListTags(repo, crane.WithContext(ctx), crane.WithAuthFromKeychain(registryauth.Keychain()))
 		},
+		ociChart: pullOCIChart,
 	}
 }
 
 // helmIndex is the subset of a Helm repository index.yaml we read.
 type helmIndex struct {
 	Entries map[string][]struct {
-		Version string `yaml:"version"`
+		Version string   `yaml:"version"`
+		URLs    []string `yaml:"urls"`
 	} `yaml:"entries"`
 }
 
@@ -110,9 +122,15 @@ func (c *HelmChecker) chartVersions(ctx context.Context, ref ChartRef) ([]string
 		return nil, fmt.Errorf("chart %q not found in %s", ref.Name, ref.RepoURL)
 	}
 	versions := make([]string, 0, len(entries))
+	c.mu.Lock()
+	if c.urls == nil {
+		c.urls = map[string][]string{}
+	}
 	for _, e := range entries {
 		versions = append(versions, e.Version)
+		c.urls[chartKey(ref.RepoURL, ref.Name, e.Version)] = e.URLs
 	}
+	c.mu.Unlock()
 	return versions, nil
 }
 

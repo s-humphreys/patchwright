@@ -245,9 +245,9 @@ type Payload struct {
 	Evidence string `json:"evidence,omitempty"`
 	// Reason is why a lapse could not be called a resolution. On a ticket_closed
 	// event it is instead why patchwright itself closed the ticket (upgrade-landed,
-	// not-running, no-longer-actionable), and empty when a person closed it: a
-	// ticket closed because the image was switched off is not a ticket closed
-	// because the work was done.
+	// not-running, no-longer-actionable, upgrade-clears-nothing), and empty when a
+	// person closed it: a ticket closed because the image was switched off is not a
+	// ticket closed because the work was done.
 	Reason string `json:"reason,omitempty"`
 
 	// Changes describe a changed event in words; SignalsAdded and SignalsRemoved are

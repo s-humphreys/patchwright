@@ -524,6 +524,21 @@ type Upgrade struct {
 	// reports two opaque hashes, so "1e37a823 -> c4b29bf3" is only intelligible
 	// alongside the tag that moved.
 	Comparison string
+
+	// ImageCurrent and ImageLatest are this image's own tag before and after, for an
+	// upgrade whose Current and Latest version something else: a chart bump moves
+	// chart versions, and the image moves only if the target chart deploys a
+	// different tag. ImageLatest is empty when that could not be established, and
+	// equal to ImageCurrent when the bump provably leaves the image where it is,
+	// which is the difference between "we do not know what this fixes" and "this
+	// fixes nothing on this image".
+	//
+	// ImagePinned reports that our own release values set this image's tag, so no
+	// chart bump moves it whatever the chart ships.
+	ImageCurrent string
+	ImageLatest  string
+	ImagePinned  bool
+
 	// Reason explains an unresolved upgrade, in terms a reader can act on. "We
 	// could not find out" is only useful with the "because": an unreadable registry
 	// and an image that never recorded its base need different people to do
