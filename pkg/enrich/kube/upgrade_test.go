@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -17,10 +18,25 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/upgrade"
 )
 
-type stubChecker struct{ up model.Upgrade }
+type stubChecker struct {
+	up     model.Upgrade
+	values map[string]any
+	// asked records the chart version whose values were requested.
+	asked *string
+}
 
 func (s stubChecker) Check(context.Context, upgrade.ChartRef) (model.Upgrade, error) {
 	return s.up, nil
+}
+
+func (s stubChecker) Values(_ context.Context, _ upgrade.ChartRef, version string) (map[string]any, error) {
+	if s.asked != nil {
+		*s.asked = version
+	}
+	if s.values == nil {
+		return nil, errors.New("no chart values")
+	}
+	return s.values, nil
 }
 
 // TestClusterUpgrades exercises the full Flux path against fake clients: a

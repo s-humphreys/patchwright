@@ -28,6 +28,8 @@ var (
 // chartChecker is the Helm-repo lookup, an interface so tests can stub it.
 type chartChecker interface {
 	Check(ctx context.Context, ref upgrade.ChartRef) (model.Upgrade, error)
+	// Values reads a chart version's values.yaml, for the image tags it would deploy.
+	Values(ctx context.Context, ref upgrade.ChartRef, version string) (map[string]any, error)
 }
 
 // Upgrades runs the configured UpgradeResolvers across every cluster and merges
@@ -99,6 +101,7 @@ func clusterUpgrades(ctx context.Context, typed kubernetes.Interface, dyn dynami
 		needed[releaseKey] = struct{}{}
 	}
 	resolved := make(map[string]model.Upgrade, len(needed))
+	targets := make(map[string]map[string]any, len(needed))
 	for releaseKey := range needed {
 		rel, ok := releases[releaseKey]
 		if !ok {
@@ -114,17 +117,35 @@ func clusterUpgrades(ctx context.Context, typed kubernetes.Interface, dyn dynami
 			slog.DebugContext(ctx, "HelmRelease missing chart or version", "release", releaseKey, "chart", rel.chart, "version", rel.version)
 			continue
 		}
-		up, err := checker.Check(ctx, upgrade.ChartRef{RepoURL: repoURL, Name: rel.chart, Version: rel.version})
+		ref := upgrade.ChartRef{RepoURL: repoURL, Name: rel.chart, Version: rel.version}
+		up, err := checker.Check(ctx, ref)
 		if err != nil {
 			slog.WarnContext(ctx, "helm chart upgrade check failed", "release", releaseKey, "chart", rel.chart, "repo", repoURL, "error", err)
 			continue
 		}
 		resolved[releaseKey] = up
+		if up.Available {
+			// Without the target chart's values nothing can say which images the bump
+			// moves, so each image's target is left unknown rather than failing the
+			// upgrade: the bump is still real.
+			values, err := checker.Values(ctx, ref, up.Latest)
+			if err != nil {
+				slog.DebugContext(ctx, "could not read target chart values", "release", releaseKey, "chart", rel.chart, "version", up.Latest, "error", err)
+			}
+			targets[releaseKey] = values
+		}
 	}
 	for image, releaseKey := range imageToRelease {
-		if up, ok := resolved[releaseKey]; ok {
-			result[image] = up
+		up, ok := resolved[releaseKey]
+		if !ok {
+			continue
 		}
+		img := model.ParseImageRef(image)
+		up.ImageCurrent = img.Tag
+		if up.Available {
+			up.ImageLatest, up.ImagePinned = upgrade.ChartImageTag(img, releases[releaseKey].values, targets[releaseKey])
+		}
+		result[image] = up
 	}
 	slog.DebugContext(ctx, "resolved helm upgrades", "helmreleases", len(needed), "resolved", len(resolved))
 	return nil
@@ -187,6 +208,11 @@ type releaseInfo struct {
 	chart   string
 	version string
 	repoKey string // "<sourceNamespace>/<sourceName>"
+	// values are the release's inline spec.values. Values from valuesFrom are not
+	// read, which can only make an image's target unknown, never wrongly unchanged:
+	// an image is only ever called unchanged when the tag read is the tag already
+	// running, and a hidden override can only keep it there.
+	values map[string]any
 }
 
 func listHelmReleases(ctx context.Context, dyn dynamic.Interface) (map[string]releaseInfo, error) {
@@ -223,6 +249,7 @@ func parseHelmRelease(u *unstructured.Unstructured) (key string, info releaseInf
 	key = ns + "/" + name
 
 	info.chart, _, _ = unstructured.NestedString(u.Object, "spec", "chart", "spec", "chart")
+	info.values, _, _ = unstructured.NestedMap(u.Object, "spec", "values")
 
 	if history, ok, _ := unstructured.NestedSlice(u.Object, "status", "history"); ok && len(history) > 0 {
 		if h, ok := history[0].(map[string]interface{}); ok {

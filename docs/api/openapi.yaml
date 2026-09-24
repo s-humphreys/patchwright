@@ -1745,6 +1745,21 @@ components:
             How the verdict was reached. `digest` means the reference is a floating tag
             with no version, so `current` and `latest` are short digests rather than
             versions.
+        image_current:
+          type: string
+          description: |
+            The image's own tag before the upgrade, for an upgrade whose `current` and
+            `latest` version something else (a chart).
+        image_latest:
+          type: string
+          description: |
+            The image's own tag after the upgrade: the tag the target chart deploys.
+            Absent when that could not be read. Equal to `image_current` when the
+            upgrade provably leaves the image where it is, so it clears nothing on it.
+        image_pinned:
+          type: boolean
+          description: |
+            Our own release values set this image's tag, so no chart bump moves it.
         actionable:
           type: boolean
           description: True only when applicable at this level.
