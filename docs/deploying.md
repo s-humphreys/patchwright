@@ -79,8 +79,10 @@ cannot work.
 ## RBAC
 
 For the cluster patchwright runs in, the chart creates a ServiceAccount and a minimal
-read-only ClusterRole: `get`/`list` on `pods` and `namespaces`, plus `services` and
-Gateway API `httproutes` when `reconcile.exposure` is on. No Secrets, no write verbs,
+read-only ClusterRole: `get`/`list` on `pods`, `namespaces`, `deployments`,
+`statefulsets`, `daemonsets` and `cronjobs` (liveness counts deployed workloads, not
+only live pods; see [reconciliation](reconciliation.md#what-counts-as-running)), plus
+`services` and Gateway API `httproutes` when `reconcile.exposure` is on. No Secrets, no write verbs,
 no credentials to manage.
 
 ## Multi-cluster
@@ -111,9 +113,10 @@ authenticates as nobody.
 kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.principalId}'
 ```
 
-The read set follows the features in use - `rbac.exposure` adds services and
-httproutes, `rbac.remediation` adds workloads and Flux resources so an image deployed
-by a chart or operator can be traced to the resource that sets its version. For
+The read set follows the features in use. Pods, namespaces, workloads and cronjobs are
+always granted, for liveness; `rbac.exposure` adds services and httproutes, and
+`rbac.remediation` adds Flux resources so an image deployed by a chart or operator can
+be traced to the resource that sets its version. For
 operator-owned custom resources, name their API groups in
 `rbac.customResourceGroups`; `*` is refused, because `get` on every resource includes
 Secrets in every namespace.

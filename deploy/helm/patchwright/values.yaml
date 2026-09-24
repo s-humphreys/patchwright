@@ -299,7 +299,7 @@ reconcile:
 
   # Detect available upgrades for how images are deployed (a newer Helm chart
   # for Flux HelmReleases, a newer image tag for manifest/Kustomize workloads).
-  # Adds read access to workloads + Flux CRDs.
+  # Adds read access to Flux CRDs (workloads are always granted, for liveness).
   remediation: false
   # Detect remediation already under way, so an upgrade with an open pull request is
   # not reported as work nobody has started. Configured under remediation.inFlight in

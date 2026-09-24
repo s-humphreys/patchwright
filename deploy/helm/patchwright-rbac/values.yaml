@@ -37,16 +37,17 @@ rbac:
   # Names of the ClusterRole and ClusterRoleBinding.
   name: patchwright-reader
 
-  # Pods and namespaces are always granted: liveness and ownership attribution cannot
-  # work without them. The rest is opt-out, matched to the features that need it.
+  # Pods, namespaces, workloads (deployments, statefulsets, daemonsets) and cronjobs
+  # are always granted: liveness and ownership attribution cannot work without them.
+  # The rest is opt-out, matched to the features that need it.
 
   # What sits in front of a workload, for internet exposure. Grant it when
   # reconcile.exposure is on. Harmless either way: neither can write, and neither
   # exposes anything a pod listing does not.
   exposure: true
 
-  # Workloads and Flux resources, so an image deployed by a chart or an operator can be
-  # traced to the resource that sets its version - which is the difference between
+  # Flux resources, so an image deployed by a chart or an operator can be traced to
+  # the resource that sets its version - which is the difference between
   # "upgrade this" and "upgrade this, here".
   remediation: true
 

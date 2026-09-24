@@ -3,17 +3,22 @@
 // backing for live reconciliation: patchwright deploys to one cluster but can
 // read many, using a kubeconfig with a read-only context per cluster.
 //
-// Only Pods in the Running or Pending phase are counted, so images belonging to
-// completed Jobs or scaled-to-zero workloads are correctly reported as not
-// running — a major source of scanner noise.
+// An image counts as running when a Running or Pending Pod uses it, or when a
+// Deployment, StatefulSet, DaemonSet or unsuspended CronJob declares it. Pods alone
+// are not enough: a CronJob has no pod between runs and a scaled-to-zero workload
+// has none until it scales up, yet both are deployed and the image still needs
+// fixing. Images left behind only by completed Jobs or deleted workloads are
+// reported as not running, which removes a major source of scanner noise.
 package kube
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -73,21 +78,33 @@ type Source struct {
 
 func (s *Source) Name() string { return "kube" }
 
-// RunningImages lists Running/Pending pods across every configured cluster and
-// returns a map of image NameTag -> running workload count. It fails hard if
-// any cluster cannot be read, so liveness is never inferred from partial data.
+// RunningImages returns a map of image NameTag -> running workload count across
+// every configured cluster. It fails hard if any cluster's pods cannot be read, so
+// liveness is never inferred from partial data.
 func (s *Source) RunningImages(ctx context.Context) (map[string]int, error) {
+	running, _, err := s.RunningImagesPartial(ctx)
+	return running, err
+}
+
+// RunningImagesPartial is RunningImages that also reports whether any cluster
+// refused a workload list. Pods are required; workload definitions are read where
+// RBAC allows, because the grants for them reach clusters later than this code does,
+// and refusing to reconcile at all would be worse than reconciling from pods alone.
+func (s *Source) RunningImagesPartial(ctx context.Context) (map[string]int, bool, error) {
 	clients, err := s.clients()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	running := map[string]int{}
+	partial := false
 	for label, client := range clients {
-		if err := collectRunningImages(ctx, client, running); err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", label, err)
+		p, err := collectRunningImages(ctx, label, client, running)
+		if err != nil {
+			return nil, false, fmt.Errorf("cluster %q: %w", label, err)
 		}
+		partial = partial || p
 	}
-	return running, nil
+	return running, partial, nil
 }
 
 // NamespaceLabels returns namespace name -> labels across every configured
@@ -122,24 +139,81 @@ func (s *Source) NamespaceLabels(ctx context.Context) (map[string]map[string]str
 	return out, nil
 }
 
-func collectRunningImages(ctx context.Context, client kubernetes.Interface, running map[string]int) error {
+func collectRunningImages(ctx context.Context, cluster string, client kubernetes.Interface, running map[string]int) (partial bool, err error) {
 	pods, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("list pods: %w", err)
+		return false, fmt.Errorf("list pods: %w", err)
+	}
+	count := func(spec corev1.PodSpec) {
+		for _, c := range podContainers(spec) {
+			running[model.ParseImageRef(c.Image).NameTag()]++
+		}
 	}
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		if p.Status.Phase != corev1.PodRunning && p.Status.Phase != corev1.PodPending {
 			continue
 		}
-		for _, c := range p.Spec.InitContainers {
-			running[model.ParseImageRef(c.Image).NameTag()]++
+		count(p.Spec)
+	}
+
+	// A forbidden list is survivable; anything else is as fatal as the pod list,
+	// since it says nothing about what RBAC allows and may hide a broken cluster.
+	listFailed := func(resource string, err error) error {
+		if !apierrors.IsForbidden(err) {
+			return fmt.Errorf("list %s: %w", resource, err)
 		}
-		for _, c := range p.Spec.Containers {
-			running[model.ParseImageRef(c.Image).NameTag()]++
+		slog.WarnContext(ctx, "cannot read workload definitions for liveness; images deployed without a "+
+			"running pod will not be seen, so nothing is judged not running this run",
+			"cluster", cluster, "resource", resource, "missing_grant", "get,list on "+resource, "error", err)
+		partial = true
+		return nil
+	}
+
+	// Scaled-to-zero workloads count: they are still deployed (KEDA scales to zero)
+	// and will run the image again as soon as they scale up.
+	if deploys, err := client.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{}); err != nil {
+		if err := listFailed("deployments.apps", err); err != nil {
+			return false, err
+		}
+	} else {
+		for i := range deploys.Items {
+			count(deploys.Items[i].Spec.Template.Spec)
 		}
 	}
-	return nil
+	if sts, err := client.AppsV1().StatefulSets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{}); err != nil {
+		if err := listFailed("statefulsets.apps", err); err != nil {
+			return false, err
+		}
+	} else {
+		for i := range sts.Items {
+			count(sts.Items[i].Spec.Template.Spec)
+		}
+	}
+	if ds, err := client.AppsV1().DaemonSets(metav1.NamespaceAll).List(ctx, metav1.ListOptions{}); err != nil {
+		if err := listFailed("daemonsets.apps", err); err != nil {
+			return false, err
+		}
+	} else {
+		for i := range ds.Items {
+			count(ds.Items[i].Spec.Template.Spec)
+		}
+	}
+	if cjs, err := client.BatchV1().CronJobs(metav1.NamespaceAll).List(ctx, metav1.ListOptions{}); err != nil {
+		if err := listFailed("cronjobs.batch", err); err != nil {
+			return false, err
+		}
+	} else {
+		for i := range cjs.Items {
+			cj := &cjs.Items[i]
+			// A suspended CronJob has been switched off and schedules nothing.
+			if cj.Spec.Suspend != nil && *cj.Spec.Suspend {
+				continue
+			}
+			count(cj.Spec.JobTemplate.Spec.Template.Spec)
+		}
+	}
+	return partial, nil
 }
 
 // restConfigs builds a *rest.Config per configured cluster, keyed by a label
