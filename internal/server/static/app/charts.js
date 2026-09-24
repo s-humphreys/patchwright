@@ -108,12 +108,30 @@ export function columnChart(cols, opts = {}) {
  * @param {HTMLElement} el
  * @param {{x: number[], series: {label: string, values: (number|null)[], color: string}[], title?: string, height?: number}} spec
  */
+/**
+ * periodLabel names a period start: the month for monthly buckets, the date when
+ * periods are closer together than a month, as weekly buckets are.
+ * @param {number} v epoch seconds
+ * @param {number[]} xs every period start in the chart
+ */
+export function periodLabel(v, xs) {
+  const iso = new Date(v * 1000).toISOString();
+  const step = xs.length > 1 ? Math.min(...xs.slice(1).map((x, i) => x - xs[i])) : Infinity;
+  return step < 20 * 86400 ? iso.slice(0, 10) : iso.slice(0, 7);
+}
+
+/** @param {string[] | null | undefined} values */
+export function axisWidth(values) {
+  const longest = Math.max(0, ...(values || []).map((v) => String(v).length));
+  return Math.max(40, longest * 8 + 18);
+}
+
 export function mountTimeSeries(el, spec) {
   const UPlot = /** @type {any} */ (globalThis).uPlot;
   if (!el || !UPlot || !spec?.x?.length) return null;
   const width = Math.max(320, el.clientWidth || el.parentElement?.clientWidth || 640);
   const series = [
-    { label: "period", value: (u, v) => (v == null ? "" : new Date(v * 1000).toISOString().slice(0, 7)) },
+    { label: "period", value: (u, v) => (v == null ? "" : periodLabel(v, spec.x)) },
     ...spec.series.map((s) => ({
       label: s.label, stroke: s.color, width: 2, points: { show: true, size: 6 },
       value: (u, v) => (v == null ? "-" : v.toLocaleString("en-GB")),
@@ -125,9 +143,13 @@ export function mountTimeSeries(el, spec) {
     legend: { live: true },
     scales: { x: { time: true } },
     axes: [
-      { values: (u, splits) => splits.map((v) => new Date(v * 1000).toISOString().slice(0, 7)),
+      // One tick per period, at the data points: uPlot's own time ticks fell
+      // between periods and printed the same month over and over.
+      { splits: () => spec.x, values: (u, splits) => splits.map((v) => periodLabel(v, spec.x)),
         stroke: getComputedStyle(el).color, grid: { show: false } },
-      { size: 56, stroke: getComputedStyle(el).color, grid: { stroke: "rgba(128,128,128,.15)" },
+      // Sized to the widest label, so a six-figure risk sum is not cut to "00,000".
+      { size: (u, values) => axisWidth(values), stroke: getComputedStyle(el).color,
+        grid: { stroke: "rgba(128,128,128,.15)" },
         values: (u, splits) => splits.map((v) => v.toLocaleString("en-GB")) },
     ],
     series,
