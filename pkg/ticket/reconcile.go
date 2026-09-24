@@ -373,7 +373,7 @@ func clearsNothingAction(t Existing, cfg config.JiraConfig) Action {
 		return Action{
 			Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true,
 			Reason: ReasonUpgradeClearsNothing,
-			Message: "Closing as not done: the upgrade this ticket asks for fixes nothing.\n\n" + detail +
+			Message: "Closing as not done: the upgrade this ticket asks for does not fix what raised it.\n\n" + detail +
 				"\n\nNobody had picked this ticket up, so it is being closed as not-worked rather than as " +
 				"completed work, which is the accurate record. Reopen if this is wrong.",
 			Why: why + "; nobody picked the ticket up",
