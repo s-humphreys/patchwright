@@ -445,3 +445,42 @@ func TestOptionsIntTreatsNonsenseAsAbsent(t *testing.T) {
 		t.Errorf("Int = %d, want 12", got)
 	}
 }
+
+// partialSource reports a read that was refused some workload definitions.
+type partialSource struct {
+	fakeSource
+	partial bool
+}
+
+func (p partialSource) RunningImagesPartial(context.Context) (map[string]int, bool, error) {
+	return p.running, p.partial, nil
+}
+
+// A partial read cannot tell "not deployed" from "deployed without a pod right now",
+// so an image it did not see is left as liveness unknown, never as not running.
+func TestAPartialLivenessReadLeavesUnseenImagesUnreconciled(t *testing.T) {
+	src := partialSource{fakeSource: fakeSource{running: map[string]int{"acr.io/app:1": 1}}, partial: true}
+	occurrences := []model.Occurrence{occ("acr.io/app:1"), occ("acr.io/cron:1")}
+
+	if err := enrich.NewLiveness(src).Enrich(context.Background(), occurrences); err != nil {
+		t.Fatal(err)
+	}
+	if !occurrences[0].Reconciled || !occurrences[0].Live {
+		t.Errorf("a seen image is live whatever else was refused: reconciled=%v live=%v", occurrences[0].Reconciled, occurrences[0].Live)
+	}
+	if occurrences[1].Reconciled || occurrences[1].Live {
+		t.Errorf("an unseen image on a partial read is unknown, not not-running: reconciled=%v live=%v", occurrences[1].Reconciled, occurrences[1].Live)
+	}
+}
+
+func TestACompleteReadFromAPartialCapableSourceReconcilesEverything(t *testing.T) {
+	src := partialSource{fakeSource: fakeSource{running: map[string]int{"acr.io/app:1": 1}}}
+	occurrences := []model.Occurrence{occ("acr.io/app:1"), occ("acr.io/gone:1")}
+
+	if err := enrich.NewLiveness(src).Enrich(context.Background(), occurrences); err != nil {
+		t.Fatal(err)
+	}
+	if !occurrences[1].Reconciled || occurrences[1].Live {
+		t.Errorf("a complete read proves absence: reconciled=%v live=%v", occurrences[1].Reconciled, occurrences[1].Live)
+	}
+}

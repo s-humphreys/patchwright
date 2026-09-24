@@ -195,7 +195,9 @@ suppress:
 
   # Not actually running: when reconciliation against live clusters has run
   # (--live-source) and none of the finding's workloads are live, drop it.
-  # A completed Job or scaled-to-zero workload is not worth paging anyone over.
+  # An image left behind only by a completed Job or a removed workload is not
+  # worth paging anyone over. Deployed workloads scaled to zero and CronJobs
+  # between runs still count as live.
   # This rule is inert unless reconciliation ran (reconciled is then false).
   - name: not-running
     when: "reconciled && !live"

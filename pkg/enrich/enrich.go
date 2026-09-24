@@ -31,6 +31,14 @@ type LiveSource interface {
 	RunningImages(ctx context.Context) (map[string]int, error)
 }
 
+// PartialLiveSource is a LiveSource that can say its read was incomplete: it saw
+// every running pod but was refused some of the workload definitions, so an image
+// it did not report may still be deployed and merely have no pod at the moment.
+// Optional, like LabelSource; a source that does not implement it is complete.
+type PartialLiveSource interface {
+	RunningImagesPartial(ctx context.Context) (running map[string]int, partial bool, err error)
+}
+
 // LabelSource reports namespace labels across one or more clusters, keyed by
 // namespace name. It backs ownership attribution from labels such as "team".
 // A LiveSource may optionally also implement LabelSource (the client-go kube
@@ -108,7 +116,8 @@ func LiveSourceNames() []string {
 
 // Liveness is an Enricher that marks each occurrence live or not by matching
 // its image against a LiveSource. Every occurrence it touches is marked
-// Reconciled, so policy can distinguish "not running" from "liveness unknown".
+// Reconciled, so policy can distinguish "not running" from "liveness unknown",
+// except when the source reports a partial read (see Enrich).
 type Liveness struct {
 	Source LiveSource
 }
@@ -117,22 +126,47 @@ type Liveness struct {
 func NewLiveness(src LiveSource) Liveness { return Liveness{Source: src} }
 
 // Enrich implements Enricher.
+//
+// On a partial read, an image the source saw is still live, but one it did not see
+// is left unreconciled rather than marked not running. Absence only means "not
+// deployed" when every place a deployed image can be recorded was read; without the
+// workload definitions a CronJob between runs looks exactly like a deleted one, and
+// "not running" is what closes tickets. Unreconciled is the existing "liveness
+// unknown" state, which policy treats as live and the ticket reconciler never closes
+// as not running.
 func (l Liveness) Enrich(ctx context.Context, occurrences []model.Occurrence) error {
-	running, err := l.Source.RunningImages(ctx)
+	running, partial, err := l.runningImages(ctx)
 	if err != nil {
 		return fmt.Errorf("live source %q: %w", l.Source.Name(), err)
 	}
-	live := 0
+	live, unknown := 0, 0
 	for i := range occurrences {
-		occurrences[i].Reconciled = true
-		occurrences[i].Live = running[occurrences[i].Image.NameTag()] > 0
-		if occurrences[i].Live {
+		isLive := running[occurrences[i].Image.NameTag()] > 0
+		occurrences[i].Live = isLive
+		occurrences[i].Reconciled = isLive || !partial
+		switch {
+		case isLive:
 			live++
+		case partial:
+			unknown++
 		}
 	}
+	if partial {
+		slog.WarnContext(ctx, "liveness read was partial; images not seen running are left unreconciled, "+
+			"so nothing is judged not running this run", "source", l.Source.Name(),
+			"occurrences_unreconciled", unknown)
+	}
 	slog.DebugContext(ctx, "reconciled liveness", "source", l.Source.Name(),
-		"running_images", len(running), "occurrences", len(occurrences), "live", live)
+		"running_images", len(running), "occurrences", len(occurrences), "live", live, "partial", partial)
 	return nil
+}
+
+func (l Liveness) runningImages(ctx context.Context) (map[string]int, bool, error) {
+	if p, ok := l.Source.(PartialLiveSource); ok {
+		return p.RunningImagesPartial(ctx)
+	}
+	running, err := l.Source.RunningImages(ctx)
+	return running, false, err
 }
 
 // NamespaceLabeler is an Enricher that attaches namespace labels (e.g.
