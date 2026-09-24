@@ -53,16 +53,24 @@ test.describe('analytics page', () => {
     const movement = page.locator('section.panel', { hasText: 'Movement, in work items' });
     await expect(movement).toContainText('Already open when the record began');
     await expect(movement).toContainText('303');
-    // 42 + 31 + 18 opened; 9 + 47 + 33 resolved; 11710 CVEs cleared; 32 lapsed.
+    // 42 + 31 + 18 opened; 9 + 47 + 33 fixed; 11710 CVEs cleared; 32 left without a fix.
     await expect(movement).toContainText('91 opened');
     await expect(movement).toContainText('89');
     await expect(movement).toContainText('clearing 11,710 CVEs (36 known-exploited)');
-    await expect(movement).toContainText('32 lapsed');
+    await expect(movement).toContainText('32 left without a fix');
+    // The unit is defined once, directly under the heading.
+    await expect(movement.locator('h3 + p.unit')).toContainText('A work item is one service and the one upgrade that would fix it.');
+    await expect(movement.locator('h3 + p.unit')).toContainText('Fixed (confirmed) means it left the queue with evidence the upgrade landed');
+    await expect(movement.locator('[data-chart="movement"] .u-legend')).toContainText('fixed (confirmed)');
+    await expect(movement.locator('[data-chart="movement"] .u-legend')).toContainText('left without a fix');
     await expect(movement.locator('[data-chart="movement"] canvas')).toHaveCount(1);
 
     const header = movement.locator('table.mini thead');
     await expect(header).toContainText('Baseline');
     await expect(header).toContainText('CVEs cleared');
+    await expect(header).toContainText('Fixed (confirmed)');
+    await expect(header).toContainText('Left without a fix');
+    await expect(header).not.toContainText(/resolved|lapsed/i);
     // Lapse reasons live on the cell's tooltip rather than as a line under the table.
     const lapsedCell = movement.locator('tbody tr', { hasText: '2026-10' }).locator('td[title*="no longer reported"]');
     await expect(lapsedCell).toHaveCount(1);
@@ -188,15 +196,35 @@ test.describe('analytics page', () => {
     await expect(page.locator('#history')).not.toContainText('Could not load history');
   });
 
-  test('by rule is gone and the signal table is in work items with EPSS decay apart', async ({ page }) => {
+  test('by rule and by team are gone, and open work items by signal is a stacked chart with EPSS decay under it', async ({ page }) => {
     await page.goto('/analytics');
     await expect(page.locator('h3', { hasText: 'By rule' })).toHaveCount(0);
-    const signals = page.locator('section.panel', { hasText: 'Work items by signal' });
-    await expect(signals).toContainText('Known exploited');
-    await expect(signals).toContainText('EPSS decayed below 0.5');
+    await expect(page.locator('h3', { hasText: /by team/i })).toHaveCount(0);
+    await expect(page.locator('h3', { hasText: /^Work items by signal$/ })).toHaveCount(0);
+    const signals = page.locator('section.panel', { has: page.locator('h3', { hasText: 'Open work items by signal' }) });
+    await expect(signals).toContainText('Each work item is counted once, under its most severe signal');
+    const chart = signals.locator('[data-chart="signals"]');
+    await expect(chart.locator('canvas')).toHaveCount(1);
+    const legend = chart.locator('.u-legend');
+    for (const label of ['open with a signal', 'Known exploited', 'EPSS above 0.5', 'Fixable critical', 'End-of-life base']) {
+      await expect(legend).toContainText(label);
+    }
+    // Hover the last bar: the legend gives each band's own count and the bar's total,
+    // which is the sum of the bands, not a double count.
+    const over = chart.locator('.u-over');
+    await over.scrollIntoViewIfNeeded();
+    const box = await over.boundingBox();
+    await page.mouse.move(box.x + box.width * (2.5 / 3), box.y + box.height * 0.9);
+    await expect(legend.locator('.u-value').nth(0)).toHaveText('2026-11');
+    await expect(legend.locator('.u-value').nth(1)).toHaveText('144');
+    await expect(legend.locator('tr', { hasText: 'Known exploited' }).locator('.u-value')).toHaveText('22');
+    await expect(legend.locator('tr', { hasText: 'End-of-life base' }).locator('.u-value')).toHaveText('9');
+
+    await expect(signals.locator('dt', { hasText: 'EPSS decayed below 0.5' })).toHaveCount(1);
     await expect(signals.locator('dd').first()).toContainText('35');
+    await expect(signals).toContainText('Became known-exploited while open');
     // Periods recorded before exposure was removed still carry the signal; the page
-    // must not bring it back as a row.
+    // must not bring it back as a band.
     await expect(signals).not.toContainText(/exposed/i);
   });
 
@@ -209,7 +237,9 @@ test.describe('analytics page', () => {
     await expect(page.locator('section.panel', { hasText: 'Direction' })).toContainText('a point, not a direction');
     // The tickets chart is per day, not per period, so it is the one chart left.
     await expect(page.locator('.chart-slot:not([data-chart="tickets-per-day"])')).toHaveCount(0);
-    await expect(page.locator('[data-chart="direction"] canvas, [data-chart="movement"] canvas')).toHaveCount(0);
+    await expect(page.locator('[data-chart="direction"] canvas, [data-chart="movement"] canvas, [data-chart="signals"] canvas')).toHaveCount(0);
+    await expect(page.locator('section.panel', { has: page.locator('h3', { hasText: 'Open work items by signal' }) }))
+      .toContainText('At the end of 2026-11: Known exploited 22 · EPSS above 0.5 9 · Fixable critical 104 · End-of-life base 9, 144 in all.');
   });
 
   test('history switched off says so and leaves the rest of the page intact', async ({ page }) => {
@@ -251,6 +281,7 @@ test.describe('analytics page', () => {
     const page = await ctx.newPage();
     await page.goto('/analytics');
     await expect(page.locator('[data-chart="direction"] canvas')).toHaveCount(1);
+    await expect(page.locator('[data-chart="signals"] canvas')).toHaveCount(1);
     await expect(page.locator('[data-chart="tickets-per-day"] canvas')).toHaveCount(1);
     await ctx.close();
   });

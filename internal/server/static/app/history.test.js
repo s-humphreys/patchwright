@@ -36,8 +36,10 @@ function body(over = {}) {
       since: '2026-07-01T00:00:00Z', until: '2026-09-22T00:00:00Z',
       first_recorded: '2026-08-15T10:00:00Z', assessments: 40,
       risk: [
-        { period: '2026-08', at: '2026-08-31T23:00:00Z', assessments: 20, findings: 600, actionable: 400, risk: { items: 300, sum: 250000, urgent: 50, known_exploited: 30 } },
-        { period: '2026-09', at: '2026-09-21T23:00:00Z', assessments: 20, findings: 560, actionable: 380, risk: { items: 280, sum: 200000, urgent: 45, known_exploited: 28 } },
+        { period: '2026-08', at: '2026-08-31T23:00:00Z', assessments: 20, findings: 600, actionable: 400, risk: { items: 300, sum: 250000, urgent: 50, known_exploited: 30 },
+          open_by_signal: { kev: 30, 'epss-high': 12, 'fixable-critical': 90, 'end-of-life': 8 } },
+        { period: '2026-09', at: '2026-09-21T23:00:00Z', assessments: 20, findings: 560, actionable: 380, risk: { items: 280, sum: 200000, urgent: 45, known_exploited: 28 },
+          open_by_signal: { kev: 28, 'epss-high': 10, 'fixable-critical': 81, 'end-of-life': 7 } },
       ],
       movement: [
         period('2026-07'),
@@ -86,20 +88,24 @@ test('one risk point is a point, not a direction', () => {
   assert.match(render(b), /one period only: a point, not a direction/);
 });
 
-test('resolved and lapsed are shown apart and never summed, with CVEs cleared beside the items', () => {
+test('fixed and left without a fix are shown apart and never summed, with CVEs cleared beside the items', () => {
   const html = render(body());
-  // Across the range: 40 opened (the 280 baseline is apart), 7 resolved clearing 40 CVEs, 9 lapsed.
+  // Across the range: 40 opened (the 280 baseline is apart), 7 fixed clearing 40 CVEs, 9 left without a fix.
   assert.match(html, /Already open when the record began<\/dt><dd class="muted">280<\/dd>/);
-  assert.match(html, /40 opened · <strong class="ok">7<\/strong> resolved, clearing 40 CVEs \(3 known-exploited\) · <span class="muted">9 lapsed<\/span>/);
+  assert.match(html, /40 opened · <strong class="ok">7<\/strong> fixed \(confirmed\), clearing 40 CVEs \(3 known-exploited\) · <span class="muted">9 left without a fix<\/span>/);
   assert.doesNotMatch(html, /16 /);
 });
 
-test('every heading says the unit, and the definitions live in the note not under the tables', () => {
+test('every heading says the unit, and movement defines it in one line under its heading', () => {
   const html = render(body());
-  assert.match(html, /Movement, in work items/);
-  assert.match(html, /Work items by signal/);
+  assert.match(html, /<h3>Movement, in work items<\/h3>\s*<p class="sub unit">A work item is one service and the one upgrade that would fix it\. <strong>Fixed \(confirmed\)<\/strong> means it left the queue with evidence the upgrade landed; <strong>left without a fix<\/strong> is everything else that left the queue: it stopped running, dropped below the rules, or is no longer reported\.<\/p>/);
+  assert.match(html, /Open work items by signal/);
   assert.match(html, /A <strong>work item<\/strong> is one service/);
   assert.doesNotMatch(html, /By rule/);
+  // The flow terms a reader sees are the new ones everywhere; the old words survive
+  // only in field names, which never reach the page.
+  const shown = html.replace(/<[^>]*>/g, ' ');
+  assert.doesNotMatch(shown, /\b(resolved|lapsed|Resolved|Lapsed)\b/);
   // Nothing trails the direction table any more; the explanation is in the note.
   assert.doesNotMatch(html, /A period with one run is a point, not a trend\.<\/p>/);
 });
@@ -116,6 +122,7 @@ test('two or more periods leave a slot for the interactive chart, and mounting w
   const html = render(body());
   assert.match(html, /data-chart="direction"/);
   assert.match(html, /data-chart="movement"/);
+  assert.match(html, /data-chart="signals"/);
   const { mountCharts } = await import('./history.js');
   const root = document.createElement('div');
   root.innerHTML = html;
@@ -127,23 +134,53 @@ test('two or more periods leave a slot for the interactive chart, and mounting w
 test('ticketed resolutions are a subset of resolved, with the share stated', () => {
   const html = render(body());
   // 4 unticketed + 3 ticketed = 7 landed, 3 ticketed = 43%.
-  assert.match(html, /<strong class="ok">7<\/strong> resolved with evidence, of which <strong>3<\/strong> \(43%\) were ticketed work/);
+  assert.match(html, /<strong class="ok">7<\/strong> fixed \(confirmed\), of which <strong>3<\/strong> \(43%\) were ticketed work/);
 });
 
 test('a ticket closed with the finding still open is flagged, not counted as done', () => {
   const html = render(body());
   assert.match(html, /<td class="warn">1<\/td>/);
-  assert.match(html, /neither resolved nor lapsed/);
+  assert.match(html, /neither fixed nor left without a fix/);
   assert.match(html, /not-running 3/);
   assert.match(html, /Closed by patchwright, by reason/);
 });
 
-test('the signal split classifies by the opening state and shows EPSS decay apart', () => {
+test('open work items by signal is a stacked chart per period that says how it avoids double counting', () => {
   const html = render(body());
-  assert.match(html, /Known exploited/);
-  assert.match(html, /EPSS decayed below 0\.5<\/dt><dd>10/);
-  // The signal table shows opened / resolved per period: 30 / 1 for KEV in August.
-  assert.match(html, /30 \/ <strong class="ok">1<\/strong>/);
+  const panel = html.slice(html.indexOf('<h3>Open work items by signal</h3>'), html.indexOf('<h3>Open now'));
+  assert.match(panel, /data-chart="signals"/);
+  assert.match(panel, /Each work item is counted once, under its most severe signal: known exploited, then EPSS above 0\.5, then fixable critical, then end-of-life/);
+  // The numbers stand without the canvas, and each row's bands sum to its total.
+  assert.match(panel, /<tr><td>2026-08<\/td><td>30<\/td><td>12<\/td><td>90<\/td><td>8<\/td><td>140<\/td><\/tr>/);
+  assert.match(panel, /<tr><td>2026-09<\/td><td>28<\/td><td>10<\/td><td>81<\/td><td>7<\/td><td>126<\/td><\/tr>/);
+  // The flows the old table carried are gone from it.
+  assert.doesNotMatch(panel, /opened \//);
+  // The two movements that shift a band without a fix sit directly under the chart.
+  assert.match(panel, /EPSS decayed below 0\.5<\/dt><dd>10<\/dd>/);
+  assert.match(panel, /Became known-exploited while open<\/dt><dd>0<\/dd>/);
+});
+
+test('one period of open work items by signal is a line of numbers, not a chart', () => {
+  const b = body();
+  b.history.risk = b.history.risk.slice(-1);
+  const html = render(b);
+  assert.doesNotMatch(html, /data-chart="signals"/);
+  assert.match(html, /At the end of 2026-09: Known exploited 28 · EPSS above 0\.5 10 · Fixable critical 81 · End-of-life base 7, 126 in all\./);
+});
+
+test('a range with no recorded work-item list says so rather than drawing zeros', () => {
+  const b = body();
+  b.history.risk = b.history.risk.map(({ open_by_signal, ...p }) => p);
+  const html = render(b);
+  assert.doesNotMatch(html, /data-chart="signals"/);
+  assert.match(html, /No work-item list was recorded for this range/);
+  assert.match(html, /EPSS decayed below 0\.5<\/dt><dd>10<\/dd>/);
+});
+
+test('work items by team is no longer on the page, though the API still carries it', () => {
+  const html = render(body());
+  assert.doesNotMatch(html, /by team/i);
+  assert.doesNotMatch(html, /<td>cpe<\/td>/);
 });
 
 test('periods with nothing in them are dropped except the latest', () => {
@@ -265,7 +302,7 @@ function ticketsBody(over = {}) {
 
 test('tickets per day sit in the ticketed panel, say they are per day, and offer a button per day that had any', () => {
   const html = render(body(), ticketsBody());
-  const panel = html.slice(html.indexOf('Total remediation against ticketed work'), html.indexOf('Work items by signal'));
+  const panel = html.slice(html.indexOf('Total remediation against ticketed work'), html.indexOf('<h3>Open work items by signal</h3>'));
   assert.match(panel, /<h4>Tickets created, per day<\/h4>/);
   assert.match(panel, /Per day whatever the period above/);
   assert.match(panel, /3 in the range/);

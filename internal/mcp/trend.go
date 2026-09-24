@@ -276,25 +276,25 @@ func trendSummary(r TrendReport) []string {
 	if m.Baseline > 0 {
 		out = append(out, fmt.Sprintf("%d work items were already open when the record began; they are the baseline, not work that opened.", m.Baseline))
 	}
-	out = append(out, fmt.Sprintf("%d work items opened and %d resolved with evidence, of which %d were ticketed work and %d landed by another route (an update bot, a Flux automation, a rebuild done in passing). A work item is one service, its owner and the upgrade it needs; the resolved ones cleared %d distinct CVEs, %d of them known-exploited (summed over periods, so a CVE cleared in two periods counts twice).",
+	out = append(out, fmt.Sprintf("%d work items opened and %d were fixed (confirmed): they left the queue with evidence the upgrade landed. Of those, %d were ticketed work and %d landed by another route (an update bot, a Flux automation, a rebuild done in passing). A work item is one service and the one upgrade that would fix it; the fixed ones cleared %d distinct CVEs, %d of them known-exploited (summed over periods, so a CVE cleared in two periods counts twice).",
 		m.Opened, m.Resolved, m.ResolvedTicketed, m.ResolvedUnticketed, m.CVEsResolved, m.KEVCVEsResolved))
 	if m.Lapsed > 0 {
-		out = append(out, fmt.Sprintf("%d items lapsed: they left the queue without evidence the work was done, and are not counted as remediation. Reasons: %s.",
+		out = append(out, fmt.Sprintf("%d items left without a fix: they left the queue without evidence the upgrade landed (stopped running, dropped below the rules, no longer reported), and are not counted as remediation. Reasons: %s.",
 			m.Lapsed, describeCounts(m.LapseReasons)))
 	}
 	if kev, ok := r.BySignal["kev"]; ok && (kev.Opened > 0 || kev.Resolved > 0) {
-		out = append(out, fmt.Sprintf("Known-exploited: %d opened, %d resolved (%d ticketed), %d lapsed, classified by the item's state when first seen.",
+		out = append(out, fmt.Sprintf("Known-exploited: %d opened, %d fixed (confirmed) (%d ticketed), %d left without a fix, classified by the item's state when first seen.",
 			kev.Opened, kev.Resolved, kev.ResolvedTicketed, kev.Lapsed))
 	}
 	if epss, ok := r.BySignal[history.SignalEPSSHigh]; ok && (epss.Opened > 0 || epss.Resolved > 0 || m.EPSSDecayed > 0) {
-		out = append(out, fmt.Sprintf("EPSS above 0.5: %d opened, %d resolved; %d items left that bucket by score decay rather than by a patch.",
+		out = append(out, fmt.Sprintf("EPSS above 0.5: %d opened, %d fixed (confirmed); %d items left that bucket by score decay rather than by a patch.",
 			epss.Opened, epss.Resolved, m.EPSSDecayed))
 	}
 	if m.TicketsClosedFindingOpen > 0 {
-		out = append(out, fmt.Sprintf("%d tickets were closed while the image still ran; those are neither resolved nor lapsed.", m.TicketsClosedFindingOpen))
+		out = append(out, fmt.Sprintf("%d tickets were closed while the image still ran; those are neither fixed (confirmed) nor left without a fix.", m.TicketsClosedFindingOpen))
 	}
 	if m.MedianDaysToResolve != nil {
-		out = append(out, fmt.Sprintf("Median time from first seen to resolved, over resolved items only: %.0f days.", *m.MedianDaysToResolve))
+		out = append(out, fmt.Sprintf("Median time from first seen to fixed (confirmed), over fixed items only: %.0f days.", *m.MedianDaysToResolve))
 	}
 	if s := cycleTimeSentence(m); s != "" {
 		out = append(out, s)

@@ -202,3 +202,71 @@ export function mountBars(el, spec) {
     return null;
   }
 }
+
+/**
+ * mountStackedBars draws one stacked bar per period with uPlot, under the same rules
+ * as mountTimeSeries: nothing without the library, and a failure inside it
+ * swallowed, because the numbers beside the chart carry every value.
+ *
+ * spec.series is bottom band first, with each band's own values. uPlot has no
+ * stacking of its own, so each band is drawn as a bar reaching its running total,
+ * top band first, and every lower band paints over the part that is not its own.
+ * The legend reads the band's own value, not the running total, and leads with the
+ * total of the bar. Periods are evenly spaced labels rather than a time axis, so a
+ * week and a month bucket draw alike.
+ *
+ * @param {HTMLElement} el
+ * @param {{labels: string[], series: {label: string, values: number[], color: string}[], totalLabel?: string, height?: number}} spec
+ */
+export function mountStackedBars(el, spec) {
+  const UPlot = /** @type {any} */ (globalThis).uPlot;
+  if (!el || !UPlot || !spec?.labels?.length || !spec.series?.length) return null;
+  const n = spec.labels.length;
+  const width = Math.max(320, el.clientWidth || el.parentElement?.clientWidth || 640);
+  const x = spec.labels.map((_, i) => i);
+  const running = [];
+  let sum = new Array(n).fill(0);
+  for (const s of spec.series) {
+    sum = sum.map((v, i) => v + (s.values[i] || 0));
+    running.push(sum);
+  }
+  const top = spec.series.map((_, i) => i).reverse();
+  const count = (v) => (v == null ? "-" : v.toLocaleString("en-GB"));
+  const color = getComputedStyle(el).color;
+  const opts = {
+    width, height: spec.height || 200,
+    cursor: { drag: { x: false, y: false }, points: { show: false } },
+    legend: { live: true },
+    scales: {
+      x: { time: false, range: () => [-0.5, n - 0.5] },
+      y: { range: (u, min, max) => [0, Math.max(1, max)] },
+    },
+    axes: [
+      { splits: () => x, values: (u, splits) => splits.map((v) => spec.labels[v] ?? ""), stroke: color, grid: { show: false } },
+      { size: 48, stroke: color, grid: { stroke: "rgba(128,128,128,.15)" },
+        incrs: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000],
+        values: (u, splits) => splits.map((v) => v.toLocaleString("en-GB")) },
+    ],
+    series: [
+      { label: "period", value: (u, v) => (v == null ? "" : spec.labels[v] ?? "") },
+      // The bar's total, for the legend only: drawn with no width, it is the top
+      // band's running total and adds nothing to the plot.
+      { label: spec.totalLabel || "total", stroke: "transparent", width: 0, points: { show: false }, value: (u, v) => count(v) },
+      ...top.map((k) => ({
+        label: spec.series[k].label, stroke: spec.series[k].color, fill: spec.series[k].color,
+        width: 0, points: { show: false },
+        paths: UPlot.paths.bars({ size: [0.6, 72] }),
+        value: (u, v, si, idx) => (idx == null ? "-" : count(spec.series[k].values[idx] ?? 0)),
+      })),
+    ],
+  };
+  const data = [x, sum, ...top.map((k) => running[k])];
+  try {
+    el.innerHTML = "";
+    return new UPlot(opts, data, el);
+  } catch (err) {
+    el.innerHTML = "";
+    console.warn("chart not drawn:", err);
+    return null;
+  }
+}

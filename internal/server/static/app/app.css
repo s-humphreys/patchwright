@@ -512,6 +512,13 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
 .chart-slot { margin: .6rem 0; min-height: 1rem; }
 .chart-slot .uplot { font: inherit; color: inherit; }
 .chart-slot .u-legend { font-size: .8rem; color: var(--muted); }
+.panel .sub.unit { margin: 0 0 .6rem; max-width: 62rem; }
+/* The signal chart's own numbers, folded: the chart is the reading, these are the
+   copy that does not need a canvas. */
+.chart-numbers { margin: .2rem 0 .6rem; }
+.chart-numbers summary { color: var(--muted); font-size: .8rem; cursor: pointer; width: fit-content; }
+.chart-numbers summary:hover { color: var(--fg); }
+.chart-numbers table { margin-top: .4rem; }
 
 /* Tickets created per day: the chart, a button per day for the keyboard, and the
    day's tickets under both. */

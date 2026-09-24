@@ -85,7 +85,7 @@ of them are actually yours".
 | [MCP](docs/mcp.md) | Read-only tools an LLM client can ask about the estate |
 | [Authentication](docs/authentication.md) | Sign-in with OIDC, and tokens for scripts |
 | [Metrics](docs/metrics.md) | Prometheus metrics and what to alert on |
-| [History](docs/history.md) | Month-on-month movement: what was resolved with evidence, what lapsed, ticketed against unticketed, and the risk direction |
+| [History](docs/history.md) | Month-on-month movement: what was fixed with evidence, what left without a fix, ticketed against unticketed, open work items by signal, and the risk direction |
 | [Deploying](docs/deploying.md) | OCI charts, RBAC, registry credentials, Flux |
 | [Development](docs/development.md) | Build, test, run against your own data |
 | [Security](SECURITY.md) | What it touches, and what it deliberately cannot do |
@@ -120,7 +120,7 @@ Design notes live in [`docs/design`](docs/design); C4 diagrams in
   question. What is missing is knowing which repositories it covers, which is a read
   rather than an automation.
 - **Phase 7** ✅ [History](docs/history.md): an event log in PostgreSQL, off by
-  default, so the tool can say what was resolved with evidence, what lapsed, how much
+  default, so the tool can say what was fixed with evidence, what left without a fix, how much
   was ticketed work, and which way the estate's risk is moving, from the API and
   without a metrics stack, with movement charts atop the analytics page and an MCP `trend_report` that answers
   "is this getting better" in words. Remaining: tracker dates for cycle time
