@@ -14,8 +14,16 @@ metadata:
   {{- end }}
 rules:
   # Always: liveness reconciliation and ownership attribution from namespace labels.
+  # Liveness reads workload definitions as well as pods, because a CronJob between runs
+  # or a workload scaled to zero has no pod but is still deployed.
   - apiGroups: [""]
     resources: ["pods", "namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
     verbs: ["get", "list"]
   {{- if .Values.rbac.exposure }}
   # Internet exposure: what sits in front of a workload.
@@ -27,11 +35,8 @@ rules:
     verbs: ["get", "list"]
   {{- end }}
   {{- if .Values.rbac.remediation }}
-  # Where an upgrade would be applied: the workload, or the chart or operator that owns
-  # its tag.
-  - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "daemonsets"]
-    verbs: ["get", "list"]
+  # Where an upgrade would be applied: the chart or operator that owns the tag. The
+  # workloads themselves are granted above for liveness.
   - apiGroups: ["helm.toolkit.fluxcd.io"]
     resources: ["helmreleases"]
     verbs: ["get", "list"]

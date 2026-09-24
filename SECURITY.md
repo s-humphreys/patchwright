@@ -60,9 +60,11 @@ which is a useful shopping list to an attacker. Treat access accordingly.
 Read-only, and narrow. The chart's ClusterRole grants `get` and `list` only, on:
 
 - `pods`, `namespaces`
+- `deployments`, `statefulsets`, `daemonsets` and `cronjobs`, so a workload with no
+  pod at the moment (scaled to zero, or a CronJob between runs) still counts as
+  running
 - `services` and Gateway API `httproutes`, to measure whether a workload is
   reachable from the internet (only when exposure is enabled)
-- `deployments`, `statefulsets`, `daemonsets`
 - Flux resources: `helmreleases`, `kustomizations`, `helmrepositories`,
   `gitrepositories`, `ocirepositories`
 - custom resources named by an ownerReference, to determine whether an image's tag

@@ -27,7 +27,7 @@ deployment {
     }
 
     hubWorkloads = k8sObject 'Workloads (all namespaces)' {
-      description 'The pods and namespaces patchwright reads locally.'
+      description 'The pods, workloads, CronJobs and namespaces patchwright reads locally.'
     }
   }
 

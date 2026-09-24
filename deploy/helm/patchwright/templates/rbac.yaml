@@ -1,7 +1,7 @@
 {{- if .Values.rbac.create -}}
-# Minimal read-only access for live reconciliation: list pods (to see what is
-# running) and namespaces (to read ownership labels such as team). No write
-# permissions, no secret access.
+# Minimal read-only access for live reconciliation: pods and workload definitions
+# (to see what is running or deployed) and namespaces (to read ownership labels
+# such as team). No write permissions, no secret access.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -11,6 +11,15 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods", "namespaces"]
+    verbs: ["get", "list"]
+  # Workload definitions count towards liveness as well as pods: a CronJob between
+  # runs or a workload scaled to zero has no pod but is still deployed. Remediation
+  # reads the same workloads to map images to their Flux HelmRelease.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
     verbs: ["get", "list"]
   {{- if .Values.reconcile.exposure.enabled }}
   # Internet exposure: read what sits in front of a workload, so "reachable from
@@ -27,11 +36,8 @@ rules:
     verbs: ["get", "list"]
   {{- end }}
   {{- if .Values.reconcile.remediation }}
-  # Remediation (upgrade detection): read workloads to map images to their Flux
-  # HelmRelease, and read Flux HelmReleases/HelmRepositories to find the chart.
-  - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "daemonsets"]
-    verbs: ["get", "list"]
+  # Remediation (upgrade detection): read Flux HelmReleases/HelmRepositories to find
+  # the chart. The workloads themselves are granted above for liveness.
   - apiGroups: ["helm.toolkit.fluxcd.io"]
     resources: ["helmreleases"]
     verbs: ["get", "list"]
