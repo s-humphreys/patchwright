@@ -23,8 +23,8 @@
   A page of its own rather than a tab, for the same reason the ticket plan is: a
   different subject, read by different people at different times.
 
-  It opens with movement - what the history record says has opened, resolved and
-  lapsed, and which way the risk is going - so the page tells a story: how things
+  It opens with movement - what the history record says has opened, been fixed and
+  left without a fix, and which way the risk is going - so the page tells a story: how things
   are moving, then what to do next. The history section reads GET /api/v1/history
   and fails on its own; a record that is unavailable never hides the queue.
 -->
@@ -32,8 +32,8 @@
 
 <h2>How the queue has moved</h2>
 <p class="meta">
-  Opened, resolved with evidence, and lapsed without it, by period. Counts are work
-  items, classified by how each looked when the record first saw it.
+  Opened, fixed (confirmed) with evidence, and left without a fix, by period. Counts
+  are work items, classified by how each looked when the record first saw it.
 </p>
 
 <div id="history">loading…</div>

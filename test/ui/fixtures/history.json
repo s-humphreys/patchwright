@@ -13,11 +13,14 @@
     "retention_days": 365,
     "risk": [
       { "period": "2026-09", "at": "2026-09-30T23:00:00Z", "assessments": 220, "findings": 663, "actionable": 497,
-        "risk": { "items": 299, "sum": 245739, "p50": 825, "p90": 825, "max": 1000, "urgent": 58, "known_exploited": 31 } },
+        "risk": { "items": 299, "sum": 245739, "p50": 825, "p90": 825, "max": 1000, "urgent": 58, "known_exploited": 31 },
+        "open_by_signal": { "kev": 31, "epss-high": 17, "fixable-critical": 142, "end-of-life": 12 } },
       { "period": "2026-10", "at": "2026-10-31T23:00:00Z", "assessments": 740, "findings": 640, "actionable": 455,
-        "risk": { "items": 271, "sum": 221400, "p50": 825, "p90": 900, "max": 1000, "urgent": 49, "known_exploited": 26 } },
+        "risk": { "items": 271, "sum": 221400, "p50": 825, "p90": 900, "max": 1000, "urgent": 49, "known_exploited": 26 },
+        "open_by_signal": { "kev": 26, "epss-high": 14, "fixable-critical": 121, "end-of-life": 11 } },
       { "period": "2026-11", "at": "2026-11-21T10:00:00Z", "assessments": 490, "findings": 602, "actionable": 410,
-        "risk": { "items": 244, "sum": 198120, "p50": 800, "p90": 900, "max": 1000, "urgent": 41, "known_exploited": 22 } }
+        "risk": { "items": 244, "sum": 198120, "p50": 800, "p90": 900, "max": 1000, "urgent": 41, "known_exploited": 22 },
+        "open_by_signal": { "kev": 22, "epss-high": 9, "fixable-critical": 104, "end-of-life": 9 } }
     ],
     "movement": [
       { "period": "2026-08", "start": "2026-08-01T00:00:00Z", "end": "2026-09-01T00:00:00Z",
@@ -95,8 +98,9 @@
     "caveats": [
       "the record begins 2026-09-21; periods before it are empty because nothing was watching, not because nothing happened",
       "303 work items were already open when the record began and are counted as the baseline, not as opened",
-      "counts are work items, classified by how each looked when the record first saw it",
-      "resolved requires evidence the work is done; lapsed is everything else, and is never remediation",
+      "counts are work items: one service and the one upgrade that would fix it, classified by how each looked when the record first saw it",
+      "fixed (confirmed), the resolved field, requires evidence the upgrade landed; left without a fix, the lapsed field, is everything else that left the queue, and is never remediation",
+      "open work items by signal count each item once, under its most severe signal: known-exploited, then EPSS above 0.5, then fixable critical, then end-of-life",
       "tracker_tickets_raised and tracker_tickets_closed come from the tracker, not the record: every ticket on the configured projects and issue type by its own created and resolution dates, including tickets raised by hand or before the record began. They are tickets, not resolutions, and carry no rule or signal"
     ]
   }

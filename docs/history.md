@@ -66,8 +66,12 @@ one as a lapse.
 | `resolved` | It left the queue **with evidence**: every image still reported, checked for a newer version, on the latest, with liveness reconciled. The test auto-close uses |
 | `lapsed` | It left the queue without that evidence: no longer reported, no longer running, or the data to judge it missing |
 
-Resolved and lapsed are never summed. A time-to-remediate that counted coverage loss
-as remediation would improve fastest when the scanner broke.
+A reader sees these two as **fixed (confirmed)** and **left without a fix**: the page,
+the report caveats and the `trend_report` sentences use those words, while the event
+kinds and JSON fields keep `resolved` and `lapsed`. The unit is the work item, one
+service and the one upgrade that would fix it. Fixed (confirmed) and left without a
+fix are never summed. A time-to-remediate that counted coverage loss as remediation
+would improve fastest when the scanner broke.
 
 ### Absence is counted before it is believed
 
@@ -131,16 +135,31 @@ not by the current configuration:
 KEV is the headline exploited figure and EPSS sits beside it with that weight: one is
 a fact that only grows, the other a forecast.
 
+### Open work items by signal
+
+Each risk point (the last assessment of a period) carries `open_by_signal`: the work
+items open at that assessment, read from its stored work-item list, by signal. An item
+carrying several signals would be counted several times by a plain tally, so each is
+counted once, under the first of `kev`, `epss-high`, `fixable-critical` and
+`end-of-life` that it carries. The four values therefore sum to the open items carrying
+any of them and can be stacked; items with none, and the retired `exposed` signal, are
+in no key. Every key is present, zero included, when the list was read; the field is
+absent for a period whose last assessment has no stored list (recorded before lists
+were kept, or unreadable, which the caveats then say). Unlike the movement splits this
+is the item's state at the end of the period, not when it was first seen, so an item
+whose EPSS decayed moves out of that band; `epss_decayed` and `became_known_exploited`
+count those moves. Added without a schema version bump, like the tracker fields.
+
 ### Total remediation against ticketed work
 
 Four buckets, and a report shows all four:
 
 | Bucket | Field | Meaning |
 |---|---|---|
-| Resolved, never ticketed | `resolved_unticketed` | Landed by another route: an update bot, a Flux automation, a rebuild done in passing |
-| Resolved, ticketed | `resolved_ticketed` | Ticketed work completed. A **subset** of resolved, never a separate total |
+| Fixed (confirmed), never ticketed | `resolved_unticketed` | Landed by another route: an update bot, a Flux automation, a rebuild done in passing |
+| Fixed (confirmed), ticketed | `resolved_ticketed` | Ticketed work completed. A **subset** of fixed, never a separate total |
 | Ticket closed, finding open | `tickets_closed_finding_open` | A human closed the ticket and the old image still runs |
-| Lapsed | `lapsed` | Coverage loss or the workload went away. Excluded from every remediation figure |
+| Left without a fix | `lapsed` | Coverage loss or the workload went away. Excluded from every remediation figure |
 
 `resolved_unticketed + resolved_ticketed` is total upgrades and patches.
 
@@ -225,16 +244,19 @@ it was stay untitled until the tracker is read in full, so run
 
 The **Analytics** page opens with the report, so the page tells a story: how things
 are moving, then what to do next. It shows the caveats first, the risk direction by
-period, opened against resolved against lapsed, the four-bucket delineation, the
-per-signal, per-rule and per-team splits, and the queue as the record holds it now.
+period, opened against fixed (confirmed) against left without a fix, with the unit
+defined under the heading, the four-bucket delineation, a stacked bar per period of the
+open work items by signal (each item under its most severe signal) with the EPSS decay
+and newly known-exploited counts under it, and the queue as the record holds it now.
+The per-rule and per-team splits stay in the API and the MCP tool but are not drawn.
 Once the tracker has been read, the ticketed panel adds a cycle-time table and the
 tracker's own ticket counts, each only for the periods that have them, and a chart of
 tickets created per day whatever the bucket: click a day, or pick it from the buttons
 under the chart, for the tickets behind it.
 A lookback and a bucket selector carry in the URL, so a view can be linked. With two
-or more periods the direction and movement panels draw interactive charts (hover for
-each period's values) using a vendored copy of uPlot; with one period a chart would
-be a single block, so the number stands alone. The
+or more periods the direction, movement and signal panels draw interactive charts
+(hover for each period's values) using a vendored copy of uPlot; with one period a
+chart would be a single block, so the numbers stand alone. The
 `trend_report` [MCP tool](mcp.md) answers the same questions in words.
 
 `GET /api/v1/history?since=90d&bucket=month` returns the report; `since` takes a

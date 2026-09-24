@@ -108,12 +108,30 @@ export function columnChart(cols, opts = {}) {
  * @param {HTMLElement} el
  * @param {{x: number[], series: {label: string, values: (number|null)[], color: string}[], title?: string, height?: number}} spec
  */
+/**
+ * periodLabel names a period start: the month for monthly buckets, the date when
+ * periods are closer together than a month, as weekly buckets are.
+ * @param {number} v epoch seconds
+ * @param {number[]} xs every period start in the chart
+ */
+export function periodLabel(v, xs) {
+  const iso = new Date(v * 1000).toISOString();
+  const step = xs.length > 1 ? Math.min(...xs.slice(1).map((x, i) => x - xs[i])) : Infinity;
+  return step < 20 * 86400 ? iso.slice(0, 10) : iso.slice(0, 7);
+}
+
+/** @param {string[] | null | undefined} values */
+export function axisWidth(values) {
+  const longest = Math.max(0, ...(values || []).map((v) => String(v).length));
+  return Math.max(40, longest * 8 + 18);
+}
+
 export function mountTimeSeries(el, spec) {
   const UPlot = /** @type {any} */ (globalThis).uPlot;
   if (!el || !UPlot || !spec?.x?.length) return null;
   const width = Math.max(320, el.clientWidth || el.parentElement?.clientWidth || 640);
   const series = [
-    { label: "period", value: (u, v) => (v == null ? "" : new Date(v * 1000).toISOString().slice(0, 7)) },
+    { label: "period", value: (u, v) => (v == null ? "" : periodLabel(v, spec.x)) },
     ...spec.series.map((s) => ({
       label: s.label, stroke: s.color, width: 2, points: { show: true, size: 6 },
       value: (u, v) => (v == null ? "-" : v.toLocaleString("en-GB")),
@@ -125,9 +143,13 @@ export function mountTimeSeries(el, spec) {
     legend: { live: true },
     scales: { x: { time: true } },
     axes: [
-      { values: (u, splits) => splits.map((v) => new Date(v * 1000).toISOString().slice(0, 7)),
+      // One tick per period, at the data points: uPlot's own time ticks fell
+      // between periods and printed the same month over and over.
+      { splits: () => spec.x, values: (u, splits) => splits.map((v) => periodLabel(v, spec.x)),
         stroke: getComputedStyle(el).color, grid: { show: false } },
-      { size: 56, stroke: getComputedStyle(el).color, grid: { stroke: "rgba(128,128,128,.15)" },
+      // Sized to the widest label, so a six-figure risk sum is not cut to "00,000".
+      { size: (u, values) => axisWidth(values), stroke: getComputedStyle(el).color,
+        grid: { stroke: "rgba(128,128,128,.15)" },
         values: (u, splits) => splits.map((v) => v.toLocaleString("en-GB")) },
     ],
     series,
@@ -196,6 +218,74 @@ export function mountBars(el, spec) {
   try {
     el.innerHTML = "";
     return new UPlot(opts, [spec.x, spec.values], el);
+  } catch (err) {
+    el.innerHTML = "";
+    console.warn("chart not drawn:", err);
+    return null;
+  }
+}
+
+/**
+ * mountStackedBars draws one stacked bar per period with uPlot, under the same rules
+ * as mountTimeSeries: nothing without the library, and a failure inside it
+ * swallowed, because the numbers beside the chart carry every value.
+ *
+ * spec.series is bottom band first, with each band's own values. uPlot has no
+ * stacking of its own, so each band is drawn as a bar reaching its running total,
+ * top band first, and every lower band paints over the part that is not its own.
+ * The legend reads the band's own value, not the running total, and leads with the
+ * total of the bar. Periods are evenly spaced labels rather than a time axis, so a
+ * week and a month bucket draw alike.
+ *
+ * @param {HTMLElement} el
+ * @param {{labels: string[], series: {label: string, values: number[], color: string}[], totalLabel?: string, height?: number}} spec
+ */
+export function mountStackedBars(el, spec) {
+  const UPlot = /** @type {any} */ (globalThis).uPlot;
+  if (!el || !UPlot || !spec?.labels?.length || !spec.series?.length) return null;
+  const n = spec.labels.length;
+  const width = Math.max(320, el.clientWidth || el.parentElement?.clientWidth || 640);
+  const x = spec.labels.map((_, i) => i);
+  const running = [];
+  let sum = new Array(n).fill(0);
+  for (const s of spec.series) {
+    sum = sum.map((v, i) => v + (s.values[i] || 0));
+    running.push(sum);
+  }
+  const top = spec.series.map((_, i) => i).reverse();
+  const count = (v) => (v == null ? "-" : v.toLocaleString("en-GB"));
+  const color = getComputedStyle(el).color;
+  const opts = {
+    width, height: spec.height || 200,
+    cursor: { drag: { x: false, y: false }, points: { show: false } },
+    legend: { live: true },
+    scales: {
+      x: { time: false, range: () => [-0.5, n - 0.5] },
+      y: { range: (u, min, max) => [0, Math.max(1, max)] },
+    },
+    axes: [
+      { splits: () => x, values: (u, splits) => splits.map((v) => spec.labels[v] ?? ""), stroke: color, grid: { show: false } },
+      { size: 48, stroke: color, grid: { stroke: "rgba(128,128,128,.15)" },
+        incrs: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000],
+        values: (u, splits) => splits.map((v) => v.toLocaleString("en-GB")) },
+    ],
+    series: [
+      { label: "period", value: (u, v) => (v == null ? "" : spec.labels[v] ?? "") },
+      // The bar's total, for the legend only: drawn with no width, it is the top
+      // band's running total and adds nothing to the plot.
+      { label: spec.totalLabel || "total", stroke: "transparent", width: 0, points: { show: false }, value: (u, v) => count(v) },
+      ...top.map((k) => ({
+        label: spec.series[k].label, stroke: spec.series[k].color, fill: spec.series[k].color,
+        width: 0, points: { show: false },
+        paths: UPlot.paths.bars({ size: [0.6, 72] }),
+        value: (u, v, si, idx) => (idx == null ? "-" : count(spec.series[k].values[idx] ?? 0)),
+      })),
+    ],
+  };
+  const data = [x, sum, ...top.map((k) => running[k])];
+  try {
+    el.innerHTML = "";
+    return new UPlot(opts, data, el);
   } catch (err) {
     el.innerHTML = "";
     console.warn("chart not drawn:", err);

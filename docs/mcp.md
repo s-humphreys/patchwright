@@ -27,7 +27,7 @@ enough to matter.
 | `explain_cve` | One CVE across the estate: who carries it, how exploitable it is, and where a rebuild removes it |
 | `policy_report` | **The estate against your OWN rules**, by their names in your config: what each caught, what each suppression holds and when it lapses, and what no rule speaks to. For a periodic review or sign-off |
 | `exploitability_report` | **What is actually being exploited, and how much is fixable.** KEV and high-EPSS CVE counts with their fixable share, per team beside each team's urgent count, worst CVEs named |
-| `trend_report` | **Is this getting better?** How the queue moved over a period, from the [history](history.md) record: opened, resolved with evidence, lapsed without it, the risk direction, ticketed against unticketed resolutions, and cycle time from the tracker's dates. Caveats first |
+| `trend_report` | **Is this getting better?** How the queue moved over a period, from the [history](history.md) record: opened, fixed (confirmed) with evidence, left without a fix, the risk direction, ticketed against unticketed resolutions, and cycle time from the tracker's dates. Caveats first |
 | `list_facets` | The vocabulary: every team, class, priority and signal that appears, with counts |
 
 **A service answers to any name that identifies it.** The bare repository
@@ -372,13 +372,15 @@ It returns a verdict on the risk direction (`improving`, `worsening`, `flat`, or
 range, the per-signal, per-rule and per-team splits classified by each item's opening
 state, and a `summary` of sentences in the order a reader needs them. The first
 sentence is always when the record begins, because an agent repeating "nothing was
-resolved in July" about a July before the record existed would be wrong in the way
-that matters most.
+fixed in July" about a July before the record existed would be wrong in the way
+that matters most. The sentences say **fixed (confirmed)** and **left without a fix**
+where the JSON fields say `resolved` and `lapsed`, and define a work item as one
+service and the one upgrade that would fix it.
 
-Two things it will not do. It never adds lapsed to resolved: a lapse is the record
-losing sight of an item without evidence, and a remediation figure that included it
-would improve fastest when the scanner broke. And it presents ticketed resolutions as
-a subset of resolved, never as a total of their own; the difference is work that
+Two things it will not do. It never adds left without a fix to fixed: leaving without
+a fix is the record losing sight of an item without evidence, and a remediation figure
+that included it would improve fastest when the scanner broke. And it presents ticketed
+fixes as a subset of fixed, never as a total of their own; the difference is work that
 landed by another route, which is the figure the report exists to show.
 
 Once the tracker has been read, the totals also carry cycle time as three separate

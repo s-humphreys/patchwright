@@ -1,15 +1,16 @@
-import { mountBars, mountTimeSeries, stackedBar } from './charts.js';
+import { mountBars, mountStackedBars, mountTimeSeries, stackedBar } from './charts.js';
 import { $, esc, utcDay } from './util.js';
 
 // Movement by period, from the event log, rendered at the top of the analytics
 // page so that page reads as a story: how things are moving, then what to do next.
 //
-// Two rules shape everything here. Resolved and lapsed are never summed - a lapse
-// is the tool losing sight of something, and adding it to remediation would produce
-// a number that improves fastest when the scanner breaks. And ticketed resolutions
-// are a SUBSET of resolved, never a separate column that could be added to it; the
-// difference between the two is work that landed by another route, which is the
-// figure the delineation exists to show.
+// Two rules shape everything here. Fixed (confirmed) and left without a fix (the
+// resolved and lapsed fields) are never summed - leaving without a fix is the tool
+// losing sight of something, and adding it to remediation would produce a number
+// that improves fastest when the scanner breaks. And ticketed fixes are a SUBSET of
+// fixed, never a separate column that could be added to it; the difference between
+// the two is work that landed by another route, which is the figure the delineation
+// exists to show.
 //
 // The page also leads with the record's caveats rather than burying them, because
 // the first and most misleading thing a chart of this kind can do is show an empty
@@ -55,10 +56,10 @@ function caveatsPanel(h, status) {
   for (const c of h.caveats || []) items.push(esc(c));
   // The definitions live here rather than under each table, so the tables carry
   // data and this one note carries the reading of it.
-  items.push("A <strong>work item</strong> is one service, its owner and the upgrade it needs: the unit a queue row and a ticket share. Every count below is work items unless it says CVEs.");
-  items.push("<strong>Resolved</strong> means the item left the queue with evidence its work landed: every image still reported, checked, on the latest version, and running. <strong>Lapsed</strong> is leaving without that evidence, and is never counted as remediation.");
+  items.push("A <strong>work item</strong> is one service and the one upgrade that would fix it: the unit a queue row and a ticket share. Every count below is work items unless it says CVEs.");
+  items.push("<strong>Fixed (confirmed)</strong> means the item left the queue with evidence the upgrade landed: every image still reported, checked, on the latest version, and running. <strong>Left without a fix</strong> is leaving without that evidence, and is never counted as remediation.");
   items.push("Each row of the direction table is the last assessment of its period. A period with one run is a point, not a trend.");
-  items.push("Splits are classified by how the item looked when the record first saw it, so a KEV resolution is one that was known-exploited when found. EPSS is a forecast; an item whose score decayed below 0.5 while open still counts under it.");
+  items.push("Open work items by signal are counted at the last assessment of each period, each item once under its most severe signal. EPSS is a forecast, so an item whose score decays below 0.5 moves out of that band without anything being fixed; the count of those sits under the chart.");
   // Collapsed by default, with the one fact that changes how the charts read kept
   // on the summary line: when the record began.
   const begins = h.first_recorded ? ` · the record begins ${esc(String(h.first_recorded).slice(0, 10))}` : "";
@@ -96,7 +97,7 @@ function directionPanel(h) {
   </section>`;
 }
 
-/** movementPanel is opened against resolved against lapsed, per period. */
+/** movementPanel is opened against fixed against left without a fix, per period. */
 function movementPanel(h) {
   const periods = activePeriods(h.movement);
   if (!periods.length) {
@@ -110,15 +111,16 @@ function movementPanel(h) {
       <td>${esc(m.period)}</td>${totals.baseline ? `<td class="muted">${fmt(m.baseline)}</td>` : ""}<td>${fmt(m.opened)}</td>
       <td><strong class="ok">${fmt(m.resolved)}</strong></td>
       <td>${fmt(m.cves_resolved)}${m.kev_cves_resolved ? ` <span class="sub">(${fmt(m.kev_cves_resolved)} KEV)</span>` : ""}</td>
-      <td class="muted" title="${esc(Object.entries(m.lapse_reasons || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "no lapses")}">${fmt(m.lapsed)}</td>
+      <td class="muted" title="${esc(Object.entries(m.lapse_reasons || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "none left without a fix")}">${fmt(m.lapsed)}</td>
       <td class="muted">${fmt(m.reassigned)}</td>
       <td>${m.median_days_to_resolve != null ? `${Math.round(m.median_days_to_resolve)}d` : "-"}</td></tr>`).join("");
   return `<section class="panel"><h3>Movement, in work items</h3>
+    <p class="sub unit">A work item is one service and the one upgrade that would fix it. <strong>Fixed (confirmed)</strong> means it left the queue with evidence the upgrade landed; <strong>left without a fix</strong> is everything else that left the queue: it stopped running, dropped below the rules, or is no longer reported.</p>
     ${totals.baseline ? `<div class="dr"><dt>Already open when the record began</dt><dd class="muted">${fmt(totals.baseline)}</dd></div>` : ""}
     <div class="dr"><dt>Across the range</dt>
-      <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> resolved, clearing ${fmt(totals.cves)} CVEs${totals.kev ? ` (${fmt(totals.kev)} known-exploited)` : ""} · <span class="muted">${fmt(totals.lapsed)} lapsed</span></dd></div>
+      <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> fixed (confirmed), clearing ${fmt(totals.cves)} CVEs${totals.kev ? ` (${fmt(totals.kev)} known-exploited)` : ""} · <span class="muted">${fmt(totals.lapsed)} left without a fix</span></dd></div>
     ${periods.length > 1 ? `<div class="chart-slot" data-chart="movement"></div>` : ""}
-    <table class="mini"><thead><tr><th>Period</th>${totals.baseline ? `<th title="Already open when the record began">Baseline</th>` : ""}<th title="Work items that entered the queue">Opened</th><th title="Left the queue with evidence the work landed">Resolved</th><th title="Distinct CVEs carried by the resolved items">CVEs cleared</th><th title="Left the queue without evidence; hover for why">Lapsed</th><th title="Owner changed">Reassigned</th><th>Median days to resolve</th></tr></thead>
+    <table class="mini"><thead><tr><th>Period</th>${totals.baseline ? `<th title="Already open when the record began">Baseline</th>` : ""}<th title="Work items that entered the queue">Opened</th><th title="Left the queue with evidence the upgrade landed">Fixed (confirmed)</th><th title="Distinct CVEs carried by the fixed items">CVEs cleared</th><th title="Left the queue without evidence the upgrade landed; hover a cell for why">Left without a fix</th><th title="Owner changed">Reassigned</th><th>Median days to fix</th></tr></thead>
     <tbody>${rows}</tbody></table>
   </section>`;
 }
@@ -137,10 +139,10 @@ function delineationPanel(h, tickets) {
   const byTool = {};
   for (const m of periods) for (const [k, v] of Object.entries(m.tickets_closed_by_tool || {})) byTool[k] = (byTool[k] || 0) + v;
   const strip = stackedBar([
-    { label: "resolved, never ticketed", value: unticketed, cls: "age-0" },
-    { label: "resolved, ticketed", value: ticketed, cls: "age-1" },
+    { label: "fixed (confirmed), never ticketed", value: unticketed, cls: "age-0" },
+    { label: "fixed (confirmed), ticketed", value: ticketed, cls: "age-1" },
     { label: "ticket closed, finding open", value: closedOpen, cls: "age-3" },
-    { label: "lapsed", value: lapsed, cls: "age-4" },
+    { label: "left without a fix", value: lapsed, cls: "age-4" },
   ], { empty: "Nothing has left the queue yet." });
   const rows = periods.map((m) => `<tr>
       <td>${esc(m.period)}</td><td>${fmt(m.resolved_unticketed)}</td><td>${fmt(m.resolved_ticketed)}</td>
@@ -151,9 +153,9 @@ function delineationPanel(h, tickets) {
   const toolRows = Object.entries(byTool).map(([k, v]) => `<span class="chart-key">${esc(k)} ${v}</span>`).join(" ");
   return `<section class="panel"><h3>Total remediation against ticketed work, in work items</h3>
     <div class="dr"><dt>Upgrades and patches landed</dt>
-      <dd><strong class="ok">${fmt(unticketed + ticketed)}</strong> resolved with evidence, of which <strong>${fmt(ticketed)}</strong> (${pct(ticketed, unticketed + ticketed)}) were ticketed work</dd></div>
+      <dd><strong class="ok">${fmt(unticketed + ticketed)}</strong> fixed (confirmed), of which <strong>${fmt(ticketed)}</strong> (${pct(ticketed, unticketed + ticketed)}) were ticketed work</dd></div>
     ${strip}
-    <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Resolved, unticketed</th><th title="Ticketed work completed; a subset of resolved">Resolved, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither resolved nor lapsed">Closed, finding open</th>${measured ? `<th title="Closed against the due date set when the ticket was raised; tickets without one are in neither">Closed on time / overdue</th>` : ""}<th>Lapsed</th></tr></thead>
+    <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Fixed, unticketed</th><th title="Ticketed work completed; a subset of fixed (confirmed)">Fixed, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither fixed nor left without a fix">Closed, finding open</th>${measured ? `<th title="Closed against the due date set when the ticket was raised; tickets without one are in neither">Closed on time / overdue</th>` : ""}<th>Left without a fix</th></tr></thead>
     <tbody>${rows}</tbody></table>
     ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
     ${measured ? `<p class="sub">Against the due date: ${fmt(onTime)} of ${fmt(measured)} (${pct(onTime, measured)}) closed on time.${meanDaysToDue(periods)}</p>` : ""}
@@ -260,41 +262,41 @@ function meanDaysToDue(periods) {
 }
 
 /**
- * splitTable renders opened / resolved per period for one classification, keyed by
- * the item's OPENING state. Rows are the classification's values, columns the
- * periods, so a month-on-month comparison reads across.
+ * signalsPanel is the open queue by signal at the end of each period, from the last
+ * assessment's work-item list, followed by the two movements that change a band
+ * without anything being fixed. Each item sits in one band only, its most severe,
+ * so the bands stack to the open items carrying any signal rather than double
+ * counting an item that is both known-exploited and end-of-life.
  */
-function splitTable(title, periods, field, rowsWanted) {
-  const keys = rowsWanted
-    ? rowsWanted.map((r) => r.key)
-    : [...new Set(periods.flatMap((m) => Object.keys(m[field] || {})))].sort();
-  const labels = Object.fromEntries((rowsWanted || []).map((r) => [r.key, r.label]));
-  if (!keys.length) return "";
-  const head = periods.map((m) => `<th>${esc(m.period)}</th>`).join("");
-  const body = keys.map((k) => {
-    const cells = periods.map((m) => {
-      const c = (m[field] || {})[k] || { opened: 0, resolved: 0, lapsed: 0, resolved_ticketed: 0 };
-      return `<td title="${esc(`${k} ${m.period}: ${c.opened} opened, ${c.resolved} resolved (${c.resolved_ticketed} ticketed), ${c.lapsed} lapsed`)}">
-        ${fmt(c.opened)} / <strong class="ok">${fmt(c.resolved)}</strong>${c.lapsed ? ` <span class="muted">/ ${fmt(c.lapsed)}</span>` : ""}</td>`;
-    }).join("");
-    return `<tr><td>${esc(labels[k] || k)}</td>${cells}</tr>`;
-  }).join("");
-  return `<section class="panel"><h3>${esc(title)}</h3>
-    <table class="mini"><thead><tr><th class="sub">opened / <span class="ok">resolved</span> / lapsed</th>${head}</tr></thead><tbody>${body}</tbody></table>
-  </section>`;
-}
-
-/** signalsPanel adds the two movements that are not remediation but matter. */
 function signalsPanel(h) {
+  const points = (h.risk || []).filter((p) => p.open_by_signal);
   const periods = activePeriods(h.movement);
-  if (!periods.length) return "";
+  if (!points.length && !periods.length) return "";
+  const total = (p) => SIGNALS.reduce((n, s) => n + (p.open_by_signal[s.key] || 0), 0);
+  const split = (p) => SIGNALS.map((s) => `${esc(s.label)} ${fmt(p.open_by_signal[s.key] || 0)}`).join(" · ");
+  let body;
+  if (!points.length) {
+    body = `<p class="muted">No work-item list was recorded for this range, so the open queue cannot be split by signal.</p>`;
+  } else if (points.length === 1) {
+    const p = points[0];
+    body = `<p>At the end of ${esc(p.period)}: ${split(p)}, ${fmt(total(p))} in all. One period is a count, not a chart.</p>`;
+  } else {
+    const head = SIGNALS.map((s) => `<th>${esc(s.label)}</th>`).join("");
+    const rows = points.map((p) => `<tr><td>${esc(p.period)}</td>${
+      SIGNALS.map((s) => `<td>${fmt(p.open_by_signal[s.key] || 0)}</td>`).join("")}<td>${fmt(total(p))}</td></tr>`).join("");
+    body = `<p class="sub">Open at the end of each period. Each work item is counted once, under its most severe signal: known exploited, then EPSS above 0.5, then fixable critical, then end-of-life. A bar is every open item carrying any of them; items with none are left out.</p>
+    <div class="chart-slot" data-chart="signals"></div>
+    <details class="chart-numbers"><summary>The numbers</summary>
+      <table class="mini"><thead><tr><th>Period</th>${head}<th>Total</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+  }
   const decayed = periods.reduce((n, m) => n + (m.epss_decayed || 0), 0);
   const becameKEV = periods.reduce((n, m) => n + (m.became_known_exploited || 0), 0);
-  const table = splitTable("Work items by signal", periods, "by_signal", SIGNALS);
-  return table.replace("</section>", `
-    <div class="dr"><dt title="Left the EPSS bucket by score decay while open: not remediation">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
-    <div class="dr"><dt>Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>
-  </section>`);
+  const figures = periods.length ? `
+    <div class="dr"><dt title="Left the EPSS band by score decay while open: not remediation">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
+    <div class="dr"><dt>Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>` : "";
+  return `<section class="panel"><h3>Open work items by signal</h3>
+    ${body}${figures}
+  </section>`;
 }
 
 /** openPanel is the queue as the record holds it now. */
@@ -343,7 +345,6 @@ export function render(body, tickets) {
     ${movementPanel(h)}
     ${delineationPanel(h, tickets)}
     ${signalsPanel(h)}
-    ${splitTable("Work items by team", activePeriods(h.movement), "by_team", null)}
     ${openPanel(h)}`;
 }
 
@@ -383,9 +384,22 @@ export function mountCharts(root, body, tickets) {
       x: periods.map((m) => epoch(m.start)),
       series: [
         { label: "opened", values: periods.map((m) => m.opened), color: cssVar("--muted", "#6b6b66") },
-        { label: "resolved", values: periods.map((m) => m.resolved), color: cssVar("--ok", "#1f6b3a") },
-        { label: "lapsed", values: periods.map((m) => m.lapsed), color: cssVar("--high", "#b8590a") },
+        { label: "fixed (confirmed)", values: periods.map((m) => m.resolved), color: cssVar("--ok", "#1f6b3a") },
+        { label: "left without a fix", values: periods.map((m) => m.lapsed), color: cssVar("--high", "#b8590a") },
       ],
+    });
+  }
+  const signals = root?.querySelector?.('[data-chart="signals"]');
+  const points = (h.risk || []).filter((p) => p.open_by_signal);
+  if (signals && points.length > 1) {
+    const colours = {
+      kev: cssVar("--urgent", "#a4262c"), "epss-high": cssVar("--high", "#b8590a"),
+      "fixable-critical": cssVar("--medium", "#6b6b00"), "end-of-life": cssVar("--accent", "#4a6b8a"),
+    };
+    mountStackedBars(signals, {
+      labels: points.map((p) => p.period),
+      totalLabel: "open with a signal",
+      series: SIGNALS.map((s) => ({ label: s.label, values: points.map((p) => p.open_by_signal[s.key] || 0), color: colours[s.key] })),
     });
   }
 }

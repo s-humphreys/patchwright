@@ -2,7 +2,7 @@ import { initialQuery, readURL } from './urlstate.js';
 import { initConfig } from './config.js';
 import { initCSV } from './csv.js';
 import { nav } from './nav.js';
-import { renderCoverage, renderDataAge, renderFreshness, renderTiles } from './panels.js';
+import { renderCoverage, renderDataAge, renderFreshness } from './panels.js';
 import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup } from './cves.js';
 import { initTabs, show } from './tabs.js';
@@ -32,7 +32,6 @@ export async function loadAll() {
         so there is nothing to report. A full run reconciles every cluster and scans every
         image, which takes several minutes; this page fills in as soon as it finishes.</div>`;
       if (summary.assessment?.running) setTimeout(loadAll, 5000);
-      $("#tiles").innerHTML = "";
       $("#findings tbody").innerHTML = "";
       $("#breakdown tbody").innerHTML = "";
       $("#queueCount").textContent = "";
@@ -41,7 +40,6 @@ export async function loadAll() {
     }
     renderCoverage(summary.summary);
     renderDataAge(summary.summary);
-    renderTiles(summary.summary);
     // Findings first: they carry whether Jira was consulted, which the breakdown
     // needs in order to distinguish "no tickets" from "not asked".
     await loadFindings();

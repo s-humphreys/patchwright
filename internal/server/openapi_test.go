@@ -253,6 +253,7 @@ func TestSpecCoversEveryHistoryField(t *testing.T) {
 	for name, typ := range map[string]reflect.Type{
 		"HistoryReport":        reflect.TypeOf(history.Report{}),
 		"HistoryMovement":      reflect.TypeOf(history.Movement{}),
+		"HistoryRiskPoint":     reflect.TypeOf(history.RiskPoint{}),
 		"HistoryTracker":       reflect.TypeOf(history.TrackerSummary{}),
 		"HistoryTicketsPerDay": reflect.TypeOf(ticketsPerDay{}),
 		"HistoryTicketDay":     reflect.TypeOf(ticketDay{}),

@@ -201,11 +201,12 @@ func register(s *sdk.Server, src Source) {
 	sdk.AddTool(s, &sdk.Tool{
 		Name: "trend_report",
 		Description: "Is this getting better? How the queue has MOVED over a period, from the history " +
-			"record rather than from today's assessment: what opened, what was resolved WITH evidence " +
-			"the work landed, what lapsed without it, and which way the estate's risk score is going. " +
-			"Counts are work items classified by how each looked when the record first saw it, so a " +
-			"KEV resolution is one that was known-exploited when found. Resolved and lapsed are never " +
-			"summed; ticketed resolutions are a subset of resolved. Use this for 'what did we fix last " +
+			"record rather than from today's assessment: what opened, what was fixed (confirmed) WITH " +
+			"evidence the upgrade landed, what left without a fix, and which way the estate's risk score " +
+			"is going. Counts are work items (one service and the one upgrade that would fix it), " +
+			"classified by how each looked when the record first saw it, so a KEV fix is one that was " +
+			"known-exploited when found. Fixed (confirmed) and left without a fix are never summed; " +
+			"ticketed fixes are a subset of fixed. Use this for 'what did we fix last " +
 			"month', 'how much of it was ticketed work', or 'is the risk going down'. The caveats " +
 			"come first: the record begins on a date, and a period before it is unwatched, not quiet.",
 	}, func(ctx context.Context, req *sdk.CallToolRequest, args trendArgs) (*sdk.CallToolResult, any, error) {

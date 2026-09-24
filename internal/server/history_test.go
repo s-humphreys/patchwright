@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,8 @@ func (m *memStore) Assessments(_ context.Context, since, until time.Time) ([]his
 	var out []history.Assessment
 	for _, a := range m.assessments {
 		if !a.FinishedAt.Before(since) && a.FinishedAt.Before(until) {
+			// Like the real store: the item list is read one run at a time.
+			a.Items = nil
 			out = append(out, a)
 		}
 	}
@@ -289,6 +292,20 @@ func TestHistoryRecordsAcrossRefreshes(t *testing.T) {
 	if a := store.assessments[0]; a.ItemCount != 2 || a.Risk.Items != 2 || len(a.Items) != 2 || a.Counts["critical"] != 2 || a.Summary == nil {
 		t.Errorf("assessment row = %+v", a)
 	}
+	openBySignal := func() map[string]int {
+		t.Helper()
+		var resp struct {
+			History history.Report `json:"history"`
+		}
+		if code := getJSON(t, s.Handler(), "/api/v1/history?since=30d", &resp); code != http.StatusOK || len(resp.History.Risk) != 1 {
+			t.Fatalf("status %d, risk %+v", code, resp.History.Risk)
+		}
+		return resp.History.Risk[0].OpenBySignal
+	}
+	// Read from the stored item list, which Assessments does not return.
+	if got := openBySignal(); len(got) != len(history.OpenSignals) {
+		t.Errorf("open by signal after the first run = %v, want every signal counted", got)
+	}
 
 	// The orders upgrade lands; billing disappears from the scan entirely.
 	a.findings = []model.Finding{upgraded("acr.io/app:1", "orders")}
@@ -331,6 +348,10 @@ func TestHistoryRecordsAcrossRefreshes(t *testing.T) {
 	}
 	if resp.History.Assessments != 2 || len(resp.History.Risk) == 0 || resp.History.FirstRecorded == nil {
 		t.Errorf("report header = %+v", resp.History)
+	}
+	// The queue is empty now: zeros, not an absence that reads as "not counted".
+	if got := openBySignal(); !reflect.DeepEqual(got, map[string]int{"kev": 0, "epss-high": 0, "fixable-critical": 0, "end-of-life": 0}) {
+		t.Errorf("open by signal with an empty queue = %v", got)
 	}
 
 	var item struct {

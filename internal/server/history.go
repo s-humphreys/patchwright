@@ -347,6 +347,22 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	if !ok {
 		first = time.Time{}
 	}
+	// One work-item list per period, for the open-by-signal counts. A list that
+	// cannot be read leaves that period without them rather than failing the report.
+	unread := 0
+	for _, i := range history.LastOfPeriods(rng, assessments) {
+		items, err := store.AssessmentItems(ctx, assessments[i].ID)
+		if err != nil {
+			slog.WarnContext(ctx, "history: read assessment items", "assessment_id", assessments[i].ID, "error", err)
+			unread++
+			continue
+		}
+		// An empty queue may be stored as no list at all; the count says which.
+		if items == nil && assessments[i].ItemCount == 0 {
+			items = []history.Snapshot{}
+		}
+		assessments[i].Items = items
+	}
 	rep := history.Aggregate(rng, assessments, events, open, first, now)
 	rep.RetentionDays = int(s.history.retention.Hours() / 24)
 	idx, err := store.TicketsIndexed(ctx)
@@ -384,9 +400,14 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 			"%s is partial for record-derived counts: it is read from %s, not from its start",
 			periods[0].Period, rng.Since.Format("2006-01-02")))
 	}
+	if unread > 0 {
+		rep.Caveats = append(rep.Caveats, fmt.Sprintf(
+			"the work-item list of %d periods' last assessment could not be read, so those periods carry no open work items by signal", unread))
+	}
 	rep.Caveats = append(rep.Caveats,
-		"counts are work items, classified by how each looked when the record first saw it",
-		"resolved requires evidence the work is done; lapsed is everything else, and is never remediation")
+		"counts are work items: one service and the one upgrade that would fix it, classified by how each looked when the record first saw it",
+		"fixed (confirmed), the resolved field, requires evidence the upgrade landed; left without a fix, the lapsed field, is everything else that left the queue, and is never remediation",
+		"open work items by signal count each item once, under its most severe signal: known-exploited, then EPSS above 0.5, then fixable critical, then end-of-life")
 	if tr := rep.Tracker; tr != nil {
 		rep.Caveats = append(rep.Caveats,
 			"tracker_tickets_raised and tracker_tickets_closed come from the tracker, not the record: every ticket on the "+
