@@ -291,7 +291,7 @@ test('a day list links each key to the tracker in a new tab and escapes what the
   assert.match(html, /<a href="https:\/\/jira\.example\.com\/browse\/DVOP-1" target="_blank" rel="noopener">DVOP-1<\/a>/);
   assert.match(html, /Upgrade &lt;app&gt;/);
   assert.match(html, /<td title="new">To Do<\/td>/);
-  assert.match(html, /<code>eng\|orders\|app\|svc<\/code>/);
+  assert.match(html, /<code>eng\|<wbr>orders\|<wbr>app\|<wbr>svc<\/code>/);
   assert.match(html, /data-close-day/);
 
   const third = dayList(ticketsBody().tickets.days[2]);

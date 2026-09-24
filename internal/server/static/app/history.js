@@ -204,7 +204,7 @@ export function dayList(day) {
     const key = url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(t.key)}</a>` : esc(t.key);
     return `<tr><td>${key}</td><td>${esc(t.project)}</td><td class="wrap">${t.summary ? esc(t.summary) : `<span class="muted">-</span>`}</td>
       <td title="${esc(t.status_category || "")}">${esc(t.status || "-")}</td>
-      <td>${t.item ? `<code>${esc(t.item)}</code>` : `<span class="muted">-</span>`}</td></tr>`;
+      <td class="item">${t.item ? `<code>${esc(t.item).split("|").join("|<wbr>")}</code>` : `<span class="muted">-</span>`}</td></tr>`;
   }).join("");
   return `${head}<table class="mini ticket-day"><thead><tr><th>Key</th><th>Project</th><th>Summary</th>
     <th title="Its status now, not when it was raised">Status</th>
