@@ -93,7 +93,7 @@ type Action struct {
 	// history records the reason.
 	NoLongerActionable bool
 	// Reason is the machine-readable cause of a close or done-note: upgrade-landed,
-	// not-running, no-longer-actionable.
+	// not-running, no-longer-actionable, upgrade-clears-nothing.
 	Reason string
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
@@ -246,6 +246,15 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				}
 			}
 
+			// Still actionable, but the change the ticket asks for was measured to fix
+			// none of what made it so. Asked before the policy and coverage checks
+			// because it is a verdict on the ticket itself: it should not exist, and
+			// leaving it open has somebody do work that changes nothing.
+			if clearsNothing(images, in.Skipped) {
+				out = append(out, clearsNothingAction(t, in.Config.ForProject(projectOf(t.Key))))
+				continue
+			}
+
 			// Configuration deciding not to ticket something is not the work being
 			// done. Without this, raising a priority threshold marks every ticket it
 			// newly excludes as finished — observed on a real board, where tickets
@@ -325,7 +334,58 @@ const (
 	ReasonUpgradeLanded      = "upgrade-landed"
 	ReasonNotRunning         = "not-running"
 	ReasonNoLongerActionable = "no-longer-actionable"
+	// ReasonUpgradeClearsNothing is a ticket whose proposed upgrade was measured to
+	// clear none of the vulnerabilities that raised it.
+	ReasonUpgradeClearsNothing = "upgrade-clears-nothing"
 )
+
+// clearsNothing reports that every one of a ticket's images was skipped because
+// the change on offer clears nothing. All of them, not any: a ticket with one image
+// the planner said nothing about is not one this can speak for.
+func clearsNothing(images []string, skips []Skip) bool {
+	if len(images) == 0 {
+		return false
+	}
+	skipped := map[string]bool{}
+	for _, s := range skips {
+		if s.ClearsNothing {
+			skipped[s.Image] = true
+		}
+	}
+	for _, img := range images {
+		if !skipped[img] {
+			return false
+		}
+	}
+	return true
+}
+
+// clearsNothingAction closes a ticket whose upgrade fixes nothing, through the same
+// door as any other ticket that stopped mattering: closed as not-done when nobody
+// picked it up and the board has a transition for that, commented on otherwise.
+func clearsNothingAction(t Existing, cfg config.JiraConfig) Action {
+	const why = "still actionable, but the proposed upgrade clears none of the vulnerabilities that raised it"
+	detail := "The proposed upgrade does not clear any of the vulnerabilities that raised this ticket: " +
+		"patchwright checked the version it asks for, and every image it would deploy still carries them. " +
+		"The images stay in the queue, and a new ticket will be raised if an upgrade that clears them " +
+		"becomes available."
+	if cfg.CloseTransitionNoLongerActionable != "" && t.Untouched() {
+		return Action{
+			Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true,
+			Reason: ReasonUpgradeClearsNothing,
+			Message: "Closing as not done: the upgrade this ticket asks for fixes nothing.\n\n" + detail +
+				"\n\nNobody had picked this ticket up, so it is being closed as not-worked rather than as " +
+				"completed work, which is the accurate record. Reopen if this is wrong.",
+			Why: why + "; nobody picked the ticket up",
+		}
+	}
+	return Action{
+		Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonUpgradeClearsNothing,
+		Message: detail + " Left open deliberately: closing is a human decision.",
+		Dedupe:  "note-done:" + ReasonUpgradeClearsNothing,
+		Why:     why,
+	}
+}
 
 // noLongerActionable says why a ticket's images left the queue without the upgrade
 // being proven to have landed. Not running wins only when every workload has gone
@@ -372,7 +432,8 @@ func noLongerActionableWhy(reason string) string {
 // staleness note. Empty for grouped drafts, which staleTarget never produces.
 func latestOf(d Draft) string {
 	if len(d.Upgrades) == 1 {
-		return d.Upgrades[0].Latest
+		_, to := d.Upgrades[0].move()
+		return to
 	}
 	return ""
 }
@@ -609,7 +670,7 @@ func staleTarget(d Draft, t Existing) string {
 	if len(d.Images) != 1 || len(d.Upgrades) != 1 || t.Summary == "" {
 		return ""
 	}
-	latest := d.Upgrades[0].Latest
+	_, latest := d.Upgrades[0].move()
 	if latest == "" {
 		return ""
 	}

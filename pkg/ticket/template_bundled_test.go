@@ -32,10 +32,10 @@ func TestBundledTemplateThroughADF(t *testing.T) {
 	withUrgent.Urgent = []UrgentVuln{
 		{Vuln: Vuln{ID: "CVE-1", KEV: true}, Why: "exploited in the wild", Cleared: true, Measured: true,
 			Where: "The base image", Action: "Nothing extra. The rebuild above removes it.", Reference: "https://www.cve.org/CVERecord?id=CVE-1"},
-		{Vuln: Vuln{ID: "CVE-2", EPSS: 0.9}, Why: "EPSS 0.90", Measured: true,
-			Where: "The Python package mcp, declared in requirements.txt", Action: "Move mcp to 1.0.1 in requirements.txt and refresh the lockfile.", Reference: "https://www.cve.org/CVERecord?id=CVE-2"},
+		{Vuln: Vuln{ID: "CVE-2", EPSS: 0.9}, Why: "EPSS 0.90", Cleared: true, Measured: true,
+			Where: "The base image (openssl)", Action: "Nothing extra. The rebuild above removes it.", Reference: "https://www.cve.org/CVERecord?id=CVE-2"},
 	}
-	withUrgent.UrgentCleared = 1
+	withUrgent.UrgentCleared = 2
 	for name, data := range map[string]TemplateData{"plain": base, "urgent": withUrgent} {
 		t.Run(name, func(t *testing.T) { checkBundledADF(t, tm, data) })
 	}
@@ -56,8 +56,11 @@ func checkBundledADF(t *testing.T, tm *template.Template, data TemplateData) {
 		if strings.Count(string(b), `"type":"table"`) < 2 {
 			t.Fatalf("urgent rows did not render as a table:\n%s", body)
 		}
-		if !strings.Contains(body, "clears 1 of 2") {
-			t.Errorf("body does not sum what the change clears:\n%s", body)
+		if !strings.Contains(body, "measured to clear each of these") {
+			t.Errorf("body does not say the rows are what the change clears:\n%s", body)
+		}
+		if strings.Contains(body, "could not be measured") || strings.Contains(body, " of 2") {
+			t.Errorf("body still counts against CVEs it does not list:\n%s", body)
 		}
 	}
 	var doc struct {

@@ -38,6 +38,10 @@ type Draft struct {
 	// "(default)" for the top-level settings. Carried so a dry run says where a
 	// ticket would land, which is the question routing creates.
 	Route string
+
+	// clearsNone marks a change measured to clear none of the CVEs that make its
+	// findings actionable. Such a draft is never raised.
+	clearsNone bool
 }
 
 // Skip records a finding that will not be ticketed, and why. Skips are reported
@@ -55,6 +59,11 @@ type Skip struct {
 	// not be told the work appears done. Changing a threshold would otherwise mark
 	// every ticket it newly excludes as finished.
 	Policy bool
+	// ClearsNothing is true when the proposed change was measured to clear none of
+	// the CVEs that make the finding actionable. The work is not done and policy
+	// did not decline it; the change on offer simply fixes nothing, so an open
+	// ticket asking for it is closed rather than held or called finished.
+	ClearsNothing bool
 }
 
 // Plan is the outcome of planning: what to raise, and what was left out.
@@ -206,6 +215,19 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Before the priority threshold: that the change fixes nothing is a fact
+			// about the change, and it decides what happens to a ticket already open
+			// for it, which a threshold would only hold.
+			if d.clearsNone {
+				for _, img := range d.Images {
+					out.Skips = append(out.Skips, Skip{
+						Image: img, ClearsNothing: true,
+						Reason: "the proposed upgrade (" + describeMove(d) + ") does not clear any of " +
+							"the vulnerabilities that make it actionable; it stays in the queue",
+					})
+				}
+				continue
+			}
 			// Judged on the draft rather than on each finding, so a low-priority image
 			// that shares an upgrade with an urgent one still rides along: one change,
 			// one ticket. Filtering findings before grouping would split that change
@@ -322,6 +344,22 @@ func (p *Planner) routeConfig(name string) config.JiraConfig {
 		}
 	}
 	return p.cfg
+}
+
+// describeMove names the change a draft proposes, for a skip reason. Drawn from
+// the findings rather than the rendered upgrades, which omit the images the
+// change leaves alone: every image, for a draft that clears nothing.
+func describeMove(d Draft) string {
+	for _, f := range d.Findings {
+		if u := f.Upgrade; u != nil && u.Latest != "" {
+			name := u.Name
+			if name == "" {
+				name = f.Repository
+			}
+			return fmt.Sprintf("%s %s -> %s", name, u.Current, u.Latest)
+		}
+	}
+	return "no version change"
 }
 
 func dashIfEmpty(s string) string {
@@ -594,6 +632,7 @@ func (p *Planner) render(group ticketGroup, route, disambiguator string) (Draft,
 		Findings:    group.all(),
 		Key:         groupKey(group.primary[0], p.campaign(route)),
 		Route:       route,
+		clearsNone:  data.clearsNone,
 	}, nil
 }
 

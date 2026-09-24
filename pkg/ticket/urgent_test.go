@@ -16,46 +16,66 @@ func urgentGroup(vulns ...sink.VulnView) ticketGroup {
 // Only what made the finding urgent is listed: exploited or likely to be, and
 // fixable. Exploited leads, whatever its EPSS.
 func TestUrgentListsExploitedFixableCVEsExploitedFirst(t *testing.T) {
-	d := newTemplateData(urgentGroup(
+	got := urgent(urgentGroup(
 		sink.VulnView{ID: "CVE-HOT", EPSS: 0.9, FixAvailable: true},
 		sink.VulnView{ID: "CVE-KEV", KEV: true, EPSS: 0.01, FixAvailable: true},
 		sink.VulnView{ID: "CVE-NOFIX", KEV: true, FixAvailable: false},
 		sink.VulnView{ID: "CVE-QUIET", EPSS: 0.2, FixAvailable: true},
-	), nil, 0)
-	if len(d.Urgent) != 2 {
-		t.Fatalf("urgent = %+v, want CVE-KEV and CVE-HOT only", d.Urgent)
+	).all(), 0)
+	if len(got) != 2 {
+		t.Fatalf("urgent = %+v, want CVE-KEV and CVE-HOT only", got)
 	}
-	if d.Urgent[0].ID != "CVE-KEV" || d.Urgent[1].ID != "CVE-HOT" {
-		t.Errorf("order = %s, %s; exploited in the wild must lead", d.Urgent[0].ID, d.Urgent[1].ID)
+	if got[0].ID != "CVE-KEV" || got[1].ID != "CVE-HOT" {
+		t.Errorf("order = %s, %s; exploited in the wild must lead", got[0].ID, got[1].ID)
 	}
-	if d.Urgent[0].Why != "exploited in the wild" || d.Urgent[1].Why != "EPSS 0.90" {
-		t.Errorf("why = %q, %q", d.Urgent[0].Why, d.Urgent[1].Why)
+	if got[0].Why != "exploited in the wild" || got[1].Why != "EPSS 0.90" {
+		t.Errorf("why = %q, %q", got[0].Why, got[1].Why)
 	}
 }
 
-// A ticket must not say "clears" unless the differential measured it, and must
-// not say "does not clear" when nothing measured it either.
+// A CVE is cleared only when the differential measured it, and one nothing
+// measured is told apart from one the change was measured to leave.
 func TestUrgentTellsClearedFromUnmeasured(t *testing.T) {
+	byID := map[string]UrgentVuln{}
+	for _, u := range urgent(urgentGroup(
+		sink.VulnView{ID: "CVE-A", KEV: true, FixAvailable: true, Origin: "base", OriginDetermined: true, FixedByUpgrade: true},
+		sink.VulnView{ID: "CVE-B", KEV: true, FixAvailable: true, Origin: "app", OriginDetermined: true},
+		sink.VulnView{ID: "CVE-C", KEV: true, FixAvailable: true},
+	).all(), 0) {
+		byID[u.ID] = u
+	}
+	if a := byID["CVE-A"]; !a.Cleared || !a.Measured {
+		t.Errorf("CVE-A was measured and removed: %+v", a)
+	}
+	if b := byID["CVE-B"]; b.Cleared || !b.Measured {
+		t.Errorf("CVE-B was measured and kept: %+v", b)
+	}
+	if c := byID["CVE-C"]; c.Cleared || c.Measured {
+		t.Errorf("CVE-C was never measured: %+v", c)
+	}
+	if !strings.Contains(byID["CVE-A"].Action, "Nothing extra") {
+		t.Errorf("cleared row should need nothing extra: %q", byID["CVE-A"].Action)
+	}
+}
+
+// "Done means" lists only what the change clears. A CVE the change leaves, or
+// that nothing measured, is left off entirely, so the ticket never waits on
+// something its own change cannot touch.
+func TestDoneMeansListsOnlyWhatTheChangeClears(t *testing.T) {
 	d := newTemplateData(urgentGroup(
 		sink.VulnView{ID: "CVE-A", KEV: true, FixAvailable: true, Origin: "base", OriginDetermined: true, FixedByUpgrade: true},
 		sink.VulnView{ID: "CVE-B", KEV: true, FixAvailable: true, Origin: "app", OriginDetermined: true},
 		sink.VulnView{ID: "CVE-C", KEV: true, FixAvailable: true},
 	), nil, 0)
-	if d.UrgentCleared != 1 || d.UrgentUnknown != 1 || d.UrgentRemaining() != 1 {
-		t.Errorf("cleared=%d unknown=%d remaining=%d, want 1/1/1", d.UrgentCleared, d.UrgentUnknown, d.UrgentRemaining())
+	if len(d.Urgent) != 1 || d.Urgent[0].ID != "CVE-A" {
+		t.Fatalf("urgent = %+v, want CVE-A alone", d.Urgent)
 	}
-	if d.UrgentAllCleared() {
-		t.Error("two of three not cleared, yet reported as all cleared")
+	if d.UrgentCleared != 1 || d.UrgentUnknown != 0 || d.UrgentRemaining() != 0 || !d.UrgentAllCleared() {
+		t.Errorf("legacy counts disagree with the list: cleared=%d unknown=%d remaining=%d all=%v",
+			d.UrgentCleared, d.UrgentUnknown, d.UrgentRemaining(), d.UrgentAllCleared())
 	}
-	byID := map[string]UrgentVuln{}
-	for _, u := range d.Urgent {
-		byID[u.ID] = u
-	}
-	if !strings.Contains(byID["CVE-A"].Action, "Nothing extra") {
-		t.Errorf("cleared row should need nothing extra: %q", byID["CVE-A"].Action)
-	}
-	if !strings.Contains(byID["CVE-C"].Where, "Not determined") {
-		t.Errorf("unmeasured row must say so, not blame the application: %q", byID["CVE-C"].Where)
+	if d.clearsNone {
+		t.Error("the change clears CVE-A, so the ticket must be raised")
 	}
 }
 
@@ -68,9 +88,12 @@ func TestUrgentIsConservativeAcrossDeployments(t *testing.T) {
 		finding("a/svc", func(f *sink.FindingView) { f.Vulns = []sink.VulnView{kev(true)} }),
 		finding("a/svc", func(f *sink.FindingView) { f.Image = "a/svc:old"; f.Vulns = []sink.VulnView{kev(false)} }),
 	}}
-	d := newTemplateData(g, nil, 0)
-	if len(d.Urgent) != 1 || d.Urgent[0].Cleared {
-		t.Errorf("one deployment keeps the CVE after the upgrade, yet it reads as cleared: %+v", d.Urgent)
+	got := urgent(g.all(), 0)
+	if len(got) != 1 || got[0].Cleared {
+		t.Errorf("one deployment keeps the CVE after the upgrade, yet it reads as cleared: %+v", got)
+	}
+	if d := newTemplateData(g, nil, 0); len(d.Urgent) != 0 {
+		t.Errorf("a CVE not cleared everywhere must not be under Done means: %+v", d.Urgent)
 	}
 }
 
@@ -121,11 +144,11 @@ func TestUrgentAdviceReadsAsPlainEnglish(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := newTemplateData(urgentGroup(tc.v), nil, 0)
-			if len(d.Urgent) != 1 {
-				t.Fatalf("urgent = %+v", d.Urgent)
+			got := urgent(urgentGroup(tc.v).all(), 0)
+			if len(got) != 1 {
+				t.Fatalf("urgent = %+v", got)
 			}
-			u := d.Urgent[0]
+			u := got[0]
 			if !strings.Contains(u.Where, tc.where) {
 				t.Errorf("where = %q, want it to contain %q", u.Where, tc.where)
 			}
@@ -145,10 +168,10 @@ func TestUrgentAdviceReadsAsPlainEnglish(t *testing.T) {
 // calls urgent.
 func TestUrgentHonoursConfiguredEPSS(t *testing.T) {
 	v := sink.VulnView{ID: "CVE-1", EPSS: 0.6, FixAvailable: true}
-	if d := newTemplateData(urgentGroup(v), nil, 0); len(d.Urgent) != 1 {
+	if got := urgent(urgentGroup(v).all(), 0); len(got) != 1 {
 		t.Errorf("0.6 against the default 0.5 should be urgent")
 	}
-	if d := newTemplateData(urgentGroup(v), nil, 0.7); len(d.Urgent) != 0 {
+	if got := urgent(urgentGroup(v).all(), 0.7); len(got) != 0 {
 		t.Errorf("0.6 against a configured 0.7 should not be urgent")
 	}
 }

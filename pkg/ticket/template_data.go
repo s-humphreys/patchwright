@@ -33,7 +33,9 @@ type TemplateData struct {
 	// controller's version. Use Upgrades in that case.
 	Upgrade *UpgradeData
 	// Upgrades is the version move(s) to APPLY. For a chain-merged ticket this is
-	// the managing component only, since bumping it is the whole action.
+	// the managing component only, since bumping it is the whole action. An image
+	// the change was measured to leave on its current tag is not listed: a row
+	// saying it moves would be the ticket's first false statement.
 	Upgrades []ImageUpgrade
 	// Fixes are images updated as a consequence of Upgrades, listed for context
 	// rather than as work. Empty on an ordinary ticket. A template should not
@@ -107,31 +109,40 @@ type TemplateData struct {
 	MaxEPSS        float64
 	KnownExploited bool
 
-	// Urgent are the CVEs this ticket exists to clear: exploited in the wild, or
-	// with an EPSS at or above the configured threshold, with a fix published.
-	// Exploited first, then most likely to be. Each says where it lives and what
-	// closes it, in words for somebody who does not know package ecosystems.
+	// Urgent are the CVEs this ticket's change was measured to clear: exploited in
+	// the wild, or with an EPSS at or above the configured threshold, with a fix
+	// published. Exploited first, then most likely to be. Each says where it lives
+	// and what closes it, in words for somebody who does not know package
+	// ecosystems.
 	//
-	// This is the list a template should call "done means". The rest of the
-	// image's CVEs are context; clearing these is what takes the finding out of
-	// the urgent band, and a ticket that promises a rebuild clears them when it
-	// does not is how the queue loses credibility.
+	// This is the list a template should call "done means", and only what the
+	// change clears is on it. A CVE the change leaves behind, or that nothing
+	// measured, is left off entirely: a ticket must never wait on something its
+	// own change cannot touch, and listing it would make the ticket's close
+	// condition one its assignee cannot meet. Empty when nothing was measured,
+	// which says nothing about what the change clears and must not be worded as
+	// if it did.
 	Urgent []UrgentVuln
-	// UrgentCleared counts those the ticket's upgrade removes, as measured by the
-	// base differential. UrgentUnknown counts those nothing measured. When
-	// UrgentCleared equals len(Urgent) the upgrade alone is the whole job.
+	// UrgentCleared is len(Urgent) and UrgentUnknown is zero, now that Urgent holds
+	// only what the change clears. Kept so a template written against the earlier
+	// contract still renders, and renders only true statements.
 	UrgentCleared int
 	UrgentUnknown int
+
+	// clearsNone is set when the change was measured to clear none of the CVEs
+	// that make this group actionable, which means there is no ticket to raise.
+	clearsNone bool
 }
 
-// UrgentRemaining is how many urgent CVEs the upgrade is known to leave behind:
-// the rows that need a change beyond the one the ticket proposes.
+// UrgentRemaining is always zero: Urgent lists only what the change clears. Kept
+// for templates written against the earlier contract.
 func (d TemplateData) UrgentRemaining() int {
 	return len(d.Urgent) - d.UrgentCleared - d.UrgentUnknown
 }
 
-// UrgentAllCleared reports that the proposed upgrade was measured to remove every
-// urgent CVE, so the ticket's promise is the whole truth.
+// UrgentAllCleared reports that there is a measured list and the change clears
+// all of it, which is true whenever Urgent is non-empty. Kept for templates
+// written against the earlier contract.
 func (d TemplateData) UrgentAllCleared() bool {
 	return len(d.Urgent) > 0 && d.UrgentCleared == len(d.Urgent)
 }
@@ -193,10 +204,19 @@ type Vuln struct {
 // ImageUpgrade is one image's version move within a ticket.
 type ImageUpgrade struct {
 	// Ref is the full image reference, tag included.
-	Ref     string
-	Repo    string
+	Ref  string
+	Repo string
+	// Current and Latest are the versions of what moves. For a chart bump they are
+	// this image's own tags, not the chart's: Latest is the tag the target chart
+	// deploys, and empty when that could not be read from it.
 	Current string
 	Latest  string
+	// Chart, ChartCurrent and ChartLatest name the Helm chart whose bump moves this
+	// image, and its versions, when a chart owns the image's version. Empty
+	// otherwise.
+	Chart        string
+	ChartCurrent string
+	ChartLatest  string
 	// Source and SourcePath are this image's own change target. They matter on a
 	// grouped ticket whose members each have their own (every Crossplane package
 	// has its own ProviderRevision), where a single ticket-level target would name
@@ -206,6 +226,9 @@ type ImageUpgrade struct {
 	// Managed names the controller owning the version; empty means direct.
 	Managed string
 	Direct  bool
+
+	// unmoved marks an image the change was measured to leave on its tag.
+	unmoved bool
 }
 
 // UpgradeData is the version move a ticket asks for.
@@ -232,15 +255,13 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 	group := tg.all()
 	d := TemplateData{}
 
-	d.Urgent = urgent(group, urgentEPSS)
-	for _, u := range d.Urgent {
-		switch {
-		case u.Cleared:
-			d.UrgentCleared++
-		case !u.Measured:
-			d.UrgentUnknown++
+	for _, u := range urgent(group, urgentEPSS) {
+		if u.Cleared {
+			d.Urgent = append(d.Urgent, u)
 		}
 	}
+	d.UrgentCleared = len(d.Urgent)
+	d.clearsNone = clearsNone(group, urgentEPSS)
 
 	d.Deployments = deployments(group, envs)
 
@@ -306,7 +327,7 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 	})
 
 	d.Upgrades = imageUpgrades(tg.primary)
-	d.Fixes = imageUpgrades(tg.dependents)
+	d.Fixes = moving(imageUpgrades(tg.dependents))
 
 	// Only claim a single target version when every image in the group actually
 	// shares it. Otherwise leave Upgrade nil so a template cannot state one
@@ -325,6 +346,9 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 			Direct: u.Actionable,
 		}
 	}
+	// Filtered only now: whether the group shares one source and one target is a
+	// question about the change, which the images it leaves alone are still part of.
+	d.Upgrades = moving(d.Upgrades)
 	d.ServiceName = serviceName(group[0], d.Upgrade, d.ImageCount)
 	// The noun describes what is grouped, and only the per-service key names a thing:
 	// a campaign key names a change, and "images" is the honest word for what it
@@ -366,15 +390,46 @@ func serviceName(f sink.FindingView, u *UpgradeData, imageCount int) string {
 func imageUpgrades(findings []sink.FindingView) []ImageUpgrade {
 	out := make([]ImageUpgrade, 0, len(findings))
 	for _, f := range findings {
-		if u := f.Upgrade; u != nil {
-			out = append(out, ImageUpgrade{
-				Ref: f.Image, Repo: f.Repository, Current: u.Current, Latest: u.Latest,
-				Source: u.Source, SourcePath: u.SourcePath,
-				Managed: u.Managed, Direct: u.Actionable,
-			})
+		u := f.Upgrade
+		if u == nil {
+			continue
 		}
+		up := ImageUpgrade{
+			Ref: f.Image, Repo: f.Repository, Current: u.Current, Latest: u.Latest,
+			Source: u.Source, SourcePath: u.SourcePath,
+			Managed: u.Managed, Direct: u.Actionable,
+			unmoved: unmoved(f),
+		}
+		if u.Kind == "chart" {
+			up.Chart, up.ChartCurrent, up.ChartLatest = u.Name, u.Current, u.Latest
+			up.Current, up.Latest = u.ImageCurrent, u.ImageLatest
+			if up.Current == "" {
+				up.Current = f.Tag
+			}
+		}
+		out = append(out, up)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
+	return out
+}
+
+// move is the version change the ticket asks somebody to make for this image:
+// the chart's, when a chart owns the image's version, else the image's own.
+func (u ImageUpgrade) move() (from, to string) {
+	if u.Chart != "" {
+		return u.ChartCurrent, u.ChartLatest
+	}
+	return u.Current, u.Latest
+}
+
+// moving drops the images the change was measured to leave where they are.
+func moving(ups []ImageUpgrade) []ImageUpgrade {
+	out := make([]ImageUpgrade, 0, len(ups))
+	for _, u := range ups {
+		if !u.unmoved {
+			out = append(out, u)
+		}
+	}
 	return out
 }
 
@@ -384,8 +439,9 @@ func sharesOneTarget(ups []ImageUpgrade) bool {
 	if len(ups) == 0 {
 		return false
 	}
+	from, to := ups[0].move()
 	for _, u := range ups[1:] {
-		if u.Latest != ups[0].Latest || u.Current != ups[0].Current {
+		if f, t := u.move(); f != from || t != to {
 			return false
 		}
 	}

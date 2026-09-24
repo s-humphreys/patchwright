@@ -11,19 +11,24 @@
     .Accounts .Namespaces .Teams .WorkloadCount
     .CriticalCount .HighCount .ProviderAssessed
     .FixableCriticals (.ID .CVSS .EPSS .FixedVersion .KEV) .MaxEPSS .KnownExploited
-    .Urgent   - the CVEs this ticket exists to clear (exploited, or EPSS at or
-                above jira.urgentEPSS, with a fix), each with .Why .Where .Action
-                .Cleared .Measured .Package .FixedVersion .Reference
-    .UrgentCleared .UrgentUnknown .UrgentRemaining .UrgentAllCleared - how many
-                of .Urgent the proposed change removes, was not measured for,
-                or leaves behind
+    .Urgent   - the CVEs the proposed change was measured to clear (exploited,
+                or EPSS at or above jira.urgentEPSS, with a fix), each with .Why
+                .Where .Action .Package .FixedVersion .Reference. ONLY what the
+                change clears: empty when nothing was measured, which is not a
+                claim that it clears nothing
+    .UrgentCleared .UrgentUnknown .UrgentRemaining .UrgentAllCleared - kept
+                for older templates; with .Urgent holding only cleared CVEs
+                they are len(.Urgent), 0, 0 and "non-empty"
     .Upgrade  - the single version move, or NIL when the grouped images do not
                 share one target version (.Kind .Name .Current .Latest .Managed
                 .Source .SourcePath .Direct)
     .Fixes    - images updated as a CONSEQUENCE of .Upgrades, not work in
                 themselves (chain-merged tickets only)
-    .Upgrades - the version move(s) to apply, one entry per image
-                (.Ref .Repo .Current .Latest .Source .SourcePath .Managed .Direct)
+    .Upgrades - the version move(s) to apply, one entry per image the change
+                moves (.Ref .Repo .Current .Latest .Source .SourcePath .Managed
+                .Direct). .Current/.Latest are the image's own tags; when a Helm
+                chart owns the version, .Chart .ChartCurrent .ChartLatest name it,
+                and .Latest is empty if the target chart's tag could not be read
     .Disambiguator - set ONLY when another ticket in this run renders the same
                 summary, naming what makes this one different. Empty otherwise,
                 so putting it in a summary costs nothing on the tickets that
@@ -47,15 +52,15 @@ Upgrade the {{ .ImageCount }} images below to clear known container vulnerabilit
 
 **Technical Requirements & Actions**
 
-{{ range .Upgrades }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}{{ if not .Direct }} ({{ if eq .Managed "helm" }}version owned by its Helm chart, so bump it there{{ else }}version owned by the {{ .Managed }}, so bump it there{{ end }}){{ end }}{{ if and (not $.Source) .Source }}, change in {{ .Source }}{{ if .SourcePath }} path {{ .SourcePath }}{{ end }}{{ end }}
+{{ range .Upgrades }}* {{ .Repo }}: {{ if .Chart }}{{ .Current }}{{ if .Latest }} -> {{ .Latest }}{{ end }} (set by the {{ .Chart }} chart, which moves {{ .ChartCurrent }} -> {{ .ChartLatest }}{{ if not .Latest }}; the tag it deploys could not be read, so check it after the upgrade{{ end }}){{ else }}{{ .Current }} -> {{ .Latest }}{{ end }}{{ if not .Direct }} ({{ if eq .Managed "helm" }}version owned by its Helm chart, so bump it there{{ else }}version owned by the {{ .Managed }}, so bump it there{{ end }}){{ end }}{{ if and (not $.Source) .Source }}, change in {{ .Source }}{{ if .SourcePath }} path {{ .SourcePath }}{{ end }}{{ end }}
 {{ end -}}
 {{- with .Fixes }}
 This also updates the following, which are not bumped directly:
 
-{{ range . }}* {{ .Repo }}: {{ .Current }} -> {{ .Latest }}
+{{ range . }}* {{ .Repo }}: {{ .Current }}{{ if .Latest }} -> {{ .Latest }}{{ end }}
 {{ end -}}
 {{- end }}
-{{- if and .Upgrade (eq .Upgrade.Kind "base") }}* Rebuild {{ .ServiceName }}: it is built on top of {{ .Upgrade.Name }}, and moving that to {{ .Upgrade.Latest }} is what the rebuild picks up.{{ if .UrgentAllCleared }} That alone clears every CVE under "Done means".{{ else if .Urgent }} That is not the whole job: "Done means" says what it leaves.{{ end }}
+{{- if and .Upgrade (eq .Upgrade.Kind "base") }}* Rebuild {{ .ServiceName }}: it is built on top of {{ .Upgrade.Name }}, and moving that to {{ .Upgrade.Latest }} is what the rebuild picks up.{{ if .Urgent }} That alone clears every CVE under "Done means".{{ end }}
 {{ if .BuildRepo }}* Rebuild from {{ .BuildRepo }}.
 {{ end }}* Redeploy the new image everywhere it runs, listed below. A rebuilt image fixes nothing until it is running.
 {{ else }}{{- if .Source }}* Change target: {{ .Source }}{{ if .SourcePath }} (path: {{ .SourcePath }}){{ end }}
@@ -63,14 +68,12 @@ This also updates the following, which are not bumped directly:
 {{ with .Urgent -}}
 **Done means**
 
-This ticket closes when none of these remain in the running image:
+The change above was measured to clear each of these. This ticket closes when none of them remain in the running image:
 
 | CVE | Why it matters | Where it is | What to do |
 | --- | -------------- | ----------- | ---------- |
 {{ range . }}| [{{ .ID }}]({{ .Reference }}) | {{ .Why }} | {{ .Where }} | {{ .Action }} |
 {{ end }}
-{{ if $.UrgentAllCleared }}The change above clears all {{ len . }}.{{ else }}The change above clears {{ $.UrgentCleared }} of {{ len . }}.{{ if $.UrgentUnknown }} {{ $.UrgentUnknown }} could not be measured, so check the dashboard link after the change.{{ end }}{{ end }}
-
 {{ end -}}
 **Where it runs**
 

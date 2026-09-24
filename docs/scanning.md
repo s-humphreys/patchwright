@@ -197,8 +197,9 @@ measurement.
 ### Naming the package behind an exploited CVE
 
 The one application CVE a team cannot leave unnamed is the exploited one, because
-that is the CVE the ticket exists to clear, and "an application dependency, fix in
-1.0.1" sends the assignee on a lockfile hunt with no name to look for.
+no base rebuild clears it (so no rebuild ticket lists it: tickets list only what
+their change clears) and "an application dependency, fix in 1.0.1" sends whoever
+picks it up from the queue on a lockfile hunt with no name to look for.
 
 ```yaml
 remediation:
