@@ -1,6 +1,8 @@
 package history
 
 import (
+	"maps"
+	"slices"
 	"testing"
 	"time"
 )
@@ -155,5 +157,46 @@ func TestAggregateSeparatesTheBaselineFromOpenings(t *testing.T) {
 	}
 	if rep.FirstRecorded == nil || !rep.FirstRecorded.Equal(first) {
 		t.Errorf("first recorded should be carried: %v", rep.FirstRecorded)
+	}
+}
+
+// A work item carrying several signals is one item. Stacked by signal, it has to sit
+// in exactly one band or the bar overstates the queue.
+func TestAggregateCountsOpenItemsOnceUnderTheirMostSevereSignal(t *testing.T) {
+	r := Range{Since: day(2026, 7, 1), Until: day(2026, 9, 21), Bucket: BucketMonth}
+	items := []Snapshot{
+		{Key: "a", Signals: []string{"end-of-life", "fixable-critical", "kev", "epss-high"}},
+		{Key: "b", Signals: []string{"fixable-critical", "epss-high"}},
+		{Key: "c", Signals: []string{"end-of-life", "fixable-critical"}},
+		{Key: "d", Signals: []string{"end-of-life", "in-flight"}},
+		// Retired and unrelated signals put an item in no band.
+		{Key: "e", Signals: []string{"exposed", "in-flight"}},
+		{Key: "f"},
+	}
+	assessments := []Assessment{
+		{ID: 1, FinishedAt: day(2026, 7, 10), Items: []Snapshot{{Key: "early", Signals: []string{"kev"}}}},
+		{ID: 2, FinishedAt: day(2026, 7, 30), Items: items},
+		// Never read: the report says nothing rather than zero.
+		{ID: 3, FinishedAt: day(2026, 8, 30), ItemCount: 4},
+		// Read, and empty.
+		{ID: 4, FinishedAt: day(2026, 9, 20), Items: []Snapshot{}},
+	}
+	if got := LastOfPeriods(r, assessments); !slices.Equal(got, []int{1, 2, 3}) {
+		t.Fatalf("last of periods = %v, want [1 2 3]", got)
+	}
+	rep := Aggregate(r, assessments, nil, nil, time.Time{}, day(2026, 9, 21))
+	if len(rep.Risk) != 3 {
+		t.Fatalf("risk points = %+v", rep.Risk)
+	}
+	want := map[string]int{"kev": 1, "epss-high": 1, "fixable-critical": 1, "end-of-life": 1}
+	if got := rep.Risk[0].OpenBySignal; !maps.Equal(got, want) {
+		t.Errorf("july open by signal = %v, want %v", got, want)
+	}
+	if got := rep.Risk[1].OpenBySignal; got != nil {
+		t.Errorf("august's list was never read, so nothing should be claimed: %v", got)
+	}
+	zero := map[string]int{"kev": 0, "epss-high": 0, "fixable-critical": 0, "end-of-life": 0}
+	if got := rep.Risk[2].OpenBySignal; !maps.Equal(got, zero) {
+		t.Errorf("an empty queue is zeros: %v", got)
 	}
 }

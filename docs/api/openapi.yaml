@@ -926,6 +926,14 @@ components:
         risk: { $ref: "#/components/schemas/HistoryRiskStats" }
         by_class: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryRiskStats" } }
         by_team: { type: object, additionalProperties: { $ref: "#/components/schemas/HistoryRiskStats" } }
+        open_by_signal:
+          type: object
+          description: >-
+            Work items open at that assessment by signal (kev, epss-high, fixable-critical, end-of-life), each counted
+            once under the first of those it carries in that order, so the values sum to the open items carrying any
+            of them and can be stacked. Items with none are in no key. Every key is present, zero included, when the
+            assessment's item list was read; absent when it could not be
+          additionalProperties: { type: integer }
     HistoryCounts:
       type: object
       properties:

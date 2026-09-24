@@ -69,7 +69,18 @@ type RiskPoint struct {
 	Risk        RiskStats            `json:"risk"`
 	ByClass     map[string]RiskStats `json:"by_class,omitempty"`
 	ByTeam      map[string]RiskStats `json:"by_team,omitempty"`
+	// OpenBySignal is the work items open at that assessment by signal, each counted
+	// once under its most severe (see OpenSignals), so the values sum to the items
+	// carrying any of them and can be stacked. Every signal is present, zero
+	// included, when it was counted; absent when the assessment's item list could not
+	// be read.
+	OpenBySignal map[string]int `json:"open_by_signal,omitempty"`
 }
+
+// OpenSignals is the order OpenBySignal assigns an item by: the first of these it
+// carries. Known exploitation is a fact, EPSS a forecast, a fixable critical a
+// severity, and an end-of-life base the slowest to act on.
+var OpenSignals = []string{"kev", SignalEPSSHigh, SignalFixableCritical, "end-of-life"}
 
 // Movement is the transitions in one period.
 type Movement struct {
@@ -261,33 +272,18 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 	}
 
 	// Risk: the last assessment of each period, with how many the period had.
-	type acc struct {
-		last  Assessment
-		count int
-	}
-	perPeriod := map[int]*acc{}
-	for _, a := range assessments {
-		i := periodOf(a.FinishedAt)
-		if i < 0 {
-			continue
-		}
-		if perPeriod[i] == nil {
-			perPeriod[i] = &acc{}
-		}
-		perPeriod[i].count++
-		if !a.FinishedAt.Before(perPeriod[i].last.FinishedAt) {
-			perPeriod[i].last = a
-		}
-	}
+	perPeriod := periodEnds(rep.Movement, assessments)
 	for i, m := range rep.Movement {
 		a, ok := perPeriod[i]
 		if !ok {
 			continue
 		}
+		last := assessments[a.last]
 		rep.Risk = append(rep.Risk, RiskPoint{
-			Period: m.Period, At: a.last.FinishedAt, Assessments: a.count,
-			Findings: a.last.Findings, Actionable: a.last.Actionable,
-			Risk: a.last.Risk, ByClass: a.last.ByClass, ByTeam: a.last.ByTeam,
+			Period: m.Period, At: last.FinishedAt, Assessments: a.count,
+			Findings: last.Findings, Actionable: last.Actionable,
+			Risk: last.Risk, ByClass: last.ByClass, ByTeam: last.ByTeam,
+			OpenBySignal: openBySignal(last.Items),
 		})
 	}
 
@@ -407,6 +403,66 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		rep.Movement[i].KEVCVEsResolved = len(kevs[i])
 	}
 	return rep
+}
+
+type periodEnd struct{ last, count int }
+
+// periodEnds finds, for each period holding an assessment, the index of the last
+// one to finish in it and how many the period had.
+func periodEnds(periods []Movement, assessments []Assessment) map[int]periodEnd {
+	out := map[int]periodEnd{}
+	for j, a := range assessments {
+		for i, m := range periods {
+			if a.FinishedAt.Before(m.Start) || !a.FinishedAt.Before(m.End) {
+				continue
+			}
+			e, seen := out[i]
+			e.count++
+			if !seen || !a.FinishedAt.Before(assessments[e.last].FinishedAt) {
+				e.last = j
+			}
+			out[i] = e
+			break
+		}
+	}
+	return out
+}
+
+// LastOfPeriods returns the index in assessments of the last assessment of each
+// period of r that has one, oldest period first: the assessments whose Items
+// Aggregate reads for RiskPoint.OpenBySignal. A caller loads those items and no
+// others, since each is a whole work-item list.
+func LastOfPeriods(r Range, assessments []Assessment) []int {
+	periods := Periods(r)
+	ends := periodEnds(periods, assessments)
+	var out []int
+	for i := range periods {
+		if e, ok := ends[i]; ok {
+			out = append(out, e.last)
+		}
+	}
+	return out
+}
+
+// openBySignal counts items under the first of OpenSignals each carries. Nil items
+// means the list was not read, which is not the same as an empty queue.
+func openBySignal(items []Snapshot) map[string]int {
+	if items == nil {
+		return nil
+	}
+	out := make(map[string]int, len(OpenSignals))
+	for _, sig := range OpenSignals {
+		out[sig] = 0
+	}
+	for _, it := range items {
+		for _, sig := range OpenSignals {
+			if it.Has(sig) {
+				out[sig]++
+				break
+			}
+		}
+	}
+	return out
 }
 
 // split applies fn to each classification bucket the opening snapshot falls in.
