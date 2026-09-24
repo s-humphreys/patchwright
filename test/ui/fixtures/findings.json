@@ -1,0 +1,17 @@
+{
+  "assessment": { "generated_at": "2026-11-21T10:00:00Z", "running": false, "version": "test" },
+  "findings": [
+    { "image": "acr.io/payments-api:4.2.0", "repository": "payments-api", "registry": "acr.io",
+      "owner": { "class": "engineering", "team": "payments" }, "namespaces": ["payments"],
+      "priority": "urgent", "rule": "exploited-fixable", "actionable": true, "live": true, "reconciled": true,
+      "counts": { "critical": 3, "high": 11 }, "provider_assessed": true, "scanned": true, "exploit_checked": true,
+      "remediation_checked": true, "in_flight_checked": true, "signals": ["kev", "fixable-critical"],
+      "upgrade": { "kind": "base", "name": "node", "current": "18-alpine", "latest": "22-alpine", "available": true, "resolved": true } },
+    { "image": "acr.io/orders:1.9.3", "repository": "orders", "registry": "acr.io",
+      "owner": { "class": "engineering", "team": "orders" }, "namespaces": ["orders"],
+      "priority": "high", "rule": "any-critical", "actionable": true, "live": true, "reconciled": true,
+      "counts": { "critical": 1, "high": 4 }, "provider_assessed": true, "scanned": true, "exploit_checked": true,
+      "remediation_checked": true, "in_flight_checked": true, "signals": ["end-of-life"],
+      "upgrade": { "kind": "helm", "name": "orders", "current": "1.9.3", "latest": "2.0.1", "available": true, "resolved": true } }
+  ]
+}
