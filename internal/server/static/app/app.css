@@ -523,7 +523,11 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
 .day-pick:hover { background: var(--hover); }
 .day-pick[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--card)); }
 .day-pick[aria-pressed="true"] .n { color: var(--fg); }
-.ticket-day-list { margin: .6rem 0 0; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+.ticket-day-list { margin: .6rem 0 0; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); overflow-x: auto; }
+/* A work item key is four parts joined by "|", the last often a full image
+   reference: it breaks at the separators first, and anywhere only if a part alone
+   is wider than the column. */
+.ticket-day td.item { white-space: normal; overflow-wrap: anywhere; }
 .ticket-day-head { display: flex; align-items: center; gap: .8rem; margin-bottom: .3rem; font-size: .9rem; }
 .ticket-day-head .linkish { margin-left: auto; }
 .ticket-day td.wrap { white-space: normal; min-width: 16rem; }
