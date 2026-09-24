@@ -13,7 +13,7 @@ const { renderTiles } = await import('./panels.js');
 
 const summary = (over = {}) => ({
   findings: 671, actionable: 571, suppressed: 220, known_exploited: 31,
-  end_of_life: 16, exposed: 0, exposure_unknown: 0, upgradable: 558,
+  end_of_life: 16, upgradable: 558,
   unique_images: 887, in_flight: 1, in_flight_checked: 671, ...over,
 });
 
@@ -53,23 +53,14 @@ test('every number carries an explanation', () => {
 test('the sharp end is present and led by exploitation', () => {
   renderTiles(summary());
   const labels = tiles().map((t) => t.label);
-  for (const want of ['known exploited', 'end of life', 'internet-facing']) {
+  for (const want of ['known exploited', 'end of life']) {
     assert.ok(labels.includes(want), `missing ${want}`);
   }
+  assert.ok(!labels.includes('internet-facing'), 'internet exposure was removed and must not come back as a tile');
   // Known exploited must be marked urgent, not rendered like a neutral count.
   const kev = [...document.querySelectorAll('#tiles .tile')]
     .find((el) => el.querySelector('.l').textContent === 'known exploited');
   assert.match(kev.className, /tile-urgent/);
-});
-
-test('zero exposed with zero unknown says "none reported", not "0"', () => {
-  // Zero of both is a claim that nothing in the estate is reachable. Where a provider
-  // reports that uniformly it is a statement about the provider, and a bare 0 would
-  // launder it into a fact about the estate.
-  renderTiles(summary({ exposed: 0, exposure_unknown: 0 }));
-  const t = tiles().find((x) => x.label === 'internet-facing');
-  assert.equal(t.sub, 'none reported');
-  assert.match(t.title, /does not populate|nothing exposed/);
 });
 
 test('an unchecked count renders as unknown rather than zero', () => {

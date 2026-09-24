@@ -65,7 +65,7 @@ export function groupFindings(findings) {
   for (const [key, members] of byKey) {
     const lead = worstFinding(members);
     const signals = new Set();
-    let critical = 0, high = 0, assessed = 0, exposedAny = false, internalKnown = false;
+    let critical = 0, high = 0, assessed = 0;
     let scanned = 0, exploitChecked = 0;
     for (const f of members) {
       for (const s of f.signals || []) signals.add(s);
@@ -76,8 +76,6 @@ export function groupFindings(findings) {
       }
       if (f.scanned) scanned++;
       if (f.exploit_checked) exploitChecked++;
-      if (f.exposure === "public") exposedAny = true;
-      if (f.exposure === "internal") internalKnown = true;
     }
     out.push({
       key,
@@ -105,7 +103,6 @@ export function groupFindings(findings) {
       assessedOf: [assessed, members.length],
       scannedOf: [scanned, members.length],
       exploitCheckedOf: [exploitChecked, members.length],
-      exposure: exposedAny ? "public" : internalKnown ? "internal" : "unknown",
       signals: [...signals],
       tags: members.map((f) => f.tag || f.image),
       dimensions: {
@@ -120,7 +117,7 @@ export function groupFindings(findings) {
 
 function urgencyGroupCell(g) {
   const marks = g.signals
-    .filter((s) => s === "exposed" || s === "kev")
+    .filter((s) => s === "kev")
     .map((s) => badge(SIGNAL_BADGES[s], s))
     .join(" ");
   // Name the environment only when it is what distinguishes this verdict from the

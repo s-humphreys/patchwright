@@ -38,7 +38,6 @@ const FINDING_COLUMNS = [
   ["actionable", (f) => f.actionable],
   ["suppressed", (f) => f.suppressed],
   ["signals", (f) => (f.signals || []).join(" ")],
-  ["exposure", (f) => f.exposure],
   ["critical", (f) => f.counts?.critical || 0],
   ["high", (f) => f.counts?.high || 0],
   ["medium", (f) => f.counts?.medium || 0],

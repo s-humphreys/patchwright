@@ -287,13 +287,6 @@ export function renderTiles(s) {
     { label: "end of life", n: s.end_of_life, tone: "urgent",
       help: "Built on a runtime or distribution nobody maintains, so no future fix will ever reach it. Every other number here falls when somebody rebuilds; this one falls only when somebody migrates.",
       unchecked: "Support windows were not checked this run." },
-    { label: "internet-facing", n: s.exposed ?? 0,
-      // Zero exposed AND zero unknown is a claim that nothing in the estate is
-      // reachable. Where the provider reports that uniformly it is a statement about
-      // the provider, not the estate, and saying so is more useful than a bare 0.
-      note: (s.exposed ?? 0) === 0 && (s.exposure_unknown ?? 0) === 0
-        ? "none reported" : null,
-      help: "Reported reachable from the internet. When every workload comes back as internal, that is usually a field the scan provider does not populate rather than an estate with nothing exposed." },
     { label: "fix in flight", n: s.in_flight,
       only: (s.in_flight_checked ?? 0) > 0,
       help: "An open pull request already applies the upgrade, so this is work somebody has started." },

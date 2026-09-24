@@ -88,7 +88,7 @@
         } }
     ],
     "open": { "items": 244, "ticketed": 61, "missing": 3, "tickets_overdue_open": 4,
-      "by_signal": { "kev": 22, "epss-high": 51, "fixable-critical": 230, "end-of-life": 9, "exposed": 104 },
+      "by_signal": { "kev": 22, "epss-high": 51, "fixable-critical": 230, "end-of-life": 9 },
       "age_days": { "0-7": 12, "7-30": 38, "30-90": 194 },
       "closed_ticket_finding_open": 3, "closed_ticket_age_days": { "0-7": 1, "30-90": 2 } },
     "tracker": { "source": "tracker", "tickets": 62, "first_created": "2026-06-02T09:00:00Z", "last_synced": "2026-11-21T10:00:00Z" },

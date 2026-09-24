@@ -29,7 +29,7 @@ function finding(over = {}) {
     owner: { class: 'cpo', team: 'platform', rule: 'by-namespace' },
     counts: { critical: 2, high: 5 }, provider_assessed: true,
     scanned: true, exploit_checked: true, remediation_checked: true,
-    exposure: 'internal', signals: [], vulns: [], workload_count: 3,
+    signals: [], vulns: [], workload_count: 3,
     in_flight_checked: true, dimensions: { namespace: ['apps'] }, reasons: ['any-critical'],
     priority: 'high',
     ...over,
@@ -44,9 +44,8 @@ test('the queue is five columns: urgency, severity, image, fix, action', () => {
 });
 
 test('urgency shows the verdict and what drives it', () => {
-  const html = FINDING_COLUMNS[0].get(finding({ signals: ['exposed', 'kev'], priority: 'urgent' }));
+  const html = FINDING_COLUMNS[0].get(finding({ signals: ['kev'], priority: 'urgent' }));
   assert.match(html, /urgent/);
-  assert.match(html, /exposed/);
   assert.match(html, /kev/);
 });
 
@@ -126,7 +125,7 @@ test('rows carry their image so a click can find the finding again', () => {
 test('the detail panel shows every section, and unknowns as unknown', () => {
   openDetail(finding({
     provider_assessed: false, scanned: false, exploit_checked: false,
-    liveness: null, exposure: 'unknown', in_flight_checked: false, digest: '',
+    liveness: null, in_flight_checked: false, digest: '',
   }));
   const el = document.querySelector('#detail');
   assert.equal(el.hidden, false);

@@ -71,7 +71,7 @@ export const FACETS = [
  * selected reads the values ticked in one facet.
  *
  * Facets are multi-select because the questions people ask are unions - "kev or
- * exposed", "urgent or high" - and a single-choice control makes those two
+ * end-of-life", "urgent or high" - and a single-choice control makes those two
  * questions whose answers have to be added up by hand.
  *
  * @returns {string[]} the chosen values, empty meaning no filter.
@@ -118,7 +118,7 @@ export function haystack(f) {
     f.upgrade?.source, f.upgrade?.source_path,
     upgradeText(f), fixPath(f),
     f.in_flight ? `${f.in_flight.title} ${f.in_flight.repository}` : "",
-    (f.signals || []).join(" "), f.exposure,
+    (f.signals || []).join(" "),
     ticketsFor(f).map((t) => `${t.key} ${t.status}`).join(" "),
   ];
   return parts.filter(Boolean).join(" ").toLowerCase();
@@ -135,7 +135,7 @@ export function matches(f, st, except) {
     if (facet.name === except) continue;
     const want = st[facet.name];
     // Several values within one facet mean ANY of them. Across facets it is still
-    // AND: "kev or exposed, owned by orders" is the sentence people say.
+    // AND: "kev or end-of-life, owned by orders" is the sentence people say.
     if (!want || !want.length) continue;
     const have = facet.values(f);
     if (!want.some((w) => have.includes(w))) return false;

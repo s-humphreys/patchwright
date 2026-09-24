@@ -3,7 +3,7 @@ import { $ } from './util.js';
 
 // Filter state in the URL, so a view can be shared.
 //
-// "The exposed, fixable findings owned by the platform team" is the sentence somebody wants to send
+// "The exploited, fixable findings owned by the platform team" is the sentence somebody wants to send
 // to somebody else, and until now the only way was a screenshot plus instructions.
 // A link also survives the refresh, so an hourly poll does not quietly reset what the
 // reader had narrowed down to.
@@ -16,7 +16,7 @@ import { $ } from './util.js';
  * Controls that make up a shareable view, mapped to their query parameter. Checkboxes
  * are stored only when they differ from their default, so a plain link stays short.
  * Facets hold several values at once and travel as a comma-separated list, so
- * "signal=kev,exposed" is a link somebody can send.
+ * "signal=kev,end-of-life" is a link somebody can send.
  * @type {{id: string, param: string, kind: 'value'|'check'|'facet', dflt?: boolean}[]}
  */
 const CONTROLS = [

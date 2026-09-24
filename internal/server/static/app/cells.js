@@ -152,9 +152,8 @@ export function upgradeTitle(f) {
 // grow a column for every fact worth knowing, and a signal that is also a filter and a
 // rule input changes the ordering rather than merely being readable.
 //
-// Every badge is a positive statement. Nothing here means "internal" or "no pull
-// request" — absence of a badge asserts nothing, which is why exposure has its own
-// three-valued cell in the hover rather than a missing globe standing for "safe".
+// Every badge is a positive statement. Nothing here means "no pull request" or
+// "not exploited" — absence of a badge asserts nothing.
 
 // The whole-image worst of a per-CVE score.
 //
@@ -325,12 +324,12 @@ export function cveColumns() {
 // The five queue cells. Each answers one question and defers the rest to the detail
 // panel, so the table can be read across rather than studied.
 
-// urgencyCell: the verdict, plus what makes it urgent. A KEV-listed or internet-facing
-// finding reads differently from a quiet critical, and that difference belongs next to
+// urgencyCell: the verdict, plus what makes it urgent. A KEV-listed finding reads
+// differently from a quiet critical, and that difference belongs next to
 // the verdict rather than eight columns away.
 export function urgencyCell(f) {
   const marks = (f.signals || [])
-    .filter((s) => s === "exposed" || s === "kev")
+    .filter((s) => s === "kev")
     .map((s) => badge(SIGNAL_BADGES[s], s))
     .join(" ");
   // The rule that decided it, beneath the verdict. Without this the column is
