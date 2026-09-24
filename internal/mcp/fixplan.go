@@ -190,9 +190,6 @@ func why(r ServiceReport) string {
 		}
 		parts = append(parts, verdict)
 	}
-	if r.Exposure == "public" {
-		parts = append(parts, "internet-facing")
-	}
 	if k := r.Vulnerabilities.KnownExploited; k > 0 {
 		parts = append(parts, fmt.Sprintf("%d known-exploited CVEs", k))
 	}

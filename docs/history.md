@@ -92,7 +92,7 @@ item lapses.
 Each item's snapshot carries what a later question is likely to need: its rule,
 priority and signals; its risk score and worst counts per severity; where it runs
 (accounts and namespaces, kept raw so production can be told apart by whatever names
-the estate uses); its exposure; the upgrade's kind and target; the open tickets
+the estate uses); the upgrade's kind and target; the open tickets
 covering it; and every distinct CVE it carries with severity, CVSS, EPSS, KEV and
 fix availability. The `resolved` and `lapsed` events carry both the opening and the
 closing snapshot, so "which CVEs did we fix" is on the event itself. CVEs arriving or
@@ -120,10 +120,13 @@ not by the current configuration:
 - CVEs join KEV after the fact. That is a `changed` event and is counted as
   `became_known_exploited`.
 - Rules are first-match-wins and get renamed. Signals (`kev`, `epss-high`,
-  `fixable-critical`, `end-of-life`, `exposed`) are what rules are made of and do not
-  depend on order, so the per-signal split is the one to compare month on month. The
-  per-rule split is there for the sign-off report, which is keyed on rule names by
-  design.
+  `fixable-critical`, `end-of-life`) are what rules are made of and do not depend on
+  order, so the per-signal split is the one to compare month on month. The per-rule
+  split is there for the sign-off report, which is keyed on rule names by design.
+- Snapshots recorded before internet exposure was removed still carry an `exposure`
+  field and an `exposed` signal. They are read as they are, so past periods keep the
+  `exposed` row they had; no new item gains it, and losing it is not recorded as a
+  `changed` event or counted among the items open now.
 
 KEV is the headline exploited figure and EPSS sits beside it with that weight: one is
 a fact that only grows, the other a forecast.

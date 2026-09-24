@@ -17,7 +17,7 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `GET /analytics` | How the queue has moved (with a [history store](history.md)), then what to fix first: the rebuilds that clear the most, and what nobody is acting on |
 | `GET /api/v1/findings` | Findings, filterable by `owner_class`, `team`, `priority`, `actionable`, `live`, `upgradable`, `known_exploited`, `suppressed`, `provider_assessed`, `remediation_checked`, `upgrade_resolved` |
 | `GET /api/v1/finding?image=<ref>` | One image's finding |
-| `GET /api/v1/owners` | Per-team triage: where the fix goes, how much is ticketed, and how much of it is the sharp end (`urgent`, `known_exploited`, `exposed`, `end_of_life`) |
+| `GET /api/v1/owners` | Per-team triage: where the fix goes, how much is ticketed, and how much of it is the sharp end (`urgent`, `known_exploited`, `end_of_life`) |
 | `GET /api/v1/summary` | Fleet headline, coverage counts, `unassessed_reasons` and `fallback_failures` |
 | `GET /api/v1/policy` | The estate against **your own** policy rules by name: what each caught, what each suppression holds and when it lapses, and what no rule speaks to. For a periodic security review |
 | `GET /api/v1/history` | How the queue moved by month: opened, resolved **with evidence**, lapsed, ticketed against unticketed, and the estate's risk direction. Needs a [history store](history.md); says `enabled: false` otherwise. With the tracker read, also cycle time (finding to ticket, ticket to In Progress, In Progress to resolved) and tickets raised and closed by the tracker's own dates, marked `source: tracker` and reported as tickets, not resolutions. `?since=90d&bucket=month` |
@@ -138,14 +138,16 @@ was assessed.
 
 ## Signals
 
-Each finding carries a `signals` list — `exposed`, `kev`, `in-flight`, `stale-fix`,
-`unassessed`, `fallback-scan`, `suppressed` — and the queue renders it as one column of badges rather
+Each finding carries a `signals` list — `kev`, `in-flight`, `stale-fix`,
+`unassessed`, `fallback-scan`, `suppressed`, `end-of-life` — and the queue renders it as one column of badges rather
 than a column per attribute. The same set is available to rules, so a signal can change
 the ordering instead of only being readable.
 
-Every signal is a positive statement. The absence of one asserts nothing: no `exposed`
-covers both an internal workload and one whose reachability nobody reported, which is
-why `exposure` is a separate three-valued field (`public`, `internal`, `unknown`).
+Every signal is a positive statement. The absence of one asserts nothing.
+
+There is no internet exposure signal or field. Earlier versions inferred one from
+Services, HTTPRoutes and hostname lists, which cannot establish what is reachable from
+the internet, so it was removed rather than presented as a fact.
 
 ## Who is carrying the sharp end
 
@@ -161,7 +163,6 @@ So each owner row also carries, as counts of findings rather than of CVEs:
 | --- | --- |
 | `urgent` | Policy rated it urgent |
 | `known_exploited` | Carries a CVE in CISA's KEV catalogue: confirmed exploitation, not a prediction |
-| `exposed` | On a workload something reported reachable from the internet |
 | `end_of_life` | Built on a line nobody maintains, so no future fix reaches it |
 
 Counts of findings, because a finding is what gets assigned, tracked and fixed; a CVE
@@ -312,7 +313,7 @@ consumer silently.
 ## Getting the queue out of the page
 
 The status page filters are multi-select and travel in the URL, so a narrowed view
-is a link somebody can send: `?view=cves&signal=kev,exposed&team=orders`. Several
+is a link somebody can send: `?view=cves&signal=kev,end-of-life&team=orders`. Several
 values within one filter mean ANY of them; the filters are still ANDed with each
 other.
 

@@ -40,6 +40,22 @@ const (
 	SignalFixableCritical = "fixable-critical"
 )
 
+// retiredSignals were recorded by earlier versions and are no longer derived.
+// Snapshots already stored keep them, so they are ignored wherever a stored snapshot
+// is compared with a new one or counted as open now; otherwise the first run after
+// an upgrade would record every item that carried one as having changed.
+var retiredSignals = map[string]bool{"exposed": true}
+
+func withoutRetired(signals []string) []string {
+	out := make([]string, 0, len(signals))
+	for _, s := range signals {
+		if !retiredSignals[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // Kind is the type of a transition.
 type Kind string
 
@@ -88,9 +104,6 @@ type Snapshot struct {
 	Rule     string   `json:"rule,omitempty"`
 	Priority string   `json:"priority,omitempty"`
 	Signals  []string `json:"signals,omitempty"`
-	// Exposure is public when any deployment is reachable from the internet,
-	// internal when all reporting ones are internal, unknown when none reported.
-	Exposure string `json:"exposure,omitempty"`
 	// Accounts and Namespaces are where the item runs, kept raw so a report can
 	// classify production against the rest by whatever names the estate uses,
 	// without depending on a rule name that will be renamed.
@@ -325,7 +338,6 @@ func snapshot(key string, members []sink.FindingView, tickets map[string][]strin
 	ticketed := map[string]bool{}
 	accounts, namespaces := map[string]bool{}, map[string]bool{}
 	cves := map[string]CVE{}
-	exposedAny, internalKnown := false, false
 	for _, f := range members {
 		s.Images = append(s.Images, f.Image)
 		if f.Risk > s.Risk {
@@ -345,12 +357,6 @@ func snapshot(key string, members []sink.FindingView, tickets map[string][]strin
 		}
 		for _, n := range f.Dimensions["namespace"] {
 			namespaces[n] = true
-		}
-		switch f.Exposure {
-		case "public":
-			exposedAny = true
-		case "internal":
-			internalKnown = true
 		}
 		for _, v := range f.Vulns {
 			c, seen := cves[v.ID]
@@ -396,14 +402,6 @@ func snapshot(key string, members []sink.FindingView, tickets map[string][]strin
 	s.Signals = sortedKeys(signals)
 	s.Tickets = sortedKeys(ticketed)
 	s.Accounts, s.Namespaces = sortedKeys(accounts), sortedKeys(namespaces)
-	switch {
-	case exposedAny:
-		s.Exposure = "public"
-	case internalKnown:
-		s.Exposure = "internal"
-	default:
-		s.Exposure = "unknown"
-	}
 	for _, id := range sortedKeys(boolKeys(cves)) {
 		s.CVEs = append(s.CVEs, cves[id])
 	}
@@ -653,7 +651,7 @@ func changed(st State, now Snapshot, at time.Time) (Event, bool) {
 	if prev.TargetVersion != now.TargetVersion {
 		changes = append(changes, "target: "+orNone(prev.TargetVersion)+" -> "+orNone(now.TargetVersion))
 	}
-	added, removed := diffStrings(prev.Signals, now.Signals)
+	added, removed := diffStrings(withoutRetired(prev.Signals), now.Signals)
 	for _, s := range added {
 		changes = append(changes, "+"+s)
 	}

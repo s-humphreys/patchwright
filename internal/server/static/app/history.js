@@ -20,7 +20,6 @@ const SIGNALS = [
   { key: "epss-high", label: "EPSS above 0.5" },
   { key: "fixable-critical", label: "Fixable critical" },
   { key: "end-of-life", label: "End-of-life base" },
-  { key: "exposed", label: "Internet exposed" },
 ];
 
 /** fmt renders a number with thousands separators, or "-" for nothing. */

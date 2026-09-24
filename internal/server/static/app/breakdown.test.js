@@ -31,16 +31,17 @@ function owner(over = {}) {
   return {
     class: 'engineering', team: 'orders', total: 10, unassessed: 0, actionable: 4,
     direct: 3, managed: 1, fixable: 2, ticketed: 0, cves: {}, cves_from: 10,
-    urgent: 2, known_exploited: 1, exposed: 0, end_of_life: 1, ...over,
+    urgent: 2, known_exploited: 1, end_of_life: 1, ...over,
   };
 }
 
 test('the breakdown reports urgency and exploitation per team', () => {
   renderBreakdown([owner()]);
   const labels = breakdownColumns().map((c) => c.label);
-  for (const want of ['Urgent', 'KEV', 'Exposed', 'EOL']) {
+  for (const want of ['Urgent', 'KEV', 'EOL']) {
     assert.ok(labels.includes(want), `missing column ${want}`);
   }
+  assert.ok(!labels.includes('Exposed'), 'internet exposure was removed and must not come back as a column');
   const text = document.querySelector('#breakdown tbody').textContent;
   assert.match(text, /orders|engineering/);
 });

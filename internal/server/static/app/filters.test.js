@@ -311,7 +311,7 @@ test('picking the kev signal lists KEV CVEs, not every CVE on a KEV finding', ()
 });
 
 test('a finding-level signal still filters findings rather than CVEs', () => {
-  // Exposure, in-flight and the rest describe the image or its deployment.
+  // In-flight, end-of-life and the rest describe the image or its deployment.
   // Filtering individual CVEs by those would be meaningless, so they narrow the
   // findings and every CVE on a surviving finding is listed.
   setUp();
@@ -355,13 +355,13 @@ test('a filter is never disabled while a value is selected', () => {
 });
 
 test('selecting several values in one filter means ANY of them', () => {
-  // The questions people ask are unions - "kev or exposed", "urgent or high" - and a
+  // The questions people ask are unions - "kev or end-of-life", "urgent or high" - and a
   // single-choice control makes those two questions whose answers are added up by
   // hand.
   setUp();
   S.queueRows = [
     finding({ team: 'a', cve: 'CVE-1', signals: ['kev'] }),
-    finding({ team: 'b', cve: 'CVE-2', signals: ['exposed'] }),
+    finding({ team: 'b', cve: 'CVE-2', signals: ['end-of-life'] }),
     finding({ team: 'c', cve: 'CVE-3', signals: ['in-flight'] }),
   ];
   applyOwnerFilters();
@@ -369,7 +369,7 @@ test('selecting several values in one filter means ANY of them', () => {
   chooseMany('#signalFilter', ['kev']);
   assert.equal(queueRowCount(), 1);
 
-  chooseMany('#signalFilter', ['kev', 'exposed']);
+  chooseMany('#signalFilter', ['kev', 'end-of-life']);
   assert.equal(queueRowCount(), 2, 'both selected signals should be included');
 
   chooseMany('#signalFilter', []);
@@ -377,39 +377,39 @@ test('selecting several values in one filter means ANY of them', () => {
 });
 
 test('filters are still ANDed with each other', () => {
-  // Union within a facet, intersection across them. "kev or exposed, owned by a" is
+  // Union within a facet, intersection across them. "kev or end-of-life, owned by a" is
   // the sentence, and it has one answer.
   setUp();
   S.queueRows = [
     finding({ team: 'a', cve: 'CVE-1', signals: ['kev'] }),
-    finding({ team: 'b', cve: 'CVE-2', signals: ['exposed'] }),
+    finding({ team: 'b', cve: 'CVE-2', signals: ['end-of-life'] }),
   ];
   applyOwnerFilters();
-  chooseMany('#signalFilter', ['kev', 'exposed']);
+  chooseMany('#signalFilter', ['kev', 'end-of-life']);
   chooseMany('#teamFilter', ['a']);
   assert.equal(queueRowCount(), 1);
 });
 
 test('a multi-select survives a link', async () => {
-  // "signal=kev,exposed" is the sentence somebody wants to send.
+  // "signal=kev,end-of-life" is the sentence somebody wants to send.
   const { readURL, writeURL } = await import('./urlstate.js');
   setUp();
   S.queueRows = [
     finding({ team: 'a', cve: 'CVE-1', signals: ['kev'] }),
-    finding({ team: 'b', cve: 'CVE-2', signals: ['exposed'] }),
+    finding({ team: 'b', cve: 'CVE-2', signals: ['end-of-life'] }),
   ];
   applyOwnerFilters();
-  chooseMany('#signalFilter', ['kev', 'exposed']);
+  chooseMany('#signalFilter', ['kev', 'end-of-life']);
   writeURL();
   // Menu order, not click order: signals have a fixed rank, so the same selection
   // always produces the same link rather than one per order of clicking.
   const signal = new URLSearchParams(location.search).get('signal');
-  assert.deepEqual(signal.split(',').sort(), ['exposed', 'kev']);
+  assert.deepEqual(signal.split(',').sort(), ['end-of-life', 'kev']);
 
   chooseMany('#signalFilter', []);
-  readURL(new URLSearchParams('signal=kev,exposed'));
+  readURL(new URLSearchParams('signal=kev,end-of-life'));
   applyOwnerFilters();
-  assert.deepEqual(selected('#signalFilter').sort(), ['exposed', 'kev']);
+  assert.deepEqual(selected('#signalFilter').sort(), ['end-of-life', 'kev']);
 });
 
 test('haystack includes the change target, so a grouped ticket can link to its rows', () => {

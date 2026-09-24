@@ -481,7 +481,7 @@ func openSummary(open []State, now time.Time) OpenSummary {
 		if st.Missing > 0 {
 			out.Missing++
 		}
-		for _, s := range st.Current.Signals {
+		for _, s := range withoutRetired(st.Current.Signals) {
 			out.BySignal[s]++
 		}
 		out.AgeDays[ageBucket(int(now.Sub(st.OpenedAt).Hours()/24))]++

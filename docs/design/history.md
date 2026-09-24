@@ -83,7 +83,7 @@ This is the decision that keeps the numbers worth reading:
   `changed` event says it did, and the report can say so.
 - Rules get renamed and reordered. Rule order is first-match-wins, so a finding both
   `exploited-fixable-critical` and `exploited-fixable` match records only the first.
-  Signals (`kev`, `epss_high`, `end_of_life`, `fixable_critical`, `exposed`) are what
+  Signals (`kev`, `epss_high`, `end_of_life`, `fixable_critical`) are what
   rules are made of and do not depend on order, so the signal columns are what a
   monthly comparison should be built on. Rule names are recorded for the sign-off
   report, which is keyed on them by design.

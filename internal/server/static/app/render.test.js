@@ -30,7 +30,7 @@ function finding(over = {}) {
     image: 'reg/app:1', repository: 'app', registry: 'reg',
     counts: { critical: 0, high: 0 }, provider_assessed: true,
     scanned: true, exploit_checked: true, remediation_checked: true,
-    exposure: 'internal', signals: [], vulns: [], in_flight_checked: true,
+    signals: [], vulns: [], in_flight_checked: true,
     ...over,
   };
 }
@@ -39,19 +39,10 @@ function finding(over = {}) {
 // while asserting the opposite, so matching anywhere in the markup proves nothing.
 const shown = (html) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 
-test('unknown exposure never renders as internal', () => {
-  const unknown = shown(signalsCell(finding({ exposure: 'unknown' })));
-  assert.match(unknown, /\?/);
-  assert.doesNotMatch(unknown, /internal/);
-
-  const internal = shown(signalsCell(finding({ exposure: 'internal' })));
-  assert.match(internal, /internal/);
-});
-
-test('an exposed finding shows the badge and no internal claim', () => {
-  const html = shown(signalsCell(finding({ exposure: 'public', signals: ['exposed'] })));
-  assert.match(html, /exposed/);
-  assert.doesNotMatch(html, /internal/);
+test('nothing is said about internet exposure, either way', () => {
+  assert.equal(shown(signalsCell(finding())), '', 'no "internal" or "?" placeholder');
+  // An older assessment or history row can still carry the retired signal.
+  assert.equal(shown(signalsCell(finding({ signals: ['exposed'] }))), '');
 });
 
 test('a stale pull request links to itself and reports its age', () => {

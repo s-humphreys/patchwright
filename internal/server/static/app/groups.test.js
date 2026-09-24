@@ -32,7 +32,7 @@ function deployment(repo, tag, account, over = {}) {
     owner: { class: 'engineering', team: 'insights', rule: 'by-label' },
     counts: { critical: 10, high: 20 }, provider_assessed: true, scanned: true,
     exploit_checked: true, remediation_checked: true, in_flight_checked: true,
-    exposure: 'internal', signals: [], vulns: [], workload_count: 1,
+    signals: [], vulns: [], workload_count: 1,
     dimensions: { account: [account], namespace: [repo] },
     priority: 'medium', reasons: ['matched actionable rule "any-critical"'],
     upgrade: python,
@@ -104,21 +104,13 @@ test('a group nothing assessed says "?" rather than zero', () => {
   assert.match(GROUP_COLUMNS[1].get(g), /\?/);
 });
 
-test('exposure and signals take the worst case across the group', () => {
+test('signals take the union across the group', () => {
   const [g] = groupFindings([
-    deployment('app', 'a', 'Development EU'),
-    deployment('app', 'b', 'Production EU', { exposure: 'public', signals: ['exposed', 'kev'] }),
+    deployment('app', 'a', 'Development EU', { signals: ['end-of-life'] }),
+    deployment('app', 'b', 'Production EU', { signals: ['kev'] }),
   ]);
-  assert.equal(g.exposure, 'public', 'exposed anywhere is exposed');
-  assert.deepEqual(g.signals.sort(), ['exposed', 'kev']);
-});
-
-test('exposure stays unknown when nothing reported it', () => {
-  const [g] = groupFindings([
-    deployment('app', 'a', 'Development EU', { exposure: 'unknown' }),
-    deployment('app', 'b', 'Production EU', { exposure: 'unknown' }),
-  ]);
-  assert.equal(g.exposure, 'unknown', 'no reports must not become "internal"');
+  assert.deepEqual(g.signals.sort(), ['end-of-life', 'kev']);
+  assert.ok(!('exposure' in g), 'internet exposure was removed from the group');
 });
 
 test('in-flight is only "checked" when every deployment was checked', () => {

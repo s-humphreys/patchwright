@@ -148,7 +148,6 @@
   .badge-helm { color: var(--high); }
   .badge-operator { color: var(--high); }
   .badge-other { color: var(--muted); }
-  .badge-exposed { color: var(--urgent); font-weight: 600; }
   .badge-kev { color: var(--urgent); }
   .badge-inflight { color: var(--ok); }
   .badge-stale { color: var(--high); font-weight: 600; }

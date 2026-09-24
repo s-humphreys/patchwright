@@ -25,15 +25,6 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
     verbs: ["get", "list"]
-  {{- if .Values.rbac.exposure }}
-  # Internet exposure: what sits in front of a workload.
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["httproutes"]
-    verbs: ["get", "list"]
-  {{- end }}
   {{- if .Values.rbac.remediation }}
   # Where an upgrade would be applied: the chart or operator that owns the tag. The
   # workloads themselves are granted above for liveness.

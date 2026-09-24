@@ -27,7 +27,7 @@ import { $, UNKNOWN, esc } from './util.js';
 const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
 
 // CVE_SIGNALS are the signals that describe a CVE rather than the finding carrying
-// it. Everything else - exposed, in-flight, unassessed, end-of-life - is a property
+// it. Everything else - in-flight, unassessed, end-of-life - is a property
 // of the image or its deployment, and filtering individual CVEs by those would be
 // meaningless.
 const CVE_SIGNALS = {

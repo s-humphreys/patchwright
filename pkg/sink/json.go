@@ -38,12 +38,8 @@ type FindingView struct {
 	// how a review finds the rules it is missing.
 	Rule     string `json:"rule,omitempty"`
 	RuleKind string `json:"rule_kind,omitempty"`
-	// Exposure is "public", "internal" or "unknown": reachability from the internet
-	// where something reports it. Unknown is a real answer and must not be read as
-	// internal.
-	Exposure string `json:"exposure"`
-	// Signals are the notable facts about this finding (exposed, kev, in-flight,
-	// stale-fix, unassessed, fallback-scan, suppressed). Each is a positive
+	// Signals are the notable facts about this finding (kev, in-flight,
+	// stale-fix, unassessed, fallback-scan, suppressed, end-of-life). Each is a positive
 	// statement; absence asserts nothing.
 	Signals         []string `json:"signals,omitempty"`
 	WorkloadCount   int      `json:"workload_count"`
@@ -451,7 +447,6 @@ func ToFindingView(f model.Finding) FindingView {
 		Reasons:            f.Reasons,
 		Rule:               f.Rule,
 		RuleKind:           f.RuleKind,
-		Exposure:           f.Exposure(),
 		Signals:            f.Signals(),
 		WorkloadCount:      len(f.Occurrences),
 		FixableCritical:    fixableCriticals(f),

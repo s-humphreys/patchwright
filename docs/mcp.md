@@ -22,13 +22,13 @@ enough to matter.
 | `fix_plan` | **What to DO about one service.** For somebody holding a ticket: the change, what not to do and why, what it achieves, and which of the remainder was never their team's |
 | `estate_summary` | The headline: size of the problem, how much of it rebuilds would clear, the biggest wins, and what nobody is acting on |
 | `service_report` | Everything about one service: deployments, image age, the upgrade it needs, and exactly what that upgrade clears, leaves and introduces |
-| `worst_first` | The work queue, worst first, filterable by team, priority and exposure |
+| `worst_first` | The work queue, worst first, filterable by team and priority |
 | `team_report` | One team's whole position, including what is already in flight and what is merely open and stale |
-| `explain_cve` | One CVE across the estate: who carries it, whether any of them is exposed, and where a rebuild removes it |
+| `explain_cve` | One CVE across the estate: who carries it, how exploitable it is, and where a rebuild removes it |
 | `policy_report` | **The estate against your OWN rules**, by their names in your config: what each caught, what each suppression holds and when it lapses, and what no rule speaks to. For a periodic review or sign-off |
 | `exploitability_report` | **What is actually being exploited, and how much is fixable.** KEV and high-EPSS CVE counts with their fixable share, per team beside each team's urgent count, worst CVEs named |
 | `trend_report` | **Is this getting better?** How the queue moved over a period, from the [history](history.md) record: opened, resolved with evidence, lapsed without it, the risk direction, ticketed against unticketed resolutions, and cycle time from the tracker's dates. Caveats first |
-| `list_facets` | The vocabulary: every team, class, priority, exposure and signal that appears, with counts |
+| `list_facets` | The vocabulary: every team, class, priority and signal that appears, with counts |
 
 **A service answers to any name that identifies it.** The bare repository
 (`storefront`), the path (`apps/storefront`), the registry-qualified form
@@ -49,7 +49,7 @@ policy rule, and leaves somebody to work out which of it they are supposed to ac
 
 ```
 storefront - insights
-why      urgent, internet-facing, 10 known-exploited CVEs, 6,746 vulnerabilities
+why      urgent, 10 known-exploited CVEs, 6,746 vulnerabilities
          across 3 deployments (rule: exploited-fixable-critical)
 
 do       change the base image this is built on
@@ -129,7 +129,7 @@ not a rare path - on one estate three of a single team's eight items are in it.
 turns a number into a conversation:
 
 ```
-apps/storefront - payments - urgent in prod, internet-facing
+apps/storefront - payments - urgent in prod
   3 deployments, newest image built 187 days ago
   10 CVEs, 1 known-exploited
 
@@ -180,7 +180,7 @@ support - because nobody re-reads a sentence a chatbot produced.
 ## Why an answer is empty
 
 Every answer carries `freshness.ran`: which sources the assessment was configured
-with, and whether upgrades, the base differential, pull-request matching and exposure
+with, and whether upgrades, the base differential and pull-request matching
 were asked for at all.
 
 This exists because of a real failure. On the first session against a live estate, a
@@ -213,7 +213,7 @@ from a different vendor feed than the rest.
 
 ## Names, and getting them wrong
 
-`list_facets` returns the team, class, priority, exposure and signal values that
+`list_facets` returns the team, class, priority and signal values that
 actually appear, with counts. It is there because a miss was not recoverable: asked
 about "the payments team", a model called `team_report`, got nothing back, and had to
 return to the human to ask what the team was called - when the assessment knew.

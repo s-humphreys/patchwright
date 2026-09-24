@@ -159,9 +159,6 @@ function sections(f) {
     row("Signals", (f.signals || []).length
       ? (f.signals || []).map((s) => badge(SIGNAL_BADGES[s], s)).join(" ")
       : '<span class="muted">none</span>'),
-    row("Exposure", f.exposure === "unknown"
-      ? unknown("unknown", "Nothing reported whether this is reachable from the internet. Not the same as internal.")
-      : esc(f.exposure)),
     row("Running now", f.liveness
       ? (f.liveness.live ? "yes" : "no")
       : unknown("?", "No live reconciliation ran, so it is not known whether this is running.")),

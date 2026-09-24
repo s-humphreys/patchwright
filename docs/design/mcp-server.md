@@ -65,7 +65,7 @@ definition of what a finding is.
 | Tool | Answers |
 |---|---|
 | `summary` | The estate headline: how much is actionable, coverage gaps, how stale the provider's data is |
-| `list_findings` | Findings, filtered by team, priority, signal, exposure, fixability |
+| `list_findings` | Findings, filtered by team, priority, signal, fixability |
 | `explain_finding` | One image: the verdict, the rules that produced it, its CVEs, where it runs, and what fixes it |
 | `explain_cve` | One CVE across the estate: which images, whose teams, whether a fix exists |
 | `biggest_wins` | The base upgrades that clear the most, and the services on each |

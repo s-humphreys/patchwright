@@ -32,10 +32,10 @@ func fixture() Assessment {
 	base := sink.FindingView{
 		Image: "reg.example/apps/storefront:1.4.0", Repository: "apps/storefront",
 		Tag: "1.4.0", Owner: sink.OwnerView{Team: "payments", Class: "product"},
-		Priority: "urgent", Exposure: "public", Scanned: true, ProviderAssessed: true,
+		Priority: "urgent", Scanned: true, ProviderAssessed: true,
 		Counts:     map[string]int{"critical": 3, "high": 5},
 		Dimensions: map[string][]string{"namespace": {"prod"}},
-		Signals:    []string{"exposed", "kev"},
+		Signals:    []string{"kev"},
 		Upgrade: &sink.UpgradeView{
 			Kind: "base", Name: "dotnet/aspnet", Current: "9.0", Latest: "10.0",
 			Available: true, Resolved: true, Actionable: true,
@@ -66,9 +66,9 @@ func fixture() Assessment {
 	unassessed := sink.FindingView{
 		Image: "reg.example/apps/storefront:1.5.0-rc1", Repository: "apps/storefront",
 		Tag: "1.5.0-rc1", Owner: sink.OwnerView{Team: "payments", Class: "product"},
-		Priority: "medium", Exposure: "unknown",
-		Counts:  map[string]int{},
-		Upgrade: base.Upgrade,
+		Priority: "medium",
+		Counts:   map[string]int{},
+		Upgrade:  base.Upgrade,
 	}
 	return Assessment{
 		GeneratedAt:        ts("2026-08-30T09:00:00Z"),
@@ -77,7 +77,6 @@ func fixture() Assessment {
 		Sources: model.Sources{
 			Provider: "rapid7", VulnSource: "trivy", ExploitSource: "public",
 			LiveSource: "kube", Remediation: true, BaseDiff: true, InFlight: true,
-			Exposure: true,
 		},
 		Findings: []sink.FindingView{base, unassessed},
 		Analytics: analytics.AnalyticsView{
@@ -210,7 +209,7 @@ func TestNothingAssessedYetIsNotAnEmptyEstate(t *testing.T) {
 }
 
 func TestWorstFirstFiltersAndSaysSo(t *testing.T) {
-	q := worstFirst(fixture(), "payments", "urgent", "", 10)
+	q := worstFirst(fixture(), "payments", "urgent", 10)
 	if q.Total != 1 {
 		t.Fatalf("want one urgent payments item, got %d", q.Total)
 	}
@@ -220,7 +219,7 @@ func TestWorstFirstFiltersAndSaysSo(t *testing.T) {
 	if q.Items[0].Clears == nil || *q.Items[0].Clears != 2 {
 		t.Errorf("want the measured benefit on the row: %+v", q.Items[0])
 	}
-	none := worstFirst(fixture(), "nobody", "", "", 10)
+	none := worstFirst(fixture(), "nobody", "", 10)
 	if none.Total != 0 {
 		t.Errorf("want no items for an unknown team, got %d", none.Total)
 	}
@@ -236,9 +235,6 @@ func TestCVEReportSeparatesClearedFromSurviving(t *testing.T) {
 	}
 	if !r.KnownExploited || r.ClearedByRebuild != 1 || r.StaysAfterRebuild != 0 {
 		t.Errorf("wrong verdict: %+v", r)
-	}
-	if len(r.ExposedServices) != 1 {
-		t.Errorf("want the exposed service named: %+v", r.ExposedServices)
 	}
 	if !strings.HasSuffix(r.Reference, "CVE-2026-1") {
 		t.Errorf("want a public reference: %q", r.Reference)
@@ -258,7 +254,7 @@ func TestTeamReportCountsWhatTheTeamOwns(t *testing.T) {
 	if !ok {
 		t.Fatal("team lookup must be case-insensitive")
 	}
-	if r.Services != 1 || r.Urgent != 1 || r.Exposed != 1 {
+	if r.Services != 1 || r.Urgent != 1 {
 		t.Errorf("wrong team position: %+v", r)
 	}
 	if _, _, ok := teamReport(fixture(), "platform"); ok {
@@ -490,7 +486,7 @@ func TestAnUpgradeWithNothingToMoveToIsNotReportedAsAMove(t *testing.T) {
 		a.Findings[i].BaseDiff = nil
 	}
 
-	q := worstFirst(a, "", "", "", 10)
+	q := worstFirst(a, "", "", 10)
 	if len(q.Items) == 0 {
 		t.Fatal("want the item")
 	}
@@ -635,7 +631,7 @@ func TestTheEstateRebuildFigureIsComparableWithTheTotal(t *testing.T) {
 	}
 
 	// Same for the queue row a team reads.
-	q := worstFirst(a, "", "", "", 10)
+	q := worstFirst(a, "", "", 10)
 	if q.Items[0].Clears == nil || *q.Items[0].Clears != 2 {
 		t.Errorf("queue row clears = %v, want 2 distinct CVEs", q.Items[0].Clears)
 	}
@@ -705,7 +701,6 @@ func realisticEstate() Assessment {
 				Repository: repo, Tag: fmt.Sprintf("1.%d.0", tag),
 				Owner:            sink.OwnerView{Team: teams[svc%len(teams)], Class: "engineering"},
 				Priority:         []string{"urgent", "high", "medium", "low"}[svc%4],
-				Exposure:         []string{"public", "internal", "unknown"}[svc%3],
 				Scanned:          true,
 				ProviderAssessed: true,
 				Counts:           map[string]int{"critical": 5, "high": 5},

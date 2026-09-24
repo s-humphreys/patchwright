@@ -227,12 +227,6 @@ type Occurrence struct {
 	LastSeen  time.Time
 	Owner     Owner // assigned by the attribution stage
 
-	// Exposed reports whether this workload is reachable from the internet, when
-	// something knows. Nil means unknown, which is not the same as internal: a
-	// provider that does not report reachability, or an export without the column,
-	// must not make everything look safely internal.
-	Exposed *bool
-
 	// Assessed reports whether the scan provider actually assessed this
 	// workload's image. It is NOT the same as "has no vulnerabilities": a
 	// provider that never scanned an image (e.g. a private registry it has no
@@ -731,41 +725,12 @@ func (f Finding) ProviderAssessed() bool {
 	return false
 }
 
-// Exposure values. Unknown is its own answer: an estate where nothing reports
-// reachability must not read as an estate where nothing is reachable.
-const (
-	ExposurePublic   = "public"
-	ExposureInternal = "internal"
-	ExposureUnknown  = "unknown"
-)
-
-// Exposure aggregates reachability across a finding's workloads. Any workload
-// reachable from the internet makes the finding public: the image is exposed
-// somewhere, and that is the fact that matters for prioritising it.
-func (f Finding) Exposure() string {
-	known := false
-	for _, o := range f.Occurrences {
-		if o.Exposed == nil {
-			continue
-		}
-		known = true
-		if *o.Exposed {
-			return ExposurePublic
-		}
-	}
-	if known {
-		return ExposureInternal
-	}
-	return ExposureUnknown
-}
-
 // Signal names one notable fact about a finding, for display and for rules.
 //
 // A set rather than a column each: the table cannot grow a column per attribute,
 // and a signal that is also available to policy can change the ordering instead of
 // merely being readable.
 const (
-	SignalExposed      = "exposed"
 	SignalKnownExploit = "kev"
 	SignalInFlight     = "in-flight"
 	SignalStaleFix     = "stale-fix"
@@ -790,13 +755,9 @@ const (
 // Signals lists what is notable about this finding, in a stable order.
 //
 // Every signal is a positive statement. Absence of a signal never asserts the
-// opposite: no "exposed" signal covers both an internal workload and one whose
-// reachability nobody reported, which is why Exposure() exists alongside this.
+// opposite.
 func (f Finding) Signals() []string {
 	var out []string
-	if f.Exposure() == ExposurePublic {
-		out = append(out, SignalExposed)
-	}
 	for _, v := range f.Vulns {
 		if v.KEV {
 			out = append(out, SignalKnownExploit)
@@ -857,11 +818,10 @@ type Sources struct {
 
 	// Remediation is whether upgrades were looked for at all; BaseDiff whether base
 	// images were scanned to establish what an upgrade clears; InFlight whether open
-	// pull requests were matched; Exposure whether internet reachability was measured.
+	// pull requests were matched.
 	Remediation bool
 	BaseDiff    bool
 	InFlight    bool
-	Exposure    bool
 
 	// ScanDisabled records config turning scanning off despite a source being named,
 	// which otherwise looks exactly like no source at all.

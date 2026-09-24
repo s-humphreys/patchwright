@@ -74,12 +74,8 @@ type Coverage struct {
 	// never assessed came back marked scanned, four with no CVEs and no error - so
 	// counting the flag claimed per-CVE coverage over images nothing had looked at, and
 	// read as an estate that was clean rather than unexamined.
-	Scanned int `json:"scanned_deployments"`
-	Total   int `json:"total_deployments"`
-	// Exposure counts deployments with ANY exposure value, which is not the same as
-	// measured: where exposure_measured is false these come from the scan provider,
-	// whose field can be constant. Named "reported" for that reason.
-	Exposure  int `json:"deployments_with_reported_exposure"`
+	Scanned   int `json:"scanned_deployments"`
+	Total     int `json:"total_deployments"`
 	BaseDiffs int `json:"deployments_with_base_differential"`
 	// FallbackScanned is deployments the provider never assessed whose counts a
 	// fallback scanner supplied instead, and Uncovered the unassessed ones nothing
@@ -185,9 +181,6 @@ func estateSummary(a Assessment) EstateSummary {
 		if hasCVEDetail(f) {
 			out.Coverage.Scanned++
 		}
-		if f.Exposure == "public" || f.Exposure == "internal" {
-			out.Coverage.Exposure++
-		}
 		if f.BaseDiff != nil && f.BaseDiff.Determined {
 			out.Coverage.BaseDiffs++
 			measured = true
@@ -289,7 +282,6 @@ type WorkItem struct {
 	Priority      string   `json:"priority,omitempty"`
 	PriorityWhere string   `json:"priority_where,omitempty"`
 	Rule          string   `json:"rule,omitempty"`
-	Exposure      string   `json:"exposure"`
 	Signals       []string `json:"signals,omitempty"`
 	Critical      int      `json:"critical"`
 	High          int      `json:"high"`
@@ -304,7 +296,7 @@ type WorkItem struct {
 
 // worstFirst returns the queue, optionally narrowed. Every filter is exact and
 // stated back in the answer, so a narrowed list is never mistaken for the estate.
-func worstFirst(a Assessment, team, priority, exposure string, limit int) WorstFirst {
+func worstFirst(a Assessment, team, priority string, limit int) WorstFirst {
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
@@ -322,7 +314,7 @@ func worstFirst(a Assessment, team, priority, exposure string, limit int) WorstF
 				"Teams in this assessment: "+strings.Join(candidates, ", ")+".")
 		}
 	}
-	out.Filtered = describeFilters(team, priority, exposure)
+	out.Filtered = describeFilters(team, priority)
 
 	clears := clearsByItem(a)
 	for _, it := range a.items() {
@@ -332,16 +324,13 @@ func worstFirst(a Assessment, team, priority, exposure string, limit int) WorstF
 		if priority != "" && !strings.EqualFold(it.Priority, priority) {
 			continue
 		}
-		if exposure != "" && !strings.EqualFold(it.Exposure, exposure) {
-			continue
-		}
 		out.Total++
 		if len(out.Items) >= limit {
 			continue
 		}
 		w := WorkItem{
 			Service: it.Repository, Team: it.Team, Priority: it.Priority,
-			PriorityWhere: it.PriorityWhere, Rule: it.Rule, Exposure: it.Exposure,
+			PriorityWhere: it.PriorityWhere, Rule: it.Rule,
 			Signals: it.Signals, Critical: it.Critical, High: it.High,
 			Deployments: it.Deployments,
 		}
@@ -372,9 +361,6 @@ func coverageOf(a Assessment) Coverage {
 		}
 		if hasCVEDetail(f) {
 			c.Scanned++
-		}
-		if f.Exposure == "public" || f.Exposure == "internal" {
-			c.Exposure++
 		}
 		if f.BaseDiff != nil && f.BaseDiff.Determined {
 			c.BaseDiffs++
@@ -432,9 +418,9 @@ func heldSuffix(u *sink.UpgradeView) string {
 	return " (" + strings.Join(parts, ", ") + ")"
 }
 
-func describeFilters(team, priority, exposure string) string {
+func describeFilters(team, priority string) string {
 	var parts []string
-	for _, p := range [][2]string{{"team", team}, {"priority", priority}, {"exposure", exposure}} {
+	for _, p := range [][2]string{{"team", team}, {"priority", priority}} {
 		if p[1] != "" {
 			parts = append(parts, p[0]+"="+p[1])
 		}
@@ -495,7 +481,6 @@ type TeamReport struct {
 	WorkItems     int `json:"work_items"`
 	Urgent        int `json:"urgent"`
 	High          int `json:"high"`
-	Exposed       int `json:"exposed_services"`
 	InProgress    int `json:"items_with_open_pull_request"`
 	StaleInFlight int `json:"items_with_stale_pull_request"`
 
@@ -527,7 +512,7 @@ func teamReport(a Assessment, team string) (TeamReport, []string, bool) {
 		return TeamReport{}, candidates, false
 	}
 	team = resolved
-	q := worstFirst(a, team, "", "", 100)
+	q := worstFirst(a, team, "", 100)
 	if q.Total == 0 {
 		return TeamReport{}, candidates, false
 	}
@@ -546,9 +531,6 @@ func teamReport(a Assessment, team string) (TeamReport, []string, bool) {
 			out.Urgent++
 		case "high":
 			out.High++
-		}
-		if it.Exposure == "public" {
-			out.Exposed++
 		}
 		if it.InFlight != nil {
 			out.InProgress++
@@ -639,15 +621,12 @@ type CVEReport struct {
 	Reference      string  `json:"reference"`
 
 	Deployments int `json:"deployments"`
-	// ServicesAffected, TeamsAffected and ExposedAffected are the TOTALS. The lists
+	// ServicesAffected and TeamsAffected are the TOTALS. The lists
 	// below are capped, and a capped list with no total reads as the whole set.
 	ServicesAffected int      `json:"services_affected"`
 	TeamsAffected    int      `json:"teams_affected"`
-	ExposedAffected  int      `json:"exposed_services_affected"`
 	Services         []string `json:"services"`
 	Teams            []string `json:"teams,omitempty"`
-	// ExposedServices are the affected services reachable from the internet.
-	ExposedServices []string `json:"exposed_services,omitempty"`
 
 	FixAvailable bool     `json:"fix_available"`
 	FixedVersion string   `json:"fixed_version,omitempty"`
@@ -667,7 +646,6 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 
 	services := map[string]bool{}
 	teams := map[string]bool{}
-	exposed := map[string]bool{}
 	pkgs := map[string]bool{}
 	var found bool
 	for _, f := range a.Findings {
@@ -680,9 +658,6 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 			services[f.Repository] = true
 			if f.Owner.Team != "" {
 				teams[f.Owner.Team] = true
-			}
-			if f.Exposure == "public" {
-				exposed[f.Repository] = true
 			}
 			// The worst reported anywhere, not whichever occurrence was read last. The
 			// same CVE is rated differently by distro, and assigning on every match left
@@ -718,10 +693,8 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 		return CVEReport{}, false
 	}
 	out.ServicesAffected, out.TeamsAffected = len(services), len(teams)
-	out.ExposedAffected = len(exposed)
 	out.Services = keys(services, maxNamed)
 	out.Teams = keys(teams, maxNamed)
-	out.ExposedServices = keys(exposed, maxNamed)
 	out.Packages = keys(pkgs, maxNamed)
 	// Capped lists say so. Ten names beside "64 deployments" reads as ten services
 	// unless the total is there, and somebody scoping the work would stop at ten.
@@ -730,11 +703,6 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 			"%d services carry this; the %d listed are the first alphabetically, not the worst. "+
 				"Use worst_first to rank them.",
 			len(services), len(out.Services)))
-	}
-	if len(exposed) > len(out.ExposedServices) {
-		out.Caveats = append(out.Caveats, fmt.Sprintf(
-			"%d of the affected services are internet-facing; %d are listed.",
-			len(exposed), len(out.ExposedServices)))
 	}
 
 	out.Caveats = append(out.Caveats, configCaveats(a, Coverage{

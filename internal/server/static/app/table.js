@@ -17,7 +17,7 @@ import { $, UNKNOWN, countPct, esc, pct } from './util.js';
 export const FINDING_COLUMNS = [
   { label: "Urgency", cls: (f) => priorityClass(f), get: (f) => urgencyCell(f),
     sort: (f) => (f.suppressed ? 0 : (PRI_RANK[f.priority] ?? 0) * 100 + signalsSort(f) / 100),
-    help: "The policy verdict, with what drives it: an exposed or KEV-listed finding is a different proposition from a quiet critical. Sorting ranks the verdict first, then the weight of those signals.",
+    help: "The policy verdict, with what drives it: a KEV-listed finding is a different proposition from a quiet critical. Sorting ranks the verdict first, then the weight of those signals.",
     title: (f) => (f.suppressed
       ? "Suppressed by policy: " + ((f.reasons || [])[0] || "no reason recorded")
       : (f.reasons || [])[0] || "") },
@@ -218,8 +218,6 @@ export const BREAKDOWN_COLUMNS = [
       (r.kev ? ` <span class="pct" title="Share of every KEV finding in the estate, not of this row">${
         r.estateKEV ? Math.round((r.kev / r.estateKEV) * 100) : 0}%</span>` : ""),
     help: "Findings carrying a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation, not a prediction. The percentage is of every KEV finding in the estate, not of this row, so it answers who carries the exploited work. Click for the list." },
-  { label: "Exposed", num: true, get: (r) => drilldown(r, r.exposed, { signal: "exposed" }),
-    help: "Findings on workloads reported reachable from the internet. Click for the list." },
   { label: "EOL", num: true, get: (r) => drilldown(r, r.eol, { signal: "end-of-life" }),
     help: "Findings whose base image line is no longer maintained, so no future fix reaches them. The only count here that does not fall when somebody rebuilds. Click for the list." },
   { label: "Direct", num: true, get: (r) => countPct(r.direct, r.actionable),
@@ -309,7 +307,7 @@ export function renderBreakdown(owners) {
       managed: sum(teams, "managed"), fixable: sum(teams, "fixable"),
       ticketed: sum(teams, "ticketed"),
       urgent: sum(teams, "urgent"), kev: sum(teams, "known_exploited"),
-      exposed: sum(teams, "exposed"), eol: sum(teams, "end_of_life"),
+      eol: sum(teams, "end_of_life"),
       classKey: cls,
     });
     // Only break a class down when there is more than one team in it; a single
@@ -322,7 +320,7 @@ export function renderBreakdown(owners) {
         total: o.total, unassessed: o.unassessed, actionable: o.actionable,
         direct: o.direct, managed: o.managed, fixable: o.fixable, ticketed: o.ticketed,
         urgent: o.urgent, kev: o.known_exploited,
-        exposed: o.exposed, eol: o.end_of_life,
+        eol: o.end_of_life,
         classKey: cls, teamKey: o.team || "",
       });
     }

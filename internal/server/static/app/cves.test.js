@@ -25,7 +25,7 @@ function finding(image, team, vulns, over = {}) {
   return {
     image, repository: image.split(':')[0], owner: { team, class: 'cpo' },
     counts: {}, provider_assessed: true, scanned: true, exploit_checked: true,
-    remediation_checked: true, exposure: 'internal', signals: [], vulns,
+    remediation_checked: true, signals: [], vulns,
     upgrade: { kind: 'base', resolved: true, available: true, actionable: true,
                name: 'base', current: '1', latest: '2' },
     ...over,

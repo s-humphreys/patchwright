@@ -27,9 +27,6 @@ type ServiceReport struct {
 	PriorityWhere string   `json:"priority_where,omitempty"`
 	Rule          string   `json:"rule,omitempty"`
 	Signals       []string `json:"signals,omitempty"`
-	// Exposure is measured from the clusters where hostnames are configured, not
-	// taken from the scan provider.
-	Exposure string `json:"exposure"`
 
 	// BuildRepo is the source repository that built the image, from the labels named by
 	// remediation.base.repoLabels. Absent means the image records none.
@@ -281,7 +278,7 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	out := ServiceReport{
 		Service: lead.Repository, Team: lead.Team, Class: lead.Class,
 		Priority: lead.Priority, PriorityWhere: lead.PriorityWhere, Rule: lead.Rule,
-		Signals: lead.Signals, Exposure: lead.Exposure,
+		Signals: lead.Signals,
 	}
 	for _, f := range mine {
 		out.Deployments = append(out.Deployments, Deployment{
@@ -722,10 +719,6 @@ func caveats(a Assessment, r ServiceReport) []string {
 	if a.Sources.BaseDiff && r.Upgrade != nil && !r.Upgrade.Measured {
 		out = append(out, "The base differential is enabled but did not measure this service, so what an "+
 			"upgrade would clear is unknown rather than nothing - its base could not be resolved or scanned.")
-	}
-	if a.Sources.Exposure && r.Exposure == "unknown" {
-		out = append(out, "Exposure was measured across the estate but nothing reported it for this service, "+
-			"so it is unknown rather than internal.")
 	}
 	var suppressed int
 	for _, d := range r.Deployments {

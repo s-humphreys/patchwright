@@ -35,8 +35,6 @@ export function badge(spec, fallbackLabel) {
 // is also the sort key and what the search box matches.
 
 export const SIGNAL_BADGES = {
-  exposed:      { glyph: "\u25c9", label: "exposed", cls: "badge-exposed",
-                  help: "Reachable from the internet, per the scan provider. An exposed critical is a different proposition from an internal one." },
   kev:          { glyph: "\u26a1", label: "kev", cls: "badge-kev",
                   help: "Carries a CVE in CISA's Known Exploited Vulnerabilities catalogue: confirmed exploitation in the wild, not a prediction." },
   "in-flight":  { glyph: "\u21c4", label: "pr", cls: "badge-inflight",
@@ -61,11 +59,11 @@ export const SIGNAL_BADGES = {
 // compounds under the ones that do not.
 // fallback-scan sits next to unassessed because it only ever appears with it: it is
 // not a fact about the image, it is a fact about where the row's numbers came from.
-export const SIGNAL_ORDER = ["exposed", "end-of-life", "kev", "stale-fix", "in-flight", "unassessed", "fallback-scan", "suppressed"];
+export const SIGNAL_ORDER = ["end-of-life", "kev", "stale-fix", "in-flight", "unassessed", "fallback-scan", "suppressed"];
 // Weighted below unassessed on purpose. A fallback scan is coverage recovered, not
 // risk added, and sorting it up the queue would push the images somebody has the LEAST
 // reason to worry about above the ones nothing has looked at at all.
-export const SIGNAL_WEIGHT = { exposed: 64, "end-of-life": 32, kev: 16, "stale-fix": 8, "in-flight": 4, unassessed: 2, "fallback-scan": 1, suppressed: 1 };
+export const SIGNAL_WEIGHT = { "end-of-life": 32, kev: 16, "stale-fix": 8, "in-flight": 4, unassessed: 2, "fallback-scan": 1, suppressed: 1 };
 
 export function signalsCell(f) {
   const set = new Set(f.signals || []);
@@ -84,12 +82,6 @@ export function signalsCell(f) {
       ? `<a href="${esc(f.in_flight.url)}" target="_blank" rel="noreferrer" class="badge ${spec.cls}" title="${esc(spec.help)}"><span class="g" aria-hidden="true">${spec.glyph}</span>${esc(spec.label)}</a>`
       : badge(spec, name));
   }
-  // Exposure is three-valued, and "nobody reported it" must not look like internal.
-  if (!set.has("exposed")) {
-    out.push(f.exposure === "internal"
-      ? '<span class="muted" title="Not reachable from the internet, per the scan provider.">internal</span>'
-      : '<span class="unknown" title="Nothing reported whether this is reachable from the internet. Not the same as internal.">?</span>');
-  }
   if (!f.in_flight_checked && f.upgrade?.available) {
     out.push('<span class="unknown" title="In-flight detection did not run, so it is not known whether anyone has started this.">pr?</span>');
   }
@@ -99,7 +91,7 @@ export function signalsCell(f) {
   return out.join(" ");
 }
 
-// Sort by the weight of what a finding carries, so the exposed, exploited and stalled
+// Sort by the weight of what a finding carries, so the end-of-life, exploited and stalled
 // rise together rather than alphabetically.
 export function signalsSort(f) {
   let w = 0;

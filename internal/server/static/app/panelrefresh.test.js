@@ -27,7 +27,7 @@ function finding(over = {}) {
   return {
     image: 'reg/app:1.0.0', repository: 'app', registry: 'reg', tag: '1.0.0',
     counts: { critical: 1, high: 2 }, provider_assessed: true, scanned: true,
-    priority: 'high', reasons: [], signals: [], exposure: 'internal',
+    priority: 'high', reasons: [], signals: [],
     liveness: { live: true }, upgrade: null, vulns: [], ...over,
   };
 }

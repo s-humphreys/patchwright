@@ -195,6 +195,9 @@ test.describe('analytics page', () => {
     await expect(signals).toContainText('Known exploited');
     await expect(signals).toContainText('EPSS decayed below 0.5');
     await expect(signals.locator('dd').first()).toContainText('35');
+    // Periods recorded before exposure was removed still carry the signal; the page
+    // must not bring it back as a row.
+    await expect(signals).not.toContainText(/exposed/i);
   });
 
   test('a single period gets numbers and no chart', async ({ page }) => {

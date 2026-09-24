@@ -81,9 +81,8 @@ cannot work.
 For the cluster patchwright runs in, the chart creates a ServiceAccount and a minimal
 read-only ClusterRole: `get`/`list` on `pods`, `namespaces`, `deployments`,
 `statefulsets`, `daemonsets` and `cronjobs` (liveness counts deployed workloads, not
-only live pods; see [reconciliation](reconciliation.md#what-counts-as-running)), plus
-`services` and Gateway API `httproutes` when `reconcile.exposure` is on. No Secrets, no write verbs,
-no credentials to manage.
+only live pods; see [reconciliation](reconciliation.md#what-counts-as-running)). No
+Secrets, no write verbs, no credentials to manage.
 
 ## Multi-cluster
 
@@ -114,8 +113,7 @@ kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.pri
 ```
 
 The read set follows the features in use. Pods, namespaces, workloads and cronjobs are
-always granted, for liveness; `rbac.exposure` adds services and httproutes, and
-`rbac.remediation` adds Flux resources so an image deployed by a chart or operator can
+always granted, for liveness; `rbac.remediation` adds Flux resources so an image deployed by a chart or operator can
 be traced to the resource that sets its version. For
 operator-owned custom resources, name their API groups in
 `rbac.customResourceGroups`; `*` is refused, because `get` on every resource includes
@@ -314,26 +312,6 @@ The kubeconfig itself is cluster and context stanzas only, with an empty users l
 A cluster that cannot be read fails the run rather than being skipped: partial liveness is
 indistinguishable from workloads having stopped, and the queue would shrink for the wrong
 reason.
-
-## Internet exposure
-
-Off by default, because it needs permissions the other live reads do not and because
-the defaults it would run with are the coarse ones.
-
-```yaml
-reconcile:
-  exposure:
-    enabled: true
-    publicHostnames: [example.com]
-    internalHostnames: [internal.example.com]
-```
-
-Remote clusters need the updated reader role before it means anything: the read is
-all-or-nothing across the fleet, so one cluster refusing it discards the result for
-every cluster. It fails soft either way - logged, with the provider's own value
-standing - so a role that has not caught up costs the exposure data and nothing else.
-
-See [live reconciliation](reconciliation.md) for how hostnames decide it.
 
 ## Base-image scanning and memory
 

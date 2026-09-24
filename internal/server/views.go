@@ -101,13 +101,6 @@ type summaryView struct {
 	// these render identically to "nobody has started this".
 	InFlightUnmatchable int `json:"in_flight_unmatchable"`
 
-	// Exposed counts findings on a workload reachable from the internet, and
-	// ExposureUnknown those where nothing reported reachability at all. The second is
-	// published because a fleet with no exposure data would otherwise look entirely
-	// internal, which is the most reassuring possible way to be wrong.
-	Exposed         int `json:"exposed"`
-	ExposureUnknown int `json:"exposure_unknown"`
-
 	// SourceFailures are the enrichments that could not run: exploit intel, CVE ages.
 	// The assessment is still here — losing an enrichment must not lose the queue — but
 	// the gap is stated rather than left to be inferred from cells that read "not
@@ -196,7 +189,7 @@ type ownerStats struct {
 	// is: see the tickets field on findings.
 	Ticketed int `json:"ticketed"`
 
-	// Urgent, KnownExploited, Exposed and EndOfLife are the counts somebody asks for
+	// Urgent, KnownExploited and EndOfLife are the counts somebody asks for
 	// by name when they want to know which teams are carrying the sharp end rather
 	// than the most work.
 	//
@@ -206,7 +199,6 @@ type ownerStats struct {
 	// gets assigned, tracked and fixed is a finding.
 	Urgent         int `json:"urgent"`
 	KnownExploited int `json:"known_exploited"`
-	Exposed        int `json:"exposed"`
 	// EndOfLife counts findings whose base line is no longer maintained. Distinct from
 	// the rest because it does not improve on its own: every other count here can fall
 	// when somebody rebuilds, this one falls only when somebody migrates.
@@ -288,12 +280,6 @@ func buildSummary(findings []model.Finding) summaryView {
 		}
 		if f.InFlightChecked {
 			s.InFlightChecked++
-		}
-		switch f.Exposure() {
-		case model.ExposurePublic:
-			s.Exposed++
-		case model.ExposureUnknown:
-			s.ExposureUnknown++
 		}
 		if f.InFlightReason != "" {
 			s.InFlightUnmatchable++
@@ -432,8 +418,6 @@ func buildOwnerStats(findings []model.Finding, tickets map[string][]ticketRef) [
 			switch sig {
 			case model.SignalKnownExploit:
 				st.KnownExploited++
-			case model.SignalExposed:
-				st.Exposed++
 			case model.SignalEndOfLife:
 				st.EndOfLife++
 			}

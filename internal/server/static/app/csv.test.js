@@ -19,7 +19,7 @@ function finding(over = {}) {
     image: 'reg/orders-api:1', registry: 'reg', repository: 'orders-api', tag: '1',
     owner: { class: 'engineering', team: 'orders' },
     priority: 'high', actionable: true, suppressed: false, signals: ['kev'],
-    exposure: 'public', counts: { critical: 2, high: 1 }, scanned: true,
+    counts: { critical: 2, high: 1 }, scanned: true,
     vulns: [{ id: 'CVE-1', kev: true, epss: 0.61, epss_percentile: 0.98 }],
     upgrade: { kind: 'base', current: '1', latest: '2', available: true },
     base_diff: { clears: 10, total: 12 },
@@ -48,9 +48,10 @@ test('the findings export carries what somebody would filter on', async () => {
   const file = await exportRows('queue', [finding()]);
   assert.ok(file);
   const [header, row] = file.body.split('\r\n');
-  for (const col of ['image', 'team', 'priority', 'kev', 'max_epss', 'max_epss_percentile', 'exposure']) {
+  for (const col of ['image', 'team', 'priority', 'kev', 'max_epss', 'max_epss_percentile']) {
     assert.ok(header.includes(col), `missing column ${col}`);
   }
+  assert.ok(!header.split(',').includes('exposure'), 'internet exposure was removed from the export');
   assert.ok(row.includes('orders-api'));
   assert.ok(row.includes('0.61'), 'the EPSS score should be exported, not just rendered');
   assert.ok(row.includes('0.98'), 'and its percentile, which is what was asked for by name');
