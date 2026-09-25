@@ -116,7 +116,6 @@ function movementPanel(h) {
       <td>${m.median_days_to_resolve != null ? `${Math.round(m.median_days_to_resolve)}d` : "-"}</td></tr>`).join("");
   return `<section class="panel"><h3>Movement, in work items</h3>
     <p class="sub unit">A work item is one service and the one upgrade that would fix it. <strong>Fixed (confirmed)</strong> means it left the queue with evidence the upgrade landed; <strong>left without a fix</strong> is everything else that left the queue: it stopped running, dropped below the rules, or is no longer reported.</p>
-    ${totals.baseline ? `<div class="dr"><dt>Already open when the record began</dt><dd class="muted">${fmt(totals.baseline)}</dd></div>` : ""}
     <div class="dr"><dt>Across the range</dt>
       <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> fixed (confirmed), clearing ${fmt(totals.cves)} CVEs${totals.kev ? ` (${fmt(totals.kev)} known-exploited)` : ""} · <span class="muted">${fmt(totals.lapsed)} left without a fix</span></dd></div>
     ${periods.length > 1 ? `<div class="chart-slot" data-chart="movement"></div>` : ""}
@@ -131,7 +130,7 @@ function delineationPanel(h, tickets) {
   if (!periods.length) return "";
   const sum = (k) => periods.reduce((n, m) => n + (m[k] || 0), 0);
   const unticketed = sum("resolved_unticketed"), ticketed = sum("resolved_ticketed");
-  const closedOpen = sum("tickets_closed_finding_open"), lapsed = sum("lapsed");
+  const closedOpen = sum("tickets_closed_finding_open");
   // Only once some ticket carried a due date: before that the column would be all
   // zeros that read as "nothing was late" rather than "nothing was measured".
   const onTime = sum("tickets_closed_on_time"), overdue = sum("tickets_closed_overdue");
@@ -141,21 +140,21 @@ function delineationPanel(h, tickets) {
   const strip = stackedBar([
     { label: "fixed (confirmed), never ticketed", value: unticketed, cls: "age-0" },
     { label: "fixed (confirmed), ticketed", value: ticketed, cls: "age-1" },
+    // Left without a fix stays in Movement: it counts every work item, ticketed or
+    // not, so it has no place in a panel comparing fixes with ticketed work.
     { label: "ticket closed, finding open", value: closedOpen, cls: "age-3" },
-    { label: "left without a fix", value: lapsed, cls: "age-4" },
-  ], { empty: "Nothing has left the queue yet." });
+  ], { empty: "Nothing fixed and no tickets closed yet." });
   const rows = periods.map((m) => `<tr>
       <td>${esc(m.period)}</td><td>${fmt(m.resolved_unticketed)}</td><td>${fmt(m.resolved_ticketed)}</td>
       <td>${fmt(m.tickets_raised)}</td><td>${fmt(m.tickets_closed)}</td>
       <td class="${m.tickets_closed_finding_open ? "warn" : ""}">${fmt(m.tickets_closed_finding_open)}</td>
-      ${measured ? `<td class="${m.tickets_closed_overdue ? "warn" : ""}">${fmt(m.tickets_closed_on_time)} / ${fmt(m.tickets_closed_overdue)}</td>` : ""}
-      <td class="muted">${fmt(m.lapsed)}</td></tr>`).join("");
+      ${measured ? `<td class="${m.tickets_closed_overdue ? "warn" : ""}">${fmt(m.tickets_closed_on_time)} / ${fmt(m.tickets_closed_overdue)}</td>` : ""}</tr>`).join("");
   const toolRows = Object.entries(byTool).map(([k, v]) => `<span class="chart-key">${esc(k)} ${v}</span>`).join(" ");
   return `<section class="panel"><h3>Total remediation against ticketed work, in work items</h3>
     <div class="dr"><dt>Upgrades and patches landed</dt>
       <dd><strong class="ok">${fmt(unticketed + ticketed)}</strong> fixed (confirmed), of which <strong>${fmt(ticketed)}</strong> (${pct(ticketed, unticketed + ticketed)}) were ticketed work</dd></div>
     ${strip}
-    <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Fixed, unticketed</th><th title="Ticketed work completed; a subset of fixed (confirmed)">Fixed, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither fixed nor left without a fix">Closed, finding open</th>${measured ? `<th title="Closed against the due date set when the ticket was raised; tickets without one are in neither">Closed on time / overdue</th>` : ""}<th>Left without a fix</th></tr></thead>
+    <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Fixed, unticketed</th><th title="Ticketed work completed; a subset of fixed (confirmed)">Fixed, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither fixed nor left without a fix">Closed, finding open</th>${measured ? `<th title="Closed against the due date set when the ticket was raised; tickets without one are in neither">Closed on time / overdue</th>` : ""}</tr></thead>
     <tbody>${rows}</tbody></table>
     ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
     ${measured ? `<p class="sub">Against the due date: ${fmt(onTime)} of ${fmt(measured)} (${pct(onTime, measured)}) closed on time.${meanDaysToDue(periods)}</p>` : ""}
@@ -299,33 +298,39 @@ function signalsPanel(h) {
   </section>`;
 }
 
-/** openPanel is the queue as the record holds it now. */
+/** stat is one figure in the open-now row: the number large, what it counts beneath. */
+function stat(value, label, { cls = "", sub = "", title = "" } = {}) {
+  return `<div class="stat${cls ? ` ${cls}` : ""}"${title ? ` title="${esc(title)}"` : ""}>
+      <div class="stat-value">${fmt(value)}</div><div class="stat-label">${esc(label)}</div>${sub ? `<div class="stat-sub">${sub}</div>` : ""}
+    </div>`;
+}
+
+/**
+ * openPanel is the queue as the record holds it now: one snapshot, not a series, so
+ * figures rather than a chart. The split by signal is left to the chart above, whose
+ * last bar is the same run.
+ */
 function openPanel(h) {
   const o = h.open || {};
   const order = ["0-7", "7-30", "30-90", "90-180", "180+"];
   const classes = ["age-0", "age-1", "age-2", "age-3", "age-4"];
   const segs = order.map((k, i) => ({ label: `${k}d`, value: o.age_days?.[k] || 0, cls: classes[i] }));
-  const signals = SIGNALS.filter((s) => o.by_signal?.[s.key]).map((s) => `${esc(s.label)} ${o.by_signal[s.key]}`).join(" · ");
+  const closeAges = order.filter((k) => o.closed_ticket_age_days?.[k])
+    .map((k) => `${k} days ${fmt(o.closed_ticket_age_days[k])}`).join(" · ");
+  const stats = [
+    stat(o.items, "open work items"),
+    stat(o.ticketed, "ticketed", { sub: o.items ? `${pct(o.ticketed, o.items)} of open` : "" }),
+    o.tickets_overdue_open ? stat(o.tickets_overdue_open, "tickets past their due date", { cls: "warn" }) : "",
+    o.closed_ticket_finding_open ? stat(o.closed_ticket_finding_open, "ticket closed, finding open", {
+      cls: "warn", sub: closeAges ? `since the close: ${closeAges}` : "",
+      title: "Open items whose latest ticket was closed while the finding stayed open, with no ticket now",
+    }) : "",
+    o.missing ? stat(o.missing, "absent from the latest run", { cls: "muted", sub: "inside the grace period" }) : "",
+  ].join("");
   return `<section class="panel"><h3>Open now, as the record holds it</h3>
-    <div class="dr"><dt>Work items</dt><dd>${fmt(o.items)} · ${fmt(o.ticketed)} ticketed${o.missing ? ` · <span class="muted">${fmt(o.missing)} absent from the latest run, inside the grace period</span>` : ""}${o.tickets_overdue_open ? ` · <span class="warn">${fmt(o.tickets_overdue_open)} tickets past their due date</span>` : ""}</dd></div>
-    ${signals ? `<div class="dr"><dt>Signals</dt><dd>${signals}</dd></div>` : ""}
-    ${closedTicketAges(o)}
+    <div class="stats">${stats}</div>
     <div class="age-strip"><div class="sub">How long the record has held them</div>${stackedBar(segs, { empty: "Nothing open." })}</div>
   </section>`;
-}
-
-/**
- * closedTicketAges dates the "ticket closed, finding open" bucket from the tracker:
- * items still open whose ticket somebody closed, by days since the close. Nothing
- * when there are none, or when the tracker has never been read.
- */
-function closedTicketAges(o) {
-  if (!o.closed_ticket_finding_open) return "";
-  const order = ["0-7", "7-30", "30-90", "90-180", "180+"];
-  const ages = order.filter((k) => o.closed_ticket_age_days?.[k])
-    .map((k) => `${k} days ${fmt(o.closed_ticket_age_days[k])}`).join(" · ");
-  return `<div class="dr"><dt title="Open items whose latest ticket was closed while the finding stayed open, with no ticket now">Ticket closed, finding open</dt>
-    <dd><span class="warn">${fmt(o.closed_ticket_finding_open)}</span>${ages ? ` · since the close: ${ages}` : ""}</dd></div>`;
 }
 
 /**
