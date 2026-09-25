@@ -51,7 +51,7 @@ test.describe('analytics page', () => {
   test('movement keeps the baseline apart from opened and shows CVEs cleared beside the items', async ({ page }) => {
     await page.goto('/analytics');
     const movement = page.locator('section.panel', { hasText: 'Movement, in work items' });
-    await expect(movement).toContainText('Already open when the record began');
+    await expect(movement.locator('dt', { hasText: 'Already open when the record began' })).toHaveCount(0);
     await expect(movement).toContainText('303');
     // 42 + 31 + 18 opened; 9 + 47 + 33 fixed; 11710 CVEs cleared; 32 left without a fix.
     await expect(movement).toContainText('91 opened');
@@ -96,7 +96,7 @@ test.describe('analytics page', () => {
     // 34 of 37 on time; (4.5 * 22 + 9 * 15) / 37 = 6.3 days to spare.
     await expect(panel).toContainText('Against the due date: 34 of 37 (92%) closed on time. On average 6.3 days to spare.');
     const open = page.locator('section.panel', { hasText: 'Open now, as the record holds it' });
-    await expect(open).toContainText('4 tickets past their due date');
+    await expect(open.locator('.stat.warn', { hasText: 'tickets past their due date' }).locator('.stat-value')).toHaveText('4');
   });
 
   test('cycle time from the tracker sits in the ticketed panel, reaches back before the record, and dates closes on open items', async ({ page }) => {
@@ -120,8 +120,10 @@ test.describe('analytics page', () => {
     await expect(panel.locator('td.warn')).toHaveCount(3);
 
     const open = page.locator('section.panel', { hasText: 'Open now, as the record holds it' });
-    await expect(open).toContainText('Ticket closed, finding open');
-    await expect(open).toContainText('3 · since the close: 0-7 days 1 · 30-90 days 2');
+    await expect(open).toContainText('ticket closed, finding open');
+    const closed = open.locator('.stat', { hasText: 'ticket closed, finding open' });
+    await expect(closed.locator('.stat-value')).toHaveText('3');
+    await expect(closed.locator('.stat-sub')).toHaveText('since the close: 0-7 days 1 · 30-90 days 2');
   });
 
   test('tickets created per day: clicking a bar lists that day\'s tickets, and clicking it again hides them', async ({ page }) => {

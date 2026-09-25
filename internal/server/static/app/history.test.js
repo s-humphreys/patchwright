@@ -91,7 +91,8 @@ test('one risk point is a point, not a direction', () => {
 test('fixed and left without a fix are shown apart and never summed, with CVEs cleared beside the items', () => {
   const html = render(body());
   // Across the range: 40 opened (the 280 baseline is apart), 7 fixed clearing 40 CVEs, 9 left without a fix.
-  assert.match(html, /Already open when the record began<\/dt><dd class="muted">280<\/dd>/);
+  // The baseline has its own column in the table; a summary row for it was noise.
+  assert.doesNotMatch(html, /Already open when the record began<\/dt>/);
   assert.match(html, /40 opened · <strong class="ok">7<\/strong> fixed \(confirmed\), clearing 40 CVEs \(3 known-exploited\) · <span class="muted">9 left without a fix<\/span>/);
   assert.doesNotMatch(html, /16 /);
 });
@@ -193,7 +194,9 @@ test('periods with nothing in them are dropped except the latest', () => {
 
 test('the open summary shows items in the grace period as absent, not gone', () => {
   const html = render(body());
-  assert.match(html, /280 · 50 ticketed · <span class="muted">4 absent from the latest run, inside the grace period<\/span>/);
+  assert.match(html, /<div class="stat-value">280<\/div><div class="stat-label">open work items<\/div>/);
+  assert.match(html, /<div class="stat-value">50<\/div><div class="stat-label">ticketed<\/div>/);
+  assert.match(html, /<div class="stat muted">\s*<div class="stat-value">4<\/div><div class="stat-label">absent from the latest run<\/div><div class="stat-sub">inside the grace period<\/div>/);
 });
 
 test('closes are measured against the due date only once a ticket carried one', () => {
@@ -228,13 +231,13 @@ test('open tickets past their due date are called out in the open summary', () =
   const b = body();
   b.history.open = { ...b.history.open, tickets_overdue_open: 5 };
   const html = render(b);
-  assert.match(html, /<span class="warn">5 tickets past their due date<\/span>/);
+  assert.match(html, /<div class="stat warn">\s*<div class="stat-value">5<\/div><div class="stat-label">tickets past their due date<\/div>/);
 });
 
 test('without tracker data there is no cycle-time table and no closed-ticket ages', () => {
   const html = render(body());
   assert.doesNotMatch(html, /Cycle time/);
-  assert.doesNotMatch(html, /Ticket closed, finding open/);
+  assert.doesNotMatch(html, /stat-label">ticket closed, finding open/);
 });
 
 test('cycle time reads the tracker, including periods before the record, and only periods that have data', () => {
@@ -273,10 +276,10 @@ test('the open summary dates tickets closed while the finding stayed open', () =
   const b = body();
   b.history.open = { ...b.history.open, closed_ticket_finding_open: 3, closed_ticket_age_days: { '0-7': 1, '30-90': 2 } };
   const html = render(b);
-  assert.match(html, /Ticket closed, finding open<\/dt>\s*<dd><span class="warn">3<\/span> · since the close: 0-7 days 1 · 30-90 days 2<\/dd>/);
+  assert.match(html, /<div class="stat-value">3<\/div><div class="stat-label">ticket closed, finding open<\/div><div class="stat-sub">since the close: 0-7 days 1 · 30-90 days 2<\/div>/);
 
   b.history.open = { ...b.history.open, closed_ticket_finding_open: 0, closed_ticket_age_days: undefined };
-  assert.doesNotMatch(render(b), /Ticket closed, finding open/);
+  assert.doesNotMatch(render(b), /stat-label">ticket closed, finding open/);
 });
 
 function ticketsBody(over = {}) {
@@ -371,4 +374,11 @@ test('choosing a day opens its list, the same day again or Close hides it, witho
   assert.equal(list.hidden, true);
   assert.equal(document.activeElement, first, 'closing returns focus to the day that opened it');
   root.remove();
+});
+
+test('the ticketed-work panel leaves out work that left without a fix, which is not ticket-specific', () => {
+  const html = render(body());
+  const panel = html.slice(html.indexOf('Total remediation against ticketed work'), html.indexOf('</section>', html.indexOf('Total remediation against ticketed work')));
+  assert.doesNotMatch(panel, /<th>Left without a fix<\/th>/);
+  assert.doesNotMatch(panel, /chart-key[^>]*>[^<]*left without a fix/);
 });
