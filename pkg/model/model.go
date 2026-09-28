@@ -564,6 +564,21 @@ type Upgrade struct {
 	// elsewhere (bump the chart/operator instead). Managed records why.
 	Actionable bool
 	Managed    string // controller that owns the version ("helm", "operator"), when not actionable
+
+	// OperatorChosen reports that an operator picks this image's version at
+	// runtime and nothing a change could edit names it: the owning custom
+	// resource does not set the image. No registry tag is ever proposed for such
+	// an image, since none is a change anybody can make; the only change is to the
+	// operator. When the operator's own upgrade could be resolved this upgrade IS
+	// that one (Kind, Name, Current and Latest are the operator's, ImageCurrent is
+	// this image's tag and ImageLatest is unknown); otherwise it is not Available
+	// and Reason says why. Resolved is true only when the operator was shown to be
+	// on its latest version: an operator that cannot be identified or checked
+	// leaves the question open, which is not the same as there being no upgrade.
+	OperatorChosen bool
+	// OperatorImage is the operator's own image (a NameTag), when it could be
+	// found running, which is how its upgrade is looked up.
+	OperatorImage string
 }
 
 // Support is what is known about whether an image's underlying line is still

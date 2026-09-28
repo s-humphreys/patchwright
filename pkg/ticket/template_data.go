@@ -339,7 +339,9 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 	if u := group[0].Upgrade; u != nil && sharesOneSource(d.Upgrades) {
 		d.Source, d.SourcePath = u.Source, u.SourcePath
 	}
-	if u := group[0].Upgrade; u != nil && sharesOneTarget(d.Upgrades) {
+	// An operator-chosen image folded as a managed upgrade has no target tag of its
+	// own, so there is no single version for a summary to promise.
+	if u := group[0].Upgrade; u != nil && u.Latest != "" && sharesOneTarget(d.Upgrades) {
 		d.Upgrade = &UpgradeData{
 			Kind: u.Kind, Name: u.Name, Current: u.Current, Latest: u.Latest,
 			Managed: u.Managed, Source: u.Source, SourcePath: u.SourcePath,

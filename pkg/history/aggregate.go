@@ -114,7 +114,8 @@ type Movement struct {
 	// the work was done: a human closing a ticket on an image that still runs.
 	TicketsClosedFindingOpen int `json:"tickets_closed_finding_open"`
 	// TicketsClosedByTool splits the tickets patchwright itself closed by reason
-	// (upgrade-landed, not-running, no-longer-actionable, upgrade-clears-nothing).
+	// (upgrade-landed, not-running, no-longer-actionable, upgrade-clears-nothing,
+	// operator-chosen).
 	// The remainder of TicketsClosed were closed by people.
 	TicketsClosedByTool map[string]int `json:"tickets_closed_by_tool,omitempty"`
 	// TicketsClosedOnTime and TicketsClosedOverdue split the closed tickets that had

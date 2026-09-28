@@ -93,7 +93,7 @@ type Action struct {
 	// history records the reason.
 	NoLongerActionable bool
 	// Reason is the machine-readable cause of a close or done-note: upgrade-landed,
-	// not-running, no-longer-actionable, upgrade-clears-nothing.
+	// not-running, no-longer-actionable, upgrade-clears-nothing, operator-chosen.
 	Reason string
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
@@ -254,6 +254,12 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				out = append(out, clearsNothingAction(t, in.Config.ForProject(projectOf(t.Key))))
 				continue
 			}
+			// The same verdict for a ticket asking to bump images an operator picks:
+			// there is no such change, and no upgrade of the operator on offer either.
+			if reasons, ok := operatorChosenSkips(images, in.Skipped); ok {
+				out = append(out, operatorChosenAction(t, in.Config.ForProject(projectOf(t.Key)), reasons))
+				continue
+			}
 
 			// Configuration deciding not to ticket something is not the work being
 			// done. Without this, raising a priority threshold marks every ticket it
@@ -337,6 +343,9 @@ const (
 	// ReasonUpgradeClearsNothing is a ticket whose proposed upgrade was measured to
 	// clear none of the vulnerabilities that raised it.
 	ReasonUpgradeClearsNothing = "upgrade-clears-nothing"
+	// ReasonOperatorChosen is a ticket for images whose versions an operator picks
+	// at runtime, where no upgrade of the operator is on offer.
+	ReasonOperatorChosen = "operator-chosen"
 )
 
 // clearsNothing reports that every one of a ticket's images was skipped because
@@ -383,6 +392,66 @@ func clearsNothingAction(t Existing, cfg config.JiraConfig) Action {
 		Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonUpgradeClearsNothing,
 		Message: detail + " Left open deliberately: closing is a human decision.",
 		Dedupe:  "note-done:" + ReasonUpgradeClearsNothing,
+		Why:     why,
+	}
+}
+
+// operatorChosenSkips returns each image's reason when every one of a ticket's
+// images was skipped as operator-chosen with the operator shown to be on its
+// latest version. All of them, for the same reason as clearsNothing. An operator
+// that could not be identified or checked is not here: its images are unresolved,
+// and unprovenImages holds the ticket.
+func operatorChosenSkips(images []string, skips []Skip) ([]string, bool) {
+	if len(images) == 0 {
+		return nil, false
+	}
+	byImage := map[string]string{}
+	for _, s := range skips {
+		if !s.OperatorChosen {
+			continue
+		}
+		key := s.Repository
+		if key == "" {
+			key = s.Image
+		}
+		byImage[key] = s.Reason
+	}
+	reasons := make([]string, 0, len(images))
+	for _, img := range images {
+		reason, ok := byImage[img]
+		if !ok {
+			return nil, false
+		}
+		reasons = append(reasons, img+": "+reason)
+	}
+	return reasons, true
+}
+
+// operatorChosenAction closes or comments on a ticket that asks to bump images an
+// operator picks, once that operator is known to be on its latest version. The
+// ticket's change does not exist: the version is the operator's choice, and the
+// operator has nowhere to go.
+func operatorChosenAction(t Existing, cfg config.JiraConfig, reasons []string) Action {
+	const why = "still actionable, but its images' versions are chosen by an operator that is on its latest version"
+	detail := "The versions of these images are chosen at runtime by the operator that runs them, not set " +
+		"anywhere a change could bump them, and that operator is already on its latest version, so the " +
+		"upgrade this ticket asks for is not a change anyone can make:\n\n* " + strings.Join(reasons, "\n* ") +
+		"\n\nThe images stay in the queue. When a newer release of the operator is published, patchwright " +
+		"proposes that upgrade instead."
+	if cfg.CloseTransitionNoLongerActionable != "" && t.Untouched() {
+		return Action{
+			Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true,
+			Reason: ReasonOperatorChosen,
+			Message: "Closing as not done: this ticket asks for a change that does not exist.\n\n" + detail +
+				"\n\nNobody had picked this ticket up, so it is being closed as not-worked rather than as " +
+				"completed work, which is the accurate record. Reopen if this is wrong.",
+			Why: why + "; nobody picked the ticket up",
+		}
+	}
+	return Action{
+		Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonOperatorChosen,
+		Message: detail + " Left open deliberately: closing is a human decision.",
+		Dedupe:  "note-done:" + ReasonOperatorChosen,
 		Why:     why,
 	}
 }
@@ -507,7 +576,10 @@ func upgradeComplete(images []string, byRepo map[string][]sink.FindingView) (boo
 			if !f.RemediationChecked || f.Upgrade == nil || !f.Upgrade.Resolved {
 				return false, ""
 			}
-			if f.Upgrade.Available {
+			// An operator-chosen image with no upgrade is not "on the latest version":
+			// nothing moved, and the image may still carry everything that raised
+			// the ticket.
+			if f.Upgrade.Available || f.Upgrade.OperatorChosen {
 				return false, ""
 			}
 			if f.Liveness == nil {
@@ -574,8 +646,6 @@ func unknownImages(images []string, byImage map[string]sink.FindingView) []strin
 	return blind
 }
 
-// policySkipped returns the reasons configuration declined to ticket this ticket's
-// images, if it did.
 // recentlyReported lists a ticket's images that left the queue inside the
 // history's grace period, whether or not the assessment still reports them.
 func recentlyReported(images []string, recent map[string]bool) []string {
@@ -588,12 +658,19 @@ func recentlyReported(images []string, recent map[string]bool) []string {
 	return out
 }
 
+// policySkipped returns the reasons configuration declined to ticket this ticket's
+// images, if it did.
 func policySkipped(images []string, skips []Skip) []string {
 	byImage := map[string]string{}
 	for _, s := range skips {
-		if s.Policy {
-			byImage[s.Image] = s.Reason
+		if !s.Policy {
+			continue
 		}
+		key := s.Repository
+		if key == "" {
+			key = s.Image
+		}
+		byImage[key] = s.Reason
 	}
 	var out []string
 	for _, img := range images {

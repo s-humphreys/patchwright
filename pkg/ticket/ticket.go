@@ -48,8 +48,12 @@ type Draft struct {
 // rather than silently dropped: "criticals with nowhere to go" is exactly what
 // someone should look at by hand.
 type Skip struct {
-	Image  string
-	Reason string
+	Image string
+	// Repository is the bare repository open tickets are indexed on, when Image is
+	// a full reference. Without it a hold for an excluded or unrouted image never
+	// matches its ticket, which then falls through to being closed.
+	Repository string
+	Reason     string
 	// Policy is true when configuration chose not to ticket this — an exclusion, a
 	// priority threshold, no matching route. The work still exists.
 	//
@@ -64,6 +68,12 @@ type Skip struct {
 	// did not decline it; the change on offer simply fixes nothing, so an open
 	// ticket asking for it is closed rather than held or called finished.
 	ClearsNothing bool
+	// OperatorChosen is true when an operator picks the image's version at runtime
+	// and that operator was shown to be on its latest version, so there is no change
+	// a ticket could ask for. Like ClearsNothing the work is not done; unlike it,
+	// nothing was proposed at all. An operator that could not be identified or
+	// checked does not set this: that is not knowing, and an open ticket is held.
+	OperatorChosen bool
 }
 
 // Plan is the outcome of planning: what to raise, and what was left out.
@@ -176,11 +186,14 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if why != "" {
 				reason += ": " + why
 			}
-			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason, Policy: true})
+			out.Skips = append(out.Skips, Skip{Image: f.Image, Repository: f.Repository, Reason: reason, Policy: true})
 			continue
 		}
 		if reason, ok := p.skipReason(f); ok {
-			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
+			out.Skips = append(out.Skips, Skip{
+				Image: f.Image, Repository: f.Repository, Reason: reason,
+				OperatorChosen: operatorChosen(f) && f.Upgrade.Resolved,
+			})
 			continue
 		}
 		// A tracker is configured only on routes, so a finding matching none has
@@ -192,7 +205,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
 			}
 			out.Skips = append(out.Skips, Skip{
-				Image: f.Image, Policy: true,
+				Image: f.Image, Repository: f.Repository, Policy: true,
 				Reason: fmt.Sprintf("no ticket route matches its owner (%s), "+
 					"so no tracker is configured for this work", owner),
 			})
@@ -419,12 +432,25 @@ func (p *Planner) skipReason(f sink.FindingView) (string, bool) {
 		return "upgrade detection did not run (no --remediation), so it is unknown whether a fix exists", true
 	case f.Upgrade == nil:
 		return "upgrade detection ran but could not resolve any version for this image (needs investigation, not a ticket)", true
+	case operatorChosen(f) && !f.Upgrade.Resolved:
+		return f.Upgrade.Reason + "; no ticket until the operator's upgrade is known", true
 	case !f.Upgrade.Resolved:
 		return "available versions could not be resolved (e.g. private registry tags unreadable), so 'no upgrade' is unproven", true
+	case operatorChosen(f):
+		return f.Upgrade.Reason + "; there is no change to ticket", true
 	case !f.Upgrade.Available:
 		return "already on the latest available version; nothing to upgrade to", true
 	}
 	return "", false
+}
+
+// operatorChosen reports a finding whose image version an operator picks at
+// runtime, with no upgrade of that operator on offer. It is not "already on the
+// latest version": the image may well have newer tags, and none of them is a
+// change anybody can make.
+func operatorChosen(f sink.FindingView) bool {
+	u := f.Upgrade
+	return u != nil && u.OperatorChosen && !u.Available
 }
 
 // ticketGroup is one ticket's worth of findings: the upgrade(s) someone applies,

@@ -39,12 +39,29 @@ func TestResolverFindsNewerSemverTag(t *testing.T) {
 	}
 }
 
+// Crossplane packages are tagged "v0.7.0". Proposing "0.7.0" names a tag that
+// does not exist, so the tag is reported as the registry spells it.
+func TestResolverKeepsTheRegistrysTagSpelling(t *testing.T) {
+	r := &Resolver{Lister: stubLister{tags: map[string][]string{
+		"xpkg.crossplane.io/crossplane-contrib/function-auto-ready": {"v0.6.0", "v0.7.0"},
+	}}}
+	ups, err := r.Upgrades(context.Background(), []model.AssessedImage{
+		{Image: model.ParseImageRef("xpkg.crossplane.io/crossplane-contrib/function-auto-ready:v0.6.0")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := ups["xpkg.crossplane.io/crossplane-contrib/function-auto-ready:v0.6.0"]; u.Latest != "v0.7.0" {
+		t.Errorf("latest = %q, want the published tag v0.7.0", u.Latest)
+	}
+}
+
 func TestResolverMarksManagedImagesNotActionable(t *testing.T) {
 	r := &Resolver{
 		Lister: stubLister{tags: map[string][]string{"acme.io/app": {"1.0.0", "1.2.0"}}},
 		Contexts: func(_ context.Context) (map[string]enrich.DeployContext, error) {
 			return map[string]enrich.DeployContext{
-				"acme.io/app:1.0.0": {Mechanism: "operator", Actionable: false},
+				"acme.io/app:1.0.0": {Mechanism: "helm", Actionable: false},
 			}, nil
 		},
 	}
@@ -59,10 +76,10 @@ func TestResolverMarksManagedImagesNotActionable(t *testing.T) {
 		t.Errorf("a newer tag exists, should be Available: %+v", u)
 	}
 	if u.Actionable {
-		t.Errorf("operator-managed image should NOT be directly actionable: %+v", u)
+		t.Errorf("chart-managed image should NOT be directly actionable: %+v", u)
 	}
-	if u.Managed != "operator" {
-		t.Errorf("expected Managed=operator, got %q", u.Managed)
+	if u.Managed != "helm" {
+		t.Errorf("expected Managed=helm, got %q", u.Managed)
 	}
 }
 

@@ -94,6 +94,10 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 		if r.skip(img.Registry) {
 			continue // first-party: the base image is the remediation, not the tag
 		}
+		if dc, ok := contexts[img.NameTag()]; ok && dc.Mechanism == "operator" && !dc.Actionable {
+			result[img.NameTag()] = operatorChosen(img, dc)
+			continue
+		}
 		current, err := strictSemver(img.Tag)
 		if err != nil {
 			continue // non-semver tag: nothing to compare
@@ -127,8 +131,8 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 			up.SourcePath = dc.SourcePath
 		}
 
-		if latest != nil {
-			up.Latest = latest.Original()
+		if latest != "" {
+			up.Latest = latest
 			up.Available = true
 			// Judge actionability from the deployment context. No context (e.g.
 			// a CSV-only run) => assume a directly deployed image, bumpable.
@@ -146,11 +150,47 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 	return result, nil
 }
 
+// operatorChosen is the answer for an image whose version an operator picks at
+// runtime: no registry tag, however new. The newest tag is one no release of the
+// operator may support (DVOP-4420 proposed NATS 2.14 to an Argo Events that
+// ships 2.10), and nothing a person can edit sets it anyway. The operator's own
+// upgrade, when there is one, is attached once every source has answered; see
+// enrich.RemediationEnricher.
+func operatorChosen(img model.Image, dc enrich.DeployContext) model.Upgrade {
+	// Unresolved until the operator's own version is known: "there is no upgrade"
+	// is only true once the operator is shown to be on its latest release.
+	up := model.Upgrade{
+		Kind: "image", Name: img.Registry + "/" + img.Repository, Current: img.Tag,
+		Source: dc.Source, SourcePath: dc.SourcePath,
+		Managed: "operator", Manager: dc.Manager,
+		OperatorChosen: true, OperatorImage: dc.ManagerImage,
+	}
+	name := enrich.OperatorName(dc.Manager, dc.Source)
+	switch {
+	case dc.OwnerUnread:
+		up.Reason = "owned by " + dc.Source + ", which could not be read (grant its API group in " +
+			"rbac.customResourceGroups), so whether it sets this image and which operator picks it is unknown"
+	case dc.ManagerImage != "":
+	case dc.Manager != "":
+		up.Reason = "version chosen by the operator " + name +
+			"; its own image was not found running, so its upgrade could not be resolved"
+	default:
+		up.Reason = "version chosen by the operator " + name +
+			"; which operator that is could not be determined, so its upgrade could not be resolved"
+	}
+	return up
+}
+
 // latestNewer returns the highest semver tag strictly greater than current, or
-// nil if none. Pre-releases are ignored unless current is itself a pre-release.
-func latestNewer(current *semver.Version, tags []string) *semver.Version {
+// "" if none. Pre-releases are ignored unless current is itself a pre-release.
+//
+// The tag is returned as the registry spells it. The version is parsed with any
+// leading "v" removed, so its own string would propose "0.7.0" to a repository
+// that only publishes "v0.7.0", which is a tag that does not exist.
+func latestNewer(current *semver.Version, tags []string) string {
 	allowPre := current.Prerelease() != ""
 	var latest *semver.Version
+	var latestTag string
 	for _, t := range tags {
 		v, err := strictSemver(t)
 		if err != nil {
@@ -163,8 +203,8 @@ func latestNewer(current *semver.Version, tags []string) *semver.Version {
 			continue
 		}
 		if latest == nil || v.GreaterThan(latest) {
-			latest = v
+			latest, latestTag = v, t
 		}
 	}
-	return latest
+	return latestTag
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
@@ -46,6 +47,14 @@ type DeployContext struct {
 	// renders a change target (a ticket, a report) wants a URL someone can click
 	// plus the path stated alongside it.
 	SourcePath string
+	// ManagerImage is the Manager's own image (a NameTag), when a workload running
+	// it was found in the same cluster. For an operator-derived image it is how the
+	// operator's upgrade is found: that upgrade is the only change that moves it.
+	ManagerImage string
+	// OwnerUnread reports that the owning custom resource could not be read (its
+	// API group is not granted, or the fetch failed), so whether it sets the image
+	// is unknown rather than known to be false.
+	OwnerUnread bool
 }
 
 // DeploymentContextSource reports the deployment context per image NameTag, so
@@ -82,6 +91,7 @@ func (r RemediationEnricher) EnrichImages(ctx context.Context, images []model.As
 			}
 		}
 	}
+	resolveOperatorUpgrades(merged)
 
 	matched, available := 0, 0
 	for i := range images {
@@ -105,4 +115,68 @@ func (r RemediationEnricher) EnrichImages(ctx context.Context, images []model.As
 	}
 	slog.DebugContext(ctx, "detected deployment upgrades", "matched", matched, "upgradable", available)
 	return nil
+}
+
+// resolveOperatorUpgrades turns each operator-chosen image into the upgrade of the
+// operator that chooses it, or says why there is none.
+//
+// Done here because this is the one place every source's answers meet: the image
+// sources report that the image has no version of its own, and the operator's
+// upgrade comes from whichever source understands how the operator is installed.
+//
+// A Flux-managed chart upgrade of the operator becomes this image's upgrade. Any
+// other available operator upgrade makes this image a managed upgrade with no
+// target tag, folded into the operator's own ticket: presenting the operator's
+// tags as this image's would be the same false statement this exists to stop.
+func resolveOperatorUpgrades(merged map[string]model.Upgrade) {
+	// Read the operators' upgrades as the sources reported them, so the outcome
+	// does not depend on map order when an operator is itself operator-chosen.
+	reported := maps.Clone(merged)
+	for image, u := range reported {
+		if !u.OperatorChosen || u.OperatorImage == "" {
+			continue
+		}
+		op, ok := reported[u.OperatorImage]
+		name := OperatorName(u.Manager, u.Source)
+		switch {
+		case ok && op.Kind == "chart" && op.Available && op.Actionable:
+			p := op
+			p.ImageCurrent, p.ImageLatest, p.ImagePinned = u.Current, "", false
+			p.Managed, p.Manager = "operator", u.Manager
+			p.OperatorChosen, p.OperatorImage = true, u.OperatorImage
+			p.Reason = ""
+			merged[image] = p
+		case ok && op.Resolved && !op.Available:
+			// The one case where "no upgrade" is established rather than assumed.
+			u.Resolved = true
+			u.Reason = "version chosen by the operator " + name + "; the operator is on its latest version"
+			merged[image] = u
+		case ok && op.Available:
+			// Any other operator upgrade: a newer operator image, whether bumped
+			// directly or through a Helm release no HelmRelease describes (the
+			// flux-operator case). This image is available as a managed upgrade with
+			// no target tag of its own, so the planner folds it into the operator's
+			// ticket rather than dropping it or inventing a tag for it.
+			u.Available, u.Resolved, u.Latest = true, true, ""
+			u.Reason = fmt.Sprintf("version chosen by the operator %s; upgrading it (%s %s -> %s) is the only "+
+				"change that moves this image", name, op.Name, op.Current, op.Latest)
+			merged[image] = u
+		default:
+			u.Reason = "version chosen by the operator " + name + "; the operator's own upgrade could not be resolved"
+			merged[image] = u
+		}
+	}
+}
+
+// OperatorName names the operator that chooses an image's version for a reader:
+// by name when its custom resource or labels say, else by the resource it
+// reconciles, which is at least somewhere to start.
+func OperatorName(manager, source string) string {
+	if manager != "" {
+		return manager
+	}
+	if source != "" {
+		return "that reconciles " + source
+	}
+	return "that owns this workload"
 }

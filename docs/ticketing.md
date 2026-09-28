@@ -210,6 +210,15 @@ gives each package its own object (a Crossplane `ProviderRevision` per provider)
 the object name is collapsed so a family groups. A grouped ticket never claims a
 single target version unless every image shares one.
 
+An image whose version an operator picks at runtime is never ticketed as an image
+bump (see [remediation](remediation.md#operator-chosen-images)). When the operator's
+chart upgrade is on offer the ticket asks for that, and says the tag the operator will
+pick is only known once it runs. When it is not, nothing is raised. An open ticket
+for those images is closed as not done (`closeTransitionNoLongerActionable`, untouched
+tickets only) or commented on only when the operator is shown to be on its latest
+version; when the operator is unknown or its upgrade unresolved the ticket is held.
+Either way it is never reported as finished.
+
 ## Dates read back from the tracker
 
 With [history](history.md) enabled, `serve` also reads the tracker's own dates after

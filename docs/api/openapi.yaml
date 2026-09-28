@@ -1705,7 +1705,9 @@ components:
           description: |
             Why an upgrade could not be determined, in terms a reader can act on — an
             unreadable registry and an image that records no base need different people
-            to do different things.
+            to do different things. Also set when an operator-chosen image has no
+            upgrade (see `operator_chosen`), naming the operator and why its own
+            upgrade is not on offer.
         newest:
           type: string
           description: |
@@ -1777,6 +1779,16 @@ components:
         manager: { type: string }
         source: { type: string }
         source_path: { type: string }
+        operator_chosen:
+          type: boolean
+          description: |
+            An operator picks this image's version at runtime and its custom resource
+            does not set the image, so no tag of the image is ever proposed. When the
+            operator's own chart upgrade is known, this upgrade is that one: `kind`,
+            `name`, `current` and `latest` are the operator's chart, and
+            `image_latest` is absent because the tag the operator will pick is
+            unknown. Otherwise `available` is false and `reason` says why; `resolved`
+            is true only when the operator was shown to be on its latest version.
 
     Vulnerability:
       type: object

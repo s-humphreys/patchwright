@@ -65,26 +65,29 @@ func (s *Source) ImageDeployments(ctx context.Context) (map[string]enrich.Deploy
 // dynamically. If the mapper can't be built or the CR can't be read, callers
 // treat the operator image as non-actionable.
 func newDynamicCRFetcher(cfg *rest.Config, dyn dynamic.Interface) crFetcher {
+	return mappedCRFetcher(func() (meta.RESTMapper, error) {
+		dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+		if err != nil {
+			return nil, err
+		}
+		gr, err := restmapper.GetAPIGroupResources(dc)
+		if err != nil {
+			return nil, err
+		}
+		return restmapper.NewDiscoveryRESTMapper(gr), nil
+	}, dyn)
+}
+
+// mappedCRFetcher is newDynamicCRFetcher with the mapper supplied, so scope
+// handling can be tested without a discovery endpoint.
+func mappedCRFetcher(newMapper func() (meta.RESTMapper, error), dyn dynamic.Interface) crFetcher {
 	var (
 		once   sync.Once
 		mapper meta.RESTMapper
 		mapErr error
 	)
-	initMapper := func() {
-		dc, err := discovery.NewDiscoveryClientForConfig(cfg)
-		if err != nil {
-			mapErr = err
-			return
-		}
-		gr, err := restmapper.GetAPIGroupResources(dc)
-		if err != nil {
-			mapErr = err
-			return
-		}
-		mapper = restmapper.NewDiscoveryRESTMapper(gr)
-	}
 	return func(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error) {
-		once.Do(initMapper)
+		once.Do(func() { mapper, mapErr = newMapper() })
 		if mapErr != nil {
 			return nil, mapErr
 		}
@@ -96,6 +99,13 @@ func newDynamicCRFetcher(cfg *rest.Config, dyn dynamic.Interface) crFetcher {
 		if err != nil {
 			return nil, err
 		}
+		// A namespaced workload can be owned by a cluster-scoped object (every
+		// Crossplane FunctionRevision and ProviderRevision is one). Asking for it
+		// under the workload's namespace is a 404, which used to read as "image not
+		// in the spec" and turned every Crossplane package into a derived image.
+		if mapping.Scope.Name() == meta.RESTScopeNameRoot {
+			return dyn.Resource(mapping.Resource).Get(ctx, name, metav1.GetOptions{})
+		}
 		return dyn.Resource(mapping.Resource).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	}
 }
@@ -103,6 +113,10 @@ func newDynamicCRFetcher(cfg *rest.Config, dyn dynamic.Interface) crFetcher {
 func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dyn dynamic.Interface, fetch crFetcher, out map[string]enrich.DeployContext) error {
 	kustSources := kustomizationSources(ctx, dyn)
 	crCache := map[string]*unstructured.Unstructured{}
+	// Every image running in this cluster by the last segment of its repository,
+	// which is how an operator's name is matched to its own image.
+	byName := map[string]string{}
+	touched := map[string]bool{}
 
 	handle := func(meta metav1.ObjectMeta, spec corev1.PodSpec) {
 		dc, ok := workloadContext(ctx, meta, kustSources, fetch, crCache)
@@ -110,7 +124,13 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 			return
 		}
 		for _, c := range podContainers(spec) {
-			key := model.ParseImageRef(c.Image).NameTag()
+			img := model.ParseImageRef(c.Image)
+			key := img.NameTag()
+			name := img.Repository[strings.LastIndex(img.Repository, "/")+1:]
+			if existing, seen := byName[name]; !seen || key < existing {
+				byName[name] = key
+			}
+			touched[key] = true
 			dcImg := dc
 			// For operator workloads, actionability depends on the specific
 			// image appearing in the CR spec.
@@ -144,6 +164,22 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 	for i := range ds.Items {
 		handle(ds.Items[i].ObjectMeta, ds.Items[i].Spec.Template.Spec)
 	}
+
+	// An operator-derived image changes only when its operator is upgraded, so
+	// point it at the operator's own image for that upgrade to be found. Matched
+	// by name the same way the ticket planner folds managed images into their
+	// manager's ticket: a named operator whose image is not running here is left
+	// unmatched rather than guessed at.
+	for key := range touched {
+		dc := out[key]
+		if dc.Mechanism != "operator" || dc.Actionable || dc.Manager == "" || dc.ManagerImage != "" {
+			continue
+		}
+		if img, ok := byName[dc.Manager]; ok && img != key {
+			dc.ManagerImage = img
+			out[key] = dc
+		}
+	}
 	return nil
 }
 
@@ -151,6 +187,16 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 // non-operator cases, its actionability/source. The operator case is refined
 // per-image by operatorContextForImage.
 func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources map[string]kustSource, fetch crFetcher, crCache map[string]*unstructured.Unstructured) (enrich.DeployContext, bool) {
+	owner, owned := customOwner(meta)
+	// A controller-owned workload is classified by its owner before its labels.
+	// Operators copy their custom resource's labels onto what they create (Argo
+	// Events stamps the EventBus's Flux Kustomize labels on its NATS StatefulSet),
+	// and those labels name whoever applied the custom resource, not what chose
+	// the images. Reading them first sent registry tags no operator release
+	// supports to the repository holding the custom resource.
+	if owned && owner.Controller != nil && *owner.Controller {
+		return operatorContext(ctx, meta, owner, fetch, crCache), true
+	}
 	for _, l := range helmToolkitLabels {
 		if meta.Labels[l] != "" {
 			return helmContext(meta.Labels), true
@@ -167,25 +213,8 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 			Source: src.URL, SourcePath: src.Path,
 		}, true
 	}
-	for _, ref := range meta.OwnerReferences {
-		if !ownerGroupIsCustom(ref.APIVersion) {
-			continue
-		}
-		// Cache the CR for per-image spec inspection.
-		key := crCacheKey(ref.APIVersion, ref.Kind, meta.Namespace, ref.Name)
-		if _, ok := crCache[key]; !ok {
-			cr, err := fetch(ctx, ref.APIVersion, ref.Kind, meta.Namespace, ref.Name)
-			if err == nil {
-				crCache[key] = cr
-			} else {
-				crCache[key] = nil
-			}
-		}
-		return enrich.DeployContext{
-			Mechanism: "operator", Actionable: false,
-			Source:  crRef(ref.Kind, meta.Namespace, ref.Name),
-			Manager: managerFromCR(crCache[key], meta.Labels),
-		}, true
+	if owned {
+		return operatorContext(ctx, meta, owner, fetch, crCache), true
 	}
 	// Label-based controller ownership: some operators (e.g. flux-operator)
 	// manage workloads via app.kubernetes.io/managed-by with no ownerReferences.
@@ -203,6 +232,58 @@ func workloadContext(ctx context.Context, meta metav1.ObjectMeta, kustSources ma
 		}
 	}
 	return enrich.DeployContext{Mechanism: "manifest", Actionable: true}, true
+}
+
+// operatorContext is the context of a workload owned by a custom resource,
+// caching the resource for per-image spec inspection.
+func operatorContext(ctx context.Context, meta metav1.ObjectMeta, ref metav1.OwnerReference, fetch crFetcher, crCache map[string]*unstructured.Unstructured) enrich.DeployContext {
+	key := crCacheKey(ref.APIVersion, ref.Kind, meta.Namespace, ref.Name)
+	if _, ok := crCache[key]; !ok {
+		cr, err := fetch(ctx, ref.APIVersion, ref.Kind, meta.Namespace, ref.Name)
+		if err == nil {
+			crCache[key] = cr
+		} else {
+			crCache[key] = nil
+		}
+	}
+	cr := crCache[key]
+	dc := enrich.DeployContext{
+		Mechanism: "operator", Actionable: false,
+		Source:      crRef(ref.Kind, meta.Namespace, ref.Name),
+		Manager:     managerFromCR(cr, meta.Labels),
+		OwnerUnread: cr == nil,
+	}
+	// A resource that is itself controller-owned was generated from its owner, and
+	// the owner is what a person edits: a Crossplane FunctionRevision is stamped out
+	// of the Function whose spec.package names the image.
+	if cr != nil {
+		if parent, ok := customOwner(metav1.ObjectMeta{OwnerReferences: cr.GetOwnerReferences()}); ok &&
+			parent.Controller != nil && *parent.Controller {
+			dc.Source = crRef(parent.Kind, meta.Namespace, parent.Name)
+		}
+	}
+	return dc
+}
+
+// customOwner returns the workload's owner in a custom resource group: its
+// controller when that is one, else the first such owner.
+func customOwner(meta metav1.ObjectMeta) (metav1.OwnerReference, bool) {
+	var first *metav1.OwnerReference
+	for i, ref := range meta.OwnerReferences {
+		if !ownerGroupIsCustom(ref.APIVersion) {
+			continue
+		}
+		if ref.Controller != nil && *ref.Controller {
+			return ref, true
+		}
+		if first == nil {
+			first = &meta.OwnerReferences[i]
+		}
+	}
+	if first == nil {
+		return metav1.OwnerReference{}, false
+	}
+	return *first, true
 }
 
 // managerFromCR names the operator that owns a custom resource, from the CR's own
@@ -236,15 +317,13 @@ func managerFromCR(cr *unstructured.Unstructured, workloadLabels map[string]stri
 // image: if the image is set in the owning CR's spec, the bump is actionable
 // (change the CR); otherwise it's derived and not actionable.
 func operatorContextForImage(base enrich.DeployContext, image string, crCache map[string]*unstructured.Unstructured, meta metav1.ObjectMeta) enrich.DeployContext {
-	for _, ref := range meta.OwnerReferences {
-		if !ownerGroupIsCustom(ref.APIVersion) {
-			continue
-		}
-		cr := crCache[crCacheKey(ref.APIVersion, ref.Kind, meta.Namespace, ref.Name)]
-		if cr != nil && imageInSpec(cr, image) {
-			base.Actionable = true
-		}
+	ref, ok := customOwner(meta)
+	if !ok {
 		return base
+	}
+	cr := crCache[crCacheKey(ref.APIVersion, ref.Kind, meta.Namespace, ref.Name)]
+	if cr != nil && imageInSpec(cr, image) {
+		base.Actionable = true
 	}
 	return base
 }
