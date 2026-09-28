@@ -125,20 +125,20 @@ func TestOperatorChartUpgradeIsRaisedWithoutClaimingWhatItClears(t *testing.T) {
 // DVOP-4491's shape: each Crossplane function's package is set in its own
 // revision, so the change is a direct bump of the package there.
 func TestCustomResourceSetImagesAreStillBumped(t *testing.T) {
-	fn := func(name, rev, current, latest string) sink.FindingView {
+	fn := func(name, current, latest string) sink.FindingView {
 		repo := "crossplane-contrib/" + name
 		return finding(repo, func(f *sink.FindingView) {
 			f.Image, f.Tag = "xpkg.crossplane.io/"+repo+":"+current, current
 			f.Upgrade = &sink.UpgradeView{
 				Kind: "image", Name: "xpkg.crossplane.io/" + repo, Current: current, Latest: latest,
 				Available: true, Resolved: true, Actionable: true,
-				Source: "FunctionRevision/crossplane-system/" + rev,
+				Source: "Function/crossplane-system/" + name,
 			}
 		})
 	}
 	plan, err := bundledPlanner(t).Plan([]sink.FindingView{
-		fn("function-auto-ready", "function-auto-ready-59868730b9a9", "v0.6.0", "v0.7.0"),
-		fn("function-go-templating", "function-go-templating-10dcf7881e85", "v0.11.3", "v0.11.4"),
+		fn("function-auto-ready", "v0.6.0", "v0.7.0"),
+		fn("function-go-templating", "v0.11.3", "v0.11.4"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -150,8 +150,8 @@ func TestCustomResourceSetImagesAreStillBumped(t *testing.T) {
 	if d.Summary != "Upgrade crossplane-system functions (2) to their latest versions" {
 		t.Errorf("summary = %q", d.Summary)
 	}
-	if !strings.Contains(d.Description, "* crossplane-contrib/function-auto-ready: v0.6.0 -> v0.7.0, change in FunctionRevision/crossplane-system/function-auto-ready-59868730b9a9") {
-		t.Errorf("row should be a direct bump in the revision:\n%s", d.Description)
+	if !strings.Contains(d.Description, "* crossplane-contrib/function-auto-ready: v0.6.0 -> v0.7.0, change in Function/crossplane-system/function-auto-ready") {
+		t.Errorf("row should be a direct bump of the Function's package:\n%s", d.Description)
 	}
 	if strings.Contains(d.Description, "version owned by") {
 		t.Errorf("a package set in the resource is not owned elsewhere:\n%s", d.Description)

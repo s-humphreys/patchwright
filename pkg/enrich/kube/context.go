@@ -253,6 +253,15 @@ func operatorContext(ctx context.Context, meta metav1.ObjectMeta, ref metav1.Own
 		Manager:     managerFromCR(cr, meta.Labels),
 		OwnerUnread: cr == nil,
 	}
+	// A resource that is itself controller-owned was generated from its owner, and
+	// the owner is what a person edits: a Crossplane FunctionRevision is stamped out
+	// of the Function whose spec.package names the image.
+	if cr != nil {
+		if parent, ok := customOwner(metav1.ObjectMeta{OwnerReferences: cr.GetOwnerReferences()}); ok &&
+			parent.Controller != nil && *parent.Controller {
+			dc.Source = crRef(parent.Kind, meta.Namespace, parent.Name)
+		}
+	}
 	return dc
 }
 

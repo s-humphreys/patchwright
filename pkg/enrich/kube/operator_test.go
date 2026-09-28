@@ -153,6 +153,10 @@ func TestClusterScopedOwnerIsReadAtClusterScope(t *testing.T) {
 		"metadata": map[string]interface{}{
 			"name":   "function-auto-ready-59868730b9a9",
 			"labels": map[string]interface{}{"pkg.crossplane.io/package": "function-auto-ready"},
+			"ownerReferences": []interface{}{map[string]interface{}{
+				"apiVersion": "pkg.crossplane.io/v1", "kind": "Function", "name": "function-auto-ready",
+				"uid": "aae180c9-d215-46df-9694-d1a361b73774", "controller": true,
+			}},
 		},
 		"spec": map[string]interface{}{
 			"desiredState": "Active", "image": image, "revision": int64(4),
@@ -179,7 +183,8 @@ func TestClusterScopedOwnerIsReadAtClusterScope(t *testing.T) {
 	if dc.Mechanism != "operator" || !dc.Actionable {
 		t.Errorf("got %+v, want an actionable operator context: the image is the revision's spec.image", dc)
 	}
-	if dc.Source != "FunctionRevision/crossplane-system/function-auto-ready-59868730b9a9" {
-		t.Errorf("source = %q", dc.Source)
+	// The revision is generated; the Function's spec.package is what a person edits.
+	if dc.Source != "Function/crossplane-system/function-auto-ready" {
+		t.Errorf("source = %q, want the Function that owns the revision", dc.Source)
 	}
 }

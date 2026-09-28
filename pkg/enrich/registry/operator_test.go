@@ -87,7 +87,7 @@ func TestResolverStillBumpsImagesSetInTheCustomResource(t *testing.T) {
 			return map[string]enrich.DeployContext{
 				"xpkg.crossplane.io/crossplane-contrib/function-auto-ready:v0.6.0": {
 					Mechanism: "operator", Actionable: true,
-					Source: "FunctionRevision/crossplane-system/function-auto-ready-59868730b9a9",
+					Source: "Function/crossplane-system/function-auto-ready",
 				},
 			}, nil
 		},
