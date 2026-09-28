@@ -42,6 +42,10 @@ by the resource's `app.kubernetes.io/part-of`/`name` labels, or a workload's
 - if it is installed by a Flux `HelmRelease` with a newer chart, the proposal is that
   chart bump, with the image's resulting tag unknown, so a ticket claims nothing under
   "Done means";
+- if the operator has any other newer release (a directly applied image, or a Helm
+  release no `HelmRelease` describes, as flux-operator usually is), the image is a
+  `managed` upgrade with no target tag of its own, `reason` names the operator's move,
+  and a ticket folds it into the operator's own ticket;
 - if the operator is shown to be on its latest version, there is no upgrade (`FIX`
   shows `none`) and `reason` says so;
 - if the operator cannot be identified, its custom resource cannot be read (the API

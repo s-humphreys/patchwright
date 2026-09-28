@@ -124,9 +124,9 @@ func (r RemediationEnricher) EnrichImages(ctx context.Context, images []model.As
 // sources report that the image has no version of its own, and the operator's
 // upgrade comes from whichever source understands how the operator is installed.
 //
-// Only a chart upgrade is proposed. It is the one whose effect on this image the
-// report can describe (a chart bump, and what the image does under it unknown);
-// a newer operator image is named in the reason instead, since presenting its
+// A Flux-managed chart upgrade of the operator becomes this image's upgrade. Any
+// other available operator upgrade makes this image a managed upgrade with no
+// target tag, folded into the operator's own ticket: presenting the operator's
 // tags as this image's would be the same false statement this exists to stop.
 func resolveOperatorUpgrades(merged map[string]model.Upgrade) {
 	// Read the operators' upgrades as the sources reported them, so the outcome
@@ -151,7 +151,13 @@ func resolveOperatorUpgrades(merged map[string]model.Upgrade) {
 			u.Resolved = true
 			u.Reason = "version chosen by the operator " + name + "; the operator is on its latest version"
 			merged[image] = u
-		case ok && op.Available && op.Actionable:
+		case ok && op.Available:
+			// Any other operator upgrade: a newer operator image, whether bumped
+			// directly or through a Helm release no HelmRelease describes (the
+			// flux-operator case). This image is available as a managed upgrade with
+			// no target tag of its own, so the planner folds it into the operator's
+			// ticket rather than dropping it or inventing a tag for it.
+			u.Available, u.Resolved, u.Latest = true, true, ""
 			u.Reason = fmt.Sprintf("version chosen by the operator %s; upgrading it (%s %s -> %s) is the only "+
 				"change that moves this image", name, op.Name, op.Current, op.Latest)
 			merged[image] = u

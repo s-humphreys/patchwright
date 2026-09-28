@@ -25,20 +25,25 @@ func enrichOne(t *testing.T, ups map[string]model.Upgrade) *model.Upgrade {
 	return images[0].Upgrade
 }
 
-// A newer operator image that is not a chart is named, not proposed: its tags
-// would be presented as the NATS image's own, which is the mistake being fixed.
-func TestOperatorImageUpgradeIsNamedNotProposed(t *testing.T) {
-	u := enrichOne(t, map[string]model.Upgrade{
-		"docker.io/nats:2.10.29": operatorChosenNATS(),
-		"quay.io/argoproj/argo-events:v1.9.11": {Kind: "image", Name: "quay.io/argoproj/argo-events",
-			Current: "v1.9.11", Latest: "v1.9.12", Available: true, Actionable: true, Resolved: true},
-	})
-	if u.Available || u.Latest != "" {
-		t.Errorf("proposed %+v", u)
-	}
-	want := "version chosen by the operator argo-events; upgrading it (quay.io/argoproj/argo-events v1.9.11 -> v1.9.12) is the only change that moves this image"
-	if u.Reason != want {
-		t.Errorf("reason = %q, want %q", u.Reason, want)
+// A newer operator image that is not a Flux chart, applied directly or owned by a
+// Helm release nothing describes: the image becomes a managed upgrade with no tag
+// of its own, since the operator's tags are not its tags.
+func TestOperatorImageUpgradeMakesAManagedUpgradeWithNoTag(t *testing.T) {
+	for name, actionable := range map[string]bool{"applied directly": true, "owned by Helm": false} {
+		t.Run(name, func(t *testing.T) {
+			u := enrichOne(t, map[string]model.Upgrade{
+				"docker.io/nats:2.10.29": operatorChosenNATS(),
+				"quay.io/argoproj/argo-events:v1.9.11": {Kind: "image", Name: "quay.io/argoproj/argo-events",
+					Current: "v1.9.11", Latest: "v1.9.12", Available: true, Actionable: actionable, Resolved: true},
+			})
+			if !u.Available || !u.Resolved || u.Actionable || u.Latest != "" || u.Managed != "operator" {
+				t.Errorf("want a managed upgrade with no target tag, got %+v", u)
+			}
+			want := "version chosen by the operator argo-events; upgrading it (quay.io/argoproj/argo-events v1.9.11 -> v1.9.12) is the only change that moves this image"
+			if u.Reason != want {
+				t.Errorf("reason = %q, want %q", u.Reason, want)
+			}
+		})
 	}
 }
 

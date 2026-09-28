@@ -37,6 +37,16 @@ test("an ordinary image with no upgrade is still current", () => {
   assert.match(upgradeTitle(f), /latest available version/);
 });
 
+test("a controller that moves with its operator shows no tag of its own", () => {
+  const f = finding({
+    kind: "image", current: "v1.6.0", resolved: true, available: true, actionable: false,
+    managed: "operator", manager: "flux-operator", operator_chosen: true,
+  });
+  assert.equal(fixPath(f), "managed");
+  assert.doesNotMatch(upgradeText(f), /→/);
+  assert.match(upgradeCell(f), /moves with its operator/);
+});
+
 test("an operator's chart upgrade leads with the operator", () => {
   const html = upgradeCell(finding({
     kind: "chart", name: "argo-events", current: "2.4.15", latest: "2.4.16",

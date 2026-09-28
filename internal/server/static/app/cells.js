@@ -40,7 +40,8 @@ export function upgradeCell(f) {
   if (u.out_of_track) {
     parts.push(`<span class="badge badge-eol" title="The current line is no longer maintained, so this move leaves it. A migration, not a version bump.">major</span>`);
   }
-  let detail = `${u.current} → ${u.latest}`;
+  // An operator-chosen image moved by upgrading its operator has no tag of its own.
+  let detail = u.latest ? `${u.current} → ${u.latest}` : `${u.current}, moves with its operator`;
   if (u.kind === "base") {
     detail = u.comparison === "digest" && u.source
       ? `${u.source} moved ${u.current} → ${u.latest}`
@@ -102,7 +103,7 @@ export function upgradeText(f) {
   // on offer may have plenty of newer tags; none of them is a change anyone can make.
   if (!u.available && u.operator_chosen) return "none: the operator's choice";
   if (!u.available) return "-";
-  let s = `${u.current} → ${u.latest}`;
+  let s = u.latest ? `${u.current} → ${u.latest}` : `${u.current}, moves with its operator`;
   if (u.kind === "chart") s = "chart " + s;
   // Named for a base upgrade: a bare version range on a first-party image reads as
   // the application's own version moving, which is the confusion this exists to

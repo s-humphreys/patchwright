@@ -128,6 +128,11 @@ func upgradeMark(f model.Finding) string {
 		return "-"
 	}
 	bump := u.Current + "→" + u.Latest
+	if u.Latest == "" {
+		// An operator-chosen image moved only by upgrading its operator: there is no
+		// tag of its own to name.
+		bump = u.Current
+	}
 	switch u.Kind {
 	case "chart":
 		bump = "chart " + bump

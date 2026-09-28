@@ -44,6 +44,8 @@ var newestTags = tagLister{
 	"docker.io/natsio/prometheus-nats-exporter":    {"0.14.0", "0.20.2"},
 	"docker.io/acme/app":                           {"1.0.0", "1.2.0"},
 	"ghcr.io/controlplaneio-fluxcd/source-ctrl":    {"v1.6.0", "v1.7.0"},
+	"ghcr.io/controlplaneio-fluxcd/flux-operator":  {"v0.33.0", "v0.60.0"},
+	"ghcr.io/fluxcd/source-controller":             {"v1.6.0", "v1.7.2"},
 }
 
 // helmInstalled is an operator Deployment installed by a Flux HelmRelease.
@@ -239,5 +241,35 @@ func TestImageSetInTheCustomResourceIsStillBumpedThere(t *testing.T) {
 	}
 	if u.Source != "Api/apps/my-api" {
 		t.Errorf("source = %q, want the custom resource", u.Source)
+	}
+}
+
+// Production flux-operator: the controllers carry only its managed-by label, and
+// its own Deployment only a helm.sh/chart label, with no HelmRelease to read. The
+// registry sees a newer flux-operator that Helm owns. The controllers become
+// managed upgrades with no tag of their own, so they fold into its ticket.
+func TestManagedByLabelImagesFollowAHelmOwnedOperatorUpgrade(t *testing.T) {
+	ctrl := deployment("flux-system", "source-controller",
+		map[string]string{"app.kubernetes.io/managed-by": "flux-operator"}, nil,
+		"ghcr.io/fluxcd/source-controller:v1.6.0")
+	op := deployment("flux-system", "flux-operator",
+		map[string]string{"helm.sh/chart": "flux-operator-0.33.0"}, nil,
+		"ghcr.io/controlplaneio-fluxcd/flux-operator:v0.33.0")
+	ups := remediate(t, kubefake.NewSimpleClientset(ctrl, op), remediationDyn(), fixedFetcher(nil), model.Upgrade{},
+		"ghcr.io/fluxcd/source-controller:v1.6.0", "ghcr.io/controlplaneio-fluxcd/flux-operator:v0.33.0")
+
+	o := ups["ghcr.io/controlplaneio-fluxcd/flux-operator:v0.33.0"]
+	if o == nil || !o.Available || o.Actionable || o.Latest != "v0.60.0" || o.Managed != "helm" {
+		t.Fatalf("flux-operator: want a Helm-managed v0.60.0, got %+v", o)
+	}
+	c := ups["ghcr.io/fluxcd/source-controller:v1.6.0"]
+	if c == nil || !c.Available || !c.Resolved || c.Actionable || c.Latest != "" {
+		t.Fatalf("controller: want a managed upgrade with no tag of its own, got %+v", c)
+	}
+	if c.Manager != "flux-operator" || c.Managed != "operator" || !c.OperatorChosen {
+		t.Errorf("controller: got %+v", c)
+	}
+	if !strings.Contains(c.Reason, "upgrading it (ghcr.io/controlplaneio-fluxcd/flux-operator v0.33.0 -> v0.60.0)") {
+		t.Errorf("reason should name the operator's move: %q", c.Reason)
 	}
 }
