@@ -121,7 +121,7 @@ func TestClusterImageDeployments(t *testing.T) {
 	}
 
 	out := map[string]enrich.DeployContext{}
-	if err := clusterImageDeployments(context.Background(), typed, dyn, fetch, out); err != nil {
+	if err := clusterImageDeployments(context.Background(), typed, dyn, fetch, nil, out); err != nil {
 		t.Fatal(err)
 	}
 

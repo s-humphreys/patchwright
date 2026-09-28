@@ -63,6 +63,8 @@ Read-only, and narrow. The chart's ClusterRole grants `get` and `list` only, on:
 - `deployments`, `statefulsets`, `daemonsets` and `cronjobs`, so a workload with no
   pod at the moment (scaled to zero, or a CronJob between runs) still counts as
   running
+- `customresourcedefinitions` (`get` only), whose install labels name the operator
+  when its custom resources do not; a CRD is a schema and holds no workload data
 - Flux resources: `helmreleases`, `kustomizations`, `helmrepositories`,
   `gitrepositories`, `ocirepositories`
 - custom resources named by an ownerReference, to determine whether an image's tag

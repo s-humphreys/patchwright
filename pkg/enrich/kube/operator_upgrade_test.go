@@ -76,9 +76,15 @@ func remediationDyn(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 // returns each image's upgrade.
 func remediate(t *testing.T, typed kubernetes.Interface, dyn *dynamicfake.FakeDynamicClient, fetch crFetcher, chart model.Upgrade, refs ...string) map[string]*model.Upgrade {
 	t.Helper()
+	return remediateWith(t, typed, dyn, fetch, nil, newestTags, chart, refs...)
+}
+
+// remediateWith is remediate with the CRD lookup and the registry's tags supplied.
+func remediateWith(t *testing.T, typed kubernetes.Interface, dyn *dynamicfake.FakeDynamicClient, fetch crFetcher, crds crdFetcher, tags registry.TagLister, chart model.Upgrade, refs ...string) map[string]*model.Upgrade {
+	t.Helper()
 	ctx := context.Background()
 	contexts := map[string]enrich.DeployContext{}
-	if err := clusterImageDeployments(ctx, typed, dyn, fetch, contexts); err != nil {
+	if err := clusterImageDeployments(ctx, typed, dyn, fetch, crds, contexts); err != nil {
 		t.Fatal(err)
 	}
 	charts := map[string]model.Upgrade{}
@@ -86,7 +92,7 @@ func remediate(t *testing.T, typed kubernetes.Interface, dyn *dynamicfake.FakeDy
 		t.Fatal(err)
 	}
 	reg := &registry.Resolver{
-		Lister: newestTags,
+		Lister: tags,
 		Contexts: func(context.Context) (map[string]enrich.DeployContext, error) {
 			return contexts, nil
 		},
