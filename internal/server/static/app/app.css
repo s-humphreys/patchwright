@@ -504,3 +504,13 @@ table.mini th, table.mini td { padding: 0.2rem 0.5rem 0.2rem 0; white-space: now
 .ticket-day-head .linkish { margin-left: auto; }
 .ticket-day td.wrap { white-space: normal; min-width: 16rem; }
 .ticket-day a { color: var(--accent); }
+
+/* Open now: one snapshot, so figures rather than a chart. */
+.stats { display: flex; flex-wrap: wrap; gap: .6rem; margin: .4rem 0 .8rem; }
+.stat { flex: 0 1 11rem; padding: .55rem .75rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
+.stat-value { font-size: 1.6rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat-label { color: var(--muted); font-size: .8rem; }
+.stat-sub { color: var(--muted); font-size: .75rem; margin-top: .2rem; }
+.stat.warn .stat-value { color: var(--high); }
+.stat.muted .stat-value { color: var(--muted); }
+
