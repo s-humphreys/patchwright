@@ -25,6 +25,10 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
     verbs: ["get", "list"]
+  # A CRD's install labels name the operator when its custom resources do not; CRDs are schema, no workload data.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get"]
   {{- if .Values.rbac.remediation }}
   # Where an upgrade would be applied: the chart or operator that owns the tag. The
   # workloads themselves are granted above for liveness.

@@ -39,6 +39,7 @@ rbac:
 
   # Pods, namespaces, workloads (deployments, statefulsets, daemonsets) and cronjobs
   # are always granted: liveness and ownership attribution cannot work without them.
+  # So is `get` on customresourcedefinitions, which name an operator by their install.
   # The rest is opt-out, matched to the features that need it.
 
   # Flux resources, so an image deployed by a chart or an operator can be traced to
