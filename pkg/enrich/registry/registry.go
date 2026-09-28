@@ -127,8 +127,8 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 			up.SourcePath = dc.SourcePath
 		}
 
-		if latest != nil {
-			up.Latest = latest.Original()
+		if latest != "" {
+			up.Latest = latest
 			up.Available = true
 			// Judge actionability from the deployment context. No context (e.g.
 			// a CSV-only run) => assume a directly deployed image, bumpable.
@@ -147,10 +147,15 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 }
 
 // latestNewer returns the highest semver tag strictly greater than current, or
-// nil if none. Pre-releases are ignored unless current is itself a pre-release.
-func latestNewer(current *semver.Version, tags []string) *semver.Version {
+// "" if none. Pre-releases are ignored unless current is itself a pre-release.
+//
+// The tag is returned as the registry spells it. The version is parsed with any
+// leading "v" removed, so its own string would propose "0.7.0" to a repository
+// that only publishes "v0.7.0", which is a tag that does not exist.
+func latestNewer(current *semver.Version, tags []string) string {
 	allowPre := current.Prerelease() != ""
 	var latest *semver.Version
+	var latestTag string
 	for _, t := range tags {
 		v, err := strictSemver(t)
 		if err != nil {
@@ -163,8 +168,8 @@ func latestNewer(current *semver.Version, tags []string) *semver.Version {
 			continue
 		}
 		if latest == nil || v.GreaterThan(latest) {
-			latest = v
+			latest, latestTag = v, t
 		}
 	}
-	return latest
+	return latestTag
 }
