@@ -48,8 +48,12 @@ type Draft struct {
 // rather than silently dropped: "criticals with nowhere to go" is exactly what
 // someone should look at by hand.
 type Skip struct {
-	Image  string
-	Reason string
+	Image string
+	// Repository is the bare repository open tickets are indexed on, when Image is
+	// a full reference. Without it a hold for an excluded or unrouted image never
+	// matches its ticket, which then falls through to being closed.
+	Repository string
+	Reason     string
 	// Policy is true when configuration chose not to ticket this — an exclusion, a
 	// priority threshold, no matching route. The work still exists.
 	//
@@ -181,7 +185,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			if why != "" {
 				reason += ": " + why
 			}
-			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason, Policy: true})
+			out.Skips = append(out.Skips, Skip{Image: f.Image, Repository: f.Repository, Reason: reason, Policy: true})
 			continue
 		}
 		if reason, ok := p.skipReason(f); ok {
@@ -202,7 +206,7 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 				owner = strings.TrimSpace(f.Owner.Class + "/" + f.Owner.Team)
 			}
 			out.Skips = append(out.Skips, Skip{
-				Image: f.Image, Policy: true,
+				Image: f.Image, Repository: f.Repository, Policy: true,
 				Reason: fmt.Sprintf("no ticket route matches its owner (%s), "+
 					"so no tracker is configured for this work", owner),
 			})

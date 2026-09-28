@@ -637,8 +637,6 @@ func unknownImages(images []string, byImage map[string]sink.FindingView) []strin
 	return blind
 }
 
-// policySkipped returns the reasons configuration declined to ticket this ticket's
-// images, if it did.
 // recentlyReported lists a ticket's images that left the queue inside the
 // history's grace period, whether or not the assessment still reports them.
 func recentlyReported(images []string, recent map[string]bool) []string {
@@ -651,12 +649,19 @@ func recentlyReported(images []string, recent map[string]bool) []string {
 	return out
 }
 
+// policySkipped returns the reasons configuration declined to ticket this ticket's
+// images, if it did.
 func policySkipped(images []string, skips []Skip) []string {
 	byImage := map[string]string{}
 	for _, s := range skips {
-		if s.Policy {
-			byImage[s.Image] = s.Reason
+		if !s.Policy {
+			continue
 		}
+		key := s.Repository
+		if key == "" {
+			key = s.Image
+		}
+		byImage[key] = s.Reason
 	}
 	var out []string
 	for _, img := range images {
