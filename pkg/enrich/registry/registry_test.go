@@ -61,7 +61,7 @@ func TestResolverMarksManagedImagesNotActionable(t *testing.T) {
 		Lister: stubLister{tags: map[string][]string{"acme.io/app": {"1.0.0", "1.2.0"}}},
 		Contexts: func(_ context.Context) (map[string]enrich.DeployContext, error) {
 			return map[string]enrich.DeployContext{
-				"acme.io/app:1.0.0": {Mechanism: "operator", Actionable: false},
+				"acme.io/app:1.0.0": {Mechanism: "helm", Actionable: false},
 			}, nil
 		},
 	}
@@ -76,10 +76,10 @@ func TestResolverMarksManagedImagesNotActionable(t *testing.T) {
 		t.Errorf("a newer tag exists, should be Available: %+v", u)
 	}
 	if u.Actionable {
-		t.Errorf("operator-managed image should NOT be directly actionable: %+v", u)
+		t.Errorf("chart-managed image should NOT be directly actionable: %+v", u)
 	}
-	if u.Managed != "operator" {
-		t.Errorf("expected Managed=operator, got %q", u.Managed)
+	if u.Managed != "helm" {
+		t.Errorf("expected Managed=helm, got %q", u.Managed)
 	}
 }
 

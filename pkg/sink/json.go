@@ -202,13 +202,18 @@ type UpgradeView struct {
 	ImagePinned  bool   `json:"image_pinned,omitempty"`
 	// Reason explains an unresolved upgrade: what stopped the lookup, and therefore
 	// what would fix it. An unreadable registry and an image that never recorded its
-	// base need different people to do different things.
+	// base need different people to do different things. It also says why an
+	// operator-chosen image has no upgrade, which is not the same as being current.
 	Reason     string `json:"reason,omitempty"`
 	Actionable bool   `json:"actionable"`
 	Managed    string `json:"managed,omitempty"`
 	Manager    string `json:"manager,omitempty"`
 	Source     string `json:"source,omitempty"`
 	SourcePath string `json:"source_path,omitempty"`
+	// OperatorChosen reports that an operator picks this image's version at
+	// runtime, so no tag of the image itself is ever the change: see
+	// model.Upgrade.OperatorChosen.
+	OperatorChosen bool `json:"operator_chosen,omitempty"`
 }
 
 // InFlightView is remediation already under way for a finding.
@@ -430,6 +435,7 @@ func ToFindingView(f model.Finding) FindingView {
 			Actionable:     f.Upgrade.Actionable,
 			Managed:        f.Upgrade.Managed, Manager: f.Upgrade.Manager,
 			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,
+			OperatorChosen: f.Upgrade.OperatorChosen,
 		}
 	}
 	var inflight *InFlightView

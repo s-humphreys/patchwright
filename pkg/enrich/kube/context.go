@@ -113,6 +113,10 @@ func mappedCRFetcher(newMapper func() (meta.RESTMapper, error), dyn dynamic.Inte
 func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dyn dynamic.Interface, fetch crFetcher, out map[string]enrich.DeployContext) error {
 	kustSources := kustomizationSources(ctx, dyn)
 	crCache := map[string]*unstructured.Unstructured{}
+	// Every image running in this cluster by the last segment of its repository,
+	// which is how an operator's name is matched to its own image.
+	byName := map[string]string{}
+	touched := map[string]bool{}
 
 	handle := func(meta metav1.ObjectMeta, spec corev1.PodSpec) {
 		dc, ok := workloadContext(ctx, meta, kustSources, fetch, crCache)
@@ -120,7 +124,13 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 			return
 		}
 		for _, c := range podContainers(spec) {
-			key := model.ParseImageRef(c.Image).NameTag()
+			img := model.ParseImageRef(c.Image)
+			key := img.NameTag()
+			name := img.Repository[strings.LastIndex(img.Repository, "/")+1:]
+			if existing, seen := byName[name]; !seen || key < existing {
+				byName[name] = key
+			}
+			touched[key] = true
 			dcImg := dc
 			// For operator workloads, actionability depends on the specific
 			// image appearing in the CR spec.
@@ -153,6 +163,22 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 	}
 	for i := range ds.Items {
 		handle(ds.Items[i].ObjectMeta, ds.Items[i].Spec.Template.Spec)
+	}
+
+	// An operator-derived image changes only when its operator is upgraded, so
+	// point it at the operator's own image for that upgrade to be found. Matched
+	// by name the same way the ticket planner folds managed images into their
+	// manager's ticket: a named operator whose image is not running here is left
+	// unmatched rather than guessed at.
+	for key := range touched {
+		dc := out[key]
+		if dc.Mechanism != "operator" || dc.Actionable || dc.Manager == "" || dc.ManagerImage != "" {
+			continue
+		}
+		if img, ok := byName[dc.Manager]; ok && img != key {
+			dc.ManagerImage = img
+			out[key] = dc
+		}
 	}
 	return nil
 }

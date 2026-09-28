@@ -26,6 +26,30 @@ available but not actionable — bumping the tag would be reverted. The
 `upgrade_available` rule variable is true only for actionable upgrades; JSON carries
 `available`, `actionable`, `managed`, `resolved` and `source`.
 
+### Operator-chosen images
+
+A workload owned by an operator's custom resource is classified by that owner, not by
+labels the operator copied onto it from the resource. When the resource sets the image
+(a `spec.image`, a Crossplane package), the tag is bumped there. When it does not, the
+operator picks the version at runtime (an Argo Events `EventBus` names a NATS version,
+and the controller maps it to images from its own supported list), so no registry tag
+is proposed: the newest tag is usually one no release of the operator supports.
+
+The only change is to the operator. Its own image is found by name (the operator named
+by the resource's `app.kubernetes.io/part-of`/`name` labels, or a workload's
+`app.kubernetes.io/managed-by`), and:
+
+- if it is installed by a Flux `HelmRelease` with a newer chart, the proposal is that
+  chart bump, with the image's resulting tag unknown, so a ticket claims nothing under
+  "Done means";
+- otherwise there is no upgrade (`FIX` shows `none`), and `reason` says whose choice the
+  version is and why the operator's upgrade is not on offer: already on its latest
+  version, a newer operator image that is not a chart, or an operator that could not be
+  identified.
+
+Such images are never ticketed on their own, and an open ticket for one is closed or
+commented on rather than reported as done.
+
 ## Columns
 
 `UPGRADE`:
