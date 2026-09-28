@@ -59,6 +59,12 @@ Such images are never ticketed as image bumps. An open ticket for them is closed
 done (or commented on) only when the operator is shown to be on its latest version; in
 every other case it is held.
 
+Known gap: the Flux Helm chart source still matches workloads by their
+`helm.toolkit.fluxcd.io` labels alone and does not apply owner precedence. A workload
+owned by a custom resource that also carries those labels (an operator copying them
+from a resource a HelmRelease installed) would be offered that release's chart bump
+rather than treated as operator-chosen. No such workload has been seen in production.
+
 ## Columns
 
 `UPGRADE`:
