@@ -81,8 +81,10 @@ cannot work.
 For the cluster patchwright runs in, the chart creates a ServiceAccount and a minimal
 read-only ClusterRole: `get`/`list` on `pods`, `namespaces`, `deployments`,
 `statefulsets`, `daemonsets` and `cronjobs` (liveness counts deployed workloads, not
-only live pods; see [reconciliation](reconciliation.md#what-counts-as-running)). No
-Secrets, no write verbs, no credentials to manage.
+only live pods; see [reconciliation](reconciliation.md#what-counts-as-running)), and
+`get` on `customresourcedefinitions`, whose install labels name an operator its custom
+resources do not (see [remediation](remediation.md#operator-chosen-images)); a CRD is a
+schema and holds no workload data. No Secrets, no write verbs, no credentials to manage.
 
 ## Multi-cluster
 
@@ -113,7 +115,8 @@ kubectl -n patchwright get managedidentity patchwright -o jsonpath='{.status.pri
 ```
 
 The read set follows the features in use. Pods, namespaces, workloads and cronjobs are
-always granted, for liveness; `rbac.remediation` adds Flux resources so an image deployed by a chart or operator can
+always granted, for liveness, as is `get` on `customresourcedefinitions`, for naming
+operators; `rbac.remediation` adds Flux resources so an image deployed by a chart or operator can
 be traced to the resource that sets its version. For
 operator-owned custom resources, name their API groups in
 `rbac.customResourceGroups`; `*` is refused, because `get` on every resource includes

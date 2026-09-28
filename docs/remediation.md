@@ -37,9 +37,24 @@ image, the operator picks the version at runtime (an Argo Events `EventBus` name
 and the controller maps it to images from its own supported list), so no registry tag
 is proposed: the newest tag is usually one no release of the operator supports.
 
-The only change is to the operator. Its own image is found by name (the operator named
-by the resource's `app.kubernetes.io/part-of`/`name` labels, or a workload's
-`app.kubernetes.io/managed-by`), and:
+The only change is to the operator. It is named, in this order:
+
+1. by the resource's `app.kubernetes.io/part-of`/`name` labels, or a workload's
+   `app.kubernetes.io/managed-by`, and its own image is then found by that name;
+2. when the resource names nothing (an `EventBus` applied by Flux carries only Flux's
+   labels), by the install that created the resource's CRD. The CRD's Flux
+   Kustomization labels (`kustomize.toolkit.fluxcd.io/name` and `/namespace`), else its
+   Flux HelmRelease labels (`helm.toolkit.fluxcd.io/name` and `/namespace`), else Helm's
+   `meta.helm.sh/release-name` and `release-namespace` annotations, identify the
+   install. If exactly one Deployment, StatefulSet or DaemonSet from that same install
+   is found (workloads an operator created are not counted), it is the operator: its
+   image is the operator's, named by the image repository's last segment
+   (`quay.io/argoproj/argo-events` is `argo-events`), or the workload's name when that
+   is empty. Known sidecars (`istio-proxy`, `linkerd-proxy`, `kube-rbac-proxy`) are set
+   aside; any other second container, no such workload, or several of them names
+   nothing. An unreadable CRD names nothing and never fails the assessment.
+
+Then:
 
 - if it is installed by a Flux `HelmRelease` with a newer chart, the proposal is that
   chart bump, with the image's resulting tag unknown, so a ticket claims nothing under
