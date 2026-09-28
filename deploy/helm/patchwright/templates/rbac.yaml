@@ -34,13 +34,23 @@ rules:
     resources: ["helmrepositories", "gitrepositories", "ocirepositories"]
     verbs: ["get", "list"]
   {{- if .Values.reconcile.remediationReadCRs }}
-  # Read custom resources so operator-deployed images whose tag is set in the CR
-  # spec are treated as directly actionable (change the CR). Broad by nature;
-  # scope it down to your operators' groups if preferred, or disable.
+  # Deprecated: every resource in the cluster, Secrets included. Kept so existing
+  # installs keep working; rbac.customResourceGroups is the scoped replacement.
   - apiGroups: ["*"]
     resources: ["*"]
     verbs: ["get"]
   {{- end }}
+  {{- end }}
+  {{- with .Values.rbac.customResourceGroups }}
+  {{- if has "*" . }}
+  {{- fail "rbac.customResourceGroups contains \"*\", which grants get on every resource in the cluster - including Secrets in every namespace. Name your operators' API groups instead." }}
+  {{- end }}
+  # Operator-deployed images: whether the owning custom resource sets the image,
+  # and which operator picks it, can only be known by reading that resource.
+  - apiGroups:
+      {{- toYaml . | nindent 6 }}
+    resources: ["*"]
+    verbs: ["get"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -117,7 +117,12 @@ always granted, for liveness; `rbac.remediation` adds Flux resources so an image
 be traced to the resource that sets its version. For
 operator-owned custom resources, name their API groups in
 `rbac.customResourceGroups`; `*` is refused, because `get` on every resource includes
-Secrets in every namespace.
+Secrets in every namespace. The same key exists in both charts: `patchwright` for the
+cluster it runs in, `patchwright-rbac` for each remote cluster. Without it, an image an
+operator deploys shows as unknown and raises no ticket, because only its owning
+resource says whether it sets the image and which operator picks the version. The main
+chart's older `reconcile.remediationReadCRs` grants `get` on everything and is
+deprecated in favour of it.
 
 ```sh
 helm install pw deploy/helm/patchwright \

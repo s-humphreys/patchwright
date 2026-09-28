@@ -51,6 +51,9 @@ func row(id int, image, status, reason string, crit, high int) map[string]any {
 // apiServer serves the given pages, and records how it was called so the test
 // can assert the request contract rather than assume it.
 type apiServer struct {
+	// Pages after the first are fetched concurrently, so the handler runs on
+	// several goroutines at once and its record of requests needs a lock.
+	mu       sync.Mutex
 	pages    [][]map[string]any
 	requests []string
 	keys     []string
@@ -62,9 +65,11 @@ func (a *apiServer) start(t *testing.T) *apiProvider {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := make([]byte, 64)
 		n, _ := r.Body.Read(body)
+		a.mu.Lock()
 		a.requests = append(a.requests, r.URL.String())
 		a.keys = append(a.keys, r.Header.Get("Api-Key"))
 		a.bodies = append(a.bodies, string(body[:n]))
+		a.mu.Unlock()
 
 		page := 1
 		fmt.Sscanf(r.URL.Query().Get("page"), "%d", &page)

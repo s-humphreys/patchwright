@@ -101,6 +101,11 @@ jobs:
             echo 'a wildcard API group rendered, and must not have' >&2
             exit 1
           fi
+          if helm template deploy/helm/patchwright --set provider.input.secretName=ci \
+              --set image.tag=v0.0.0-ci --set 'rbac.customResourceGroups={*}' > /dev/null 2>&1; then
+            echo 'a wildcard API group rendered in the main chart, and must not have' >&2
+            exit 1
+          fi
 
   integration:
     name: integration-kind
