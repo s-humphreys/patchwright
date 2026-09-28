@@ -1787,7 +1787,8 @@ components:
             operator's own chart upgrade is known, this upgrade is that one: `kind`,
             `name`, `current` and `latest` are the operator's chart, and
             `image_latest` is absent because the tag the operator will pick is
-            unknown. Otherwise `available` is false and `reason` says why.
+            unknown. Otherwise `available` is false and `reason` says why; `resolved`
+            is true only when the operator was shown to be on its latest version.
 
     Vulnerability:
       type: object

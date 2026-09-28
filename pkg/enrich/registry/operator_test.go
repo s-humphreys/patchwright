@@ -40,8 +40,8 @@ func TestResolverProposesNoTagForOperatorChosenImages(t *testing.T) {
 	if u.Available || u.Latest != "" || u.Actionable {
 		t.Errorf("no registry tag may be proposed for an operator-chosen image, got %+v", u)
 	}
-	if !u.Resolved || !u.OperatorChosen || u.Managed != "operator" {
-		t.Errorf("want a resolved, operator-chosen answer, got %+v", u)
+	if u.Resolved || !u.OperatorChosen || u.Managed != "operator" {
+		t.Errorf("want an unresolved, operator-chosen answer, got %+v", u)
 	}
 	if want := "version chosen by the operator that reconciles EventBus/argo-events/cpo"; !strings.HasPrefix(u.Reason, want) {
 		t.Errorf("reason = %q, want it to start %q", u.Reason, want)

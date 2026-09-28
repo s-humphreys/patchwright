@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -108,8 +109,8 @@ var natsImages = []string{
 	"natsio/prometheus-nats-exporter:0.14.0",
 }
 
-// DVOP-4420 as it happened: nothing names the operator, so there is no upgrade to
-// propose for the NATS images, and the reason says whose choice their version is.
+// DVOP-4420 in production: nothing names the operator. No tag is proposed, and
+// whether an upgrade exists stays an open question rather than "none".
 func TestOperatorChosenImagesGetNoRegistryUpgrade(t *testing.T) {
 	typed := kubefake.NewSimpleClientset(eventBusStatefulSet())
 	ups := remediate(t, typed, remediationDyn(), fixedFetcher(eventBus(nil)), model.Upgrade{}, natsImages...)
@@ -121,8 +122,8 @@ func TestOperatorChosenImagesGetNoRegistryUpgrade(t *testing.T) {
 		if u.Available || u.Latest != "" {
 			t.Errorf("%s: proposed %q; the operator chooses this version", ref, u.Latest)
 		}
-		if !u.Resolved || !u.OperatorChosen {
-			t.Errorf("%s: want a resolved, operator-chosen answer, got %+v", ref, u)
+		if u.Resolved || !u.OperatorChosen {
+			t.Errorf("%s: an unidentified operator leaves this unresolved, not no-upgrade; want operator-chosen and unresolved, got %+v", ref, u)
 		}
 		if !strings.Contains(u.Reason, "version chosen by the operator that reconciles EventBus/argo-events/cpo") {
 			t.Errorf("%s: reason = %q", ref, u.Reason)
@@ -175,8 +176,30 @@ func TestOperatorOnItsLatestVersionLeavesNoUpgrade(t *testing.T) {
 	if u == nil || u.Available {
 		t.Fatalf("want no upgrade, got %+v", u)
 	}
+	if !u.Resolved {
+		t.Error("an operator shown to be on its latest version establishes there is no upgrade")
+	}
 	if want := "version chosen by the operator argo-events; the operator is on its latest version"; u.Reason != want {
 		t.Errorf("reason = %q, want %q", u.Reason, want)
+	}
+}
+
+// Production: the service account is not granted the operator's API group, so the
+// custom resource cannot be read. Whether it sets the image is then unknown, and
+// the answer says so and what grant would settle it.
+func TestUnreadableOwnerLeavesOperatorImagesUnresolved(t *testing.T) {
+	forbidden := func(context.Context, string, string, string, string) (*unstructured.Unstructured, error) {
+		return nil, errors.New(`eventbus.argoproj.io "cpo" is forbidden`)
+	}
+	u := remediate(t, kubefake.NewSimpleClientset(eventBusStatefulSet()), remediationDyn(), forbidden,
+		model.Upgrade{}, "nats:2.10.29")["nats:2.10.29"]
+	if u == nil || u.Available || u.Resolved || !u.OperatorChosen {
+		t.Fatalf("want an unresolved, operator-chosen answer, got %+v", u)
+	}
+	for _, want := range []string{"EventBus/argo-events/cpo", "could not be read", "rbac.customResourceGroups"} {
+		if !strings.Contains(u.Reason, want) {
+			t.Errorf("reason %q should mention %q", u.Reason, want)
+		}
 	}
 }
 

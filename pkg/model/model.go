@@ -572,7 +572,9 @@ type Upgrade struct {
 	// operator. When the operator's own upgrade could be resolved this upgrade IS
 	// that one (Kind, Name, Current and Latest are the operator's, ImageCurrent is
 	// this image's tag and ImageLatest is unknown); otherwise it is not Available
-	// and Reason says why.
+	// and Reason says why. Resolved is true only when the operator was shown to be
+	// on its latest version: an operator that cannot be identified or checked
+	// leaves the question open, which is not the same as there being no upgrade.
 	OperatorChosen bool
 	// OperatorImage is the operator's own image (a NameTag), when it could be
 	// found running, which is how its upgrade is looked up.

@@ -51,6 +51,10 @@ type DeployContext struct {
 	// it was found in the same cluster. For an operator-derived image it is how the
 	// operator's upgrade is found: that upgrade is the only change that moves it.
 	ManagerImage string
+	// OwnerUnread reports that the owning custom resource could not be read (its
+	// API group is not granted, or the fetch failed), so whether it sets the image
+	// is unknown rather than known to be false.
+	OwnerUnread bool
 }
 
 // DeploymentContextSource reports the deployment context per image NameTag, so
@@ -143,6 +147,8 @@ func resolveOperatorUpgrades(merged map[string]model.Upgrade) {
 			p.Reason = ""
 			merged[image] = p
 		case ok && op.Resolved && !op.Available:
+			// The one case where "no upgrade" is established rather than assumed.
+			u.Resolved = true
 			u.Reason = "version chosen by the operator " + name + "; the operator is on its latest version"
 			merged[image] = u
 		case ok && op.Available && op.Actionable:

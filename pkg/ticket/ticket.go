@@ -69,9 +69,10 @@ type Skip struct {
 	// ticket asking for it is closed rather than held or called finished.
 	ClearsNothing bool
 	// OperatorChosen is true when an operator picks the image's version at runtime
-	// and no upgrade of the operator is on offer, so there is no change a ticket
-	// could ask for. Like ClearsNothing the work is not done; unlike it, nothing
-	// was proposed at all.
+	// and that operator was shown to be on its latest version, so there is no change
+	// a ticket could ask for. Like ClearsNothing the work is not done; unlike it,
+	// nothing was proposed at all. An operator that could not be identified or
+	// checked does not set this: that is not knowing, and an open ticket is held.
 	OperatorChosen bool
 }
 
@@ -189,12 +190,10 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			continue
 		}
 		if reason, ok := p.skipReason(f); ok {
-			skip := Skip{Image: f.Image, Reason: reason}
-			if operatorChosen(f) {
-				// The bare repository, which is what an open ticket is matched on.
-				skip.Image, skip.OperatorChosen = f.Repository, true
-			}
-			out.Skips = append(out.Skips, skip)
+			out.Skips = append(out.Skips, Skip{
+				Image: f.Image, Repository: f.Repository, Reason: reason,
+				OperatorChosen: operatorChosen(f) && f.Upgrade.Resolved,
+			})
 			continue
 		}
 		// A tracker is configured only on routes, so a finding matching none has
@@ -433,6 +432,8 @@ func (p *Planner) skipReason(f sink.FindingView) (string, bool) {
 		return "upgrade detection did not run (no --remediation), so it is unknown whether a fix exists", true
 	case f.Upgrade == nil:
 		return "upgrade detection ran but could not resolve any version for this image (needs investigation, not a ticket)", true
+	case operatorChosen(f) && !f.Upgrade.Resolved:
+		return f.Upgrade.Reason + "; no ticket until the operator's upgrade is known", true
 	case !f.Upgrade.Resolved:
 		return "available versions could not be resolved (e.g. private registry tags unreadable), so 'no upgrade' is unproven", true
 	case operatorChosen(f):

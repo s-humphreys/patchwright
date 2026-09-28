@@ -36,10 +36,22 @@ func eventBusFindings(upgrade func(tag string) *sink.UpgradeView) []sink.Finding
 	return out
 }
 
-func noOperatorUpgrade(tag string) *sink.UpgradeView {
+// unknownOperator is the production shape: nothing names the operator, so whether
+// it has an upgrade is unknown.
+func unknownOperator(tag string) *sink.UpgradeView {
 	return &sink.UpgradeView{
-		Kind: "image", Current: tag, Resolved: true, Managed: "operator",
+		Kind: "image", Current: tag, Managed: "operator",
 		Source: "EventBus/argo-events/cpo", OperatorChosen: true, Reason: eventBusReason,
+	}
+}
+
+const latestReason = "version chosen by the operator argo-events; the operator is on its latest version"
+
+// operatorOnLatest is the one shape that establishes there is no upgrade.
+func operatorOnLatest(tag string) *sink.UpgradeView {
+	return &sink.UpgradeView{
+		Kind: "image", Current: tag, Resolved: true, Managed: "operator", Manager: "argo-events",
+		Source: "EventBus/argo-events/cpo", OperatorChosen: true, Reason: latestReason,
 	}
 }
 
@@ -51,24 +63,36 @@ func operatorChartUpgrade(tag string) *sink.UpgradeView {
 	}
 }
 
-func TestOperatorChosenImagesWithNoOperatorUpgradeAreNotTicketed(t *testing.T) {
-	plan, err := bundledPlanner(t).Plan(eventBusFindings(noOperatorUpgrade))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.Drafts) != 0 {
-		t.Fatalf("nothing can be changed, so nothing is raised; got %q", plan.Drafts[0].Summary)
-	}
-	if len(plan.Skips) != len(natsRepos) {
-		t.Fatalf("every image should be reported as skipped: %+v", plan.Skips)
-	}
-	for _, s := range plan.Skips {
-		if !s.OperatorChosen || s.Policy || s.ClearsNothing {
-			t.Errorf("skip should be marked operator-chosen only: %+v", s)
-		}
-		if !strings.HasPrefix(s.Reason, eventBusReason) || strings.Contains(s.Reason, "latest available version") {
-			t.Errorf("the reason should be whose choice the version is, not that it is current: %q", s.Reason)
-		}
+func TestOperatorChosenImagesAreNotTicketed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		upgrade func(string) *sink.UpgradeView
+		reason  string
+		proven  bool
+	}{
+		{"operator unknown", unknownOperator, eventBusReason + "; no ticket until the operator's upgrade is known", false},
+		{"operator on its latest version", operatorOnLatest, latestReason + "; there is no change to ticket", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := bundledPlanner(t).Plan(eventBusFindings(tc.upgrade))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.Drafts) != 0 {
+				t.Fatalf("nothing can be changed, so nothing is raised; got %q", plan.Drafts[0].Summary)
+			}
+			if len(plan.Skips) != len(natsRepos) {
+				t.Fatalf("every image should be reported as skipped: %+v", plan.Skips)
+			}
+			for _, s := range plan.Skips {
+				if s.OperatorChosen != tc.proven || s.Policy || s.ClearsNothing {
+					t.Errorf("operator-chosen should be set only when the operator is proven current: %+v", s)
+				}
+				if s.Reason != tc.reason {
+					t.Errorf("reason = %q, want %q", s.Reason, tc.reason)
+				}
+			}
+		})
 	}
 }
 
@@ -134,17 +158,33 @@ func TestCustomResourceSetImagesAreStillBumped(t *testing.T) {
 	}
 }
 
-// The ticket DVOP-4420 already raised: its images are still here, still carry what
-// raised it, and have no upgrade. That is not the upgrade having landed.
-func TestAnOpenTicketForOperatorChosenImagesIsNotReportedDone(t *testing.T) {
-	findings := eventBusFindings(noOperatorUpgrade)
+// The ticket DVOP-4420 already raised, in production: the operator is unknown, so
+// nobody can say whether an upgrade exists. The ticket is held, never closed.
+func TestAnOpenTicketForImagesOfAnUnknownOperatorIsHeld(t *testing.T) {
+	findings := eventBusFindings(unknownOperator)
 	plan, err := bundledPlanner(t).Plan(findings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	open := map[string][]Existing{}
-	for _, n := range natsRepos {
-		open[n.repo] = []Existing{{Key: "DVOP-4420", Category: "new"}}
+	cfg := config.JiraConfig{Project: "DVOP", AutoClose: true, CloseTransitionNoLongerActionable: "WON'T BE DONE"}
+	got := Reconcile(ReconcileInput{Config: cfg, Findings: findings, Skipped: plan.Skips, OpenByImage: openDVOP4420()})
+	if len(got) != 1 || got[0].Kind != ActionHold {
+		t.Fatalf("got %+v, want one hold", got)
+	}
+	for _, want := range []string{"cannot tell", eventBusReason} {
+		if !strings.Contains(got[0].Why, want) {
+			t.Errorf("hold should say %q: %s", want, got[0].Why)
+		}
+	}
+}
+
+// Once the operator is shown to be on its latest version the ticket's change is
+// proven not to exist: closed as not done, or commented on. Never reported done.
+func TestAnOpenTicketForImagesOfAnOperatorOnItsLatestVersionIsClosedNotDone(t *testing.T) {
+	findings := eventBusFindings(operatorOnLatest)
+	plan, err := bundledPlanner(t).Plan(findings)
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		name string
@@ -157,7 +197,7 @@ func TestAnOpenTicketForOperatorChosenImagesIsNotReportedDone(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Reconcile(ReconcileInput{
-				Config: tc.cfg, Findings: findings, Skipped: plan.Skips, OpenByImage: open,
+				Config: tc.cfg, Findings: findings, Skipped: plan.Skips, OpenByImage: openDVOP4420(),
 			})
 			if len(got) != 1 {
 				t.Fatalf("got %+v, want one action", got)
@@ -169,11 +209,19 @@ func TestAnOpenTicketForOperatorChosenImagesIsNotReportedDone(t *testing.T) {
 			if a.Kind == ActionClose && (!a.NoLongerActionable || !a.Unworked) {
 				t.Errorf("a close must use the not-done transition: %+v", a)
 			}
-			for _, want := range []string{"chosen at runtime by the operator", "nats: " + eventBusReason, "stay in the queue"} {
+			for _, want := range []string{"already on its latest version", "nats: " + latestReason, "stay in the queue"} {
 				if !strings.Contains(a.Message, want) {
 					t.Errorf("comment should say %q:\n%s", want, a.Message)
 				}
 			}
 		})
 	}
+}
+
+func openDVOP4420() map[string][]Existing {
+	open := map[string][]Existing{}
+	for _, n := range natsRepos {
+		open[n.repo] = []Existing{{Key: "DVOP-4420", Category: "new"}}
+	}
+	return open
 }

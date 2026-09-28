@@ -246,11 +246,14 @@ func operatorContext(ctx context.Context, meta metav1.ObjectMeta, ref metav1.Own
 			crCache[key] = nil
 		}
 	}
-	return enrich.DeployContext{
+	cr := crCache[key]
+	dc := enrich.DeployContext{
 		Mechanism: "operator", Actionable: false,
-		Source:  crRef(ref.Kind, meta.Namespace, ref.Name),
-		Manager: managerFromCR(crCache[key], meta.Labels),
+		Source:      crRef(ref.Kind, meta.Namespace, ref.Name),
+		Manager:     managerFromCR(cr, meta.Labels),
+		OwnerUnread: cr == nil,
 	}
+	return dc
 }
 
 // customOwner returns the workload's owner in a custom resource group: its

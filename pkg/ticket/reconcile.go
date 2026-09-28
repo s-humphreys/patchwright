@@ -397,17 +397,24 @@ func clearsNothingAction(t Existing, cfg config.JiraConfig) Action {
 }
 
 // operatorChosenSkips returns each image's reason when every one of a ticket's
-// images was skipped as operator-chosen. All of them, for the same reason as
-// clearsNothing.
+// images was skipped as operator-chosen with the operator shown to be on its
+// latest version. All of them, for the same reason as clearsNothing. An operator
+// that could not be identified or checked is not here: its images are unresolved,
+// and unprovenImages holds the ticket.
 func operatorChosenSkips(images []string, skips []Skip) ([]string, bool) {
 	if len(images) == 0 {
 		return nil, false
 	}
 	byImage := map[string]string{}
 	for _, s := range skips {
-		if s.OperatorChosen {
-			byImage[s.Image] = s.Reason
+		if !s.OperatorChosen {
+			continue
 		}
+		key := s.Repository
+		if key == "" {
+			key = s.Image
+		}
+		byImage[key] = s.Reason
 	}
 	reasons := make([]string, 0, len(images))
 	for _, img := range images {
@@ -421,14 +428,16 @@ func operatorChosenSkips(images []string, skips []Skip) ([]string, bool) {
 }
 
 // operatorChosenAction closes or comments on a ticket that asks to bump images an
-// operator picks. The ticket's change does not exist: the version is the
-// operator's choice, and nothing can be edited to move it except the operator.
+// operator picks, once that operator is known to be on its latest version. The
+// ticket's change does not exist: the version is the operator's choice, and the
+// operator has nowhere to go.
 func operatorChosenAction(t Existing, cfg config.JiraConfig, reasons []string) Action {
-	const why = "still actionable, but its images' versions are chosen by an operator and no upgrade of it is on offer"
+	const why = "still actionable, but its images' versions are chosen by an operator that is on its latest version"
 	detail := "The versions of these images are chosen at runtime by the operator that runs them, not set " +
-		"anywhere a change could bump them, so the upgrade this ticket asks for is not a change anyone can " +
-		"make:\n\n* " + strings.Join(reasons, "\n* ") + "\n\nThe images stay in the queue, and a new " +
-		"ticket will be raised for the operator's upgrade when one is available."
+		"anywhere a change could bump them, and that operator is already on its latest version, so the " +
+		"upgrade this ticket asks for is not a change anyone can make:\n\n* " + strings.Join(reasons, "\n* ") +
+		"\n\nThe images stay in the queue. When a newer release of the operator is published, patchwright " +
+		"proposes that upgrade instead."
 	if cfg.CloseTransitionNoLongerActionable != "" && t.Untouched() {
 		return Action{
 			Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true,

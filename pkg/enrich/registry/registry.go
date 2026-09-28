@@ -157,14 +157,19 @@ func (r *Resolver) Upgrades(ctx context.Context, images []model.AssessedImage) (
 // upgrade, when there is one, is attached once every source has answered; see
 // enrich.RemediationEnricher.
 func operatorChosen(img model.Image, dc enrich.DeployContext) model.Upgrade {
+	// Unresolved until the operator's own version is known: "there is no upgrade"
+	// is only true once the operator is shown to be on its latest release.
 	up := model.Upgrade{
 		Kind: "image", Name: img.Registry + "/" + img.Repository, Current: img.Tag,
 		Source: dc.Source, SourcePath: dc.SourcePath,
-		Resolved: true, Managed: "operator", Manager: dc.Manager,
+		Managed: "operator", Manager: dc.Manager,
 		OperatorChosen: true, OperatorImage: dc.ManagerImage,
 	}
 	name := enrich.OperatorName(dc.Manager, dc.Source)
 	switch {
+	case dc.OwnerUnread:
+		up.Reason = "owned by " + dc.Source + ", which could not be read (grant its API group in " +
+			"rbac.customResourceGroups), so whether it sets this image and which operator picks it is unknown"
 	case dc.ManagerImage != "":
 	case dc.Manager != "":
 		up.Reason = "version chosen by the operator " + name +

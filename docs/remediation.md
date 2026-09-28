@@ -42,13 +42,16 @@ by the resource's `app.kubernetes.io/part-of`/`name` labels, or a workload's
 - if it is installed by a Flux `HelmRelease` with a newer chart, the proposal is that
   chart bump, with the image's resulting tag unknown, so a ticket claims nothing under
   "Done means";
-- otherwise there is no upgrade (`FIX` shows `none`), and `reason` says whose choice the
-  version is and why the operator's upgrade is not on offer: already on its latest
-  version, a newer operator image that is not a chart, or an operator that could not be
-  identified.
+- if the operator is shown to be on its latest version, there is no upgrade (`FIX`
+  shows `none`) and `reason` says so;
+- if the operator cannot be identified, its custom resource cannot be read (the API
+  group is not in `rbac.customResourceGroups`), or its own upgrade cannot be resolved,
+  the answer is unresolved (`FIX` shows `unknown`) with `reason` saying which. That is
+  not knowing, not "no upgrade".
 
-Such images are never ticketed on their own, and an open ticket for one is closed or
-commented on rather than reported as done.
+Such images are never ticketed as image bumps. An open ticket for them is closed as not
+done (or commented on) only when the operator is shown to be on its latest version; in
+every other case it is held.
 
 ## Columns
 
