@@ -99,7 +99,7 @@ func fixedFetcher(cr *unstructured.Unstructured) crFetcher {
 func TestOperatorOwnedWorkloadIgnoresInheritedKustomizeLabels(t *testing.T) {
 	typed := kubefake.NewSimpleClientset(eventBusStatefulSet())
 	out := map[string]enrich.DeployContext{}
-	if err := clusterImageDeployments(context.Background(), typed, fluxKustomizeDyn(), fixedFetcher(eventBus(nil)), out); err != nil {
+	if err := clusterImageDeployments(context.Background(), typed, fluxKustomizeDyn(), fixedFetcher(eventBus(nil)), nil, out); err != nil {
 		t.Fatal(err)
 	}
 	for _, img := range []string{"nats:2.10.29", "natsio/nats-server-config-reloader:0.14.0", "natsio/prometheus-nats-exporter:0.14.0"} {
@@ -123,7 +123,7 @@ func TestNonControllerOwnerDoesNotOutrankLabels(t *testing.T) {
 	sts.OwnerReferences[0].Controller = nil
 	typed := kubefake.NewSimpleClientset(sts)
 	out := map[string]enrich.DeployContext{}
-	if err := clusterImageDeployments(context.Background(), typed, fluxKustomizeDyn(), fixedFetcher(eventBus(nil)), out); err != nil {
+	if err := clusterImageDeployments(context.Background(), typed, fluxKustomizeDyn(), fixedFetcher(eventBus(nil)), nil, out); err != nil {
 		t.Fatal(err)
 	}
 	if dc := out[model.ParseImageRef("nats:2.10.29").NameTag()]; dc.Mechanism != "kustomize" {
@@ -176,7 +176,7 @@ func TestClusterScopedOwnerIsReadAtClusterScope(t *testing.T) {
 	fetch := mappedCRFetcher(func() (meta.RESTMapper, error) { return mapper, nil }, dyn)
 
 	out := map[string]enrich.DeployContext{}
-	if err := clusterImageDeployments(context.Background(), kubefake.NewSimpleClientset(dep), dyn, fetch, out); err != nil {
+	if err := clusterImageDeployments(context.Background(), kubefake.NewSimpleClientset(dep), dyn, fetch, nil, out); err != nil {
 		t.Fatal(err)
 	}
 	dc := out[image]

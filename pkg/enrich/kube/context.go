@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -26,11 +27,16 @@ var (
 	gitRepositoryGVR  = schema.GroupVersionResource{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"}
 	ociRepositoryGVR  = schema.GroupVersionResource{Group: "source.toolkit.fluxcd.io", Version: "v1beta2", Resource: "ocirepositories"}
 	helmToolkitLabels = []string{"helm.toolkit.fluxcd.io/name", "helm.sh/chart"}
+	crdGVR            = schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
 )
 
 // crFetcher fetches a custom resource by its owner reference. It is an interface
 // so the operator CR-spec detection can be tested without a live cluster.
 type crFetcher func(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error)
+
+// crdFetcher fetches the CustomResourceDefinition of a custom resource's group and
+// kind, so the install that created it can name its operator.
+type crdFetcher func(ctx context.Context, apiVersion, kind string) (*unstructured.Unstructured, error)
 
 // ImageDeployments reports the deployment context per image NameTag: how the
 // image is deployed, whether an image-tag bump is directly actionable, and
@@ -52,50 +58,62 @@ func (s *Source) ImageDeployments(ctx context.Context) (map[string]enrich.Deploy
 		if err != nil {
 			return nil, fmt.Errorf("cluster %q: %w", label, err)
 		}
-		fetch := newDynamicCRFetcher(cfg, dyn)
-		if err := clusterImageDeployments(ctx, typed, dyn, fetch, out); err != nil {
+		fetch, crds := newDynamicFetchers(cfg, dyn)
+		if err := clusterImageDeployments(ctx, typed, dyn, fetch, crds, out); err != nil {
 			return nil, fmt.Errorf("cluster %q: %w", label, err)
 		}
 	}
 	return out, nil
 }
 
-// newDynamicCRFetcher builds a crFetcher that resolves an ownerReference's Kind
-// to a resource via the discovery REST mapper (built lazily, once) and reads it
-// dynamically. If the mapper can't be built or the CR can't be read, callers
+// newDynamicFetchers builds a crFetcher that resolves an ownerReference's Kind
+// to a resource via the discovery REST mapper (built lazily, once, and shared)
+// and reads it dynamically, and a crdFetcher that reads the same Kind's
+// definition. If the mapper can't be built or the CR can't be read, callers
 // treat the operator image as non-actionable.
-func newDynamicCRFetcher(cfg *rest.Config, dyn dynamic.Interface) crFetcher {
-	return mappedCRFetcher(func() (meta.RESTMapper, error) {
-		dc, err := discovery.NewDiscoveryClientForConfig(cfg)
-		if err != nil {
-			return nil, err
-		}
-		gr, err := restmapper.GetAPIGroupResources(dc)
-		if err != nil {
-			return nil, err
-		}
-		return restmapper.NewDiscoveryRESTMapper(gr), nil
-	}, dyn)
-}
-
-// mappedCRFetcher is newDynamicCRFetcher with the mapper supplied, so scope
-// handling can be tested without a discovery endpoint.
-func mappedCRFetcher(newMapper func() (meta.RESTMapper, error), dyn dynamic.Interface) crFetcher {
+func newDynamicFetchers(cfg *rest.Config, dyn dynamic.Interface) (crFetcher, crdFetcher) {
 	var (
 		once   sync.Once
 		mapper meta.RESTMapper
 		mapErr error
 	)
+	newMapper := func() (meta.RESTMapper, error) {
+		once.Do(func() {
+			dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+			if err != nil {
+				mapErr = err
+				return
+			}
+			gr, err := restmapper.GetAPIGroupResources(dc)
+			if err != nil {
+				mapErr = err
+				return
+			}
+			mapper = restmapper.NewDiscoveryRESTMapper(gr)
+		})
+		return mapper, mapErr
+	}
+	return mappedCRFetcher(newMapper, dyn), mappedCRDFetcher(newMapper, dyn)
+}
+
+// restMapping resolves a custom resource's apiVersion and Kind to its resource.
+func restMapping(newMapper func() (meta.RESTMapper, error), apiVersion, kind string) (*meta.RESTMapping, error) {
+	mapper, err := newMapper()
+	if err != nil {
+		return nil, err
+	}
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return nil, err
+	}
+	return mapper.RESTMapping(schema.GroupKind{Group: gv.Group, Kind: kind}, gv.Version)
+}
+
+// mappedCRFetcher is the crFetcher of newDynamicFetchers with the mapper
+// supplied, so scope handling can be tested without a discovery endpoint.
+func mappedCRFetcher(newMapper func() (meta.RESTMapper, error), dyn dynamic.Interface) crFetcher {
 	return func(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error) {
-		once.Do(func() { mapper, mapErr = newMapper() })
-		if mapErr != nil {
-			return nil, mapErr
-		}
-		gv, err := schema.ParseGroupVersion(apiVersion)
-		if err != nil {
-			return nil, err
-		}
-		mapping, err := mapper.RESTMapping(schema.GroupKind{Group: gv.Group, Kind: kind}, gv.Version)
+		mapping, err := restMapping(newMapper, apiVersion, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -110,19 +128,37 @@ func mappedCRFetcher(newMapper func() (meta.RESTMapper, error), dyn dynamic.Inte
 	}
 }
 
-func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dyn dynamic.Interface, fetch crFetcher, out map[string]enrich.DeployContext) error {
+// mappedCRDFetcher is the crdFetcher of newDynamicFetchers with the mapper
+// supplied. A CRD is named "<plural>.<group>", and only the mapper knows the plural.
+func mappedCRDFetcher(newMapper func() (meta.RESTMapper, error), dyn dynamic.Interface) crdFetcher {
+	return func(ctx context.Context, apiVersion, kind string) (*unstructured.Unstructured, error) {
+		mapping, err := restMapping(newMapper, apiVersion, kind)
+		if err != nil {
+			return nil, err
+		}
+		name := mapping.Resource.Resource + "." + mapping.Resource.Group
+		return dyn.Resource(crdGVR).Get(ctx, name, metav1.GetOptions{})
+	}
+}
+
+func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dyn dynamic.Interface, fetch crFetcher, crds crdFetcher, out map[string]enrich.DeployContext) error {
 	kustSources := kustomizationSources(ctx, dyn)
 	crCache := map[string]*unstructured.Unstructured{}
 	// Every image running in this cluster by the last segment of its repository,
 	// which is how an operator's name is matched to its own image.
 	byName := map[string]string{}
 	touched := map[string]bool{}
+	// The custom resource owning each operator-chosen image, and the workloads each
+	// install created, for naming an operator from the install of its CRD.
+	owners := map[string]metav1.OwnerReference{}
+	installs := map[string][]installedWorkload{}
 
 	handle := func(meta metav1.ObjectMeta, spec corev1.PodSpec) {
 		dc, ok := workloadContext(ctx, meta, kustSources, fetch, crCache)
 		if !ok {
 			return
 		}
+		recordInstall(installs, meta, spec)
 		for _, c := range podContainers(spec) {
 			img := model.ParseImageRef(c.Image)
 			key := img.NameTag()
@@ -139,6 +175,11 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 			}
 			if existing, seen := out[key]; !seen || preferContext(dcImg, existing) {
 				out[key] = dcImg
+				if ref, ok := customOwner(meta); ok && dcImg.Mechanism == "operator" {
+					owners[key] = ref
+				} else {
+					delete(owners, key)
+				}
 			}
 		}
 	}
@@ -165,6 +206,33 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 		handle(ds.Items[i].ObjectMeta, ds.Items[i].Spec.Template.Spec)
 	}
 
+	// A custom resource that does not name its operator is still defined by a CRD,
+	// and whatever installed that CRD usually installed the operator beside it.
+	// Only a readable owner qualifies: with the owner unread, whether it sets the
+	// image is unknown, and naming an operator would let its upgrade speak for it.
+	byInstall := map[string]installedWorkload{}
+	for key := range touched {
+		dc := out[key]
+		if dc.Mechanism != "operator" || dc.Actionable || dc.Manager != "" || dc.OwnerUnread {
+			continue
+		}
+		ref, ok := owners[key]
+		if !ok {
+			continue
+		}
+		gk := ref.APIVersion + "/" + ref.Kind
+		op, ok := byInstall[gk]
+		if !ok {
+			op = operatorFromCRDInstall(ctx, crds, ref, installs)
+			byInstall[gk] = op
+		}
+		if op.image == "" || op.image == key {
+			continue
+		}
+		dc.Manager, dc.ManagerImage = op.manager, op.image
+		out[key] = dc
+	}
+
 	// An operator-derived image changes only when its operator is upgraded, so
 	// point it at the operator's own image for that upgrade to be found. Matched
 	// by name the same way the ticket planner folds managed images into their
@@ -181,6 +249,103 @@ func clusterImageDeployments(ctx context.Context, typed kubernetes.Interface, dy
 		}
 	}
 	return nil
+}
+
+// installedWorkload is a workload an install created: its image, when that is
+// one container once known sidecars are set aside, and the name to give it as
+// an operator.
+type installedWorkload struct {
+	manager string
+	image   string
+}
+
+// sidecarContainers are containers injected beside a workload's own process, which
+// never name the operator the workload runs.
+var sidecarContainers = map[string]bool{
+	"istio-proxy":     true,
+	"linkerd-proxy":   true,
+	"kube-rbac-proxy": true,
+}
+
+// installIdentities names the installs an object records it came from, in order of
+// precedence: a Flux Kustomization, a Flux HelmRelease, a Helm release. Each needs
+// both its name and namespace, since a name alone matches unrelated installs.
+func installIdentities(labels, annotations map[string]string) []string {
+	var ids []string
+	for _, p := range []struct {
+		kind           string
+		from           map[string]string
+		nameKey, nsKey string
+	}{
+		{"kustomization", labels, "kustomize.toolkit.fluxcd.io/name", "kustomize.toolkit.fluxcd.io/namespace"},
+		{"helmrelease", labels, "helm.toolkit.fluxcd.io/name", "helm.toolkit.fluxcd.io/namespace"},
+		{"helm", annotations, "meta.helm.sh/release-name", "meta.helm.sh/release-namespace"},
+	} {
+		if name, ns := p.from[p.nameKey], p.from[p.nsKey]; name != "" && ns != "" {
+			ids = append(ids, p.kind+":"+ns+"/"+name)
+		}
+	}
+	return ids
+}
+
+// recordInstall files a workload under every install it records. A workload an
+// operator created is left out: it carries whatever labels the operator copied
+// from its custom resource, and it is never the operator itself.
+func recordInstall(installs map[string][]installedWorkload, meta metav1.ObjectMeta, spec corev1.PodSpec) {
+	if ref, ok := customOwner(meta); ok && ref.Controller != nil && *ref.Controller {
+		return
+	}
+	var own []string
+	for _, c := range spec.Containers {
+		if !sidecarContainers[c.Name] {
+			own = append(own, c.Image)
+		}
+	}
+	// Named by its image's repository, the name the ticket planner folds managed
+	// images under; the workload's own name is often generic ("controller-manager").
+	w := installedWorkload{manager: meta.Name}
+	if len(own) == 1 {
+		img := model.ParseImageRef(own[0])
+		w.image = img.NameTag()
+		if name := img.Repository[strings.LastIndex(img.Repository, "/")+1:]; name != "" {
+			w.manager = name
+		}
+	}
+	for _, id := range installIdentities(meta.Labels, meta.Annotations) {
+		installs[id] = append(installs[id], w)
+	}
+}
+
+// operatorFromCRDInstall names the operator of a custom resource from the install
+// that created its CRD: the one workload that install also created. None, several,
+// or one whose image is ambiguous is no answer, because a guessed operator would
+// let an unrelated component's version close a ticket. Nothing here fails the
+// assessment; an unreadable CRD leaves the operator unknown, as before.
+func operatorFromCRDInstall(ctx context.Context, crds crdFetcher, ref metav1.OwnerReference, installs map[string][]installedWorkload) installedWorkload {
+	if crds == nil {
+		return installedWorkload{}
+	}
+	crd, err := crds(ctx, ref.APIVersion, ref.Kind)
+	if err != nil {
+		slog.DebugContext(ctx, "could not read the custom resource definition; its operator stays unnamed",
+			"apiVersion", ref.APIVersion, "kind", ref.Kind, "error", err)
+		return installedWorkload{}
+	}
+	ids := installIdentities(crd.GetLabels(), crd.GetAnnotations())
+	if len(ids) == 0 {
+		slog.DebugContext(ctx, "custom resource definition records no install; its operator stays unnamed",
+			"crd", crd.GetName())
+		return installedWorkload{}
+	}
+	// The first identity by precedence: a HelmRelease's objects carry both Flux's
+	// labels and Helm's annotations, and either names the same install.
+	candidates := installs[ids[0]]
+	if len(candidates) != 1 || candidates[0].image == "" {
+		slog.DebugContext(ctx, "install of the custom resource definition does not single out an operator",
+			"crd", crd.GetName(), "install", ids[0], "workloads", len(candidates))
+		return installedWorkload{}
+	}
+	return candidates[0]
 }
 
 // workloadContext classifies a workload's deployment mechanism and, for
