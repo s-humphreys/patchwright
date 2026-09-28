@@ -28,7 +28,9 @@
                 moves (.Ref .Repo .Current .Latest .Source .SourcePath .Managed
                 .Direct). .Current/.Latest are the image's own tags; when a Helm
                 chart owns the version, .Chart .ChartCurrent .ChartLatest name it,
-                and .Latest is empty if the target chart's tag could not be read
+                and .Latest is empty if the target chart's tag could not be read.
+                .Managed "operator" with .Chart set means an operator picks the
+                image's tag at runtime and the change is the operator's chart
     .Disambiguator - set ONLY when another ticket in this run renders the same
                 summary, naming what makes this one different. Empty otherwise,
                 so putting it in a summary costs nothing on the tickets that
@@ -52,7 +54,7 @@ Upgrade the {{ .ImageCount }} images below to clear known container vulnerabilit
 
 **Technical Requirements & Actions**
 
-{{ range .Upgrades }}* {{ .Repo }}: {{ if .Chart }}{{ .Current }}{{ if .Latest }} -> {{ .Latest }}{{ end }} (set by the {{ .Chart }} chart, which moves {{ .ChartCurrent }} -> {{ .ChartLatest }}{{ if not .Latest }}; the tag it deploys could not be read, so check it after the upgrade{{ end }}){{ else }}{{ .Current }} -> {{ .Latest }}{{ end }}{{ if not .Direct }} ({{ if eq .Managed "helm" }}version owned by its Helm chart, so bump it there{{ else }}version owned by the {{ .Managed }}, so bump it there{{ end }}){{ end }}{{ if and (not $.Source) .Source }}, change in {{ .Source }}{{ if .SourcePath }} path {{ .SourcePath }}{{ end }}{{ end }}
+{{ range .Upgrades }}* {{ .Repo }}: {{ if and .Chart (eq .Managed "operator") }}{{ .Current }} (chosen at runtime by the operator the {{ .Chart }} chart installs, which moves {{ .ChartCurrent }} -> {{ .ChartLatest }}; the tag the operator picks is only known once it runs, so check it after the upgrade){{ else if .Chart }}{{ .Current }}{{ if .Latest }} -> {{ .Latest }}{{ end }} (set by the {{ .Chart }} chart, which moves {{ .ChartCurrent }} -> {{ .ChartLatest }}{{ if not .Latest }}; the tag it deploys could not be read, so check it after the upgrade{{ end }}){{ else }}{{ .Current }} -> {{ .Latest }}{{ end }}{{ if not .Direct }} ({{ if eq .Managed "helm" }}version owned by its Helm chart, so bump it there{{ else }}version owned by the {{ .Managed }}, so bump it there{{ end }}){{ end }}{{ if and (not $.Source) .Source }}, change in {{ .Source }}{{ if .SourcePath }} path {{ .SourcePath }}{{ end }}{{ end }}
 {{ end -}}
 {{- with .Fixes }}
 This also updates the following, which are not bumped directly:

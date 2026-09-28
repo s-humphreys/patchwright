@@ -93,7 +93,7 @@ type Action struct {
 	// history records the reason.
 	NoLongerActionable bool
 	// Reason is the machine-readable cause of a close or done-note: upgrade-landed,
-	// not-running, no-longer-actionable, upgrade-clears-nothing.
+	// not-running, no-longer-actionable, upgrade-clears-nothing, operator-chosen.
 	Reason string
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
@@ -254,6 +254,12 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				out = append(out, clearsNothingAction(t, in.Config.ForProject(projectOf(t.Key))))
 				continue
 			}
+			// The same verdict for a ticket asking to bump images an operator picks:
+			// there is no such change, and no upgrade of the operator on offer either.
+			if reasons, ok := operatorChosenSkips(images, in.Skipped); ok {
+				out = append(out, operatorChosenAction(t, in.Config.ForProject(projectOf(t.Key)), reasons))
+				continue
+			}
 
 			// Configuration deciding not to ticket something is not the work being
 			// done. Without this, raising a priority threshold marks every ticket it
@@ -337,6 +343,9 @@ const (
 	// ReasonUpgradeClearsNothing is a ticket whose proposed upgrade was measured to
 	// clear none of the vulnerabilities that raised it.
 	ReasonUpgradeClearsNothing = "upgrade-clears-nothing"
+	// ReasonOperatorChosen is a ticket for images whose versions an operator picks
+	// at runtime, where no upgrade of the operator is on offer.
+	ReasonOperatorChosen = "operator-chosen"
 )
 
 // clearsNothing reports that every one of a ticket's images was skipped because
@@ -383,6 +392,57 @@ func clearsNothingAction(t Existing, cfg config.JiraConfig) Action {
 		Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonUpgradeClearsNothing,
 		Message: detail + " Left open deliberately: closing is a human decision.",
 		Dedupe:  "note-done:" + ReasonUpgradeClearsNothing,
+		Why:     why,
+	}
+}
+
+// operatorChosenSkips returns each image's reason when every one of a ticket's
+// images was skipped as operator-chosen. All of them, for the same reason as
+// clearsNothing.
+func operatorChosenSkips(images []string, skips []Skip) ([]string, bool) {
+	if len(images) == 0 {
+		return nil, false
+	}
+	byImage := map[string]string{}
+	for _, s := range skips {
+		if s.OperatorChosen {
+			byImage[s.Image] = s.Reason
+		}
+	}
+	reasons := make([]string, 0, len(images))
+	for _, img := range images {
+		reason, ok := byImage[img]
+		if !ok {
+			return nil, false
+		}
+		reasons = append(reasons, img+": "+reason)
+	}
+	return reasons, true
+}
+
+// operatorChosenAction closes or comments on a ticket that asks to bump images an
+// operator picks. The ticket's change does not exist: the version is the
+// operator's choice, and nothing can be edited to move it except the operator.
+func operatorChosenAction(t Existing, cfg config.JiraConfig, reasons []string) Action {
+	const why = "still actionable, but its images' versions are chosen by an operator and no upgrade of it is on offer"
+	detail := "The versions of these images are chosen at runtime by the operator that runs them, not set " +
+		"anywhere a change could bump them, so the upgrade this ticket asks for is not a change anyone can " +
+		"make:\n\n* " + strings.Join(reasons, "\n* ") + "\n\nThe images stay in the queue, and a new " +
+		"ticket will be raised for the operator's upgrade when one is available."
+	if cfg.CloseTransitionNoLongerActionable != "" && t.Untouched() {
+		return Action{
+			Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true,
+			Reason: ReasonOperatorChosen,
+			Message: "Closing as not done: this ticket asks for a change that does not exist.\n\n" + detail +
+				"\n\nNobody had picked this ticket up, so it is being closed as not-worked rather than as " +
+				"completed work, which is the accurate record. Reopen if this is wrong.",
+			Why: why + "; nobody picked the ticket up",
+		}
+	}
+	return Action{
+		Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonOperatorChosen,
+		Message: detail + " Left open deliberately: closing is a human decision.",
+		Dedupe:  "note-done:" + ReasonOperatorChosen,
 		Why:     why,
 	}
 }
@@ -507,7 +567,10 @@ func upgradeComplete(images []string, byRepo map[string][]sink.FindingView) (boo
 			if !f.RemediationChecked || f.Upgrade == nil || !f.Upgrade.Resolved {
 				return false, ""
 			}
-			if f.Upgrade.Available {
+			// An operator-chosen image with no upgrade is not "on the latest version":
+			// nothing moved, and the image may still carry everything that raised
+			// the ticket.
+			if f.Upgrade.Available || f.Upgrade.OperatorChosen {
 				return false, ""
 			}
 			if f.Liveness == nil {

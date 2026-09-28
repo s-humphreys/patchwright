@@ -64,6 +64,11 @@ type Skip struct {
 	// did not decline it; the change on offer simply fixes nothing, so an open
 	// ticket asking for it is closed rather than held or called finished.
 	ClearsNothing bool
+	// OperatorChosen is true when an operator picks the image's version at runtime
+	// and no upgrade of the operator is on offer, so there is no change a ticket
+	// could ask for. Like ClearsNothing the work is not done; unlike it, nothing
+	// was proposed at all.
+	OperatorChosen bool
 }
 
 // Plan is the outcome of planning: what to raise, and what was left out.
@@ -180,7 +185,12 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			continue
 		}
 		if reason, ok := p.skipReason(f); ok {
-			out.Skips = append(out.Skips, Skip{Image: f.Image, Reason: reason})
+			skip := Skip{Image: f.Image, Reason: reason}
+			if operatorChosen(f) {
+				// The bare repository, which is what an open ticket is matched on.
+				skip.Image, skip.OperatorChosen = f.Repository, true
+			}
+			out.Skips = append(out.Skips, skip)
 			continue
 		}
 		// A tracker is configured only on routes, so a finding matching none has
@@ -421,10 +431,21 @@ func (p *Planner) skipReason(f sink.FindingView) (string, bool) {
 		return "upgrade detection ran but could not resolve any version for this image (needs investigation, not a ticket)", true
 	case !f.Upgrade.Resolved:
 		return "available versions could not be resolved (e.g. private registry tags unreadable), so 'no upgrade' is unproven", true
+	case operatorChosen(f):
+		return f.Upgrade.Reason + "; there is no change to ticket", true
 	case !f.Upgrade.Available:
 		return "already on the latest available version; nothing to upgrade to", true
 	}
 	return "", false
+}
+
+// operatorChosen reports a finding whose image version an operator picks at
+// runtime, with no upgrade of that operator on offer. It is not "already on the
+// latest version": the image may well have newer tags, and none of them is a
+// change anybody can make.
+func operatorChosen(f sink.FindingView) bool {
+	u := f.Upgrade
+	return u != nil && u.OperatorChosen && !u.Available
 }
 
 // ticketGroup is one ticket's worth of findings: the upgrade(s) someone applies,
