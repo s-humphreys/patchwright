@@ -200,6 +200,7 @@ function sections(f) {
       : u?.strategy && u.strategy !== "latest" ? `${esc(u.strategy)} upgrades only` : ""),
     row("Why not resolved", u && !u.resolved
       ? `<code>${esc(u.reason || "no reason recorded")}</code>` : ""),
+    row("Why no upgrade", u && u.resolved && !u.available && u.reason ? esc(u.reason) : ""),
     row("Change lands in", u?.source
       ? `<code>${esc(u.source)}</code>${u.source_path ? ` path <code>${esc(u.source_path)}</code>` : ""}` : ""),
     row("Version owned by", u?.manager || u?.managed ? esc(u.manager || u.managed) : ""),

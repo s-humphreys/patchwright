@@ -27,7 +27,10 @@ export function upgradeCell(f) {
   // the more useful answer than "what did we compare", and an image badge in front
   // of a chart-owned upgrade reads as though the tag were the place to change it.
   const parts = [];
-  if (!u.actionable) {
+  // An operator's chart upgrade proposed for an image the operator picks is
+  // actionable, and still has to read as the operator's move, not the image's.
+  const owned = !u.actionable || u.operator_chosen;
+  if (owned) {
     parts.push(badge(MANAGED_BADGES[(u.managed || "").toLowerCase()], u.managed || "managed"));
   }
   parts.push(badge(KIND_BADGES[u.kind], u.kind));
@@ -53,7 +56,7 @@ export function upgradeCell(f) {
   }
   // Name the thing that owns it where we know it: "helm" says the tag is the wrong
   // place to look, "flux-operator-0.33.0" says where to look instead.
-  if (!u.actionable && (u.manager || u.source)) {
+  if (owned && (u.manager || u.source)) {
     parts.push(`<span class="ticket-status">${esc(u.manager || u.source)}</span>`);
   }
   return parts.join(" ");
@@ -95,6 +98,9 @@ export function upgradeText(f) {
       ? `end of life: move to ${st.product} ${st.recommended}`
       : `end of life: no maintained line found`;
   }
+  // "-" says the image is current. An operator-chosen image with no operator upgrade
+  // on offer may have plenty of newer tags; none of them is a change anyone can make.
+  if (!u.available && u.operator_chosen) return "none: the operator's choice";
   if (!u.available) return "-";
   let s = `${u.current} → ${u.latest}`;
   if (u.kind === "chart") s = "chart " + s;
@@ -138,7 +144,11 @@ export function upgradeTitle(f) {
         " rebuild would pick it up.");
     }
   }
-  if (!u.available) parts.push("Already on the latest available version.");
+  if (!u.available) {
+    parts.push(u.operator_chosen && u.reason
+      ? `No upgrade: ${u.reason}.`
+      : "Already on the latest available version.");
+  }
   if (u.managed) parts.push(`Version owned by ${u.manager || u.managed}.`);
   // Where the change lands. This used to be a second `title` on the column, which
   // silently overrode this whole function, so the explanation never showed.
