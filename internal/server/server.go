@@ -164,6 +164,8 @@ type Server struct {
 	// autoTicket nothing is raised except on request.
 	ticketer   Ticketer
 	autoTicket bool
+	// planOnWorker marks a web replica with Jira configured but no credentials.
+	planOnWorker bool
 
 	// history is nil unless a store is configured; see history.go.
 	history *historyRecorder

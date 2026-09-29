@@ -39,7 +39,9 @@ export async function loadPending() {
     // so use its words.
     const why = /not configured/i.test(e.message)
       ? "Jira is not configured, so there is no ticket plan. The queue and the page are unaffected."
-      : `Ticket reconciliation is unavailable: ${esc(e.message)}`;
+      : /made by the assessment worker/i.test(e.message)
+        ? "The ticket plan is made by the assessment worker, which logs each one; this replica has no Jira credentials to show it."
+        : `Ticket reconciliation is unavailable: ${esc(e.message)}`;
     el.innerHTML = `<div class="meta">${why}</div>`;
     return;
   }

@@ -19,6 +19,9 @@ import (
 var (
 	errTicketingNotConfigured = errTicketing("ticketing is not configured: a jira config block and JIRA_* credentials are required")
 	errNoAssessment           = errTicketing("no assessment has completed yet")
+	errPlanOnWorker           = errTicketing("the ticket plan is made by the assessment worker: this web replica holds no Jira " +
+		"credentials to repeat it (split.web.jiraCredentials is off). The worker logs every plan it makes, and applies it " +
+		"when auto-ticketing is on")
 )
 
 // errTicketing is a plain error type so the handlers can report the reason without

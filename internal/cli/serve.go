@@ -176,6 +176,14 @@ func newServeCmd() *cobra.Command {
 				jira, jerr := ticket.NewJira(cfg.Jira)
 				switch {
 				case jerr != nil:
+					if role == server.RoleWeb {
+						// The chart's default for a web replica: the worker plans and
+						// writes; this replica says so rather than "not configured".
+						slog.InfoContext(cmd.Context(),
+							"jira configured but this web replica has no credentials; the ticket plan is the worker's")
+						srv = srv.WithTicketPlanOnWorker()
+						break
+					}
 					slog.WarnContext(cmd.Context(),
 						"jira configured but credentials missing; ticket links disabled", "error", jerr)
 					if autoTicket {
