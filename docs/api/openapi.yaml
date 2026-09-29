@@ -2309,12 +2309,19 @@ components:
             the gap is reported rather than left to be inferred from cells reading "not
             checked" for no visible reason, because a missing signal looks exactly like a
             signal that found nothing.
+
+            An entry with `cluster` set is one cluster the live source could not read and
+            left out of this run. For `live`, liveness there is unknown: images seen only
+            in that cluster are left unreconciled, so none is judged not running.
           items:
             type: object
             required: [stage, error]
             properties:
-              stage: { type: string, enum: [exploit, age] }
+              stage:
+                type: string
+                enum: [exploit, age, fallback-scan, image-age, base-diff, live, namespace-labels, deploy-context, cluster-upgrades]
               error: { type: string }
+              cluster: { type: string, description: "The cluster left out, for a per-cluster read." }
         expired_suppressions:
           description: |
             Suppress rules that have lapsed, so the work they were hiding is back in

@@ -156,3 +156,19 @@ test('an enrichment that could not run is reported as a gap', () => {
   assert.equal(gaps.filter((g) => /exploit/i.test(g.headline)).length, 1,
     JSON.stringify(gaps.map((g) => g.headline)));
 });
+
+test('a cluster that could not be read is named, with what that leaves unknown', () => {
+  // One cluster returning 401 used to fail the whole estate's assessment. Now it is
+  // left out, and the page has to say which one and that liveness there is unknown.
+  const gaps = dataGaps({
+    provider_assessed: 800, provider_unassessed: 0, scanned: 800, exploit_checked: 800,
+    source_failures: [{ stage: "live", cluster: "remote<eu>", error: "list cronjobs.batch: Unauthorized" }],
+  });
+  const gap = gaps.find((g) => /could not be read/.test(g.headline));
+  assert.ok(gap, JSON.stringify(gaps.map((g) => g.headline)));
+  assert.match(gap.headline, /remote&lt;eu&gt;/, 'named, and escaped');
+  assert.match(gap.headline, /liveness there is unknown/);
+  assert.equal(gap.severe, true, 'unknown liveness changes what the queue means');
+  assert.match(gap.detail, /Unauthorized/, 'the raw reason, not a registry paraphrase');
+  assert.doesNotMatch(gap.detail, /registry/);
+});

@@ -373,6 +373,27 @@ func TestScanningDisabledInConfigSaysSo(t *testing.T) {
 	}
 }
 
+// A cluster left out of the run reads as a cluster with nothing in it unless the
+// answer says otherwise, and "not running" there would be a guess.
+func TestAClusterThatCouldNotBeReadIsNamed(t *testing.T) {
+	a := fixture()
+	a.Failures = []model.SourceFailure{
+		{Stage: model.StageLive, Cluster: "remote-eu", Error: "list cronjobs.batch: Unauthorized"},
+		{Stage: "exploit", Error: "status 502"},
+	}
+	joined := strings.Join(estateSummary(a).Caveats, " ")
+	if !strings.Contains(joined, `Cluster "remote-eu" could not be read`) || !strings.Contains(joined, "liveness there is unknown") {
+		t.Errorf("want the cluster and the unknown liveness named: %q", joined)
+	}
+	if !strings.Contains(joined, "Unauthorized") {
+		t.Errorf("want the reason, so somebody can act on it: %q", joined)
+	}
+	r, _ := serviceReport(a, "storefront")
+	if !strings.Contains(strings.Join(r.Caveats, " "), "remote-eu") {
+		t.Errorf("every report carries it, not only the estate summary: %v", r.Caveats)
+	}
+}
+
 func TestUnassessedReasonsAreCountedWorstFirst(t *testing.T) {
 	a := fixture()
 	a.Findings[1].AssessmentIssues = []string{"no registry credential"}
