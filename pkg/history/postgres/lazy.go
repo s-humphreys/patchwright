@@ -163,6 +163,30 @@ func (l *Lazy) LatestServed(ctx context.Context, after time.Time) (*history.Serv
 	return s.LatestServed(ctx, after)
 }
 
+func (l *Lazy) WorkerState(ctx context.Context) (history.WorkerState, error) {
+	s, err := l.get(ctx)
+	if err != nil {
+		return history.WorkerState{}, err
+	}
+	return s.WorkerState(ctx)
+}
+
+func (l *Lazy) SaveWorkerState(ctx context.Context, st history.WorkerState) error {
+	s, err := l.get(ctx)
+	if err != nil {
+		return err
+	}
+	return s.SaveWorkerState(ctx, st)
+}
+
+func (l *Lazy) RequestRefresh(ctx context.Context, at time.Time) error {
+	s, err := l.get(ctx)
+	if err != nil {
+		return err
+	}
+	return s.RequestRefresh(ctx, at)
+}
+
 func (l *Lazy) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()

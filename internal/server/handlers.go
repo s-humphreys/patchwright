@@ -19,6 +19,9 @@ import (
 var (
 	errTicketingNotConfigured = errTicketing("ticketing is not configured: a jira config block and JIRA_* credentials are required")
 	errNoAssessment           = errTicketing("no assessment has completed yet")
+	errPlanOnWorker           = errTicketing("the ticket plan is made by the assessment worker: this web replica holds no Jira " +
+		"credentials to repeat it (split.web.jiraCredentials is off). The worker logs every plan it makes, and applies it " +
+		"when auto-ticketing is on")
 )
 
 // errTicketing is a plain error type so the handlers can report the reason without
@@ -120,6 +123,9 @@ func registeredRoutes() []string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	for pattern, h := range s.routes() {
+		if s.role == RoleWorker && !workerRoutes[pattern] {
+			continue
+		}
 		mux.Handle(pattern, h)
 	}
 	for pattern, h := range s.signInRoutes() {
@@ -149,6 +155,9 @@ func (s *Server) meta() assessmentMeta {
 		m.GeneratedAt = &t
 		m.Error = s.latest.err
 		m.LoadedFromStore = s.loaded
+	}
+	if s.role == RoleWeb {
+		s.webMeta(&m, time.Now())
 	}
 	return m
 }
@@ -317,8 +326,13 @@ func (s *Server) handleExploitability(w http.ResponseWriter, r *http.Request) {
 	}{s.meta(), mcp.NewExploitabilityReport(a, threshold)})
 }
 
-// handleRefresh triggers an assessment in the background and returns 202.
-func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
+// handleRefresh triggers an assessment in the background and returns 202. A web
+// replica asks the worker for one instead.
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.role == RoleWeb {
+		s.requestRefresh(w, r)
+		return
+	}
 	go s.Refresh(context.Background())
 	writeJSON(w, http.StatusAccepted, struct {
 		Assessment assessmentMeta `json:"assessment"`

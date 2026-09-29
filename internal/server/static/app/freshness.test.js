@@ -33,3 +33,16 @@ test('while the first run is in flight, both facts are stated', () => {
   });
   assert.match(line().textContent, /kept from before a restart · reassessing/);
 });
+
+test('a failed refresh is stated beside the age of what is still served, not instead of it', () => {
+  renderFreshness({
+    generated_at: minutesAgo(40), running: false, version: 'v1', loaded_from_store: true, error: 'provider unreachable',
+  });
+  assert.match(line().textContent, /^assessed .* · kept from before a restart · last refresh failed: provider unreachable$/);
+  assert.equal(line().className, 'meta err');
+});
+
+test('a failure with nothing to serve is the whole line', () => {
+  renderFreshness({ generated_at: '0001-01-01T00:00:00Z', running: false, version: 'v1', error: 'provider unreachable' });
+  assert.equal(line().textContent, 'last refresh failed: provider unreachable');
+});

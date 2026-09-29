@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +29,11 @@ type memStore struct {
 	tickets                  map[string]history.TrackerTicket
 	served                   []history.ServedAssessment
 	nextServed               int64
+	worker                   history.WorkerState
 	err                      error
+	// mu makes memStore safe to share between a worker and a web server in one test,
+	// as the database is between two processes.
+	mu sync.Mutex
 }
 
 func newMemStore() *memStore {
@@ -36,6 +41,8 @@ func newMemStore() *memStore {
 }
 
 func (m *memStore) Open(context.Context) ([]history.State, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -49,6 +56,8 @@ func (m *memStore) Open(context.Context) ([]history.State, error) {
 }
 
 func (m *memStore) Record(_ context.Context, a history.Assessment, events []history.Event, marks []history.Mark) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return 0, m.err
 	}
@@ -64,6 +73,8 @@ func (m *memStore) Record(_ context.Context, a history.Assessment, events []hist
 }
 
 func (m *memStore) Append(_ context.Context, _ int64, events []history.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return m.err
 	}
@@ -100,6 +111,8 @@ func (m *memStore) apply(events []history.Event) error {
 }
 
 func (m *memStore) Events(_ context.Context, since, until time.Time) ([]history.Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -113,6 +126,8 @@ func (m *memStore) Events(_ context.Context, since, until time.Time) ([]history.
 }
 
 func (m *memStore) Assessments(_ context.Context, since, until time.Time) ([]history.Assessment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -128,6 +143,8 @@ func (m *memStore) Assessments(_ context.Context, since, until time.Time) ([]his
 }
 
 func (m *memStore) AssessmentItems(_ context.Context, id int64) ([]history.Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, a := range m.assessments {
 		if a.ID == id {
 			return a.Items, nil
@@ -137,6 +154,8 @@ func (m *memStore) AssessmentItems(_ context.Context, id int64) ([]history.Snaps
 }
 
 func (m *memStore) Item(_ context.Context, key string) (*history.ItemHistory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := &history.ItemHistory{Key: key}
 	for _, st := range m.items {
 		if st.Current.Key == key {
@@ -155,6 +174,8 @@ func (m *memStore) Item(_ context.Context, key string) (*history.ItemHistory, er
 }
 
 func (m *memStore) First(context.Context) (time.Time, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.assessments) == 0 {
 		return time.Time{}, false, nil
 	}
@@ -164,6 +185,8 @@ func (m *memStore) First(context.Context) (time.Time, bool, error) {
 // Prune only mirrors the tickets part of the postgres store: nothing here reads
 // pruned events or items back.
 func (m *memStore) Prune(_ context.Context, before time.Time) (history.Pruned, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var p history.Pruned
 	for k, t := range m.tickets {
 		if t.ResolvedAt != nil && t.ResolvedAt.Before(before) {
@@ -176,6 +199,8 @@ func (m *memStore) Prune(_ context.Context, before time.Time) (history.Pruned, e
 func (m *memStore) Close() {}
 
 func (m *memStore) UpsertTickets(_ context.Context, tickets []history.TrackerTicket) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return m.err
 	}
@@ -201,6 +226,8 @@ func (m *memStore) UpsertTickets(_ context.Context, tickets []history.TrackerTic
 }
 
 func (m *memStore) Tickets(_ context.Context, since, until time.Time) ([]history.TrackerTicket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -215,6 +242,8 @@ func (m *memStore) Tickets(_ context.Context, since, until time.Time) ([]history
 }
 
 func (m *memStore) TicketsIndexed(context.Context) (history.TicketIndexState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return history.TicketIndexState{}, m.err
 	}
@@ -231,6 +260,8 @@ func (m *memStore) TicketsIndexed(context.Context) (history.TicketIndexState, er
 }
 
 func (m *memStore) SaveServed(_ context.Context, a history.ServedAssessment, keep int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return m.err
 	}
@@ -255,6 +286,8 @@ func (m *memStore) SaveServed(_ context.Context, a history.ServedAssessment, kee
 }
 
 func (m *memStore) LatestServed(_ context.Context, after time.Time) (*history.ServedAssessment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -265,7 +298,41 @@ func (m *memStore) LatestServed(_ context.Context, after time.Time) (*history.Se
 	return &a, nil
 }
 
+func (m *memStore) WorkerState(context.Context) (history.WorkerState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return history.WorkerState{}, m.err
+	}
+	return m.worker, nil
+}
+
+func (m *memStore) SaveWorkerState(_ context.Context, st history.WorkerState) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	st.RefreshRequested = m.worker.RefreshRequested
+	m.worker = st
+	return nil
+}
+
+func (m *memStore) RequestRefresh(_ context.Context, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if m.worker.RefreshRequested == nil || at.After(*m.worker.RefreshRequested) {
+		m.worker.RefreshRequested = &at
+	}
+	return nil
+}
+
 func (m *memStore) kinds() map[history.Kind]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := map[history.Kind]int{}
 	for _, e := range m.events {
 		out[e.Kind]++

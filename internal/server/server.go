@@ -21,6 +21,7 @@ import (
 	"github.com/s-humphreys/patchwright/pkg/analytics"
 	"github.com/s-humphreys/patchwright/pkg/config"
 	"github.com/s-humphreys/patchwright/pkg/group"
+	"github.com/s-humphreys/patchwright/pkg/history"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -163,6 +164,8 @@ type Server struct {
 	// autoTicket nothing is raised except on request.
 	ticketer   Ticketer
 	autoTicket bool
+	// planOnWorker marks a web replica with Jira configured but no credentials.
+	planOnWorker bool
 
 	// history is nil unless a store is configured; see history.go.
 	history *historyRecorder
@@ -174,6 +177,19 @@ type Server struct {
 	// process. It is what keeps ticketing and history off stale data, and what the
 	// API reports as loaded_from_store.
 	loaded bool
+	// seenServed is the id of the last stored assessment read, so one that cannot be
+	// used is explained once rather than on every poll; storeFailing the same for an
+	// unreachable store.
+	seenServed   int64
+	storeFailing bool
+
+	// role splits the process in two; see role.go. The zero value is RoleAll.
+	role Role
+	// worker is what a web replica last read of the worker's state, and
+	// refreshHandled the newest refresh request a worker has acted on.
+	worker         history.WorkerState
+	refreshHandled *time.Time
+	reportMu       sync.Mutex
 	// startedAt is when the in-flight assessment began. A first full run takes
 	// minutes (every cluster, every image), and a client showing nothing with no
 	// indication of progress is indistinguishable from one that is broken.
@@ -226,6 +242,9 @@ func (s *Server) lookupTickets(ctx context.Context) map[string][]ticketRef {
 // refreshes are collapsed: if one is already running, Refresh returns without
 // starting another.
 func (s *Server) Refresh(ctx context.Context) {
+	if s.role == RoleWeb {
+		return
+	}
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
@@ -235,6 +254,7 @@ func (s *Server) Refresh(ctx context.Context) {
 	started := time.Now()
 	s.startedAt = started
 	s.mu.Unlock()
+	s.reportWorkerState(ctx)
 
 	// published is set once a successful snapshot is cached, so ticketing reconciles
 	// exactly what the API is serving rather than a half-built or failed cache. The
@@ -246,8 +266,13 @@ func (s *Server) Refresh(ctx context.Context) {
 		s.mu.Lock()
 		s.running = false
 		s.mu.Unlock()
+		// Stored before the worker reports the run over, so a web replica that sees
+		// it finish finds the assessment it produced.
 		if published {
 			s.persistServed(ctx, snap)
+		}
+		s.reportWorkerState(ctx)
+		if published {
 			s.recordHistory(ctx, snap, started)
 			s.recordTicketWrites(ctx, s.autoReconcile(ctx))
 			s.syncTracker(ctx)
@@ -318,6 +343,13 @@ func (s *Server) Refresh(ctx context.Context) {
 // stored assessment is served alongside the first run rather than before it, so a
 // slow or unreachable database never delays the assessment.
 func (s *Server) Start(ctx context.Context, interval time.Duration) {
+	switch s.role {
+	case RoleWeb:
+		s.runWeb(ctx)
+		return
+	case RoleWorker:
+		go s.runWorker(ctx)
+	}
 	go s.restoreServed(ctx)
 	s.Refresh(ctx)
 	if interval <= 0 {

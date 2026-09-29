@@ -1,0 +1,234 @@
+{{/*
+The split server: a worker that assesses and web replicas that serve. Rendered in
+place of deployment.yaml's single Deployment when split.enabled; see values.yaml.
+*/}}
+{{- if .Values.split.enabled }}
+{{- if not .Values.server.enabled }}
+{{- fail "split.enabled needs server.enabled: the split is of the long-running server, and the CronJob has none" }}
+{{- end }}
+{{- if not .Values.history.enabled }}
+{{- fail "split.enabled needs history.enabled: the worker and the web replicas share nothing but the history database, so without one the web replicas have no assessment to serve and refuse to start" }}
+{{- end }}
+{{- if lt (int .Values.split.web.replicas) 1 }}
+{{- fail "split.web.replicas must be at least 1: the web replicas are what the Service points at" }}
+{{- end }}
+{{- if and .Values.auth.oidc.issuer (not .Values.auth.oidc.sessionKeyRef.name) (not .Values.credentialsSecretName) }}
+{{- fail "split.enabled with auth.oidc needs PATCHWRIGHT_SESSION_KEY, from auth.oidc.sessionKeyRef or the credentials Secret: each web replica would otherwise sign cookies with its own key, and refuses to start without one" }}
+{{- end }}
+{{- $fullname := include "patchwright.fullname" . }}
+{{- /* Its own account whatever serviceAccount.create says: the shared one is typically
+the account a ClusterRole is bound to, here or by the patchwright-rbac chart. */}}
+{{- $webSA := .Values.split.web.serviceAccountName | default (printf "%s-web" $fullname) }}
+{{- $createWebSA := not .Values.split.web.serviceAccountName }}
+{{- /* The web replicas need the workload identity only to reach an Azure database with an Entra token; registry pulls are the worker's. */}}
+{{- $webIdentity := and .Values.registryAuth.azure.workloadIdentity.enabled (eq .Values.history.auth "azure") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-worker
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: 1
+  # One worker at a time: it owns the Trivy cache volume, which is ReadWriteOnce, and
+  # two assessing at once would raise every ticket twice. The web replicas keep
+  # serving the stored assessment while it is replaced.
+  strategy:
+    type: Recreate
+  progressDeadlineSeconds: {{ .Values.server.startupBudgetSeconds }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "patchwright.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "patchwright.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+        {{- if .Values.registryAuth.azure.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "patchwright.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.podSecurityContext.runAsUser }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        {{- include "patchwright.container" (dict "root" . "command" "serve" "remediation" .Values.reconcile.remediation "ports" true "modeArgs" (list (printf "--addr=:%v" .Values.server.port) (printf "--interval=%s" .Values.server.interval) "--role=worker")) | nindent 8 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        {{- include "patchwright.volumes" (dict "root" .) | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-web
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.split.web.replicas }}
+  # Ready once a stored assessment is loaded, which is seconds after the first one
+  # exists. Only a first install waits for the worker's first run.
+  progressDeadlineSeconds: {{ .Values.server.startupBudgetSeconds }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "patchwright.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "patchwright.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+        {{- if $webIdentity }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $webSA }}
+      # A web replica reads nothing from the Kubernetes API, so it carries no token for it.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.podSecurityContext.runAsUser }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        {{- include "patchwright.container" (dict "root" . "command" "serve" "remediation" false "ports" true "web" true "resources" .Values.split.web.resources "extraArgs" .Values.split.web.extraArgs "modeArgs" (list (printf "--addr=:%v" .Values.server.port) "--role=web")) | nindent 8 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        {{- include "patchwright.volumes" (dict "root" . "web" true) | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.server.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "patchwright.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: {{ .Values.server.port }}
+      targetPort: http
+---
+# The worker's own Service, for its metrics: the monitors select it by component, and
+# nothing else should route here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-worker
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "patchwright.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: worker
+  ports:
+    - name: http
+      port: {{ .Values.server.port }}
+      targetPort: http
+{{- if .Values.split.web.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-web
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  maxUnavailable: {{ .Values.split.web.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "patchwright.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+{{- end }}
+{{- if $createWebSA }}
+---
+# The web replicas' identity: bound to nothing, so it can read nothing from the
+# cluster even if a token were mounted.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $webSA }}
+  labels:
+    {{- include "patchwright.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- if $webIdentity }}
+  annotations:
+    azure.workload.identity/client-id: {{ required "registryAuth.azure.workloadIdentity.clientId is required" .Values.registryAuth.azure.workloadIdentity.clientId | quote }}
+    {{- with .Values.registryAuth.azure.workloadIdentity.tenantId }}
+    azure.workload.identity/tenant-id: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+automountServiceAccountToken: false
+{{- end }}
+{{- end }}

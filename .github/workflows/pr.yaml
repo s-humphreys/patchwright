@@ -107,6 +107,116 @@ jobs:
             exit 1
           fi
 
+          # The split server: a worker and web replicas over the history database.
+          main=(deploy/helm/patchwright --set provider.input.secretName=ci --set image.tag=v0.0.0-ci)
+          history=(--set history.enabled=true --set history.retention=400d --set history.connection.host=db)
+          helm lint "${main[@]}" "${history[@]}" --set split.enabled=true
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set scan.enabled=true --set scan.cache.persistence.enabled=true --set metrics.serviceMonitor.enabled=true)
+          for want in 'name: pw-patchwright-worker' 'name: pw-patchwright-web' 'kind: PodDisruptionBudget' \
+              '"--role=worker"' '"--role=web"' 'automountServiceAccountToken: false' 'type: Recreate'; do
+            if ! grep -qF -- "$want" <<<"$split"; then
+              echo "the split render is missing: $want" >&2
+              exit 1
+            fi
+          done
+          # Only the worker mounts the ReadWriteOnce cache and is bound to the cluster-read
+          # role; the web replicas would otherwise fight over the volume across nodes.
+          if [ "$(grep -c 'claimName: pw-patchwright-trivy-cache' <<<"$split")" != 1 ]; then
+            echo 'the Trivy cache volume is mounted by more than the worker' >&2
+            exit 1
+          fi
+          # doc prints the rendered object of one kind and name, so a check can look at the
+          # web replicas alone rather than grep a render that also holds the worker.
+          doc() {
+            python3 -c 'import sys, yaml
+          for d in yaml.safe_load_all(sys.stdin):
+              if d and d["kind"] == sys.argv[1] and d["metadata"]["name"] == sys.argv[2]:
+                  print(yaml.safe_dump(d))' "$1" "$2"
+          }
+
+          # The top-level extraArgs are the worker's: a web replica refuses --auto-ticket,
+          # and passing it there would crash-loop every one of them.
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set 'extraArgs={--auto-ticket}' --set 'split.web.extraArgs={--web-flag}')
+          web=$(doc Deployment pw-patchwright-web <<<"$split")
+          worker=$(doc Deployment pw-patchwright-worker <<<"$split")
+          if grep -qF -- '--auto-ticket' <<<"$web" || ! grep -qF -- '--web-flag' <<<"$web" \
+              || ! grep -qF -- '--auto-ticket' <<<"$worker" || grep -qF -- '--web-flag' <<<"$worker"; then
+            echo 'extraArgs and split.web.extraArgs did not reach the worker and the web replicas respectively' >&2
+            exit 1
+          fi
+
+          # The disruption budget bounds how many web replicas go at once; a minimum would
+          # block every drain of a single replica.
+          pdb=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true --set split.web.replicas=1 \
+            | doc PodDisruptionBudget pw-patchwright-web)
+          if ! grep -qF 'maxUnavailable: 1' <<<"$pdb" || grep -qF 'minAvailable' <<<"$pdb"; then
+            echo 'the web PodDisruptionBudget is not maxUnavailable 1' >&2
+            exit 1
+          fi
+
+          # The web replicas never share the worker's ServiceAccount, even when the chart
+          # does not create that one: it is the account the cluster-read role is bound to.
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set serviceAccount.create=false --set serviceAccount.name=shared)
+          if ! grep -qF 'serviceAccountName: pw-patchwright-web' <<<"$(doc Deployment pw-patchwright-web <<<"$split")" \
+              || [ -z "$(doc ServiceAccount pw-patchwright-web <<<"$split")" ] \
+              || [ -n "$(doc ServiceAccount shared <<<"$split")" ]; then
+            echo 'the web replicas do not run under a ServiceAccount of their own' >&2
+            exit 1
+          fi
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set split.web.serviceAccountName=mine)
+          if ! grep -qF 'serviceAccountName: mine' <<<"$(doc Deployment pw-patchwright-web <<<"$split")" \
+              || [ -n "$(doc ServiceAccount pw-patchwright-web <<<"$split")" ]; then
+            echo 'split.web.serviceAccountName was not used, or a web ServiceAccount was still created' >&2
+            exit 1
+          fi
+
+          # A web replica gets named keys from the credentials Secret, never all of it, and
+          # no Jira credentials unless asked.
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true --set credentialsSecretName=creds)
+          web=$(doc Deployment pw-patchwright-web <<<"$split")
+          if grep -qF 'envFrom' <<<"$web" || grep -qF 'JIRA_' <<<"$web" \
+              || ! grep -qF 'key: PATCHWRIGHT_API_TOKEN' <<<"$web" || ! grep -qF 'optional: true' <<<"$web" \
+              || ! grep -qF 'envFrom' <<<"$(doc Deployment pw-patchwright-worker <<<"$split")"; then
+            echo 'the web replicas take the whole credentials Secret, or Jira credentials by default' >&2
+            exit 1
+          fi
+          web=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true --set credentialsSecretName=creds \
+            --set split.web.jiraCredentials=true | doc Deployment pw-patchwright-web)
+          if ! grep -qF 'key: JIRA_API_TOKEN' <<<"$web" || grep -qF 'envFrom' <<<"$web"; then
+            echo 'split.web.jiraCredentials did not pass the Jira keys, and only them' >&2
+            exit 1
+          fi
+
+          # And with it off, nothing of it renders: the single Deployment stays the default.
+          if helm template pw "${main[@]}" "${history[@]}" | grep -qE -- '--role=|component: (worker|web)'; then
+            echo 'split resources rendered with split.enabled false' >&2
+            exit 1
+          fi
+
+          # Each of these must FAIL to render: a split with nothing to share, with no
+          # server to split, with no web replica, or with sign-in and no shared key.
+          if helm template "${main[@]}" --set split.enabled=true > /dev/null 2>&1; then
+            echo 'split.enabled rendered without history, and must not have' >&2
+            exit 1
+          fi
+          if helm template "${main[@]}" "${history[@]}" --set split.enabled=true --set server.enabled=false > /dev/null 2>&1; then
+            echo 'split.enabled rendered without the server, and must not have' >&2
+            exit 1
+          fi
+          if helm template "${main[@]}" "${history[@]}" --set split.enabled=true --set split.web.replicas=0 > /dev/null 2>&1; then
+            echo 'split.enabled rendered with no web replicas, and must not have' >&2
+            exit 1
+          fi
+          if helm template "${main[@]}" "${history[@]}" --set split.enabled=true --set auth.oidc.issuer=https://idp \
+              --set auth.oidc.clientID=c --set auth.oidc.redirectURL=https://x/cb > /dev/null 2>&1; then
+            echo 'split.enabled with sign-in rendered without a session key source, and must not have' >&2
+            exit 1
+          fi
+
   integration:
     name: integration-kind
     runs-on: ubuntu-latest

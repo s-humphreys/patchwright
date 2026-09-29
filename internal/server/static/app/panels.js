@@ -10,7 +10,11 @@ export function renderFreshness(a) {
   if (ver) ver.textContent = a && a.version ? a.version : "";
 
   const el = $("#freshness");
-  if (a && a.error) {
+  el.title = "";
+  // With nothing to serve, the failure is the whole story. With something to serve,
+  // it is said beside the age: replacing the line would hide how old the data still
+  // on the page is, which is the thing a failed refresh makes worth knowing.
+  if (a && a.error && !hasAssessment(a)) {
     el.textContent = `last refresh failed: ${a.error}`;
     el.className = "meta err";
     return;
@@ -35,6 +39,11 @@ export function renderFreshness(a) {
     el.title += " (stored by the previous process; replaced when this one's first assessment completes)";
   }
   if (a.running) el.textContent += ` · reassessing${elapsed(a)}`;
+  if (a.error) {
+    el.textContent += ` · last refresh failed: ${a.error}`;
+    el.className = "meta err";
+    return;
+  }
   el.className = "meta";
 }
 

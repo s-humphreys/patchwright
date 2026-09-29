@@ -39,6 +39,14 @@ type Ticketer interface {
 	ticket.Applier
 }
 
+// WithTicketPlanOnWorker says that Jira is configured but this web replica was
+// given no credentials for it, so the ticket plan is the worker's alone. Without it
+// the plan endpoint would say ticketing is not configured, which is untrue.
+func (s *Server) WithTicketPlanOnWorker() *Server {
+	s.planOnWorker = true
+	return s
+}
+
 // WithTicketing attaches ticket planning. autoApply raises and reconciles tickets
 // on every scheduled refresh; without it the endpoints still work on request.
 func (s *Server) WithTicketing(t Ticketer, autoApply bool) *Server {
@@ -92,6 +100,13 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 
+	// Refused before planning: a web replica may have no Jira credentials to plan with,
+	// and "not configured" would be the wrong reason to give.
+	if s.role == RoleWeb {
+		writeError(w, http.StatusConflict, "this replica serves the page and the API and never writes to a tracker; "+
+			"tickets are applied by the assessment worker, with --auto-ticket, or by `patchwright ticket`")
+		return
+	}
 	// Read before planning: a loaded assessment can only be replaced by a fresh one,
 	// never the reverse, so a plan made after this check is at least as fresh.
 	loaded := s.meta().LoadedFromStore
@@ -133,6 +148,9 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 
 // planTickets reconciles the cached assessment against Jira.
 func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
+	if s.ticketer == nil && s.planOnWorker {
+		return nil, errPlanOnWorker
+	}
 	if s.ticketer == nil {
 		return nil, errTicketingNotConfigured
 	}
@@ -148,9 +166,13 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 	if err != nil {
 		return nil, err
 	}
+	recent := s.recentlyMissing()
+	if s.role == RoleWeb {
+		recent = s.recentlyMissingFromStore(ctx)
+	}
 	return ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, Skipped: plan.Skips, OpenByImage: index, Findings: snap.views,
-		Config: s.ticketer.Config(), RecentlyReported: s.recentlyMissing(),
+		Config: s.ticketer.Config(), RecentlyReported: recent,
 	}), nil
 }
 

@@ -61,6 +61,61 @@ server:
   # identity and no per-team scoping; put OIDC in front for anything beyond a trusted
   # network.
 
+# Run the server as two Deployments instead of one: a worker that assesses, and web
+# replicas that serve the page, the API and MCP. Off by default, and nothing changes
+# while it is off: one Deployment, as above.
+#
+# Worth it when the page must stay up while assessments run and restart - a worker
+# evicted mid-scan, or out of memory on a large estate, no longer takes the page with
+# it - and when more than one replica should serve it. It needs history
+# (history.enabled): the worker stores every assessment and the web replicas read it
+# from there, and ask the worker for a fresh one through the same database. Rendering
+# refuses split.enabled without it.
+#
+# The worker is one replica with strategy Recreate, owns the Trivy cache volume and is
+# the only pod bound to the cluster-read ClusterRole. It serves only its probes and
+# /metrics; the metrics monitors scrape it and not the web replicas. The web replicas
+# run under a ServiceAccount of their own with no Kubernetes API access and no token
+# mounted, never assess and never write to Jira or the history record, and are what
+# the Service points at. With auth.oidc, every replica must sign cookies with the same
+# key, so PATCHWRIGHT_SESSION_KEY is required (auth.oidc.sessionKeyRef, or the
+# credentials Secret). See docs/deploying.md.
+split:
+  enabled: false
+  web:
+    replicas: 2
+    # For the web replicas only; the worker keeps `resources` below. A web replica
+    # holds one decoded assessment in memory and does no scanning, so it needs a
+    # fraction of what the worker does.
+    resources: {}
+    # The web replicas' ServiceAccount. Empty means the chart creates <release>-web,
+    # bound to nothing, whatever serviceAccount.create says: the shared account is the
+    # one the cluster-read role is bound to. Name an existing account only if it too
+    # is bound to nothing.
+    serviceAccountName: ""
+    # Whether the web replicas get Jira credentials, for the ticket plan preview
+    # (GET /api/v1/tickets and the pending panel), which searches Jira's open tickets.
+    # Off by default: a web replica then holds no Jira credential at all, and the plan
+    # endpoint says the plan is the worker's (the worker logs every plan it makes).
+    # On, the JIRA_* keys of credentialsSecretName are passed to the web replicas; a web
+    # replica only ever searches, so give it a read-only token if your Jira allows one.
+    #
+    # Whatever this says, a web replica takes only named keys from credentialsSecretName
+    # (the API token, the OIDC secret and session key, the history DSN and password), not
+    # the whole Secret: the scan provider, registry and Azure DevOps credentials stay
+    # with the worker.
+    jiraCredentials: false
+    # Extra args for `patchwright serve --role=web`. The top-level extraArgs go to the
+    # worker only: they are usually assessment flags, and one the web role refuses,
+    # such as --auto-ticket, would leave every web replica crash-looping.
+    extraArgs: []
+    # maxUnavailable rather than minAvailable: with one replica, minAvailable 1 would
+    # refuse every voluntary eviction and hang node drains, while maxUnavailable 1
+    # keeps all but one serving at any replica count and never blocks a drain.
+    podDisruptionBudget:
+      enabled: true
+      maxUnavailable: 1
+
 # Prometheus metrics, prefixed patchwright_, served at /metrics in server mode.
 #
 # The endpoint is unauthenticated by default, like the health probes. A scrape config

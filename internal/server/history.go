@@ -278,6 +278,13 @@ func (s *Server) historyStatus() historyStatus {
 	if s.history == nil {
 		return historyStatus{}
 	}
+	if s.role == RoleWeb {
+		// A web replica records nothing; the status is the worker's, as it reported it.
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return historyStatus{Enabled: true, LastRecorded: s.worker.HistoryRecorded, LastError: s.worker.HistoryError,
+			RetentionDays: int(s.history.retention.Hours() / 24)}
+	}
 	s.history.mu.Lock()
 	defer s.history.mu.Unlock()
 	st := historyStatus{Enabled: true, LastError: s.history.lastErr, RetentionDays: int(s.history.retention.Hours() / 24)}

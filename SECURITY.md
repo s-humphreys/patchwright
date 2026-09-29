@@ -47,6 +47,14 @@ it at once instead of waiting out a fresh run. That is the in-memory assessment 
 rest: the facts the record already holds, in the shape the page shows them, for the
 newest three runs only. See [history](docs/history.md#restarts-serve-the-last-assessment).
 
+A [split deployment](docs/deploying.md#splitting-the-worker-from-the-page) narrows what
+the serving pods hold. The web replicas answer every request from that stored
+assessment and the record; they run under a ServiceAccount bound to nothing, with no
+Kubernetes token mounted, never pull an image and never write to Jira. Only the single
+worker holds the cluster read grant, the registry access and the tracker writes. The
+two share one extra row in the database: the worker's heartbeat and the time a refresh
+was last asked for.
+
 The credential file deserves a note, because handing a subprocess a secret is
 exactly the kind of thing a review should ask about. Base-image scanning shells out
 to Trivy, which would otherwise find its own credentials through the docker
