@@ -200,3 +200,49 @@ func TestAggregateCountsOpenItemsOnceUnderTheirMostSevereSignal(t *testing.T) {
 		t.Errorf("an empty queue is zeros: %v", got)
 	}
 }
+
+// Earlier versions wrote the same close on every hourly run. Those rows are still in
+// the record, and each (item, ticket) close counts once until the ticket is raised
+// again.
+func TestAggregateCountsATicketCloseOncePerItemAndTicket(t *testing.T) {
+	r := Range{Since: day(2026, 7, 1), Until: day(2026, 9, 1), Bucket: BucketMonth}
+	closed := func(item int64, key, ticket string, at time.Time, reason string, days int) Event {
+		return Event{ItemID: item, Key: key, Kind: KindTicketClosed, At: at, Payload: Payload{
+			Ticket: ticket, EvidenceAtClose: ptr(false), Reason: reason, DaysToDue: ptr(days), Overdue: ptr(days < 0),
+		}}
+	}
+	var events []Event
+	// Item 1, PROJ-1: the same close repeated on three runs, the last in August.
+	for h := 0; h < 2; h++ {
+		events = append(events, closed(1, "k1", "PROJ-1", day(2026, 7, 10).Add(time.Duration(h)*time.Hour), "upgrade-landed", 2))
+	}
+	events = append(events, closed(1, "k1", "PROJ-1", day(2026, 8, 2), "upgrade-landed", 2))
+	// Item 2 shares PROJ-1: a different item's close is its own.
+	events = append(events, closed(2, "k2", "PROJ-1", day(2026, 7, 10), "", -1), closed(2, "k2", "PROJ-1", day(2026, 7, 11), "", -1))
+	// Item 3, PROJ-3: closed, raised again, closed again. Two closes.
+	events = append(events,
+		closed(3, "k3", "PROJ-3", day(2026, 7, 12), "", 0),
+		closed(3, "k3", "PROJ-3", day(2026, 7, 12).Add(time.Hour), "", 0),
+		Event{ItemID: 3, Key: "k3", Kind: KindTicketRaised, At: day(2026, 7, 20), Payload: Payload{Ticket: "PROJ-3", Action: "extend"}},
+		closed(3, "k3", "PROJ-3", day(2026, 7, 25), "", 0),
+		closed(3, "k3", "PROJ-3", day(2026, 7, 25).Add(time.Hour), "", 0),
+	)
+
+	rep := Aggregate(r, nil, events, nil, time.Time{}, day(2026, 9, 1))
+	jul, aug := rep.Movement[0], rep.Movement[1]
+	if jul.TicketsClosed != 4 || jul.TicketsClosedFindingOpen != 4 {
+		t.Errorf("July closed/finding open = %d/%d, want 4/4 (item 1, item 2, item 3 twice)", jul.TicketsClosed, jul.TicketsClosedFindingOpen)
+	}
+	if jul.TicketsClosedOnTime != 3 || jul.TicketsClosedOverdue != 1 {
+		t.Errorf("July on time/overdue = %d/%d, want 3/1", jul.TicketsClosedOnTime, jul.TicketsClosedOverdue)
+	}
+	if !maps.Equal(jul.TicketsClosedByTool, map[string]int{"upgrade-landed": 1}) {
+		t.Errorf("July closed by tool = %v, want upgrade-landed once", jul.TicketsClosedByTool)
+	}
+	if jul.TicketsRaised != 1 {
+		t.Errorf("July raised = %d, want 1", jul.TicketsRaised)
+	}
+	if aug.TicketsClosed != 0 || aug.TicketsClosedOnTime != 0 || aug.TicketsClosedByTool != nil || aug.MeanDaysToDueAtClose != nil {
+		t.Errorf("August holds only a repeat of July's close and must count nothing: %+v", aug)
+	}
+}

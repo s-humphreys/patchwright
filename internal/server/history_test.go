@@ -64,12 +64,24 @@ func (m *memStore) Record(_ context.Context, a history.Assessment, events []hist
 	m.nextAssessment++
 	a.ID = m.nextAssessment
 	m.assessments = append(m.assessments, a)
+	// Events before marks, as the real store applies them.
+	if err := m.apply(events); err != nil {
+		return 0, err
+	}
 	for _, mk := range marks {
-		if st := m.items[mk.ItemID]; st != nil {
-			st.Missing, st.MissingSince = mk.Missing, mk.MissingSince
+		st := m.items[mk.ItemID]
+		if _, closed := m.closed[mk.ItemID]; st == nil || closed {
+			continue
+		}
+		st.Missing, st.MissingSince = mk.Missing, mk.MissingSince
+		if mk.RefreshTickets {
+			st.Current.Tickets = nil
+			if len(mk.Tickets) > 0 {
+				st.Current.Tickets = append([]string(nil), mk.Tickets...)
+			}
 		}
 	}
-	return a.ID, m.apply(events)
+	return a.ID, nil
 }
 
 func (m *memStore) Append(_ context.Context, _ int64, events []history.Event) error {
@@ -613,6 +625,72 @@ func TestHistoryGraceHoldsTicketsAndDelaysLapse(t *testing.T) {
 	}
 }
 
+// flakyTickets is an open-ticket index a test can break and mend between runs.
+type flakyTickets struct {
+	byImage map[string][]ticket.Existing
+	err     error
+}
+
+func (f *flakyTickets) OpenByImage(context.Context) (map[string][]ticket.Existing, error) {
+	return f.byImage, f.err
+}
+
+// A failed open-ticket lookup makes every ticket look closed. The run records no
+// closes and leaves the stored lists alone; the next run that reads the index
+// records the genuine close once, still attributed to patchwright.
+func TestHistoryFailedTicketLookupRecordsNoCloses(t *testing.T) {
+	store := newMemStore()
+	idx := &flakyTickets{byImage: map[string][]ticket.Existing{"app": {{Key: "PROJ-1", Category: "new"}}}}
+	s := New(&stubAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders")}}).
+		WithTickets(idx, "").WithHistory(store, 30*24*time.Hour)
+	s.Refresh(context.Background())
+	closes := func() []history.Event {
+		var out []history.Event
+		for _, e := range store.events {
+			if e.Kind == history.KindTicketClosed {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	storedTickets := func() []string {
+		open, _ := store.Open(context.Background())
+		if len(open) != 1 {
+			t.Fatalf("open items = %+v, want one", open)
+		}
+		return open[0].Current.Tickets
+	}
+	if got := storedTickets(); !reflect.DeepEqual(got, []string{"PROJ-1"}) {
+		t.Fatalf("stored tickets = %v", got)
+	}
+
+	// Reconciliation closes PROJ-1, then the next run cannot read the index.
+	s.recordTicketWrites(context.Background(), []ticket.Result{
+		{Action: ticket.Action{Kind: ticket.ActionClose, TicketKey: "PROJ-1", Reason: ticket.ReasonUpgradeLanded}, Key: "PROJ-1"},
+	})
+	idx.byImage, idx.err = nil, errors.New("tracker unavailable")
+	s.Refresh(context.Background())
+	if got := closes(); len(got) != 0 {
+		t.Fatalf("a failed lookup recorded closes: %+v", got)
+	}
+	if got := storedTickets(); !reflect.DeepEqual(got, []string{"PROJ-1"}) {
+		t.Errorf("stored tickets after a failed lookup = %v, want them untouched", got)
+	}
+
+	// The index answers again, without PROJ-1, for three runs.
+	idx.err = nil
+	for i := 0; i < 3; i++ {
+		s.Refresh(context.Background())
+	}
+	got := closes()
+	if len(got) != 1 || got[0].Payload.Ticket != "PROJ-1" {
+		t.Fatalf("want one close for PROJ-1, got %+v", got)
+	}
+	if got[0].Payload.Reason != ticket.ReasonUpgradeLanded {
+		t.Errorf("close reason = %q, want the reason held over the failed run", got[0].Payload.Reason)
+	}
+}
+
 // trackerIndex is an open-ticket index that can also date the tracker's tickets,
 // as *ticket.Jira does.
 type trackerIndex struct {
@@ -873,4 +951,31 @@ func equalInts(a, b []int) bool {
 		}
 	}
 	return true
+}
+
+// A web replica holds no Jira credentials, but the site's address is not a secret:
+// the keys it lists must still be links.
+func TestTicketLinksWithoutJiraCredentials(t *testing.T) {
+	store := newMemStore()
+	created := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	store.tickets["PROJ-7"] = history.TrackerTicket{Key: "PROJ-7", Project: "PROJ", CreatedAt: created}
+	s := New(&stubAssessor{}).WithHistory(store, 400*24*time.Hour).
+		WithTicketPlanOnWorker().WithTicketLinks("https://jira.example.com/")
+
+	var resp ticketsPerDayResponse
+	path := "/api/v1/history/tickets?since=2026-09-03T00:00:00Z&until=2026-09-04T00:00:00Z"
+	if code := getJSON(t, s.Handler(), path, &resp); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	var url string
+	for _, d := range resp.Tickets.Days {
+		for _, tk := range d.Tickets {
+			if tk.Key == "PROJ-7" {
+				url = tk.URL
+			}
+		}
+	}
+	if url != "https://jira.example.com/browse/PROJ-7" {
+		t.Errorf("url = %q, want a browse link built from the base URL alone", url)
+	}
 }

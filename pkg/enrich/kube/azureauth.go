@@ -97,6 +97,17 @@ func (a *azureTokenSource) Token(ctx context.Context) (string, error) {
 	return a.token, nil
 }
 
+// invalidate drops the cached token if it is still the one an API server rejected,
+// so the next request mints a fresh one rather than presenting it again until it
+// expires. Compared first because another request may already have replaced it.
+func (a *azureTokenSource) invalidate(token string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.token == token {
+		a.token = ""
+	}
+}
+
 // apply puts the token source behind a rest.Config, replacing whatever credentials the
 // kubeconfig carried.
 //
@@ -132,5 +143,11 @@ func (t *azureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	// Cloned: a RoundTripper must not modify the request it is given.
 	r := req.Clone(req.Context())
 	r.Header.Set("Authorization", "Bearer "+token)
-	return t.next.RoundTrip(r)
+	resp, err := t.next.RoundTrip(r)
+	// A cached token an API server rejects is otherwise reused for up to an hour, and
+	// the retry of the failed cluster read would present the same one.
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		t.source.invalidate(token)
+	}
+	return resp, err
 }

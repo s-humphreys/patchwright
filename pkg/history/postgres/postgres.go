@@ -271,8 +271,18 @@ func (s *Store) Record(ctx context.Context, a history.Assessment, events []histo
 		return 0, err
 	}
 	for _, m := range marks {
-		if _, err := tx.Exec(ctx, `UPDATE items SET missing_runs = $2, missing_since = $3 WHERE id = $1 AND closed_at IS NULL`,
-			m.ItemID, m.Missing, m.MissingSince); err != nil {
+		tickets := []byte("[]")
+		if len(m.Tickets) > 0 {
+			tickets, _ = json.Marshal(m.Tickets)
+		}
+		// An empty list drops the key rather than storing [], matching how a
+		// snapshot without tickets is marshalled everywhere else.
+		if _, err := tx.Exec(ctx, `UPDATE items SET missing_runs = $2, missing_since = $3,
+			current = CASE WHEN NOT $4::boolean THEN current
+				WHEN jsonb_array_length($5::jsonb) = 0 THEN current - 'tickets'
+				ELSE jsonb_set(current, '{tickets}', $5::jsonb) END
+			WHERE id = $1 AND closed_at IS NULL`,
+			m.ItemID, m.Missing, m.MissingSince, m.RefreshTickets, tickets); err != nil {
 			return 0, fmt.Errorf("history: mark item %d: %w", m.ItemID, err)
 		}
 	}
