@@ -88,6 +88,7 @@ func newServeCmd() *cobra.Command {
 		autoTicket  bool
 		metricsAuth bool
 		oidc        oidcFlags
+		roleName    string
 	)
 
 	cmd := &cobra.Command{
@@ -102,11 +103,22 @@ func newServeCmd() *cobra.Command {
 			"for HTTP Basic with the token as the password. Without it, the API and the page are\n" +
 			"unauthenticated, which is only appropriate locally.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			a, err := newAssessor(in)
+			role, err := server.ParseRole(roleName)
 			if err != nil {
 				return err
 			}
-			srv := server.New(a)
+			if err := checkRole(role, os.Getenv(envHistoryDSN), autoTicket, oidc.issuer, os.Getenv(envSessionKey)); err != nil {
+				return err
+			}
+			// A web replica never assesses, so it builds no assessor: nothing that
+			// would reach a provider, a registry or a cluster exists in the process.
+			var a server.Assessor
+			if role != server.RoleWeb {
+				if a, err = newAssessor(in); err != nil {
+					return err
+				}
+			}
+			srv := server.New(a).WithRole(role)
 
 			// Authentication. The token comes from the environment rather than a
 			// flag so it does not land in a process list or a shell history.
@@ -249,7 +261,7 @@ func newServeCmd() *cobra.Command {
 				_ = httpServer.Shutdown(shutdownCtx)
 			}()
 
-			slog.InfoContext(ctx, "serving assessment API", "addr", addr, "refresh_interval", interval.String())
+			slog.InfoContext(ctx, "serving assessment API", "addr", addr, "role", string(role), "refresh_interval", interval.String())
 			if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}
@@ -286,7 +298,31 @@ func newServeCmd() *cobra.Command {
 			"service that starts raising tickets the moment it deploys is not a good surprise. "+
 			"The API endpoints work either way.")
 	cmd.Flags().DurationVar(&interval, "interval", time.Hour, "how often to re-run the assessment (0 to run once)")
+	cmd.Flags().StringVar(&roleName, "role", string(server.RoleAll),
+		"which half of the work to do: all (assess and serve, the default), worker (assess, ticket, record and "+
+			"store each assessment; serve only probes and /metrics) or web (serve the page, API and MCP from the "+
+			"stored assessment; never assess or write to a tracker). worker and web need "+envHistoryDSN)
 	return cmd
+}
+
+// checkRole refuses a split role that cannot work, at start rather than at first use.
+func checkRole(role server.Role, dsn string, autoTicket bool, oidcIssuer, sessionKey string) error {
+	if role == server.RoleAll {
+		return nil
+	}
+	if dsn == "" {
+		return fmt.Errorf("--role=%s needs %s: the worker and the web replicas share nothing but the history "+
+			"store, so without one the web side has no assessment to serve and the worker nowhere to put it; "+
+			"run --role=all (the default) without a database", role, envHistoryDSN)
+	}
+	if role == server.RoleWeb && autoTicket {
+		return fmt.Errorf("--auto-ticket is for the worker: a web replica never writes to a tracker")
+	}
+	if role == server.RoleWeb && oidcIssuer != "" && sessionKey == "" {
+		return fmt.Errorf("--role=web with sign-in needs %s: each replica would otherwise sign cookies with its "+
+			"own random key, and a sign-in completed on one replica would not be recognised by the next", envSessionKey)
+	}
+	return nil
 }
 
 // oidcFlags are the non-secret parts of the sign-in configuration. The client secret and

@@ -193,6 +193,77 @@ func isolatedPostgres(t *testing.T) string {
 	return u.String()
 }
 
+// The worker's row, run the same way: the split deployment's tests run web and
+// worker over memStore, so it must keep the request apart from the report as the
+// database does.
+func TestWorkerStateStoreContract(t *testing.T) {
+	stores := map[string]func(t *testing.T) history.Store{
+		"memStore": func(*testing.T) history.Store { return newMemStore() },
+		"postgres.Lazy": func(t *testing.T) history.Store {
+			return postgres.NewLazy(postgres.Options{DSN: isolatedPostgres(t)})
+		},
+	}
+	for name, open := range stores {
+		t.Run(name, func(t *testing.T) { workerStateContract(t, open(t)) })
+	}
+}
+
+func workerStateContract(t *testing.T, s history.Store) {
+	ctx := context.Background()
+	at := func(m int) time.Time { return time.Date(2026, 9, 29, 12, m, 0, 0, time.UTC) }
+	ptr := func(t time.Time) *time.Time { return &t }
+	read := func() history.WorkerState {
+		t.Helper()
+		st, err := s.WorkerState(ctx)
+		if err != nil {
+			t.Fatalf("worker state: %v", err)
+		}
+		return st
+	}
+
+	if st := read(); !st.Heartbeat.IsZero() || st.Running || st.RefreshRequested != nil {
+		t.Fatalf("a store the worker never wrote to = %+v, want the zero value", st)
+	}
+
+	// A request before the worker has ever reported creates the row.
+	if err := s.RequestRefresh(ctx, at(1)); err != nil {
+		t.Fatal(err)
+	}
+	if st := read(); st.RefreshRequested == nil || !st.RefreshRequested.Equal(at(1)) || !st.Heartbeat.IsZero() {
+		t.Errorf("after a first request = %+v", st)
+	}
+
+	// The worker's report leaves the request alone, even though it does not carry it.
+	if err := s.SaveWorkerState(ctx, history.WorkerState{
+		Heartbeat: at(2), Version: "v1", Running: true, StartedAt: ptr(at(2)), RefreshHandled: ptr(at(1)),
+		HistoryRecorded: ptr(at(0)), HistoryError: "permission denied",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := read()
+	if !st.Heartbeat.Equal(at(2)) || st.Version != "v1" || !st.Running || st.StartedAt == nil || !st.StartedAt.Equal(at(2)) ||
+		st.RefreshHandled == nil || !st.RefreshHandled.Equal(at(1)) || st.HistoryRecorded == nil || st.HistoryError != "permission denied" {
+		t.Errorf("worker report round trip = %+v", st)
+	}
+	if st.RefreshRequested == nil || !st.RefreshRequested.Equal(at(1)) {
+		t.Errorf("the worker's report cleared the request: %v", st.RefreshRequested)
+	}
+
+	// Requests only move forward; a late, older one does not rewind a newer.
+	_ = s.RequestRefresh(ctx, at(5))
+	_ = s.RequestRefresh(ctx, at(3))
+	if st := read(); st.RefreshRequested == nil || !st.RefreshRequested.Equal(at(5)) {
+		t.Errorf("request = %v, want the newest", st.RefreshRequested)
+	}
+
+	// A later report replaces the report fields, clearing what it does not set.
+	_ = s.SaveWorkerState(ctx, history.WorkerState{Heartbeat: at(6), Version: "v1", RefreshHandled: ptr(at(5))})
+	if st := read(); st.Running || st.StartedAt != nil || st.HistoryError != "" || st.HistoryRecorded != nil ||
+		!st.RefreshRequested.Equal(at(5)) || !st.RefreshHandled.Equal(at(5)) {
+		t.Errorf("after the run = %+v", st)
+	}
+}
+
 // The served-assessment half of the store, run the same way: memStore stands in for
 // postgres in every server test that restarts from a stored assessment.
 func TestServedStoreContract(t *testing.T) {

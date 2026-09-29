@@ -100,6 +100,11 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	if s.role == RoleWeb {
+		writeError(w, http.StatusConflict, "this replica serves the page and the API and never writes to a tracker; "+
+			"tickets are applied by the assessment worker, with --auto-ticket, or by `patchwright ticket`")
+		return
+	}
 	if !body.Confirm {
 		// Reject rather than silently returning a plan: the caller asked to change
 		// something, and answering with a plan as though that were the same thing
@@ -148,9 +153,13 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 	if err != nil {
 		return nil, err
 	}
+	recent := s.recentlyMissing()
+	if s.role == RoleWeb {
+		recent = s.recentlyMissingFromStore(ctx)
+	}
 	return ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, Skipped: plan.Skips, OpenByImage: index, Findings: snap.views,
-		Config: s.ticketer.Config(), RecentlyReported: s.recentlyMissing(),
+		Config: s.ticketer.Config(), RecentlyReported: recent,
 	}), nil
 }
 

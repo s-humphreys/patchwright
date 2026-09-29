@@ -127,27 +127,13 @@ func (s *Server) restoreServed(ctx context.Context) {
 	if s.history == nil {
 		return
 	}
-	row, err := s.history.store.LatestServed(ctx, time.Time{})
-	if err != nil {
-		slog.WarnContext(ctx, "history: could not read the stored assessment; serving nothing until the first run completes", "error", err)
+	snap, row := s.latestServed(ctx, time.Time{})
+	if snap == nil {
+		if row == nil {
+			slog.InfoContext(ctx, "history: no stored assessment to serve; waiting for the first run")
+		}
 		return
 	}
-	if row == nil {
-		slog.InfoContext(ctx, "history: no stored assessment to serve; waiting for the first run")
-		return
-	}
-	if row.SchemaVersion != servedSchemaVersion {
-		slog.WarnContext(ctx, "history: ignoring the stored assessment: it was written in a payload schema this build does not read",
-			"stored_schema", row.SchemaVersion, "want_schema", servedSchemaVersion, "stored_by", row.Version)
-		return
-	}
-	snap, err := decodeServed(row.Payload)
-	if err != nil {
-		slog.WarnContext(ctx, "history: ignoring the stored assessment: it could not be read",
-			"id", row.ID, "stored_by", row.Version, "error", err)
-		return
-	}
-	snap.generatedAt = row.GeneratedAt
 
 	s.mu.Lock()
 	if s.latest != nil && s.latest.views != nil {
@@ -164,4 +150,67 @@ func (s *Server) restoreServed(ctx context.Context) {
 	slog.InfoContext(ctx, "history: serving the stored assessment until a fresh one completes",
 		"generated_at", row.GeneratedAt.Format(time.RFC3339), "age", time.Since(row.GeneratedAt).Round(time.Second).String(),
 		"stored_by", row.Version, "findings", len(snap.views))
+}
+
+// latestServed reads and decodes the newest stored assessment generated after after.
+// The snapshot is nil when there is nothing newer, the store cannot be read, or the
+// row cannot be; the row is returned whenever one was read, so a caller can tell
+// "nothing stored" from "something stored and unusable". Why a row was unusable is
+// logged once per row, since a web replica asks every few seconds.
+func (s *Server) latestServed(ctx context.Context, after time.Time) (*snapshot, *history.ServedAssessment) {
+	row, err := s.history.store.LatestServed(ctx, after)
+	if err != nil {
+		s.storeTrouble(ctx, "read the stored assessment", err)
+		return nil, nil
+	}
+	s.storeRecovered(ctx)
+	if row == nil {
+		return nil, nil
+	}
+	s.mu.Lock()
+	logged := s.seenServed == row.ID
+	s.seenServed = row.ID
+	s.mu.Unlock()
+	if row.SchemaVersion != servedSchemaVersion {
+		if !logged {
+			slog.WarnContext(ctx, "history: ignoring the stored assessment: it was written in a payload schema this build does not read",
+				"id", row.ID, "stored_schema", row.SchemaVersion, "want_schema", servedSchemaVersion, "stored_by", row.Version)
+		}
+		return nil, row
+	}
+	snap, err := decodeServed(row.Payload)
+	if err != nil {
+		if !logged {
+			slog.WarnContext(ctx, "history: ignoring the stored assessment: it could not be read",
+				"id", row.ID, "stored_by", row.Version, "error", err)
+		}
+		return nil, row
+	}
+	snap.generatedAt = row.GeneratedAt
+	return snap, row
+}
+
+// storeTrouble logs a store failure when it starts rather than on every poll, and
+// storeRecovered when it ends: a web replica polls every few seconds, and a line per
+// poll through an outage buries the one saying when it began.
+func (s *Server) storeTrouble(ctx context.Context, what string, err error) {
+	s.mu.Lock()
+	first := !s.storeFailing
+	s.storeFailing = true
+	s.mu.Unlock()
+	if first {
+		slog.WarnContext(ctx, "history: could not "+what+"; serving what is already held and retrying", "error", err)
+		return
+	}
+	slog.DebugContext(ctx, "history: could not "+what, "error", err)
+}
+
+func (s *Server) storeRecovered(ctx context.Context) {
+	s.mu.Lock()
+	was := s.storeFailing
+	s.storeFailing = false
+	s.mu.Unlock()
+	if was {
+		slog.InfoContext(ctx, "history: the store is answering again")
+	}
 }
