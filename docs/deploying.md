@@ -462,7 +462,15 @@ rollback it attempts has no previously-successful release to return to, so the
 HelmRelease stalls with `MissingRollbackTarget` while the pod it deployed sits there
 perfectly healthy.
 
-If fast rollouts matter more, make readiness mean "serving" instead — the page already
+With [history](history.md) enabled most of this goes away after the first install:
+a new pod serves the assessment the previous one stored, and is ready as soon as it
+has read it, while its own first run proceeds in the background. The page says the
+data is from before the restart and how old it is, and nothing is ticketed or
+recorded from it. The budgets above still matter for a first install, for a database
+that is unreachable at start, and for an upgrade that changes the stored payload's
+schema, when the pod waits for its own run as before.
+
+Without history, if fast rollouts matter more, make readiness mean "serving" instead — the page already
 states plainly that no assessment has completed yet, so the cost is a route that briefly
 answers with an empty queue rather than a misleading one.
 
@@ -581,6 +589,11 @@ grant all on schema public to patchwright;
 Without it the pod logs `history: store unavailable; will retry` with `permission
 denied for schema public`, the assessment carries on unaffected, and the next use
 after the grant connects and migrates.
+
+With history on, each assessment is also stored whole so a restarted pod serves it at
+once rather than waiting out a fresh run; see
+[history.md](history.md#restarts-serve-the-last-assessment). It needs nothing extra
+from the database: a few megabytes per row, three rows kept.
 
 The record cannot be rebuilt if lost, so the database's backup is what stands between
 the estate and a blank history. That is the point of choosing an operated database

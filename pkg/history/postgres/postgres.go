@@ -650,4 +650,45 @@ func (s *Store) TicketsIndexed(ctx context.Context) (history.TicketIndexState, e
 	return st, nil
 }
 
+// SaveServed stores a served assessment and prunes all but the newest keep rows.
+func (s *Store) SaveServed(ctx context.Context, a history.ServedAssessment, keep int) error {
+	if keep < 1 {
+		keep = 1
+	}
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("history: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `INSERT INTO served_assessments (generated_at, version, schema_version, payload)
+		VALUES ($1, $2, $3, $4)`, a.GeneratedAt, a.Version, a.SchemaVersion, a.Payload); err != nil {
+		return fmt.Errorf("history: insert served assessment: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM served_assessments WHERE id NOT IN (
+		SELECT id FROM served_assessments ORDER BY generated_at DESC, id DESC LIMIT $1)`, keep); err != nil {
+		return fmt.Errorf("history: prune served assessments: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// LatestServed returns the newest served assessment generated after after.
+func (s *Store) LatestServed(ctx context.Context, after time.Time) (*history.ServedAssessment, error) {
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	var a history.ServedAssessment
+	err := s.pool.QueryRow(ctx, `SELECT id, generated_at, version, schema_version, payload
+		FROM served_assessments WHERE generated_at > $1
+		ORDER BY generated_at DESC, id DESC LIMIT 1`, after).
+		Scan(&a.ID, &a.GeneratedAt, &a.Version, &a.SchemaVersion, &a.Payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("history: latest served assessment: %w", err)
+	}
+	return &a, nil
+}
+
 var _ history.Store = (*Store)(nil)

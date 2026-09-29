@@ -28,10 +28,10 @@ func testStore(t *testing.T) *Store {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = s.pool.Exec(ctx, `TRUNCATE events, items, assessments, tickets RESTART IDENTITY`)
+		_, _ = s.pool.Exec(ctx, `TRUNCATE events, items, assessments, tickets, served_assessments RESTART IDENTITY`)
 		s.Close()
 	})
-	if _, err := s.pool.Exec(ctx, `TRUNCATE events, items, assessments, tickets RESTART IDENTITY`); err != nil {
+	if _, err := s.pool.Exec(ctx, `TRUNCATE events, items, assessments, tickets, served_assessments RESTART IDENTITY`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return s
@@ -51,7 +51,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 	var v int
-	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 7 {
+	if err := s.pool.QueryRow(context.Background(), `SELECT MAX(version) FROM schema_version`).Scan(&v); err != nil || v != 8 {
 		t.Errorf("schema version = %d (%v)", v, err)
 	}
 }

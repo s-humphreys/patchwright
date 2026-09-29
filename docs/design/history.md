@@ -294,6 +294,18 @@ latest assessment as a single document so a new pod serves the previous one whil
 runs its own. That removes most of the pain with one table, and makes a later split
 small, because the UI would already be reading from the database.
 
+### Built: the latest assessment at rest
+
+The step described above is done. Each successful assessment is stored whole in
+`served_assessments` (gzipped JSON, newest three kept, labelled with the writing build
+and a payload schema version) and a starting process serves the newest while it runs
+its own. It is served and never acted on: ticket reconciliation and the event log
+read only assessments the process ran, so a restart cannot reconcile Jira against
+data from before it. A payload of another schema, a corrupt row or an unreachable
+database all fall back to the cold start. This is the whole assessment at rest the
+paragraph above weighed; with history on, the event log already put the same facts
+in the same database, so the posture change is the shape, not the content.
+
 ## Decisions to sign off
 
 1. **Identity.** The work item key changes when ownership or the upgrade target

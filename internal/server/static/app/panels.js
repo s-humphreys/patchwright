@@ -28,6 +28,12 @@ export function renderFreshness(a) {
   // The exact timestamp stays in the tooltip for when somebody does need it.
   el.textContent = `assessed ${ago(a.generated_at)}`;
   el.title = new Date(a.generated_at).toLocaleString();
+  // Said outright, because after a restart the age alone reads as a slow refresh
+  // rather than as the previous process's result held over.
+  if (a.loaded_from_store) {
+    el.textContent += " · kept from before a restart";
+    el.title += " (stored by the previous process; replaced when this one's first assessment completes)";
+  }
   if (a.running) el.textContent += ` · reassessing${elapsed(a)}`;
   el.className = "meta";
 }

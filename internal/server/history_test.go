@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,8 @@ type memStore struct {
 	events                   []history.Event
 	assessments              []history.Assessment
 	tickets                  map[string]history.TrackerTicket
+	served                   []history.ServedAssessment
+	nextServed               int64
 	err                      error
 }
 
@@ -225,6 +228,41 @@ func (m *memStore) TicketsIndexed(context.Context) (history.TicketIndexState, er
 		}
 	}
 	return st, nil
+}
+
+func (m *memStore) SaveServed(_ context.Context, a history.ServedAssessment, keep int) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.nextServed++
+	a.ID = m.nextServed
+	a.Payload = append([]byte(nil), a.Payload...)
+	m.served = append(m.served, a)
+	// Newest first, as the postgres store orders them, then keep the head.
+	sort.SliceStable(m.served, func(i, j int) bool {
+		if !m.served[i].GeneratedAt.Equal(m.served[j].GeneratedAt) {
+			return m.served[i].GeneratedAt.After(m.served[j].GeneratedAt)
+		}
+		return m.served[i].ID > m.served[j].ID
+	})
+	if keep < 1 {
+		keep = 1
+	}
+	if len(m.served) > keep {
+		m.served = m.served[:keep]
+	}
+	return nil
+}
+
+func (m *memStore) LatestServed(_ context.Context, after time.Time) (*history.ServedAssessment, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if len(m.served) == 0 || !m.served[0].GeneratedAt.After(after) {
+		return nil, nil
+	}
+	a := m.served[0]
+	return &a, nil
 }
 
 func (m *memStore) kinds() map[history.Kind]int {

@@ -21,6 +21,7 @@ requests, and does not change cluster state.
 | Jira credentials, API token | **Secret** | Environment variables from Secrets |
 | Registry credentials for base-image scanning | **Secret** | Minted per scan, written to a private file under `/tmp` for the length of one scan, then deleted |
 | History: work items, when they opened and closed, tickets and their titles, tracker dates and status, evidence | Internal, security record | PostgreSQL, only when `PATCHWRIGHT_HISTORY_DSN` is set; pruned to `history.retention` |
+| The latest assessments, whole, as the page serves them (findings, CVEs, owners, open-ticket keys) | Internal | PostgreSQL, only when `PATCHWRIGHT_HISTORY_DSN` is set; the newest three kept, older ones deleted as each is written |
 | History database connection string | **Secret** | Environment variable from a Secret; never logged or written |
 
 No personal data is processed. Nothing is written to disk except Trivy's cache and
@@ -40,6 +41,11 @@ the environment and never written; and with `history.auth: azure` no password ex
 anywhere, since an Entra token is minted per connection. The database's own controls
 (network, encryption at rest, backup) are the organisation's, which is why the design
 chose one that is already operated over a file on a volume.
+
+The same database also holds the latest assessment whole, so a restarted pod can serve
+it at once instead of waiting out a fresh run. That is the in-memory assessment at
+rest: the facts the record already holds, in the shape the page shows them, for the
+newest three runs only. See [history](docs/history.md#restarts-serve-the-last-assessment).
 
 The credential file deserves a note, because handing a subprocess a secret is
 exactly the kind of thing a review should ask about. Base-image scanning shells out

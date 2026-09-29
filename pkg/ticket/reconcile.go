@@ -234,8 +234,7 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				if done, evidence := upgradeComplete(images, byRepo(in.Findings)); done {
 					// A ticket somebody has picked up is theirs to close, even when the
 					// upgrade is proven to have landed: they may have QA or a rollout of
-					// their own to finish. Closing it under them happened on a real
-					// board (DATA-4316, closed from QA), so it is said, not done.
+					// their own to finish, so it is said, not done.
 					if !t.Untouched() {
 						out = append(out, Action{
 							Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonUpgradeLanded,

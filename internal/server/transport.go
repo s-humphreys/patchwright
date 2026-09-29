@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -273,13 +274,8 @@ func (s *Server) etag(r *http.Request) string {
 	}
 	// An in-flight assessment is deliberately not cacheable: the page shows progress
 	// from the meta, and a 304 during a run would freeze that.
-	s.mu.RLock()
-	running, generated := s.running, ""
-	if s.latest != nil {
-		generated = s.latest.generatedAt.UTC().Format("20060102150405.000000000")
-	}
-	s.mu.RUnlock()
-	if running {
+	m := s.meta()
+	if m.Running {
 		return ""
 	}
 	// An asset is identified by its own bytes, not by the assessment: it must not be
@@ -290,12 +286,16 @@ func (s *Server) etag(r *http.Request) string {
 	}
 	// Everything else is a view of the cached assessment, which is immutable while it
 	// is the current one - so its timestamp, plus the query that selected from it, is
-	// an exact identity. It also changes on restart, which is what stops a client
-	// reusing an entity a new build would serialise differently.
-	if generated == "" {
+	// an exact identity. The build and the rest of the meta are part of it too: an
+	// assessment loaded from the store keeps its timestamp across a restart, so the
+	// timestamp alone would let a client reuse an entity a new build serialises
+	// differently, or one from before a failed run that the meta now reports.
+	if m.GeneratedAt == nil {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(generated + "|" + r.URL.RequestURI()))
+	identity := fmt.Sprintf("%s|%s|%t|%s|%s", m.GeneratedAt.UTC().Format("20060102150405.000000000"),
+		m.Version, m.LoadedFromStore, m.Error, r.URL.RequestURI())
+	sum := sha256.Sum256([]byte(identity))
 	return `"` + hex.EncodeToString(sum[:12]) + `"`
 }
 

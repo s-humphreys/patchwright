@@ -48,6 +48,33 @@ If the database is unreachable the assessment still runs and the page still serv
 History reports itself unavailable, the log says why, and the next refresh tries
 again. An outage of the record is not an outage of the queue.
 
+## Restarts serve the last assessment
+
+With a store configured, every successful assessment is also stored whole, as the
+page, the API and the MCP tools serve it, and a starting process serves the newest
+stored one while its own first run is in flight. A restart (an eviction, a config
+reload, a rollout) no longer means twenty minutes of 503s: the pod is ready as soon as
+it has read the store.
+
+What it serves is labelled as what it is. `assessment.generated_at` stays the time the
+stored assessment was made, so the page's "assessed N ago" is its real age, and
+`assessment.loaded_from_store` is `true` until the first run in the new process
+replaces it; the page adds "kept from before a restart". Nothing acts on it: tickets
+are reconciled, and the history record written, only from an assessment the process
+ran itself, and `POST /api/v1/tickets` answers 409 until one has. Reconciling Jira
+against data from before a restart could close a ticket on the strength of a fix that
+has since been rolled back.
+
+The payload is gzipped JSON in `served_assessments`, and only the newest three are
+kept. A real estate's findings are tens of megabytes of JSON and a few once
+compressed. Each row records the build that wrote it and a payload schema version; a
+row this build cannot read (another schema, or corrupt) is ignored with a warning in
+the log, and the process starts the way it did before, waiting for its first run. So
+does an unreachable database: the store is never a reason not to start.
+
+Metrics are not restored. The gauges describe runs in this process, and stay absent
+until the first one completes, as before.
+
 ## What is recorded
 
 The unit is the **work item**: an owner, a service, and what it upgrades to. It is
@@ -277,7 +304,9 @@ no database is used stops being true. The record holds image references, CVE
 identifiers, team names, versions and ticket keys: a history of which services carried
 exploitable vulnerabilities and for how long, useful to an attacker and subject to
 whatever retention applies to security records. No personal data. Retention is applied
-after every assessment and what was pruned is logged.
+after every assessment and what was pruned is logged. The latest few served
+assessments are held as well (see above), which is the same data in the shape the
+page serves it, and are replaced rather than retained.
 
 **Backup** is the database's. That is the point of choosing one that is already
 operated over a file on a volume: history cannot be reconstructed once lost, because

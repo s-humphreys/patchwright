@@ -31,7 +31,7 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}` |
 | `POST /mcp` | [MCP tools](mcp.md) an LLM client can call, over the same cached assessment |
 | `GET /metrics` | [Prometheus metrics](metrics.md) |
-| `GET /healthz`, `GET /readyz` | Health; ready once a first assessment is cached |
+| `GET /healthz`, `GET /readyz` | Health; ready once an assessment is served: one this process ran, or, with a [history store](history.md#restarts-serve-the-last-assessment), the last one stored |
 
 ## Authentication
 

@@ -92,6 +92,9 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 
+	// Read before planning: a loaded assessment can only be replaced by a fresh one,
+	// never the reverse, so a plan made after this check is at least as fresh.
+	loaded := s.meta().LoadedFromStore
 	actions, err := s.planTickets(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -109,6 +112,14 @@ func (s *Server) handleTicketApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if loaded {
+		// GET still shows the plan to a reader, but writing it would reconcile
+		// Jira against data from before this process started, which is exactly what
+		// the schedule refuses to do.
+		writeError(w, http.StatusConflict, "the served assessment was loaded from the store after a restart; "+
+			"tickets are applied only against an assessment this process has run, so retry once it completes")
+		return
+	}
 	logPlan(r.Context(), "api", actions, true, s.autoTicket)
 	results := ticket.Apply(r.Context(), s.ticketer, actions)
 	auditWrites(r.Context(), "api", results)
