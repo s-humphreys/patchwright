@@ -292,8 +292,10 @@ func (s *Server) Refresh(ctx context.Context) {
 	}
 
 	s.mu.Lock()
-	// Preserve the last good data if this run errored but a previous succeeded.
-	if snap.err != "" && s.latest != nil && s.latest.err == "" {
+	// Preserve the last good data if this run errored but a previous succeeded. Keyed
+	// on the data being there, not on the last run having succeeded: after one
+	// failure latest carries that error, and a second must not drop what it serves.
+	if snap.err != "" && s.latest != nil && s.latest.views != nil {
 		s.latest.err = snap.err
 		// A loaded assessment keeps the time it was made: it is served as what it
 		// is, older data, until a run in this process succeeds.

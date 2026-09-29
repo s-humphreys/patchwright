@@ -215,6 +215,35 @@ func TestFailedRunKeepsTheLoadedAssessmentsAge(t *testing.T) {
 	}
 }
 
+// Failed runs in a row after a restart keep serving the loaded assessment, still
+// marked as loaded and still with its own age, until a run succeeds.
+func TestRepeatedFailuresKeepTheLoadedAssessment(t *testing.T) {
+	store := newMemStore()
+	ctx := context.Background()
+	first := New(stubAssessor{findings: estateFindings()}).WithHistory(store, 90*24*time.Hour)
+	first.Refresh(ctx)
+	made := *first.meta().GeneratedAt
+
+	s := New(stubAssessor{err: errors.New("provider unreachable")}).WithHistory(store, 90*24*time.Hour)
+	s.restoreServed(ctx)
+	s.Refresh(ctx)
+	s.assessor = stubAssessor{err: errors.New("still unreachable")}
+	s.Refresh(ctx)
+	m := s.meta()
+	if !m.LoadedFromStore || m.Error != "still unreachable" || m.GeneratedAt == nil || !m.GeneratedAt.Equal(made) {
+		t.Errorf("meta = %+v, want the loaded assessment of %v with the latest error", m, made)
+	}
+	if readyCode(s.Handler()) != http.StatusOK {
+		t.Error("a second failed run made the loaded assessment unready")
+	}
+
+	s.assessor = stubAssessor{findings: estateFindings()}
+	s.Refresh(ctx)
+	if m := s.meta(); m.LoadedFromStore || m.Error != "" || !m.GeneratedAt.After(made) {
+		t.Errorf("meta = %+v, want a fresh assessment once a run succeeds", m)
+	}
+}
+
 // A loaded assessment keeps its timestamp across the restart, so the timestamp alone
 // cannot be the entity's identity: a client holding the previous process's copy, or
 // the copy from before a failed run, must be sent the new meta rather than a 304.

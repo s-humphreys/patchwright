@@ -167,6 +167,33 @@ func TestRefreshErrorKeepsLastGood(t *testing.T) {
 	}
 }
 
+// Failures in a row keep the last good data too, and readiness with it: the second
+// failure used to replace it, since after the first the cache carries an error.
+func TestRepeatedRefreshErrorsKeepLastGood(t *testing.T) {
+	s := New(stubAssessor{findings: []model.Finding{finding("a:1", "eng", "t", true, false)}})
+	s.Refresh(context.Background())
+
+	for _, msg := range []string{"first outage", "second outage", "third outage"} {
+		s.assessor = stubAssessor{err: errors.New(msg)}
+		s.Refresh(context.Background())
+		if s.latest == nil || len(s.latest.views) != 1 {
+			t.Fatalf("after %q: the last good views were dropped", msg)
+		}
+		if s.latest.err != msg {
+			t.Errorf("after %q: error = %q, want the latest failure", msg, s.latest.err)
+		}
+		if readyCode(s.Handler()) != http.StatusOK {
+			t.Errorf("after %q: a failed run made the server unready", msg)
+		}
+	}
+
+	s.assessor = stubAssessor{findings: []model.Finding{finding("b:2", "eng", "t", true, false), finding("c:3", "eng", "t", true, false)}}
+	s.Refresh(context.Background())
+	if s.latest.err != "" || len(s.latest.views) != 2 {
+		t.Errorf("a success after failures should replace the data and clear the error: err=%q views=%d", s.latest.err, len(s.latest.views))
+	}
+}
+
 // assessedFinding builds a finding the provider actually assessed, with a
 // resolved upgrade. The default `finding` helper has neither, which is itself the
 // point: an unassessed finding is the shape the API must not present as healthy.
