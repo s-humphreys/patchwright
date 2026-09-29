@@ -622,7 +622,10 @@ paths:
         `assessment.running` is true from the moment it is recorded.
       responses:
         "202":
-          description: Refresh started, already running, or requested of the worker
+          description: |
+            Refresh started, already running, or requested of the worker. On a web
+            replica whose history store did not confirm the request in time, the
+            message says it may still be queued; asking again is harmless.
           content:
             application/json:
               schema:
@@ -647,7 +650,10 @@ paths:
               schema: { $ref: "#/components/schemas/TicketPlan" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503":
-          description: Ticketing is not configured, or no assessment is cached
+          description: |
+            Ticketing is not configured, or no assessment is cached, or this is a web
+            replica of a split deployment given no Jira credentials, in which case the
+            plan is the worker's alone and the error says so.
     post:
       tags: [tickets]
       summary: Apply the plan
