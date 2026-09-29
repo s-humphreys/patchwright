@@ -3,10 +3,12 @@
 // deployment that does not want to run a database runs without it.
 //
 // Migrations are numbered SQL files embedded in the binary and applied at startup
-// against a version table. One writer is assumed: the Deployment runs one replica
-// and the CronJob forbids concurrency. The events table carries a uniqueness index
-// so a replayed run inserts nothing twice, which is as far as the schema goes to
-// tolerate a second writer.
+// against a version table, under an advisory lock so processes starting together
+// take turns. One writer of the record is assumed: the Deployment's assessing pod is
+// a single replica (the worker, in a split deployment, whose web replicas write only
+// the refresh request) and the CronJob forbids concurrency. The events table carries
+// a uniqueness index so a replayed run inserts nothing twice, which is as far as the
+// schema goes to tolerate a second writer.
 package postgres
 
 import (
@@ -120,17 +122,40 @@ func (s *Store) ctx(parent context.Context) (context.Context, context.CancelFunc
 	return context.WithTimeout(parent, s.timeout)
 }
 
+// migrationLock is the advisory lock key migrations are applied under: "patchwri".
+const migrationLock int64 = 0x7061746368777269
+
 // migrate applies every embedded migration newer than the recorded version, in a
 // transaction each, so a failed migration leaves the version where it was.
+//
+// Under an advisory lock, because a split deployment starts a worker and several web
+// replicas against the same database at once. Without it, two processes migrating an
+// empty database race on CREATE TABLE IF NOT EXISTS, which is not safe concurrently,
+// and the loser is left without a store until its next retry.
 func (s *Store) migrate(ctx context.Context) error {
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
-	if _, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_version (
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("history: migrate: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationLock); err != nil {
+		return fmt.Errorf("history: migration lock: %w", err)
+	}
+	defer func() {
+		if _, err := conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationLock); err != nil {
+			// The lock belongs to the session, so a connection that could not give it
+			// back must not go back to the pool still holding it.
+			_ = conn.Conn().Close(context.Background())
+		}
+	}()
+	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_version (
 		version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
 		return fmt.Errorf("history: schema_version: %w", err)
 	}
 	var current int
-	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&current); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&current); err != nil {
 		return fmt.Errorf("history: read schema version: %w", err)
 	}
 	files, err := fs.ReadDir(migrations, "migrations")
@@ -154,7 +179,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		tx, err := s.pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("history: migrate %s: %w", name, err)
 		}
@@ -689,6 +714,61 @@ func (s *Store) LatestServed(ctx context.Context, after time.Time) (*history.Ser
 		return nil, fmt.Errorf("history: latest served assessment: %w", err)
 	}
 	return &a, nil
+}
+
+// WorkerState reads the worker's row, or the zero value when there is none.
+func (s *Store) WorkerState(ctx context.Context) (history.WorkerState, error) {
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	var st history.WorkerState
+	var heartbeat *time.Time
+	err := s.pool.QueryRow(ctx, `SELECT heartbeat_at, version, running, started_at, last_error,
+		refresh_requested_at, refresh_handled_at, history_recorded_at, history_error
+		FROM worker_state WHERE id = 1`).
+		Scan(&heartbeat, &st.Version, &st.Running, &st.StartedAt, &st.LastError,
+			&st.RefreshRequested, &st.RefreshHandled, &st.HistoryRecorded, &st.HistoryError)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return history.WorkerState{}, nil
+	}
+	if err != nil {
+		return st, fmt.Errorf("history: worker state: %w", err)
+	}
+	if heartbeat != nil {
+		st.Heartbeat = *heartbeat
+	}
+	return st, nil
+}
+
+// SaveWorkerState writes everything the worker reports, leaving the request alone.
+func (s *Store) SaveWorkerState(ctx context.Context, st history.WorkerState) error {
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	if _, err := s.pool.Exec(ctx, `INSERT INTO worker_state
+		(id, heartbeat_at, version, running, started_at, last_error, refresh_handled_at, history_recorded_at, history_error)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (id) DO UPDATE SET
+			heartbeat_at = EXCLUDED.heartbeat_at, version = EXCLUDED.version, running = EXCLUDED.running,
+			started_at = EXCLUDED.started_at, last_error = EXCLUDED.last_error,
+			refresh_handled_at = EXCLUDED.refresh_handled_at,
+			history_recorded_at = EXCLUDED.history_recorded_at, history_error = EXCLUDED.history_error`,
+		st.Heartbeat, st.Version, st.Running, st.StartedAt, st.LastError, st.RefreshHandled,
+		st.HistoryRecorded, st.HistoryError); err != nil {
+		return fmt.Errorf("history: save worker state: %w", err)
+	}
+	return nil
+}
+
+// RequestRefresh records a request for an assessment. GREATEST ignores a NULL, so
+// the first request sets the time and later ones only move it forward.
+func (s *Store) RequestRefresh(ctx context.Context, at time.Time) error {
+	ctx, cancel := s.ctx(ctx)
+	defer cancel()
+	if _, err := s.pool.Exec(ctx, `INSERT INTO worker_state (id, refresh_requested_at) VALUES (1, $1)
+		ON CONFLICT (id) DO UPDATE SET
+			refresh_requested_at = GREATEST(worker_state.refresh_requested_at, EXCLUDED.refresh_requested_at)`, at); err != nil {
+		return fmt.Errorf("history: request refresh: %w", err)
+	}
+	return nil
 }
 
 var _ history.Store = (*Store)(nil)
