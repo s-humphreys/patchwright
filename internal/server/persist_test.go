@@ -215,6 +215,34 @@ func TestFailedRunKeepsTheLoadedAssessmentsAge(t *testing.T) {
 	}
 }
 
+// A loaded assessment keeps its timestamp across the restart, so the timestamp alone
+// cannot be the entity's identity: a client holding the previous process's copy, or
+// the copy from before a failed run, must be sent the new meta rather than a 304.
+func TestLoadedAssessmentHasItsOwnETag(t *testing.T) {
+	store := newMemStore()
+	ctx := context.Background()
+	first := New(stubAssessor{findings: estateFindings()}).WithHistory(store, 90*24*time.Hour)
+	first.Refresh(ctx)
+	tag := func(s *Server) string {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil))
+		return rec.Header().Get("ETag")
+	}
+	before := tag(first)
+
+	s := New(stubAssessor{err: errors.New("provider unreachable")}).WithHistory(store, 90*24*time.Hour)
+	s.restoreServed(ctx)
+	loaded := tag(s)
+	s.Refresh(ctx)
+	failed := tag(s)
+	if before == "" || loaded == "" || failed == "" {
+		t.Fatalf("missing ETags: %q %q %q", before, loaded, failed)
+	}
+	if loaded == before || failed == loaded {
+		t.Errorf("ETags did not change with the meta: before %s, loaded %s, after a failed run %s", before, loaded, failed)
+	}
+}
+
 // A fresh assessment that lands before the store answers wins.
 func TestFreshAssessmentIsNotReplacedByALateLoad(t *testing.T) {
 	store := newMemStore()
