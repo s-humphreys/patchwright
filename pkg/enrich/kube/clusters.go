@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
 
@@ -159,6 +160,7 @@ func joinClusterErrors(errs []error) error {
 func (s *Source) recordFailure(ctx context.Context, stage, label string, err error) {
 	slog.WarnContext(ctx, "cluster could not be read; it is left out of this run rather than failing the assessment",
 		"cluster", label, "read", stage, "error", err)
+	metrics.ClusterReadFailure(label, stage)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failures = append(s.failures, model.SourceFailure{Stage: stage, Cluster: label, Error: err.Error()})

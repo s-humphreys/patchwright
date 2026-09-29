@@ -156,6 +156,13 @@ var (
 	fallbackScans = counterVec("fallback_scans_total",
 		"Scans of provider-unassessed images by the fallback source, by result.",
 		[]string{"result"})
+
+	// Labelled by cluster, which is bounded by configuration rather than by the
+	// estate. A cluster left out of every run is the thing to alert on, and without
+	// the label it hides inside the others succeeding.
+	clusterReadFailures = counterVec("cluster_read_failures_total",
+		"Cluster reads left out of an assessment after a failure, by cluster and read.",
+		[]string{"cluster", "read"})
 )
 
 func init() {
@@ -478,3 +485,9 @@ func ProviderFetch(result string) { providerFetches.WithLabelValues(result).Inc(
 
 // FallbackScan records one fallback scan attempt: "ok", "failed" or "skipped".
 func FallbackScan(result string) { fallbackScans.WithLabelValues(result).Inc() }
+
+// ClusterReadFailure records one cluster left out of a read ("live",
+// "namespace-labels", "deploy-context", "cluster-upgrades").
+func ClusterReadFailure(cluster, read string) {
+	clusterReadFailures.WithLabelValues(cluster, read).Inc()
+}
