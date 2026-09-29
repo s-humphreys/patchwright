@@ -126,6 +126,27 @@ jobs:
             echo 'the Trivy cache volume is mounted by more than the worker' >&2
             exit 1
           fi
+          # doc prints the rendered object of one kind and name, so a check can look at the
+          # web replicas alone rather than grep a render that also holds the worker.
+          doc() {
+            python3 -c 'import sys, yaml
+          for d in yaml.safe_load_all(sys.stdin):
+              if d and d["kind"] == sys.argv[1] and d["metadata"]["name"] == sys.argv[2]:
+                  print(yaml.safe_dump(d))' "$1" "$2"
+          }
+
+          # The top-level extraArgs are the worker's: a web replica refuses --auto-ticket,
+          # and passing it there would crash-loop every one of them.
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set 'extraArgs={--auto-ticket}' --set 'split.web.extraArgs={--web-flag}')
+          web=$(doc Deployment pw-patchwright-web <<<"$split")
+          worker=$(doc Deployment pw-patchwright-worker <<<"$split")
+          if grep -qF -- '--auto-ticket' <<<"$web" || ! grep -qF -- '--web-flag' <<<"$web" \
+              || ! grep -qF -- '--auto-ticket' <<<"$worker" || grep -qF -- '--web-flag' <<<"$worker"; then
+            echo 'extraArgs and split.web.extraArgs did not reach the worker and the web replicas respectively' >&2
+            exit 1
+          fi
+
           # And with it off, nothing of it renders: the single Deployment stays the default.
           if helm template pw "${main[@]}" "${history[@]}" | grep -qE -- '--role=|component: (worker|web)'; then
             echo 'split resources rendered with split.enabled false' >&2

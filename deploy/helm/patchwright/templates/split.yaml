@@ -133,7 +133,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        {{- include "patchwright.container" (dict "root" . "command" "serve" "remediation" false "ports" true "web" true "resources" .Values.split.web.resources "modeArgs" (list (printf "--addr=:%v" .Values.server.port) "--role=web")) | nindent 8 }}
+        {{- include "patchwright.container" (dict "root" . "command" "serve" "remediation" false "ports" true "web" true "resources" .Values.split.web.resources "extraArgs" .Values.split.web.extraArgs "modeArgs" (list (printf "--addr=:%v" .Values.server.port) "--role=web")) | nindent 8 }}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 5

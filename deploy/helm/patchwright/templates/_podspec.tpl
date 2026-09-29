@@ -9,6 +9,7 @@ so they stay in sync. Callers pass a dict:
   web         bool — a split deployment's web replica: no scanning, no tracker
               writes, and none of the mounts only an assessment reads
   resources   map — overrides .Values.resources
+  extraArgs   list — overrides .Values.extraArgs
 */}}
 
 {{- define "patchwright.container" -}}
@@ -116,7 +117,7 @@ so they stay in sync. Callers pass a dict:
     {{- range .modeArgs }}
     - {{ . | quote }}
     {{- end }}
-    {{- range .root.Values.extraArgs }}
+    {{- range (ternary .extraArgs .root.Values.extraArgs (hasKey . "extraArgs")) }}
     - {{ . | quote }}
     {{- end }}
   {{- $oidc := .root.Values.auth.oidc }}

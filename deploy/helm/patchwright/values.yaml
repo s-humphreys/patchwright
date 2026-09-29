@@ -88,6 +88,10 @@ split:
     # holds one decoded assessment in memory and does no scanning, so it needs a
     # fraction of what the worker does.
     resources: {}
+    # Extra args for `patchwright serve --role=web`. The top-level extraArgs go to the
+    # worker only: they are usually assessment flags, and one the web role refuses,
+    # such as --auto-ticket, would leave every web replica crash-looping.
+    extraArgs: []
     podDisruptionBudget:
       enabled: true
       minAvailable: 1
