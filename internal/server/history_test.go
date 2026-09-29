@@ -874,3 +874,30 @@ func equalInts(a, b []int) bool {
 	}
 	return true
 }
+
+// A web replica holds no Jira credentials, but the site's address is not a secret:
+// the keys it lists must still be links.
+func TestTicketLinksWithoutJiraCredentials(t *testing.T) {
+	store := newMemStore()
+	created := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	store.tickets["PROJ-7"] = history.TrackerTicket{Key: "PROJ-7", Project: "PROJ", CreatedAt: created}
+	s := New(&stubAssessor{}).WithHistory(store, 400*24*time.Hour).
+		WithTicketPlanOnWorker().WithTicketLinks("https://jira.example.com/")
+
+	var resp ticketsPerDayResponse
+	path := "/api/v1/history/tickets?since=2026-09-03T00:00:00Z&until=2026-09-04T00:00:00Z"
+	if code := getJSON(t, s.Handler(), path, &resp); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	var url string
+	for _, d := range resp.Tickets.Days {
+		for _, tk := range d.Tickets {
+			if tk.Key == "PROJ-7" {
+				url = tk.URL
+			}
+		}
+	}
+	if url != "https://jira.example.com/browse/PROJ-7" {
+		t.Errorf("url = %q, want a browse link built from the base URL alone", url)
+	}
+}
