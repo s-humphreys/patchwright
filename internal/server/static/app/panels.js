@@ -180,6 +180,21 @@ export function dataGaps(s) {
   }
 
   for (const f of s.source_failures || []) {
+    if (f.cluster) {
+      // One cluster left out rather than failing the whole estate's assessment. Named,
+      // because a cluster nobody read looks exactly like a cluster with nothing in it.
+      // The raw error, not shortReason: those plain reasons are about registries.
+      const reason = String(f.error || "");
+      gaps.push({
+        severe: f.stage === "live",
+        count: "1 cluster",
+        headline: `could not be read (<code>${esc(f.cluster)}</code>): ${CLUSTER_GAPS[f.stage] || `its ${esc(f.stage)} data is missing`}`,
+        detail: `The assessment carried on with the other clusters. This one is left out whole
+          for this run rather than half counted, and is tried again on the next. The cluster
+          reported: <code>${esc(reason.length > 160 ? reason.slice(0, 157) + "…" : reason)}</code>`,
+      });
+      continue;
+    }
     // An enrichment that could not run, stated rather than inferred. Exploit intel gates
     // whole priority tiers, so its absence changes what the queue means — and the cells
     // that go quiet ("?" for EPSS, KEV, risk) give no clue why.
@@ -228,6 +243,15 @@ export function dataGaps(s) {
   }
   return gaps;
 }
+
+// What a cluster left out of each per-cluster read leaves unknown.
+/** @type {Record<string, string>} */
+const CLUSTER_GAPS = {
+  live: "liveness there is unknown, so an image seen only there is left unreconciled and is not judged not running",
+  "namespace-labels": "its namespace labels are missing, so ownership there falls back to rules that do not use labels",
+  "deploy-context": "how images there are deployed is unknown, so whether their tag bumps are directly actionable is unknown too",
+  "cluster-upgrades": "chart upgrades there were not looked for, so an absent chart upgrade there means nobody looked",
+};
 
 // shortReason trims a provider or registry error to its point. These arrive as whole
 // HTTP errors ("read image config for x: reading image x: POST https://… UNAUTHORIZED:

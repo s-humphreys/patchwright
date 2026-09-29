@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,6 +67,11 @@ type assessor struct {
 	// sources is what this run was configured to do, reported so a consumer can tell
 	// a stage that found nothing from one that never ran.
 	sources model.Sources
+
+	// clusters reports the clusters the live source left out, when it reads several.
+	clusters enrich.ClusterFailureReporter
+	// clusterFailures are the clusters left out of the last run.
+	clusterFailures []model.SourceFailure
 }
 
 // newAssessor loads config and constructs the provider, enrichers, and pipeline
@@ -95,6 +101,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 	var liveEnrichers []enrich.Enricher
 	var upgradeSources []enrich.UpgradeSource
 	var deployContexts func(context.Context) (map[string]enrich.DeployContext, error)
+	var clusters enrich.ClusterFailureReporter
 
 	if in.liveSource != "" {
 		src, err := newLiveSource(in.liveSource, in.liveOptions)
@@ -102,6 +109,9 @@ func newAssessor(in assessInputs) (*assessor, error) {
 			return nil, err
 		}
 		liveEnrichers = append(liveEnrichers, enrich.NewLiveness(src))
+		if cr, ok := src.(enrich.ClusterFailureReporter); ok {
+			clusters = cr
+		}
 		if ls, ok := src.(enrich.LabelSource); ok {
 			liveEnrichers = append(liveEnrichers, enrich.NewNamespaceLabeler(ls))
 		}
@@ -256,6 +266,7 @@ func newAssessor(in assessInputs) (*assessor, error) {
 		exploitSource: in.exploitSource,
 		ageSource:     in.ageSource,
 		sources:       sources,
+		clusters:      clusters,
 	}, nil
 }
 
@@ -264,6 +275,11 @@ func newAssessor(in assessInputs) (*assessor, error) {
 func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 	slog.InfoContext(ctx, "starting assessment",
 		"provider", a.providerName, "vuln_source", a.vulnSource, "exploit_source", a.exploitSource, "age_source", a.ageSource, "live_source", a.liveSource)
+	if a.clusters != nil {
+		// Whatever a failed run left behind; that run was reported as failed already.
+		a.clusters.TakeClusterFailures()
+		defer func() { a.clusterFailures = a.clusters.TakeClusterFailures() }()
+	}
 
 	occ, err := a.provider.Fetch(ctx)
 	if err != nil {
@@ -293,10 +309,12 @@ func (a *assessor) Run(ctx context.Context) ([]model.Finding, error) {
 	return findings, nil
 }
 
-// Failures reports the enrichments that could not run in the last assessment, so the
-// server can state the gap rather than serving a queue whose missing signals look like
-// absent findings.
-func (a *assessor) Failures() []model.SourceFailure { return a.pipeline.Failures() }
+// Failures reports the enrichments that could not run in the last assessment, and the
+// clusters the live source had to leave out, so the server can state the gap rather
+// than serving a queue whose missing signals look like absent findings.
+func (a *assessor) Failures() []model.SourceFailure {
+	return append(slices.Clone(a.clusterFailures), a.pipeline.Failures()...)
+}
 
 // Sources reports what this assessment was configured to do. See model.Sources for
 // why "not configured" has to be distinguishable from "found nothing".

@@ -50,6 +50,10 @@ type Assessment struct {
 	// is exactly what a model concluded, confidently, on the first real session.
 	Sources model.Sources
 
+	// Failures are the enrichments that could not run and the clusters left out of
+	// this run. A cluster nobody read looks exactly like one with nothing in it.
+	Failures []model.SourceFailure
+
 	// Policy is the rule set the findings were evaluated against.
 	//
 	// The findings alone say which rules FIRED. A report on a policy also needs the

@@ -297,7 +297,7 @@ func (s *Server) Refresh(ctx context.Context) {
 		if fr, ok := s.assessor.(FailureReporter); ok {
 			for _, f := range fr.Failures() {
 				snap.summary.SourceFailures = append(snap.summary.SourceFailures,
-					sourceFailure{Stage: f.Stage, Error: f.Error})
+					sourceFailure{Stage: f.Stage, Error: f.Error, Cluster: f.Cluster})
 			}
 		}
 		snap.byImage = indexByImage(snap.views)
@@ -410,6 +410,9 @@ func (s *Server) assessment() mcp.Assessment {
 	}
 	if snap.summary.ProviderDataNewest != nil {
 		a.ProviderDataNewest = *snap.summary.ProviderDataNewest
+	}
+	for _, f := range snap.summary.SourceFailures {
+		a.Failures = append(a.Failures, model.SourceFailure{Stage: f.Stage, Error: f.Error, Cluster: f.Cluster})
 	}
 	return a
 }

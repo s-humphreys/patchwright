@@ -141,6 +141,8 @@ type summaryView struct {
 type sourceFailure struct {
 	Stage string `json:"stage"`
 	Error string `json:"error"`
+	// Cluster is set when the stage left out one cluster and carried on without it.
+	Cluster string `json:"cluster,omitempty"`
 }
 
 // ownerStats is a per-team triage row.

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -104,6 +105,35 @@ func configCaveats(a Assessment, cov Coverage) []string {
 	case cov.BaseDiffs == 0:
 		out = append(out, "The base differential is enabled and yet measured no deployment. Base images could "+
 			"not be resolved or scanned - registry access is the usual cause.")
+	}
+	return append(out, clusterCaveats(a.Failures)...)
+}
+
+// clusterCaveats names each cluster the live source left out of this run, and what
+// that leaves unknown. Without it, a cluster nobody read reads as a cluster with
+// nothing in it, and "not running" there would be a guess.
+func clusterCaveats(failures []model.SourceFailure) []string {
+	var out []string
+	for _, f := range failures {
+		if f.Cluster == "" {
+			continue
+		}
+		var gap string
+		switch f.Stage {
+		case model.StageLive:
+			gap = "liveness there is unknown, so an image seen only there is left unreconciled and is " +
+				"not judged not running"
+		case model.StageNamespaceLabels:
+			gap = "its namespace labels are missing, so ownership there falls back to rules that do not use labels"
+		case model.StageDeployContext:
+			gap = "how images there are deployed is unknown, so whether their tag bumps are directly actionable " +
+				"is unknown too"
+		case model.StageClusterUpgrades:
+			gap = "chart upgrades there were not looked for, so an absent chart upgrade there means nobody looked"
+		default:
+			gap = "its " + f.Stage + " data is missing"
+		}
+		out = append(out, fmt.Sprintf("Cluster %q could not be read this run (%s): %s.", f.Cluster, f.Error, gap))
 	}
 	return out
 }
