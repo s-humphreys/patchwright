@@ -86,8 +86,16 @@ split:
     replicas: 2
     # For the web replicas only; the worker keeps `resources` below. A web replica
     # holds one decoded assessment in memory and does no scanning, so it needs a
-    # fraction of what the worker does.
-    resources: {}
+    # fraction of what the worker does. Set by default, limits included, because
+    # admission policies that refuse containers without limits are common, and a
+    # refused web replica leaves the Service with nothing to route to.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
     # The web replicas' ServiceAccount. Empty means the chart creates <release>-web,
     # bound to nothing, whatever serviceAccount.create says: the shared account is the
     # one the cluster-read role is bound to. Name an existing account only if it too

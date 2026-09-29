@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1053,5 +1055,37 @@ func TestDecideBranchNamesTheExploitedCVEs(t *testing.T) {
 		if e.ClearedByThis {
 			t.Errorf("nothing is cleared by a plan with no change: %+v", e)
 		}
+	}
+}
+
+// Behind several replicas, consecutive requests from one client land on different
+// processes. Two handlers stand in for two replicas, with every request alternating
+// between them: a client must still connect, list and call.
+func TestToolsAnswerAcrossReplicas(t *testing.T) {
+	a := fixture()
+	src := func() Assessment { return a }
+	replicas := []http.Handler{Handler("patchwright", "test", src), Handler("patchwright", "test", src)}
+	var n atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		replicas[n.Add(1)%2].ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "test"}, nil)
+	session, err := client.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: srv.URL}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer session.Close()
+	for i := 0; i < 3; i++ {
+		if _, err := session.ListTools(ctx, nil); err != nil {
+			t.Fatalf("list tools, request %d: %v", i, err)
+		}
+	}
+	res, err := session.CallTool(ctx, &sdk.CallToolParams{Name: "estate_summary"})
+	if err != nil || res.IsError {
+		t.Fatalf("estate_summary across replicas: err=%v result=%+v", err, res)
 	}
 }
