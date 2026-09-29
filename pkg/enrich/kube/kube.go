@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -61,53 +63,79 @@ type Source struct {
 	// resolvers detect available upgrades per deployment system. Nil uses the
 	// defaults (Flux HelmRelease); set for tests or to add resolvers.
 	resolvers []UpgradeResolver
+
+	// connect replaces how clusters are reached. Nil builds them from the kubeconfig
+	// or in-cluster config; set by tests.
+	connect func() ([]cluster, error)
+	// retryAfter is the pause before retrying a failed cluster read. Zero uses
+	// defaultRetryAfter.
+	retryAfter time.Duration
+
+	// failures are the cluster reads left out since TakeClusterFailures last ran.
+	mu       sync.Mutex
+	failures []model.SourceFailure
 }
 
 func (s *Source) Name() string { return "kube" }
 
 // RunningImages returns a map of image NameTag -> running workload count across
-// every configured cluster. It fails hard if any cluster's pods cannot be read, so
-// liveness is never inferred from partial data.
+// every cluster that could be read. It does not say whether the read was partial;
+// enrich.Liveness asks RunningImagesPartial, which does.
 func (s *Source) RunningImages(ctx context.Context) (map[string]int, error) {
 	running, _, err := s.RunningImagesPartial(ctx)
 	return running, err
 }
 
-// RunningImagesPartial is RunningImages that also reports whether any cluster
-// refused a workload list. Pods are required; workload definitions are read where
-// RBAC allows, because the grants for them reach clusters later than this code does,
-// and refusing to reconcile at all would be worse than reconciling from pods alone.
+// RunningImagesPartial is RunningImages that also reports whether the read was
+// partial: a cluster refused a workload list, or could not be read at all.
+//
+// Within a cluster, pods are required and workload definitions are read where RBAC
+// allows, because the grants for them reach clusters later than this code does, and
+// refusing to reconcile at all would be worse than reconciling from pods alone.
+// Across clusters, one that cannot be read is left out whole (see readClusters), and
+// the read fails only when none could be read.
 func (s *Source) RunningImagesPartial(ctx context.Context) (map[string]int, bool, error) {
-	clients, err := s.clients()
+	clusters, err := s.clusters()
 	if err != nil {
 		return nil, false, err
 	}
 	running := map[string]int{}
 	partial := false
-	for label, client := range clients {
-		p, err := collectRunningImages(ctx, label, client, running)
+	dropped, err := s.readClusters(ctx, model.StageLive, clusters, func(c cluster) error {
+		seen := map[string]int{}
+		p, err := collectRunningImages(ctx, c.label, c.typed, seen)
 		if err != nil {
-			return nil, false, fmt.Errorf("cluster %q: %w", label, err)
+			return err
+		}
+		for image, n := range seen {
+			running[image] += n
 		}
 		partial = partial || p
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
 	}
-	return running, partial, nil
+	return running, partial || dropped > 0, nil
 }
 
 // NamespaceLabels returns namespace name -> labels across every configured
 // cluster, used to attribute ownership from labels such as "team". When a
 // namespace name appears in more than one cluster, the first cluster's labels
 // win (namespace names are assumed consistent across a fleet).
+//
+// A cluster whose namespaces cannot be read is left out: its namespaces carry no
+// labels this run, so ownership falls back to the rules that do not need them.
 func (s *Source) NamespaceLabels(ctx context.Context) (map[string]map[string]string, error) {
-	clients, err := s.clients()
+	clusters, err := s.clusters()
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]map[string]string{}
-	for label, client := range clients {
-		nss, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	_, err = s.readClusters(ctx, model.StageNamespaceLabels, clusters, func(c cluster) error {
+		nss, err := c.typed.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("cluster %q: list namespaces: %w", label, err)
+			return fmt.Errorf("list namespaces: %w", err)
 		}
 		for i := range nss.Items {
 			ns := &nss.Items[i]
@@ -122,6 +150,10 @@ func (s *Source) NamespaceLabels(ctx context.Context) (map[string]map[string]str
 				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -144,8 +176,9 @@ func collectRunningImages(ctx context.Context, cluster string, client kubernetes
 		count(p.Spec)
 	}
 
-	// A forbidden list is survivable; anything else is as fatal as the pod list,
-	// since it says nothing about what RBAC allows and may hide a broken cluster.
+	// A forbidden list is survivable; anything else fails this cluster's read like
+	// the pod list, since it says nothing about what RBAC allows and may hide a
+	// broken cluster. The caller then leaves the whole cluster out.
 	listFailed := func(resource string, err error) error {
 		if !apierrors.IsForbidden(err) {
 			return fmt.Errorf("list %s: %w", resource, err)
@@ -264,23 +297,6 @@ func (s *Source) restConfigs() (map[string]*rest.Config, error) {
 
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no clusters configured")
-	}
-	return out, nil
-}
-
-// clients builds a typed Kubernetes client per configured cluster.
-func (s *Source) clients() (map[string]kubernetes.Interface, error) {
-	configs, err := s.restConfigs()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]kubernetes.Interface, len(configs))
-	for label, cfg := range configs {
-		cs, err := kubernetes.NewForConfig(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("build client for %q: %w", label, err)
-		}
-		out[label] = cs
 	}
 	return out, nil
 }

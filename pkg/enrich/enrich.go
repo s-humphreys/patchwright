@@ -31,12 +31,24 @@ type LiveSource interface {
 	RunningImages(ctx context.Context) (map[string]int, error)
 }
 
-// PartialLiveSource is a LiveSource that can say its read was incomplete: it saw
-// every running pod but was refused some of the workload definitions, so an image
-// it did not report may still be deployed and merely have no pod at the moment.
+// PartialLiveSource is a LiveSource that can say its read was incomplete: it was
+// refused some of the workload definitions, or could not read one of several
+// clusters at all, so an image it did not report may still be deployed.
 // Optional, like LabelSource; a source that does not implement it is complete.
 type PartialLiveSource interface {
 	RunningImagesPartial(ctx context.Context) (running map[string]int, partial bool, err error)
+}
+
+// ClusterFailureReporter is a source over several clusters that leaves out a cluster
+// it cannot read, rather than failing the assessment, and can say which it left out.
+//
+// One unreadable cluster says nothing about the others, and failing the whole
+// estate for it means nothing refreshes anywhere. The gap still has to be visible:
+// a cluster nobody read looks exactly like a cluster with nothing in it.
+type ClusterFailureReporter interface {
+	// TakeClusterFailures returns the cluster reads that failed since the last call
+	// and forgets them, so each assessment reports only its own.
+	TakeClusterFailures() []model.SourceFailure
 }
 
 // LabelSource reports namespace labels across one or more clusters, keyed by

@@ -870,4 +870,22 @@ type SourceFailure struct {
 	// Error is the reason, as reported, so somebody can act on it rather than only
 	// know that something went wrong.
 	Error string
+	// Cluster names the one cluster a stage could not read, when the stage reads
+	// several and carried on without it. Empty when the whole stage failed.
+	Cluster string
 }
+
+// Stages a live source reports per cluster, when it drops a cluster it cannot read
+// rather than failing the assessment.
+const (
+	// StageLive is the liveness read: images seen only in the dropped cluster are
+	// left unreconciled, so nothing is judged not running on its account.
+	StageLive = "live"
+	// StageNamespaceLabels is the namespace label read that ownership rules use.
+	StageNamespaceLabels = "namespace-labels"
+	// StageDeployContext is how each image is deployed, which decides whether an
+	// image tag bump is directly actionable.
+	StageDeployContext = "deploy-context"
+	// StageClusterUpgrades is the in-cluster upgrade lookup (Flux HelmReleases).
+	StageClusterUpgrades = "cluster-upgrades"
+)

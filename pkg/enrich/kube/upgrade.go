@@ -41,32 +41,34 @@ func (s *Source) Upgrades(ctx context.Context, _ []model.AssessedImage) (map[str
 	if len(resolvers) == 0 {
 		resolvers = defaultResolvers()
 	}
-	configs, err := s.restConfigs()
+	clusters, err := s.clusters()
 	if err != nil {
 		return nil, err
 	}
 
 	result := map[string]model.Upgrade{}
-	for label, cfg := range configs {
-		typed, err := kubernetes.NewForConfig(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", label, err)
-		}
-		dyn, err := dynamic.NewForConfig(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", label, err)
-		}
+	_, err = s.readClusters(ctx, model.StageClusterUpgrades, clusters, func(c cluster) error {
+		found := map[string]model.Upgrade{}
 		for _, r := range resolvers {
-			ups, err := r.Resolve(ctx, typed, dyn)
+			ups, err := r.Resolve(ctx, c.typed, c.dyn)
 			if err != nil {
-				return nil, fmt.Errorf("cluster %q: resolver %q: %w", label, r.Name(), err)
+				return fmt.Errorf("resolver %q: %w", r.Name(), err)
 			}
 			for image, up := range ups {
-				if _, exists := result[image]; !exists {
-					result[image] = up
+				if _, exists := found[image]; !exists {
+					found[image] = up
 				}
 			}
 		}
+		for image, up := range found {
+			if _, exists := result[image]; !exists {
+				result[image] = up
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }
