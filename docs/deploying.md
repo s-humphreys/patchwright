@@ -680,7 +680,7 @@ there.
 | every MCP tool (`estate_summary`, `fix_plan`, `service_report`, `worst_first`, `team_report`, `explain_cve`, `list_facets`, `policy_report`, `exploitability_report`) | the stored assessment and the rules the replica loaded |
 | MCP `trend_report`, `/api/v1/history`, `/api/v1/history/item`, `/api/v1/history/tickets` | the history record (the tracker's tickets are synced into it by the worker); read-only |
 | `/api/v1/config` | the rules the replica loaded; mount the same config on both |
-| `GET /api/v1/tickets` | planned from the stored assessment, against Jira's open tickets read live: a search, safe on any number of replicas. Items in their grace period come from the record, so the preview matches the worker's plan |
+| `GET /api/v1/tickets` | by default 503, saying the plan is the worker's: a web replica holds no Jira credentials, and the worker logs every plan it makes. With `split.web.jiraCredentials: true`, planned from the stored assessment against Jira's open tickets read live: a search, safe on any number of replicas, with items in their grace period read from the record so the preview matches the worker's plan |
 | `POST /api/v1/tickets` | 409: a web replica never writes to a tracker. The worker applies tickets with `--auto-ticket` (`ticketing.autoTicket`) |
 | `POST /api/v1/assessments` | records a request the worker picks up |
 | history status (`status` in `/api/v1/history`) | the worker's, from its row |
@@ -702,10 +702,19 @@ federated credential for the subject
 `split.web.serviceAccountName`), beside the worker's. With password authentication the
 web replicas need no cloud identity at all and carry none.
 
-**Credentials.** The web replicas take the same `credentialsSecretName` as the worker.
-They use the API token, the Jira credentials (for the read-only plan preview), the OIDC
-secrets and the database password; the scan provider and Azure DevOps keys in the same
-Secret are present and unused. Split the Secret yourself if that matters.
+**Credentials.** The web replicas do not take the whole `credentialsSecretName`. They
+get named keys from it, each optional: `PATCHWRIGHT_API_TOKEN`,
+`PATCHWRIGHT_SESSION_KEY` and `PATCHWRIGHT_OIDC_CLIENT_SECRET` (unless
+`auth.oidc.sessionKeyRef` or `clientSecretRef` name them elsewhere), and
+`PATCHWRIGHT_HISTORY_DSN` and `PATCHWRIGHT_HISTORY_PASSWORD` (unless
+`history.connection` and `history.passwordSecretRef` supply them). The scan provider
+key, registry and Azure DevOps credentials and the Jira credentials stay with the
+worker.
+
+`split.web.jiraCredentials: true` adds the `JIRA_*` keys, so the web replicas can show
+the ticket plan preview. They only ever search Jira, so give them a read-only token if
+your Jira allows one: the same Secret key serves both halves, so that means a Secret of
+the web replicas' own, or accepting that they hold the worker's write-capable token.
 
 **Switching.** Enabling the split on an existing release deletes the single Deployment
 and creates the two, whose selectors differ; the Service stays. With a stored assessment

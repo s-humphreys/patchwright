@@ -123,7 +123,8 @@ so they stay in sync. Callers pass a dict:
   {{- $oidc := .root.Values.auth.oidc }}
   {{- $jira := .root.Values.ticketing.jira }}
   {{- $history := .root.Values.history }}
-  {{- if or $scan $docker $oidc.clientSecretRef.name $oidc.sessionKeyRef.name $jira.baseURL $jira.cloudID (and $history.enabled $history.connection.host) }}
+  {{- $webCreds := and $web .root.Values.credentialsSecretName }}
+  {{- if or $scan $docker $oidc.clientSecretRef.name $oidc.sessionKeyRef.name $jira.baseURL $jira.cloudID (and $history.enabled $history.connection.host) $webCreds }}
   env:
     {{- if and $history.enabled $history.connection.host }}
     # Not a credential: the password comes separately, so this can sit in values and
@@ -179,8 +180,34 @@ so they stay in sync. Callers pass a dict:
     - name: DOCKER_CONFIG
       value: /etc/patchwright-dockerconfig
     {{- end }}
+    {{- if $webCreds }}
+    {{- /*
+    A web replica takes named keys from the credentials Secret rather than all of it:
+    the Secret also holds the scan provider's key, registry and Azure DevOps tokens and
+    the Jira credentials the worker writes with, none of which a web replica uses.
+    Optional, because each is: an absent key is a feature switched off, as with envFrom.
+    */}}
+    {{- $keys := list "PATCHWRIGHT_API_TOKEN" }}
+    {{- if not $oidc.sessionKeyRef.name }}{{ $keys = append $keys "PATCHWRIGHT_SESSION_KEY" }}{{ end }}
+    {{- if not $oidc.clientSecretRef.name }}{{ $keys = append $keys "PATCHWRIGHT_OIDC_CLIENT_SECRET" }}{{ end }}
+    {{- if not (and $history.enabled $history.connection.host) }}{{ $keys = append $keys "PATCHWRIGHT_HISTORY_DSN" }}{{ end }}
+    {{- if and (not $history.passwordSecretRef.name) (ne $history.auth "azure") }}{{ $keys = append $keys "PATCHWRIGHT_HISTORY_PASSWORD" }}{{ end }}
+    {{- if .root.Values.split.web.jiraCredentials }}
+    {{- $keys = concat $keys (list "JIRA_EMAIL" "JIRA_API_TOKEN" "JIRA_OAUTH_CLIENT_ID" "JIRA_OAUTH_CLIENT_SECRET" "JIRA_OAUTH_REFRESH_TOKEN") }}
+    {{- if not $jira.baseURL }}{{ $keys = append $keys "JIRA_BASE_URL" }}{{ end }}
+    {{- if not $jira.cloudID }}{{ $keys = append $keys "JIRA_CLOUD_ID" }}{{ end }}
+    {{- end }}
+    {{- range $keys }}
+    - name: {{ . }}
+      valueFrom:
+        secretKeyRef:
+          name: {{ $.root.Values.credentialsSecretName }}
+          key: {{ . }}
+          optional: true
+    {{- end }}
+    {{- end }}
   {{- end }}
-  {{- if .root.Values.credentialsSecretName }}
+  {{- if and .root.Values.credentialsSecretName (not $web) }}
   # One Secret, whose keys are the environment variables the binary reads. It replaced
   # five separate secretName/secretKey pairs — Rapid7, Azure DevOps, three Jira values
   # and the API token — each of which had to agree with a key name the operator could

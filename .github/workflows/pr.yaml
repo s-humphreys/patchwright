@@ -174,6 +174,23 @@ jobs:
             exit 1
           fi
 
+          # A web replica gets named keys from the credentials Secret, never all of it, and
+          # no Jira credentials unless asked.
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true --set credentialsSecretName=creds)
+          web=$(doc Deployment pw-patchwright-web <<<"$split")
+          if grep -qF 'envFrom' <<<"$web" || grep -qF 'JIRA_' <<<"$web" \
+              || ! grep -qF 'key: PATCHWRIGHT_API_TOKEN' <<<"$web" || ! grep -qF 'optional: true' <<<"$web" \
+              || ! grep -qF 'envFrom' <<<"$(doc Deployment pw-patchwright-worker <<<"$split")"; then
+            echo 'the web replicas take the whole credentials Secret, or Jira credentials by default' >&2
+            exit 1
+          fi
+          web=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true --set credentialsSecretName=creds \
+            --set split.web.jiraCredentials=true | doc Deployment pw-patchwright-web)
+          if ! grep -qF 'key: JIRA_API_TOKEN' <<<"$web" || grep -qF 'envFrom' <<<"$web"; then
+            echo 'split.web.jiraCredentials did not pass the Jira keys, and only them' >&2
+            exit 1
+          fi
+
           # And with it off, nothing of it renders: the single Deployment stays the default.
           if helm template pw "${main[@]}" "${history[@]}" | grep -qE -- '--role=|component: (worker|web)'; then
             echo 'split resources rendered with split.enabled false' >&2
