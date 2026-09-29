@@ -27,9 +27,14 @@ func NewServer(name, version string, src Source) *sdk.Server {
 // Handler is the Streamable HTTP handler to mount at /mcp. It is a normal handler
 // so it sits behind whatever middleware wraps the rest of the routes: the MCP
 // endpoint must never be an unauthenticated door into data the page gates.
+//
+// Stateless, because the tools are request and response and a session lives in one
+// process's memory: behind several web replicas, a session opened on one was
+// unknown to the next replica the load balancer picked, and every call failed.
 func Handler(name, version string, src Source) http.Handler {
 	server := NewServer(name, version, src)
-	return sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, nil)
+	return sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server },
+		&sdk.StreamableHTTPOptions{Stateless: true})
 }
 
 // errNoAssessment is what every tool returns before the first assessment finishes.
