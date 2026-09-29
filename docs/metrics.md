@@ -38,6 +38,7 @@ Enabling both is refused: two monitors on one target double every counter.
 | `patchwright_ticket_actions_total{action,result}` | `result` is `applied`, `noop`, `failed` |
 | `patchwright_image_scans_total{result}` | `ok`, `failed`, `skipped` |
 | `patchwright_fallback_scans_total{result}` | `ok`, `failed`, `skipped` — scans of provider-unassessed images only |
+| `patchwright_cluster_read_failures_total{cluster,read}` | a cluster left out of an assessment after a failed read and one retry; `read` is `live`, `namespace-labels`, `deploy-context`, `cluster-upgrades` |
 
 ## Alerting
 

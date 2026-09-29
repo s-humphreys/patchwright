@@ -209,6 +209,15 @@ func TestJiraRequestsAreCountedByOutcome(t *testing.T) {
 	}
 }
 
+func TestClusterReadFailuresAreCountedPerCluster(t *testing.T) {
+	labels := map[string]string{"cluster": "remote", "read": "live"}
+	before := counterValue(t, "patchwright_cluster_read_failures_total", labels)
+	ClusterReadFailure("remote", "live")
+	if after := counterValue(t, "patchwright_cluster_read_failures_total", labels); after != before+1 {
+		t.Errorf("count went %v -> %v, want +1", before, after)
+	}
+}
+
 // grepPrefix returns the scrape lines starting with prefix, for readable failures.
 func grepPrefix(scrape, prefix string) string {
 	var out []string
