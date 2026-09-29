@@ -147,6 +147,15 @@ jobs:
             exit 1
           fi
 
+          # The disruption budget bounds how many web replicas go at once; a minimum would
+          # block every drain of a single replica.
+          pdb=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true --set split.web.replicas=1 \
+            | doc PodDisruptionBudget pw-patchwright-web)
+          if ! grep -qF 'maxUnavailable: 1' <<<"$pdb" || grep -qF 'minAvailable' <<<"$pdb"; then
+            echo 'the web PodDisruptionBudget is not maxUnavailable 1' >&2
+            exit 1
+          fi
+
           # And with it off, nothing of it renders: the single Deployment stays the default.
           if helm template pw "${main[@]}" "${history[@]}" | grep -qE -- '--role=|component: (worker|web)'; then
             echo 'split resources rendered with split.enabled false' >&2

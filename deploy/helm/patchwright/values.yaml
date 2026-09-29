@@ -92,9 +92,12 @@ split:
     # worker only: they are usually assessment flags, and one the web role refuses,
     # such as --auto-ticket, would leave every web replica crash-looping.
     extraArgs: []
+    # maxUnavailable rather than minAvailable: with one replica, minAvailable 1 would
+    # refuse every voluntary eviction and hang node drains, while maxUnavailable 1
+    # keeps all but one serving at any replica count and never blocks a drain.
     podDisruptionBudget:
       enabled: true
-      minAvailable: 1
+      maxUnavailable: 1
 
 # Prometheus metrics, prefixed patchwright_, served at /metrics in server mode.
 #

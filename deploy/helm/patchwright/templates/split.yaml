@@ -204,7 +204,7 @@ metadata:
     {{- include "patchwright.labels" . | nindent 4 }}
     app.kubernetes.io/component: web
 spec:
-  minAvailable: {{ .Values.split.web.podDisruptionBudget.minAvailable }}
+  maxUnavailable: {{ .Values.split.web.podDisruptionBudget.maxUnavailable }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "patchwright.name" . }}

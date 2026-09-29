@@ -615,7 +615,7 @@ split:
     resources: {}
     podDisruptionBudget:
       enabled: true
-      minAvailable: 1
+      maxUnavailable: 1
 ```
 
 **When to use it.** When the page, the API and MCP must stay up while the assessment
@@ -631,7 +631,7 @@ byte. `true` renders instead:
 | | Worker (`<release>-worker`) | Web (`<release>-web`) |
 |---|---|---|
 | Runs | `serve --role=worker`: the schedule, assessments, ticket reconciliation, history, tracker sync; stores each assessment | `serve --role=web`: the page, the API and MCP from the stored assessment and the record |
-| Replicas | 1, `strategy: Recreate` | `split.web.replicas`, with a PodDisruptionBudget (`minAvailable: 1`) |
+| Replicas | 1, `strategy: Recreate` | `split.web.replicas`, with a PodDisruptionBudget (`maxUnavailable: 1`, so a single replica never blocks a node drain) |
 | Serves | `/healthz`, `/readyz`, `/metrics` only | everything, behind the release's Service |
 | Kubernetes API | the ServiceAccount bound to the cluster-read ClusterRole | a ServiceAccount of its own (`<release>-web`), bound to nothing, token not mounted |
 | Mounts | rules, Trivy cache, kubeconfig and docker config as configured | rules only |
