@@ -232,15 +232,23 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 			// rolled it out without ever seeing the ticket.
 			if in.Config.ForProject(projectOf(t.Key)).AutoClose {
 				if done, evidence := upgradeComplete(images, byRepo(in.Findings)); done {
-					// Whether anyone picked the ticket up decides which transition may
-					// be used, so the plan has to carry it: the writer cannot ask Jira
-					// after the fact without a second round trip, and the answer would
-					// be the same one already in hand.
-					unworked := t.Untouched()
+					// A ticket somebody has picked up is theirs to close, even when the
+					// upgrade is proven to have landed: they may have QA or a rollout of
+					// their own to finish. Closing it under them happened on a real
+					// board (DATA-4316, closed from QA), so it is said, not done.
+					if !t.Untouched() {
+						out = append(out, Action{
+							Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonUpgradeLanded,
+							Message: landedNote(evidence),
+							Dedupe:  "note-done:" + ReasonUpgradeLanded,
+							Why:     "every image it covers is already on the latest available version; left for whoever is working it to close",
+						})
+						continue
+					}
 					out = append(out, Action{
-						Kind: ActionClose, TicketKey: t.Key, Unworked: unworked, Reason: ReasonUpgradeLanded,
-						Message: closeComment(evidence, unworked),
-						Why:     closeWhy(unworked),
+						Kind: ActionClose, TicketKey: t.Key, Unworked: true, Reason: ReasonUpgradeLanded,
+						Message: closeComment(evidence, true),
+						Why:     closeWhy(true),
 					})
 					continue
 				}
@@ -526,6 +534,15 @@ func closeComment(evidence string, unworked bool) string {
 	body += "\n\nChecked, not assumed — patchwright never closes a ticket because a finding " +
 		"disappeared. Reopen if this is wrong."
 	return body
+}
+
+// landedNote tells whoever is working a ticket that patchwright sees the upgrade
+// running everywhere, without closing it for them.
+func landedNote(evidence string) string {
+	return "patchwright sees this upgrade running everywhere the ticket covers: " + evidence +
+		"\n\nLeft open because someone is working it: close it once you are satisfied. " +
+		"Anything still reported on these images after the upgrade is outside what this " +
+		"ticket asked for."
 }
 
 func closeWhy(unworked bool) string {

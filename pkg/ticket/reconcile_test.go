@@ -638,9 +638,11 @@ func TestAutoCloseIsResolvedPerProject(t *testing.T) {
 		{"OTHER-1", false},  // unknown project falls back to the base
 	} {
 		actions := Reconcile(ReconcileInput{
-			Config:      cfg,
-			Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
-			OpenByImage: map[string][]Existing{"acme/app": {{Key: tc.key}}},
+			Config:   cfg,
+			Findings: []sink.FindingView{onLatest("acme/app", "2.0.0")},
+			// Untouched, so only the route's autoClose decides; a worked ticket is
+			// never closed, whatever the route says (see the test below).
+			OpenByImage: map[string][]Existing{"acme/app": {{Key: tc.key, Category: "new"}}},
 		})
 		var closed bool
 		for _, a := range actions {
@@ -727,28 +729,30 @@ func TestNoOpsAreNotCountedAsWrites(t *testing.T) {
 	}
 }
 
-// The plan has to say whether the ticket was worked, or the writer cannot choose a
-// transition honestly. And the comment has to explain a not-done status, or a closed
-// ticket reads as a decision to skip the work.
+// An untouched ticket whose upgrade landed is closed as not worked, and says so. A
+// ticket somebody has picked up is never closed by patchwright, even with the
+// upgrade proven everywhere: it gets a note and stays theirs to close. DATA-4316 was
+// closed from QA under its assignee before this rule.
 func TestCloseCarriesWhetherTheTicketWasWorked(t *testing.T) {
+	untouched := Reconcile(ReconcileInput{
+		Config:      autoCloseCfg(),
+		Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
+		OpenByImage: map[string][]Existing{"acme/app": {{Key: "PROJ-1", Category: "new"}}},
+	})
+	if len(untouched) != 1 || untouched[0].Kind != ActionClose || !untouched[0].Unworked {
+		t.Fatalf("untouched: actions = %+v, want one not-worked close", untouched)
+	}
+	if !strings.Contains(untouched[0].Message, "Nobody picked this ticket up") {
+		t.Errorf("untouched close does not say it was not worked: %s", untouched[0].Message)
+	}
+
 	for _, tc := range []struct {
-		name         string
-		existing     Existing
-		wantUnworked bool
-		wantInBody   string
+		name     string
+		existing Existing
 	}{
-		{
-			name:         "nobody picked it up",
-			existing:     Existing{Key: "PROJ-1", Category: "new"},
-			wantUnworked: true,
-			wantInBody:   "Nobody picked this ticket up",
-		},
-		{
-			name:         "someone is working it",
-			existing:     Existing{Key: "PROJ-1", Category: "indeterminate", Assigned: true},
-			wantUnworked: false,
-			wantInBody:   "already on the latest available version",
-		},
+		{"assigned and in progress", Existing{Key: "PROJ-1", Category: "indeterminate", Assigned: true}},
+		{"assigned, still to do", Existing{Key: "PROJ-1", Category: "new", Assigned: true}},
+		{"moved on, nobody assigned", Existing{Key: "PROJ-1", Category: "indeterminate"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			actions := Reconcile(ReconcileInput{
@@ -756,18 +760,14 @@ func TestCloseCarriesWhetherTheTicketWasWorked(t *testing.T) {
 				Findings:    []sink.FindingView{onLatest("acme/app", "2.0.0")},
 				OpenByImage: map[string][]Existing{"acme/app": {tc.existing}},
 			})
-			if len(actions) != 1 || actions[0].Kind != ActionClose {
-				t.Fatalf("actions = %+v, want one close", actions)
+			if len(actions) != 1 || actions[0].Kind != ActionNoteDone {
+				t.Fatalf("actions = %+v, want one note and no close", actions)
 			}
-			if actions[0].Unworked != tc.wantUnworked {
-				t.Errorf("Unworked = %v, want %v", actions[0].Unworked, tc.wantUnworked)
+			if actions[0].Reason != ReasonUpgradeLanded || actions[0].Dedupe == "" {
+				t.Errorf("note = %+v, want reason %s and a dedupe key", actions[0], ReasonUpgradeLanded)
 			}
-			if !strings.Contains(actions[0].Message, tc.wantInBody) {
-				t.Errorf("comment does not mention %q: %s", tc.wantInBody, actions[0].Message)
-			}
-			// A worked ticket must not be described as unworked in its own comment.
-			if !tc.wantUnworked && strings.Contains(actions[0].Message, "Nobody picked") {
-				t.Errorf("a worked ticket was described as unworked: %s", actions[0].Message)
+			if !strings.Contains(actions[0].Message, "close it once you are satisfied") {
+				t.Errorf("note does not leave the close to the assignee: %s", actions[0].Message)
 			}
 		})
 	}

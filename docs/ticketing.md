@@ -402,6 +402,13 @@ that path only comments. Closing requires every image on the ticket to be:
   catches an old tag still running somewhere;
 - liveness reconciled, so "everywhere" is checked rather than assumed.
 
+**patchwright never closes a ticket somebody has picked up.** A ticket that is
+assigned, or has moved out of its board's to-do status, belongs to whoever is working
+it, even when the upgrade is proven to be running everywhere: they may still have QA
+or a rollout of their own to finish. Instead it gets one comment saying the upgrade is
+running and leaving the close to them. Only untouched tickets, unassigned and never
+started, are closed automatically.
+
 Set `closeTransition` where the workflow offers more than one way to finish:
 "Done" and "Won't Do" are not interchangeable, so patchwright refuses to choose and
 names the alternatives.
@@ -418,11 +425,9 @@ jira:
 
 It applies **only to tickets nobody picked up** — unassigned and never started. For
 those, "not done" is the accurate record: the upgrade landed by another route, so the
-ticket was never actioned. A ticket somebody worked still refuses to close this way
-and fails loudly, because recording their work as not-done would misrepresent it.
-`closeTransition` wins wherever it is available, since "done" is the truer statement
-about finished work. The comment says which case it is, so a closed-as-not-done ticket
-does not read as a decision to skip the work.
+ticket was never actioned. A ticket somebody worked is not closed at all (see above).
+The comment says why it was closed, so a closed-as-not-done ticket does not read as a
+decision to skip the work.
 
 **`closeTransitionNoLongerActionable` closes tickets whose work stopped mattering.** Distinct
 from `autoClose`, which needs proof the upgrade landed. This covers the two ways a
