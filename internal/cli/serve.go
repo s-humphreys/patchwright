@@ -182,6 +182,9 @@ func newServeCmd() *cobra.Command {
 						slog.InfoContext(cmd.Context(),
 							"jira configured but this web replica has no credentials; the ticket plan is the worker's")
 						srv = srv.WithTicketPlanOnWorker()
+						if base := strings.TrimSpace(os.Getenv(ticket.EnvBaseURL)); base != "" {
+							srv = srv.WithTicketLinks(base)
+						}
 						break
 					}
 					slog.WarnContext(cmd.Context(),

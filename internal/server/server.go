@@ -211,6 +211,14 @@ func (s *Server) WithTickets(idx TicketIndex, baseURL string) *Server {
 	return s
 }
 
+// WithTicketLinks sets only the base issue links are built from, for a process that
+// has no Jira credentials: the site's address is not a secret, and a key someone
+// cannot click is a key they have to go and search for.
+func (s *Server) WithTicketLinks(baseURL string) *Server {
+	s.jiraBaseURL = baseURL
+	return s
+}
+
 // lookupTickets fetches the open-ticket index, if one is configured. A failure is
 // logged and returns nothing: findings are the point of this service, and losing
 // the ability to say "there is already a ticket" must not cost the assessment.
