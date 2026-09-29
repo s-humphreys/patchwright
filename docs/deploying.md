@@ -641,9 +641,13 @@ The Service keeps its name and points at the web replicas, so an Ingress or HTTP
 you manage in front of it needs no change; the chart itself renders neither. The
 worker gets a second Service, `<release>-worker`, for its metrics only, and the
 ServiceMonitor or PodMonitor select the worker: its metrics describe the runs, and a
-web replica makes none. With `serviceAccount.create: false` there is no second
-ServiceAccount to create, so the web replicas run under the one you name, still with no
-token mounted.
+web replica makes none.
+
+The web ServiceAccount is created by the chart whatever `serviceAccount.create` says:
+with `create: false` the account you name is the one the cluster-read role is bound to
+(by this chart or by patchwright-rbac), and the web replicas must not share it. Set
+`split.web.serviceAccountName` to use an account you manage instead; the chart then
+creates none, and that account should be bound to nothing.
 
 Rendering refuses `split.enabled` without `history.enabled`, without `server.enabled`,
 with no web replicas, and with `auth.oidc` but no source for `PATCHWRIGHT_SESSION_KEY`
@@ -690,9 +694,13 @@ key is required: without it each replica signs with its own random key, and a si
 completed on one is not recognised by the next.
 
 **Identity.** With `history.auth: azure` the web replicas need the workload identity to
-reach the database, so their ServiceAccount carries the same client-id annotation. Its
-subject is `system:serviceaccount:<namespace>:<release>-web`, a second federated
-credential on the managed identity beside the worker's.
+reach the database, so the ServiceAccount the chart creates for them carries the
+client-id annotation, and `registryAuth.azure.workloadIdentity.clientId` is required
+even when `serviceAccount.create` is false. The managed identity needs a second
+federated credential for the subject
+`system:serviceaccount:<namespace>:<release>-web` (or the account named in
+`split.web.serviceAccountName`), beside the worker's. With password authentication the
+web replicas need no cloud identity at all and carry none.
 
 **Credentials.** The web replicas take the same `credentialsSecretName` as the worker.
 They use the API token, the Jira credentials (for the read-only plan preview), the OIDC

@@ -16,10 +16,10 @@ place of deployment.yaml's single Deployment when split.enabled; see values.yaml
 {{- fail "split.enabled with auth.oidc needs PATCHWRIGHT_SESSION_KEY, from auth.oidc.sessionKeyRef or the credentials Secret: each web replica would otherwise sign cookies with its own key, and refuses to start without one" }}
 {{- end }}
 {{- $fullname := include "patchwright.fullname" . }}
-{{- $webSA := include "patchwright.serviceAccountName" . }}
-{{- if .Values.serviceAccount.create }}
-{{- $webSA = printf "%s-web" $fullname }}
-{{- end }}
+{{- /* Its own account whatever serviceAccount.create says: the shared one is typically
+the account a ClusterRole is bound to, here or by the patchwright-rbac chart. */}}
+{{- $webSA := .Values.split.web.serviceAccountName | default (printf "%s-web" $fullname) }}
+{{- $createWebSA := not .Values.split.web.serviceAccountName }}
 {{- /* The web replicas need the workload identity only to reach an Azure database with an Entra token; registry pulls are the worker's. */}}
 {{- $webIdentity := and .Values.registryAuth.azure.workloadIdentity.enabled (eq .Values.history.auth "azure") }}
 apiVersion: apps/v1
@@ -211,7 +211,7 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: web
 {{- end }}
-{{- if .Values.serviceAccount.create }}
+{{- if $createWebSA }}
 ---
 # The web replicas' identity: bound to nothing, so it can read nothing from the
 # cluster even if a token were mounted.

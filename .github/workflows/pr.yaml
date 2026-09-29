@@ -156,6 +156,24 @@ jobs:
             exit 1
           fi
 
+          # The web replicas never share the worker's ServiceAccount, even when the chart
+          # does not create that one: it is the account the cluster-read role is bound to.
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set serviceAccount.create=false --set serviceAccount.name=shared)
+          if ! grep -qF 'serviceAccountName: pw-patchwright-web' <<<"$(doc Deployment pw-patchwright-web <<<"$split")" \
+              || [ -z "$(doc ServiceAccount pw-patchwright-web <<<"$split")" ] \
+              || [ -n "$(doc ServiceAccount shared <<<"$split")" ]; then
+            echo 'the web replicas do not run under a ServiceAccount of their own' >&2
+            exit 1
+          fi
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set split.web.serviceAccountName=mine)
+          if ! grep -qF 'serviceAccountName: mine' <<<"$(doc Deployment pw-patchwright-web <<<"$split")" \
+              || [ -n "$(doc ServiceAccount pw-patchwright-web <<<"$split")" ]; then
+            echo 'split.web.serviceAccountName was not used, or a web ServiceAccount was still created' >&2
+            exit 1
+          fi
+
           # And with it off, nothing of it renders: the single Deployment stays the default.
           if helm template pw "${main[@]}" "${history[@]}" | grep -qE -- '--role=|component: (worker|web)'; then
             echo 'split resources rendered with split.enabled false' >&2

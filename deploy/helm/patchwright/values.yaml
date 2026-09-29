@@ -88,6 +88,11 @@ split:
     # holds one decoded assessment in memory and does no scanning, so it needs a
     # fraction of what the worker does.
     resources: {}
+    # The web replicas' ServiceAccount. Empty means the chart creates <release>-web,
+    # bound to nothing, whatever serviceAccount.create says: the shared account is the
+    # one the cluster-read role is bound to. Name an existing account only if it too
+    # is bound to nothing.
+    serviceAccountName: ""
     # Extra args for `patchwright serve --role=web`. The top-level extraArgs go to the
     # worker only: they are usually assessment flags, and one the web role refuses,
     # such as --auto-ticket, would leave every web replica crash-looping.
