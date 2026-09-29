@@ -117,6 +117,50 @@ func TestTheTokenIsSentAsABearerHeader(t *testing.T) {
 	}
 }
 
+func TestARejectedTokenIsNotPresentedAgain(t *testing.T) {
+	// A cluster read that fails 401 is retried once, and a retry presenting the same
+	// cached token would fail the same way for the rest of the token's hour.
+	cred := &stubCred{token: "rejected", expires: time.Now().Add(time.Hour)}
+	src := &azureTokenSource{cred: cred}
+	var seen []string
+	rt := &azureRoundTripper{source: src, next: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		if len(seen) == 1 {
+			return &http.Response{StatusCode: http.StatusUnauthorized, Body: http.NoBody}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})}
+	for i := 0; i < 2; i++ {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://cluster.example/api", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rt.RoundTrip(req); err != nil {
+			t.Fatal(err)
+		}
+		cred.token = "fresh"
+	}
+	if cred.calls != 2 {
+		t.Errorf("acquired %d tokens, want a second after the 401", cred.calls)
+	}
+	if seen[1] != "Bearer fresh" {
+		t.Errorf("retry sent %q, want the fresh token", seen[1])
+	}
+}
+
+func TestAnotherRequestsFreshTokenIsNotDropped(t *testing.T) {
+	// A 401 arriving after a concurrent request already replaced the token must not
+	// throw away the replacement.
+	src := &azureTokenSource{cred: &stubCred{token: "fresh", expires: time.Now().Add(time.Hour)}}
+	if _, err := src.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	src.invalidate("older")
+	if src.token != "fresh" {
+		t.Errorf("cached token = %q, want the replacement kept", src.token)
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

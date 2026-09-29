@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 
@@ -43,25 +44,28 @@ type crdFetcher func(ctx context.Context, apiVersion, kind string) (*unstructure
 // where the change would land. Directly-deployed (manifest/Kustomize) and
 // operator-set-in-spec images are actionable; chart-managed and operator-derived
 // images are not.
+//
+// A cluster that cannot be read is left out, so its images carry no deployment
+// context this run.
 func (s *Source) ImageDeployments(ctx context.Context) (map[string]enrich.DeployContext, error) {
-	configs, err := s.restConfigs()
+	clusters, err := s.clusters()
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]enrich.DeployContext{}
-	for label, cfg := range configs {
-		typed, err := kubernetes.NewForConfig(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", label, err)
+	_, err = s.readClusters(ctx, model.StageDeployContext, clusters, func(c cluster) error {
+		// Into a copy, kept only when the whole cluster reads. Not a map of its own:
+		// a cluster's read refines what earlier clusters recorded for the same image.
+		next := maps.Clone(out)
+		fetch, crds := newDynamicFetchers(c.cfg, c.dyn)
+		if err := clusterImageDeployments(ctx, c.typed, c.dyn, fetch, crds, next); err != nil {
+			return err
 		}
-		dyn, err := dynamic.NewForConfig(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", label, err)
-		}
-		fetch, crds := newDynamicFetchers(cfg, dyn)
-		if err := clusterImageDeployments(ctx, typed, dyn, fetch, crds, out); err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", label, err)
-		}
+		out = next
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
