@@ -41,6 +41,10 @@ type assessmentMeta struct {
 	// they believe is running - which is the thing that goes wrong when a rollout
 	// half-succeeds.
 	Version string `json:"version"`
+	// LoadedFromStore is set while the data served was stored by an earlier process
+	// and no run in this one has replaced it. GeneratedAt is still when that
+	// assessment was made, so its age is stated honestly.
+	LoadedFromStore bool `json:"loaded_from_store,omitempty"`
 }
 
 // routes is the one place a pattern is written down: Handler registers from it and
@@ -144,6 +148,7 @@ func (s *Server) meta() assessmentMeta {
 		t := s.latest.generatedAt
 		m.GeneratedAt = &t
 		m.Error = s.latest.err
+		m.LoadedFromStore = s.loaded
 	}
 	return m
 }
@@ -158,7 +163,8 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// handleReadyz reports ready once a first successful assessment is cached.
+// handleReadyz reports ready once an assessment is served: one this process ran,
+// or one it loaded from the store.
 func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	snap := s.snapshot()
 	if snap == nil || snap.views == nil {

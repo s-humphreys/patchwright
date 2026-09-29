@@ -674,6 +674,19 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/TicketAction" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: |
+            The served assessment was loaded from the store after a restart
+            (`assessment.loaded_from_store`). Tickets are applied only against an
+            assessment this process ran; retry once its first run completes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+        "503":
+          description: Ticketing is not configured, or no assessment is cached
 
   /mcp:
     post:
@@ -1047,6 +1060,16 @@ components:
           description: |
             Set when the most recent run failed. The previously cached result is
             still served, so a failed refresh does not blank the API.
+        loaded_from_store:
+          type: boolean
+          description: |
+            Present and true while the data served was stored by an earlier process
+            and no assessment in this one has replaced it: after a restart, with a
+            history store configured, the last stored assessment is served while the
+            first run is in flight. `generated_at` is still when that assessment was
+            made, so its age is honest. Tickets are not applied against it
+            (`POST /api/v1/tickets` answers 409) and it is not recorded as history.
+            Absent otherwise, including whenever no store is configured.
 
     Movable:
       type: object

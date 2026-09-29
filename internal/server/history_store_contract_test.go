@@ -192,3 +192,78 @@ func isolatedPostgres(t *testing.T) string {
 	})
 	return u.String()
 }
+
+// The served-assessment half of the store, run the same way: memStore stands in for
+// postgres in every server test that restarts from a stored assessment.
+func TestServedStoreContract(t *testing.T) {
+	stores := map[string]func(t *testing.T) history.Store{
+		"memStore": func(*testing.T) history.Store { return newMemStore() },
+		"postgres.Lazy": func(t *testing.T) history.Store {
+			return postgres.NewLazy(postgres.Options{DSN: isolatedPostgres(t)})
+		},
+	}
+	for name, open := range stores {
+		t.Run(name, func(t *testing.T) { servedStoreContract(t, open(t)) })
+	}
+}
+
+func servedStoreContract(t *testing.T, s history.Store) {
+	ctx := context.Background()
+	// Microseconds, which is what postgres keeps.
+	at := func(h int) time.Time { return time.Date(2026, 9, 29, h, 0, 0, 123456000, time.UTC) }
+	save := func(h int, schema int, payload string, keep int) {
+		t.Helper()
+		if err := s.SaveServed(ctx, history.ServedAssessment{
+			GeneratedAt: at(h), Version: fmt.Sprintf("v%d", h), SchemaVersion: schema, Payload: []byte(payload),
+		}, keep); err != nil {
+			t.Fatalf("save %d: %v", h, err)
+		}
+	}
+	latest := func(after time.Time) *history.ServedAssessment {
+		t.Helper()
+		got, err := s.LatestServed(ctx, after)
+		if err != nil {
+			t.Fatalf("latest: %v", err)
+		}
+		return got
+	}
+
+	if got := latest(time.Time{}); got != nil {
+		t.Fatalf("an empty store returned %+v, want nil", got)
+	}
+
+	save(10, 1, "ten", 3)
+	got := latest(time.Time{})
+	if got == nil || !got.GeneratedAt.Equal(at(10)) || got.Version != "v10" || got.SchemaVersion != 1 || string(got.Payload) != "ten" || got.ID == 0 {
+		t.Fatalf("round trip = %+v", got)
+	}
+
+	// Newest by generated_at, not by insertion: an older row written late does not
+	// displace a newer one.
+	save(12, 1, "twelve", 3)
+	save(11, 1, "eleven", 3)
+	if got := latest(time.Time{}); got == nil || string(got.Payload) != "twelve" {
+		t.Errorf("latest = %+v, want the twelve o'clock row", got)
+	}
+
+	// after is strict, so a reader holding the newest is told nothing is newer.
+	if got := latest(at(12)); got != nil {
+		t.Errorf("latest after the newest = %+v, want nil", got)
+	}
+	if got := latest(at(11)); got == nil || string(got.Payload) != "twelve" {
+		t.Errorf("latest after eleven = %+v, want twelve", got)
+	}
+
+	// A payload of another schema is stored as written: telling it apart is the
+	// reader's job, and the store must not drop what it cannot read.
+	save(13, 99, "future", 3)
+	if got := latest(time.Time{}); got == nil || got.SchemaVersion != 99 {
+		t.Errorf("latest = %+v, want the schema 99 row", got)
+	}
+
+	// Pruning keeps the newest: with keep 1 an older row is dropped as it is written.
+	save(9, 1, "nine", 1)
+	if got := latest(at(12)); got == nil || got.SchemaVersion != 99 {
+		t.Errorf("after keep 1 with an older row, latest after twelve = %+v, want the schema 99 row", got)
+	}
+}

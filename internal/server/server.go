@@ -170,6 +170,10 @@ type Server struct {
 	mu      sync.RWMutex
 	latest  *snapshot
 	running bool
+	// loaded is set while latest came from the store rather than from a run in this
+	// process. It is what keeps ticketing and history off stale data, and what the
+	// API reports as loaded_from_store.
+	loaded bool
 	// startedAt is when the in-flight assessment began. A first full run takes
 	// minutes (every cluster, every image), and a client showing nothing with no
 	// indication of progress is indistinguishable from one that is broken.
@@ -243,6 +247,7 @@ func (s *Server) Refresh(ctx context.Context) {
 		s.running = false
 		s.mu.Unlock()
 		if published {
+			s.persistServed(ctx, snap)
 			s.recordHistory(ctx, snap, started)
 			s.recordTicketWrites(ctx, s.autoReconcile(ctx))
 			s.syncTracker(ctx)
@@ -290,9 +295,14 @@ func (s *Server) Refresh(ctx context.Context) {
 	// Preserve the last good data if this run errored but a previous succeeded.
 	if snap.err != "" && s.latest != nil && s.latest.err == "" {
 		s.latest.err = snap.err
-		s.latest.generatedAt = snap.generatedAt
+		// A loaded assessment keeps the time it was made: it is served as what it
+		// is, older data, until a run in this process succeeds.
+		if !s.loaded {
+			s.latest.generatedAt = snap.generatedAt
+		}
 	} else {
 		s.latest = snap
+		s.loaded = false
 		// Only reconcile tickets against a successful assessment: raising work from
 		// a failed run would act on whatever the last good data happened to be
 		// while reporting an error.
@@ -302,8 +312,11 @@ func (s *Server) Refresh(ctx context.Context) {
 }
 
 // Start runs an initial assessment, then refreshes on interval until ctx is
-// cancelled. It blocks; run it in a goroutine.
+// cancelled. It blocks; run it in a goroutine. With a store configured, the last
+// stored assessment is served alongside the first run rather than before it, so a
+// slow or unreachable database never delays the assessment.
 func (s *Server) Start(ctx context.Context, interval time.Duration) {
+	go s.restoreServed(ctx)
 	s.Refresh(ctx)
 	if interval <= 0 {
 		return
