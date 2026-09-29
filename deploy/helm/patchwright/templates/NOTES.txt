@@ -49,3 +49,10 @@ Query the API (port-forward, then hit an endpoint):
 
 Trigger a fresh assessment on demand:
   curl -X POST localhost:{{ .Values.server.port }}/api/v1/assessments
+{{- if .Values.split.enabled }}
+
+Split: a worker ({{ include "patchwright.fullname" . }}-worker) assesses and stores each
+assessment; {{ .Values.split.web.replicas }} web replicas ({{ include "patchwright.fullname" . }}-web)
+serve the page, the API and MCP from the history database behind the Service. A
+refresh asked of a web replica is picked up by the worker within ten seconds.
+{{- end }}

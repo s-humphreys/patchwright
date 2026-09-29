@@ -107,6 +107,51 @@ jobs:
             exit 1
           fi
 
+          # The split server: a worker and web replicas over the history database.
+          main=(deploy/helm/patchwright --set provider.input.secretName=ci --set image.tag=v0.0.0-ci)
+          history=(--set history.enabled=true --set history.retention=400d --set history.connection.host=db)
+          helm lint "${main[@]}" "${history[@]}" --set split.enabled=true
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set scan.enabled=true --set scan.cache.persistence.enabled=true --set metrics.serviceMonitor.enabled=true)
+          for want in 'name: pw-patchwright-worker' 'name: pw-patchwright-web' 'kind: PodDisruptionBudget' \
+              '"--role=worker"' '"--role=web"' 'automountServiceAccountToken: false' 'type: Recreate'; do
+            if ! grep -qF -- "$want" <<<"$split"; then
+              echo "the split render is missing: $want" >&2
+              exit 1
+            fi
+          done
+          # Only the worker mounts the ReadWriteOnce cache and is bound to the cluster-read
+          # role; the web replicas would otherwise fight over the volume across nodes.
+          if [ "$(grep -c 'claimName: pw-patchwright-trivy-cache' <<<"$split")" != 1 ]; then
+            echo 'the Trivy cache volume is mounted by more than the worker' >&2
+            exit 1
+          fi
+          # And with it off, nothing of it renders: the single Deployment stays the default.
+          if helm template pw "${main[@]}" "${history[@]}" | grep -qE -- '--role=|component: (worker|web)'; then
+            echo 'split resources rendered with split.enabled false' >&2
+            exit 1
+          fi
+
+          # Each of these must FAIL to render: a split with nothing to share, with no
+          # server to split, with no web replica, or with sign-in and no shared key.
+          if helm template "${main[@]}" --set split.enabled=true > /dev/null 2>&1; then
+            echo 'split.enabled rendered without history, and must not have' >&2
+            exit 1
+          fi
+          if helm template "${main[@]}" "${history[@]}" --set split.enabled=true --set server.enabled=false > /dev/null 2>&1; then
+            echo 'split.enabled rendered without the server, and must not have' >&2
+            exit 1
+          fi
+          if helm template "${main[@]}" "${history[@]}" --set split.enabled=true --set split.web.replicas=0 > /dev/null 2>&1; then
+            echo 'split.enabled rendered with no web replicas, and must not have' >&2
+            exit 1
+          fi
+          if helm template "${main[@]}" "${history[@]}" --set split.enabled=true --set auth.oidc.issuer=https://idp \
+              --set auth.oidc.clientID=c --set auth.oidc.redirectURL=https://x/cb > /dev/null 2>&1; then
+            echo 'split.enabled with sign-in rendered without a session key source, and must not have' >&2
+            exit 1
+          fi
+
   integration:
     name: integration-kind
     runs-on: ubuntu-latest

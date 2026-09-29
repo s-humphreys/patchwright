@@ -4,7 +4,7 @@
 {{- if and .Values.ticketing.autoTicket (not .Values.ticketing.templates) }}
 {{- fail "ticketing.autoTicket requires at least one entry in ticketing.templates: jira.defaultTicketTemplate is a path and the image ships no default ticket template" }}
 {{- end }}
-{{- if .Values.server.enabled }}
+{{- if and .Values.server.enabled (not .Values.split.enabled) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

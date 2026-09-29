@@ -6,14 +6,23 @@ so they stay in sync. Callers pass a dict:
   remediation bool — pass --remediation
   modeArgs    list of extra command args (e.g. --format, --addr, --interval)
   ports       bool — render a containerPort (server mode)
+  web         bool — a split deployment's web replica: no scanning, no tracker
+              writes, and none of the mounts only an assessment reads
+  resources   map — overrides .Values.resources
 */}}
 
 {{- define "patchwright.container" -}}
+{{- $web := .web -}}
+{{- $scan := and .root.Values.scan.enabled (not $web) -}}
+{{- $docker := and .root.Values.registryAuth.dockerConfigSecret (not $web) -}}
+{{- $kubeconfig := and .root.Values.reconcile.remote.kubeconfigSecret (not $web) -}}
+{{- $export := and (eq .root.Values.provider.mode "csv") (not $web) -}}
 - name: patchwright
   image: {{ include "patchwright.image" .root | quote }}
   imagePullPolicy: {{ .root.Values.image.pullPolicy }}
   args:
     - {{ .command }}
+    {{- if not $web }}
     - "--provider={{ .root.Values.provider.name }}"
     - "--mode={{ .root.Values.provider.mode }}"
     {{- if eq .root.Values.provider.mode "csv" }}
@@ -21,9 +30,12 @@ so they stay in sync. Callers pass a dict:
     {{- else if eq .root.Values.provider.mode "api" }}
     - "--option=base-url={{ required "provider.api.baseURL is required for api mode" .root.Values.provider.api.baseURL }}"
     {{- end }}
+    {{- end }}
     - "--config=/etc/patchwright"
     - "--log-level={{ .root.Values.logLevel }}"
     - "--log-format={{ .root.Values.logFormat }}"
+    {{- /* From here to the sign-in flags configures the assessment, which a web replica never runs. */}}
+    {{- if not $web }}
     {{- if .root.Values.reconcile.enabled }}
     - "--live-source=kube"
     {{- if .root.Values.reconcile.local }}
@@ -66,6 +78,7 @@ so they stay in sync. Callers pass a dict:
     - "--age-option={{ . }}"
     {{- end }}
     {{- end }}
+    {{- end }}
     {{- with .root.Values.auth.oidc }}
     {{- if .issuer }}
     - "--oidc-issuer={{ .issuer }}"
@@ -88,7 +101,7 @@ so they stay in sync. Callers pass a dict:
     {{- end }}
     {{- end }}
     {{- end }}
-    {{- if .root.Values.support.source }}
+    {{- if and .root.Values.support.source (not $web) }}
     - "--support-source={{ .root.Values.support.source }}"
     {{- range .root.Values.support.options }}
     - "--support-option={{ . }}"
@@ -97,7 +110,7 @@ so they stay in sync. Callers pass a dict:
     {{- if and (eq .command "serve") .root.Values.metrics.requireAuth }}
     - "--metrics-require-auth"
     {{- end }}
-    {{- if and (eq .command "serve") .root.Values.ticketing.autoTicket }}
+    {{- if and (eq .command "serve") .root.Values.ticketing.autoTicket (not $web) }}
     - "--auto-ticket"
     {{- end }}
     {{- range .modeArgs }}
@@ -109,7 +122,7 @@ so they stay in sync. Callers pass a dict:
   {{- $oidc := .root.Values.auth.oidc }}
   {{- $jira := .root.Values.ticketing.jira }}
   {{- $history := .root.Values.history }}
-  {{- if or .root.Values.scan.enabled .root.Values.registryAuth.dockerConfigSecret $oidc.clientSecretRef.name $oidc.sessionKeyRef.name $jira.baseURL $jira.cloudID (and $history.enabled $history.connection.host) }}
+  {{- if or $scan $docker $oidc.clientSecretRef.name $oidc.sessionKeyRef.name $jira.baseURL $jira.cloudID (and $history.enabled $history.connection.host) }}
   env:
     {{- if and $history.enabled $history.connection.host }}
     # Not a credential: the password comes separately, so this can sit in values and
@@ -155,13 +168,13 @@ so they stay in sync. Callers pass a dict:
           name: {{ $oidc.sessionKeyRef.name }}
           key: {{ $oidc.sessionKeyRef.key | default "sessionKey" }}
     {{- end }}
-    {{- if .root.Values.scan.enabled }}
+    {{- if $scan }}
     - name: TRIVY_CACHE_DIR
       value: /tmp/trivy-cache
     - name: TMPDIR
       value: /tmp
     {{- end }}
-    {{- if .root.Values.registryAuth.dockerConfigSecret }}
+    {{- if $docker }}
     - name: DOCKER_CONFIG
       value: /etc/patchwright-dockerconfig
     {{- end }}
@@ -189,7 +202,7 @@ so they stay in sync. Callers pass a dict:
     readOnlyRootFilesystem: true
     capabilities:
       drop: ["ALL"]
-  {{- with .root.Values.resources }}
+  {{- with (ternary .resources .root.Values.resources (hasKey . "resources")) }}
   resources:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -197,17 +210,17 @@ so they stay in sync. Callers pass a dict:
     - name: rules
       mountPath: /etc/patchwright
       readOnly: true
-    {{- if eq .root.Values.provider.mode "csv" }}
+    {{- if $export }}
     - name: export
       mountPath: /data
       readOnly: true
     {{- end }}
-    {{- if .root.Values.reconcile.remote.kubeconfigSecret }}
+    {{- if $kubeconfig }}
     - name: kubeconfig
       mountPath: /etc/patchwright-kubeconfig
       readOnly: true
     {{- end }}
-    {{- if .root.Values.scan.enabled }}
+    {{- if $scan }}
     - name: tmp
       mountPath: /tmp
     {{- if .root.Values.scan.cache.persistence.enabled }}
@@ -215,7 +228,7 @@ so they stay in sync. Callers pass a dict:
       mountPath: /tmp/trivy-cache
     {{- end }}
     {{- end }}
-    {{- if .root.Values.registryAuth.dockerConfigSecret }}
+    {{- if $docker }}
     - name: dockerconfig
       mountPath: /etc/patchwright-dockerconfig
       readOnly: true
@@ -223,20 +236,21 @@ so they stay in sync. Callers pass a dict:
 {{- end -}}
 
 {{- define "patchwright.volumes" -}}
+{{- $web := .web -}}
 - name: rules
   configMap:
     name: {{ include "patchwright.fullname" .root }}-rules
-{{- if eq .root.Values.provider.mode "csv" }}
+{{- if and (eq .root.Values.provider.mode "csv") (not $web) }}
 - name: export
   secret:
     secretName: {{ required "provider.input.secretName is required for csv mode" .root.Values.provider.input.secretName }}
 {{- end }}
-{{- if .root.Values.reconcile.remote.kubeconfigSecret }}
+{{- if and .root.Values.reconcile.remote.kubeconfigSecret (not $web) }}
 - name: kubeconfig
   secret:
     secretName: {{ .root.Values.reconcile.remote.kubeconfigSecret }}
 {{- end }}
-{{- if .root.Values.scan.enabled }}
+{{- if and .root.Values.scan.enabled (not $web) }}
 - name: tmp
   emptyDir: {}
 {{- if .root.Values.scan.cache.persistence.enabled }}
@@ -245,7 +259,7 @@ so they stay in sync. Callers pass a dict:
     claimName: {{ .root.Values.scan.cache.persistence.existingClaim | default (printf "%s-trivy-cache" (include "patchwright.fullname" .root)) }}
 {{- end }}
 {{- end }}
-{{- if .root.Values.registryAuth.dockerConfigSecret }}
+{{- if and .root.Values.registryAuth.dockerConfigSecret (not $web) }}
 - name: dockerconfig
   secret:
     secretName: {{ .root.Values.registryAuth.dockerConfigSecret }}
