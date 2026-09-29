@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -243,17 +244,43 @@ func (s *Server) requestRefresh(w http.ResponseWriter, r *http.Request) {
 	// the worker's handled time read back from the store, and a nanosecond remainder
 	// would leave the request looking pending for ever.
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	if err := s.history.store.RequestRefresh(r.Context(), now); err != nil {
+	var msg string
+	switch err := s.history.store.RequestRefresh(r.Context(), now); {
+	case errors.Is(err, context.DeadlineExceeded):
+		// The write may still commit after the deadline, and a request is only ever a
+		// time that moves forward, so a second one is harmless. Neither "failed" nor
+		// "queued" is known to be true; say so, and let the caller press again.
+		writeJSON(w, http.StatusAccepted, struct {
+			Assessment assessmentMeta `json:"assessment"`
+			Message    string         `json:"message"`
+		}{s.meta(), "the request may still be queued: the history store did not confirm it in time. " +
+			"Asking again is safe; it cannot start a second assessment"})
+		return
+	case err != nil:
 		writeError(w, http.StatusServiceUnavailable, "could not pass the request to the assessment worker: "+err.Error())
 		return
 	}
 	s.mu.Lock()
 	s.worker.RefreshRequested = &now
+	msg = refreshMessage(s.worker, now)
 	s.mu.Unlock()
 	writeJSON(w, http.StatusAccepted, struct {
 		Assessment assessmentMeta `json:"assessment"`
 		Message    string         `json:"message"`
-	}{s.meta(), "assessment requested; the worker picks requests up within " + workerPoll.String()})
+	}{s.meta(), msg})
+}
+
+// refreshMessage says when a queued request will be acted on, which depends on
+// whether the worker is there to act on it.
+func refreshMessage(w history.WorkerState, now time.Time) string {
+	switch {
+	case w.Heartbeat.IsZero():
+		return "assessment requested and queued; no assessment worker has reported yet, so it runs when one does"
+	case now.Sub(w.Heartbeat) >= workerStale:
+		return fmt.Sprintf("assessment requested and queued; the worker has not reported since %s, so it runs when the worker is back",
+			w.Heartbeat.UTC().Format(time.RFC3339))
+	}
+	return "assessment requested; the worker picks requests up within " + workerPoll.String()
 }
 
 // recentlyMissingFromStore is recentlyMissing for a web replica, which records
