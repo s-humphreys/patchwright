@@ -731,8 +731,7 @@ func TestNoOpsAreNotCountedAsWrites(t *testing.T) {
 
 // An untouched ticket whose upgrade landed is closed as not worked, and says so. A
 // ticket somebody has picked up is never closed by patchwright, even with the
-// upgrade proven everywhere: it gets a note and stays theirs to close. DATA-4316 was
-// closed from QA under its assignee before this rule.
+// upgrade proven everywhere: it gets a note and stays theirs to close.
 func TestCloseCarriesWhetherTheTicketWasWorked(t *testing.T) {
 	untouched := Reconcile(ReconcileInput{
 		Config:      autoCloseCfg(),
