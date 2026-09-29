@@ -598,3 +598,108 @@ from the database: a few megabytes per row, three rows kept.
 The record cannot be rebuilt if lost, so the database's backup is what stands between
 the estate and a blank history. That is the point of choosing an operated database
 over a volume.
+
+## Splitting the worker from the page
+
+By default one pod assesses and serves. That stays the default and needs no database.
+With [history](#history) enabled, the chart can instead run two Deployments:
+
+```yaml
+history:
+  enabled: true
+  # ...as above
+split:
+  enabled: true
+  web:
+    replicas: 2
+    resources: {}
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+```
+
+**When to use it.** When the page, the API and MCP must stay up while the assessment
+restarts: a worker evicted mid-scan, killed for memory on a large estate, or rolled out
+to pick up a config change no longer takes the page with it. And when more than one
+replica should serve it, or the serving pods should not hold cluster read access. For a
+small estate where a restart costs a few minutes and a stored assessment already covers
+the gap (see [Rollouts](#rollouts-take-as-long-as-an-assessment)), one pod is simpler.
+
+**What it deploys.** `split.enabled: false` renders exactly what it always has, byte for
+byte. `true` renders instead:
+
+| | Worker (`<release>-worker`) | Web (`<release>-web`) |
+|---|---|---|
+| Runs | `serve --role=worker`: the schedule, assessments, ticket reconciliation, history, tracker sync; stores each assessment | `serve --role=web`: the page, the API and MCP from the stored assessment and the record |
+| Replicas | 1, `strategy: Recreate` | `split.web.replicas`, with a PodDisruptionBudget (`minAvailable: 1`) |
+| Serves | `/healthz`, `/readyz`, `/metrics` only | everything, behind the release's Service |
+| Kubernetes API | the ServiceAccount bound to the cluster-read ClusterRole | a ServiceAccount of its own (`<release>-web`), bound to nothing, token not mounted |
+| Mounts | rules, Trivy cache, kubeconfig and docker config as configured | rules only |
+| Writes | Jira, the history record, the stored assessment | only a refresh request |
+
+The Service keeps its name and points at the web replicas, so an Ingress or HTTPRoute
+you manage in front of it needs no change; the chart itself renders neither. The
+worker gets a second Service, `<release>-worker`, for its metrics only, and the
+ServiceMonitor or PodMonitor select the worker: its metrics describe the runs, and a
+web replica makes none. With `serviceAccount.create: false` there is no second
+ServiceAccount to create, so the web replicas run under the one you name, still with no
+token mounted.
+
+Rendering refuses `split.enabled` without `history.enabled`, without `server.enabled`,
+with no web replicas, and with `auth.oidc` but no source for `PATCHWRIGHT_SESSION_KEY`
+(`auth.oidc.sessionKeyRef` or the credentials Secret). The binary makes the same checks:
+`--role=web` or `--role=worker` without `PATCHWRIGHT_HISTORY_DSN` refuses to start, as
+does `--role=web` with `--auto-ticket`, or with sign-in and no session key.
+
+**How the halves talk.** Only through the database. The worker writes one row, every
+ten seconds and at the start and end of each run: a heartbeat, whether it is running and
+since when, how its last run ended, and its history status. A web replica reads it
+every five seconds, which is where `/api/v1/summary`'s `running` and `started_at` come
+from; a worker silent for a minute is not believed, and `error` says since when. The
+Refresh button (`POST /api/v1/assessments`) on a web replica records a request time in
+the same row, and the worker's next poll starts a run. A request while one is running
+is answered by that run, as it is in a single pod. Web replicas look for a newer stored
+assessment whenever the worker reports a run finished, and every thirty seconds besides.
+
+A request row rather than an HTTP call to the worker because it survives the worker
+restarting: a request made while the worker is down is waiting when it comes back,
+rather than failing against a Service with no endpoints. It also needs no Service, no
+credential and no NetworkPolicy rule between the two, and the database is already
+there.
+
+**What a web replica serves, and from where.**
+
+| Endpoint or tool | In web mode |
+|---|---|
+| `/`, `/tickets`, `/analytics`, static assets | the embedded page, as ever |
+| `/api/v1/findings`, `finding`, `items`, `service`, `cves`, `cve`, `owners`, `summary`, `analytics`, `policy`, `exploitability` | the stored assessment, which carries the open-ticket index the worker read when it ran |
+| every MCP tool (`estate_summary`, `fix_plan`, `service_report`, `worst_first`, `team_report`, `explain_cve`, `list_facets`, `policy_report`, `exploitability_report`) | the stored assessment and the rules the replica loaded |
+| MCP `trend_report`, `/api/v1/history`, `/api/v1/history/item`, `/api/v1/history/tickets` | the history record (the tracker's tickets are synced into it by the worker); read-only |
+| `/api/v1/config` | the rules the replica loaded; mount the same config on both |
+| `GET /api/v1/tickets` | planned from the stored assessment, against Jira's open tickets read live: a search, safe on any number of replicas. Items in their grace period come from the record, so the preview matches the worker's plan |
+| `POST /api/v1/tickets` | 409: a web replica never writes to a tracker. The worker applies tickets with `--auto-ticket` (`ticketing.autoTicket`) |
+| `POST /api/v1/assessments` | records a request the worker picks up |
+| history status (`status` in `/api/v1/history`) | the worker's, from its row |
+| `/metrics` | served, but describes nothing: scrape the worker |
+| `/healthz`, `/readyz` | ready once a stored assessment is loaded |
+
+**Sign-in and tokens across replicas.** Both are stateless: `PATCHWRIGHT_API_TOKEN` is
+compared per request, and OIDC keeps its sign-in state and its session in cookies
+signed with `PATCHWRIGHT_SESSION_KEY`. Nothing is held per process, which is why the
+key is required: without it each replica signs with its own random key, and a sign-in
+completed on one is not recognised by the next.
+
+**Identity.** With `history.auth: azure` the web replicas need the workload identity to
+reach the database, so their ServiceAccount carries the same client-id annotation. Its
+subject is `system:serviceaccount:<namespace>:<release>-web`, a second federated
+credential on the managed identity beside the worker's.
+
+**Credentials.** The web replicas take the same `credentialsSecretName` as the worker.
+They use the API token, the Jira credentials (for the read-only plan preview), the OIDC
+secrets and the database password; the scan provider and Azure DevOps keys in the same
+Secret are present and unused. Split the Secret yourself if that matters.
+
+**Switching.** Enabling the split on an existing release deletes the single Deployment
+and creates the two, whose selectors differ; the Service stays. With a stored assessment
+already in the database the web replicas are ready within seconds, so the page is down
+only for the moments the Service has no ready endpoint.

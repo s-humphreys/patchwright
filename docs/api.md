@@ -26,9 +26,9 @@ Full reference: [`docs/api/openapi.yaml`](api/openapi.yaml), browsable at
 | `GET /api/v1/exploitability` | Exploited work items and how many can be moved on today, per team beside each team's urgent count, worst CVEs named. Same unit as the queue page. `?epss_threshold=` |
 | `GET /api/v1/analytics` | What to fix first: base upgrades ranked by what they clear, the classes of problem nobody is acting on, and per-owner responsiveness |
 | `GET /api/v1/config` | The ownership and policy rules as parsed at startup |
-| `POST /api/v1/assessments` | Trigger a refresh |
+| `POST /api/v1/assessments` | Trigger a refresh. On a [split deployment](deploying.md#splitting-the-worker-from-the-page)'s web replica, asks the worker for one |
 | `GET /api/v1/tickets` | What ticket reconciliation would do. Changes nothing |
-| `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}` |
+| `POST /api/v1/tickets` | Apply it. Requires `{"confirm": true}`. 409 on a web replica, which never writes to a tracker, and while the served assessment is one [loaded after a restart](history.md#restarts-serve-the-last-assessment) |
 | `POST /mcp` | [MCP tools](mcp.md) an LLM client can call, over the same cached assessment |
 | `GET /metrics` | [Prometheus metrics](metrics.md) |
 | `GET /healthz`, `GET /readyz` | Health; ready once an assessment is served: one this process ran, or, with a [history store](history.md#restarts-serve-the-last-assessment), the last one stored |

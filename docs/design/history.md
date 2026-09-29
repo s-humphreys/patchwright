@@ -306,6 +306,20 @@ database all fall back to the cold start. This is the whole assessment at rest t
 paragraph above weighed; with history on, the event log already put the same facts
 in the same database, so the posture change is the shape, not the content.
 
+### Built: the separate UI deployment, optionally
+
+With the latest assessment at rest, the split considered above is small, and is built
+as an option rather than a replacement: `serve --role=worker` assesses and stores,
+`--role=web` serves from the store, and `--role=all` stays the default and needs no
+database. The two talk only through the database: a single `worker_state` row carries
+the worker's heartbeat, running flag and history status, and the web replicas write a
+refresh request into it for the worker's next poll. A row rather than HTTP between the
+pods, because a request then survives the worker restarting and needs no route or
+credential between them. Web replicas never assess, never write to a tracker and never
+record; the only live external read left on them is the ticket plan preview's Jira
+search. Migrations take an advisory lock, since the halves start against one database
+together.
+
 ## Decisions to sign off
 
 1. **Identity.** The work item key changes when ownership or the upgrade target

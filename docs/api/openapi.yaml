@@ -615,17 +615,24 @@ paths:
     post:
       tags: [operations]
       summary: Trigger a refresh
-      description: Returns immediately; the refresh runs in the background.
+      description: |
+        Returns immediately; the refresh runs in the background. On a web replica of a
+        split deployment (`serve --role=web`) nothing runs here: the request is recorded
+        in the history store and the worker picks it up within ten seconds, and
+        `assessment.running` is true from the moment it is recorded.
       responses:
         "202":
-          description: Refresh started, or already running
+          description: Refresh started, already running, or requested of the worker
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   assessment: { $ref: "#/components/schemas/AssessmentMeta" }
+                  message: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: A web replica could not record the request in the history store
 
   /api/v1/tickets:
     get:
@@ -678,7 +685,9 @@ paths:
           description: |
             The served assessment was loaded from the store after a restart
             (`assessment.loaded_from_store`). Tickets are applied only against an
-            assessment this process ran; retry once its first run completes.
+            assessment this process ran; retry once its first run completes. Also
+            returned by every web replica of a split deployment, which never writes to
+            a tracker: the worker applies tickets, with `--auto-ticket`.
           content:
             application/json:
               schema:
@@ -1043,7 +1052,14 @@ components:
       required: [generated_at, running]
       properties:
         generated_at: { type: string, format: date-time }
-        running: { type: boolean }
+        running:
+          type: boolean
+          description: |
+            Whether an assessment is in flight. On a web replica of a split deployment
+            this is the worker's, from the state it reports to the history store, and
+            is also true while a requested refresh waits for the worker to pick it up.
+            A worker that has not reported for a minute is not believed: running is
+            false and `error` says since when it has been silent.
         version:
           type: string
           description: |

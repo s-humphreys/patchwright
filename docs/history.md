@@ -75,6 +75,12 @@ does an unreachable database: the store is never a reason not to start.
 Metrics are not restored. The gauges describe runs in this process, and stay absent
 until the first one completes, as before.
 
+The same stored assessment is what a split deployment's web replicas serve: with
+`serve --role=worker` and `--role=web` (the chart's `split.enabled`), the worker stores
+every assessment and the web replicas read the newest, and a `worker_state` row carries
+the worker's heartbeat, whether it is running, and requests for a fresh run. See
+[deploying.md](deploying.md#splitting-the-worker-from-the-page).
+
 ## What is recorded
 
 The unit is the **work item**: an owner, a service, and what it upgrades to. It is
