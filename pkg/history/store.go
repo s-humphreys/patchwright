@@ -48,7 +48,26 @@ type Store interface {
 	// TicketsIndexed says how many tickets are held, the oldest, and when the
 	// tracker was last read. Zero Tickets means it never has been.
 	TicketsIndexed(ctx context.Context) (TicketIndexState, error)
+	// SaveServed stores the assessment the server is serving and keeps only the
+	// newest keep rows, in one transaction.
+	SaveServed(ctx context.Context, a ServedAssessment, keep int) error
+	// LatestServed returns the newest served assessment generated after after, or
+	// nil when there is none. The zero time means any.
+	LatestServed(ctx context.Context, after time.Time) (*ServedAssessment, error)
 	Close()
+}
+
+// ServedAssessment is the whole assessment a server was serving, kept so a
+// restarted process can serve it at once rather than answer 503 until a fresh run
+// completes. The payload is opaque here: the server owns its encoding and says
+// which one it wrote in SchemaVersion, so a build that cannot read it can say so
+// and ignore it rather than misread it.
+type ServedAssessment struct {
+	ID            int64
+	GeneratedAt   time.Time
+	Version       string
+	SchemaVersion int
+	Payload       []byte
 }
 
 // ItemHistory is one key's record.

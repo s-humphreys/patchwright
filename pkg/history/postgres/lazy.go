@@ -147,6 +147,22 @@ func (l *Lazy) TicketsIndexed(ctx context.Context) (history.TicketIndexState, er
 	return s.TicketsIndexed(ctx)
 }
 
+func (l *Lazy) SaveServed(ctx context.Context, a history.ServedAssessment, keep int) error {
+	s, err := l.get(ctx)
+	if err != nil {
+		return err
+	}
+	return s.SaveServed(ctx, a, keep)
+}
+
+func (l *Lazy) LatestServed(ctx context.Context, after time.Time) (*history.ServedAssessment, error) {
+	s, err := l.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.LatestServed(ctx, after)
+}
+
 func (l *Lazy) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
