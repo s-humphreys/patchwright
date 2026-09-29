@@ -90,8 +90,15 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	tickets := openTicketKeys(snap.tickets)
 	rec.mu.Lock()
 	closedReasons := rec.closedReasons
-	rec.closedReasons = nil
+	// A run that cannot see the index records no closes, so the reasons are kept for
+	// the next one; otherwise a close patchwright made would be recorded as a person's.
+	if !snap.ticketsFailed {
+		rec.closedReasons = nil
+	}
 	rec.mu.Unlock()
+	if snap.ticketsFailed {
+		slog.WarnContext(ctx, "history: open tickets could not be listed, so no ticket closes are recorded this run")
+	}
 	open, err := rec.store.Open(ctx)
 	if err != nil {
 		rec.fail(ctx, "list open items", err)
@@ -104,7 +111,7 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	current := history.Snapshots(snap.views, tickets)
 	events, marks := history.Diff(history.Input{
 		Open: open, Current: current, Views: snap.views, OpenTickets: tickets,
-		ClosedReasons: closedReasons, LapseAfter: rec.lapseAfter, Now: snap.generatedAt,
+		ClosedReasons: closedReasons, TicketsUnavailable: snap.ticketsFailed, LapseAfter: rec.lapseAfter, Now: snap.generatedAt,
 	})
 	a := history.Summarise(started, snap.generatedAt, snap.views, current, snap.summary)
 	id, err := rec.store.Record(ctx, a, events, marks)
@@ -173,7 +180,14 @@ func (s *Server) recordTicketWrites(ctx context.Context, results []ticket.Result
 	}
 	if len(closed) > 0 {
 		rec.mu.Lock()
-		rec.closedReasons = closed
+		// Merged, not replaced: reasons held over from a run that could not read the
+		// index have not been recorded yet.
+		if rec.closedReasons == nil {
+			rec.closedReasons = map[string]string{}
+		}
+		for k, why := range closed {
+			rec.closedReasons[k] = why
+		}
 		rec.mu.Unlock()
 	}
 	if len(writes) == 0 {

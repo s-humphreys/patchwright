@@ -372,3 +372,100 @@ func TestDiffResolvesImmediatelyDespiteGrace(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// A ticket that leaves the open index is recorded closed once. The mark carries the
+// new ticket list to the store, so the next run compares against what is open now
+// rather than against the ticket that has already closed.
+func TestDiffRecordsATicketCloseOnce(t *testing.T) {
+	v := view("acr.io/app:1", "eng", "orders", "high")
+	st := openState(3, Snapshots([]sink.FindingView{v}, map[string][]string{"acr.io/app": {"PROJ-1"}})[0], t0)
+	cur := Snapshots([]sink.FindingView{v}, nil)
+
+	closes := 0
+	for run := 0; run < 3; run++ {
+		events, marks := Diff(Input{Open: []State{st}, Current: cur, Views: []sink.FindingView{v}, Now: t0.Add(time.Duration(run+1) * time.Hour)})
+		for _, e := range events {
+			if e.Kind != KindTicketClosed || e.Payload.Ticket != "PROJ-1" {
+				t.Fatalf("run %d: unexpected event %+v", run, e)
+			}
+			closes++
+		}
+		for _, m := range marks {
+			if m.ItemID == st.ID && m.RefreshTickets {
+				st.Current.Tickets = m.Tickets
+			}
+		}
+	}
+	if closes != 1 {
+		t.Errorf("ticket_closed recorded %d times over three runs, want once", closes)
+	}
+	if len(st.Current.Tickets) != 0 {
+		t.Errorf("stored tickets = %v, want none after the close", st.Current.Tickets)
+	}
+}
+
+// A ticket that appears is stored against the item without a changed event, so its
+// close can be recorded later.
+func TestDiffFollowsTicketAdditionsWithoutAChange(t *testing.T) {
+	v := view("acr.io/app:1", "eng", "orders", "high")
+	st := openState(3, Snapshots([]sink.FindingView{v}, nil)[0], t0)
+	cur := Snapshots([]sink.FindingView{v}, map[string][]string{"acr.io/app": {"PROJ-2"}})
+
+	events, marks := Diff(Input{Open: []State{st}, Current: cur, Views: []sink.FindingView{v}, Now: t0.Add(time.Hour)})
+	if len(events) != 0 {
+		t.Errorf("a new ticket is not movement: %+v", events)
+	}
+	if len(marks) != 1 || !marks[0].RefreshTickets || !reflect.DeepEqual(marks[0].Tickets, []string{"PROJ-2"}) || marks[0].Missing != 0 {
+		t.Fatalf("want one mark refreshing the tickets to PROJ-2, got %+v", marks)
+	}
+
+	st.Current.Tickets = marks[0].Tickets
+	if _, marks := Diff(Input{Open: []State{st}, Current: cur, Views: []sink.FindingView{v}, Now: t0.Add(2 * time.Hour)}); len(marks) != 0 {
+		t.Errorf("an unchanged ticket list needs no mark: %+v", marks)
+	}
+}
+
+// When the index could not be read every item looks unticketed. That is not every
+// ticket closing, so nothing is recorded and the stored lists are not touched, not
+// even by an event that carries a snapshot.
+func TestDiffRecordsNoClosesWhenTicketsAreUnavailable(t *testing.T) {
+	app := view("acr.io/app:1", "eng", "orders", "high")
+	lib := view("acr.io/lib:1", "eng", "orders", "high")
+	gone := view("acr.io/old:1", "eng", "orders", "high")
+	tickets := map[string][]string{"acr.io/app": {"PROJ-1"}, "acr.io/lib": {"PROJ-2"}, "acr.io/old": {"PROJ-3"}}
+	stored := Snapshots([]sink.FindingView{app, lib, gone}, tickets)
+	open := []State{openState(1, stored[0], t0), openState(2, stored[1], t0), openState(3, stored[2], t0)}
+
+	lib.Priority = "urgent"
+	views := []sink.FindingView{app, lib, fixed(gone)}
+	cur := Snapshots(views, nil)
+
+	events, marks := Diff(Input{Open: open, Current: cur, Views: views, TicketsUnavailable: true, Now: t0.Add(time.Hour)})
+	kinds := map[Kind]int{}
+	for _, e := range events {
+		kinds[e.Kind]++
+		if e.Kind == KindChanged && !reflect.DeepEqual(e.Payload.Snapshot.Tickets, []string{"PROJ-2"}) {
+			t.Errorf("a changed snapshot must keep the stored tickets, got %v", e.Payload.Snapshot.Tickets)
+		}
+	}
+	if kinds[KindTicketClosed] != 0 || kinds[KindChanged] != 1 || kinds[KindResolved] != 1 {
+		t.Errorf("want one changed and one resolved and no ticket_closed, got %v", kinds)
+	}
+	for _, m := range marks {
+		if m.RefreshTickets {
+			t.Errorf("stored tickets must be left alone: %+v", m)
+		}
+	}
+
+	// Without the flag the same input closes all three.
+	events, _ = Diff(Input{Open: open, Current: cur, Views: views, Now: t0.Add(time.Hour)})
+	closes := 0
+	for _, e := range events {
+		if e.Kind == KindTicketClosed {
+			closes++
+		}
+	}
+	if closes != 3 {
+		t.Errorf("control: want three closes when the index was read and is empty, got %d", closes)
+	}
+}

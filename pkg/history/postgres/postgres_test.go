@@ -244,6 +244,39 @@ func TestMarksPersistAndClearOnClose(t *testing.T) {
 	}
 }
 
+// A ticket gone from the open index is recorded closed once, however many runs it
+// stays gone: the mark rewrites the stored list in the same transaction as the close.
+func TestTicketCloseIsRecordedOnce(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	live := snap("eng|orders|app|svc", "app", "orders")
+	opened := snap(live.Key, "app", "orders", "PROJ-1")
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0},
+		[]history.Event{{Key: opened.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &opened}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for run := 1; run <= 3; run++ {
+		open, err := s.Open(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := t0.Add(time.Duration(run) * time.Hour)
+		events, marks := history.Diff(history.Input{Open: open, Current: []history.Snapshot{live}, Now: at})
+		if _, err := s.Record(ctx, history.Assessment{StartedAt: at, FinishedAt: at}, events, marks); err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+	}
+	var closes int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE kind = 'ticket_closed'`).Scan(&closes); err != nil || closes != 1 {
+		t.Errorf("ticket_closed rows = %d (%v), want 1", closes, err)
+	}
+	var hasKey bool
+	if err := s.pool.QueryRow(ctx, `SELECT current ? 'tickets' FROM items`).Scan(&hasKey); err != nil || hasKey {
+		t.Errorf("an empty ticket list should drop the key, as a marshalled snapshot does: has key %v (%v)", hasKey, err)
+	}
+}
+
 // A ticket's due date is held on the item so a close can be measured against it,
 // and is never moved once recorded.
 func TestTicketDueRoundTripsAndIsNeverMoved(t *testing.T) {

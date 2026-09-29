@@ -106,6 +106,18 @@ service and the one upgrade that would fix it. Fixed (confirmed) and left withou
 fix are never summed. A time-to-remediate that counted coverage loss as remediation
 would improve fastest when the scanner broke.
 
+### A ticket closes once
+
+Each run keeps an open item's stored ticket list in step with the open-ticket index,
+additions included, without recording a `changed` event. A ticket that leaves the
+index is therefore recorded as `ticket_closed` once per item, not again on every run
+it stays gone; one raised again and closed again is recorded again. When the index
+cannot be read (a Jira error), the run records no ticket closes at all and leaves the
+stored lists alone, and a warning is logged: an empty answer is not every ticket
+closing. Earlier versions did repeat the close on every run; reports count at most one
+close per item and ticket in the range, and the rows can be removed with the
+[clean-up below](#removing-repeated-ticket-closes).
+
 ### Absence is counted before it is believed
 
 A scan provider's hourly responses are not identical: a handful of repositories
@@ -320,3 +332,49 @@ the estate no longer looks the way it did.
 
 **Network.** The chart's NetworkPolicy needs an egress rule to the database, which is
 usually not on 443. See [deploying.md](deploying.md).
+
+## Operator tasks
+
+### Removing repeated ticket closes
+
+Versions before the fix above recorded the same `ticket_closed` on every assessment
+until something else rewrote the item. Reports already count each close once, so this
+is tidying rather than a correction, but the item page still lists the repeats. The
+statement keeps the earliest close per item and ticket, and a later one only when a
+`ticket_raised` for the same ticket on the same item sits between them. Run it in
+`psql` against the history database; it stops before committing so the counts can be
+checked:
+
+```sql
+BEGIN;
+
+-- A close is a repeat when an earlier close of the same ticket on the same item
+-- exists with no ticket_raised for that ticket between the two.
+CREATE TEMP TABLE repeated_ticket_closes ON COMMIT DROP AS
+SELECT c.id
+FROM events c
+WHERE c.kind = 'ticket_closed'
+  AND EXISTS (
+    SELECT 1 FROM events p
+    WHERE p.kind = 'ticket_closed'
+      AND p.item_id = c.item_id
+      AND p.payload->>'ticket' = c.payload->>'ticket'
+      AND (p.at, p.id) < (c.at, c.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM events r
+        WHERE r.kind = 'ticket_raised'
+          AND r.item_id = c.item_id
+          AND r.payload->>'ticket' = c.payload->>'ticket'
+          AND (r.at, r.id) > (p.at, p.id)
+          AND (r.at, r.id) < (c.at, c.id)));
+
+-- Preview: how many rows the DELETE below will remove.
+SELECT count(*) AS repeated_ticket_closes FROM repeated_ticket_closes;
+
+DELETE FROM events WHERE id IN (SELECT id FROM repeated_ticket_closes);
+
+-- Check the DELETE count matches the preview, then COMMIT; otherwise ROLLBACK.
+```
+
+Run it after the fixed version is deployed, or the next assessment may add another
+repeat. It is safe to run more than once: a second run finds nothing.

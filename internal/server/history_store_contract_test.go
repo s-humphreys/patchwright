@@ -165,6 +165,124 @@ func ticketStoreContract(t *testing.T, s history.Store) {
 	}
 }
 
+// The item's stored ticket list has to follow the open index on both stores, or the
+// server tests would pass on memStore while production recorded the same close
+// every hour.
+func TestItemTicketsStoreContract(t *testing.T) {
+	stores := map[string]func(t *testing.T) history.Store{
+		"memStore": func(*testing.T) history.Store { return newMemStore() },
+		"postgres.Lazy": func(t *testing.T) history.Store {
+			return postgres.NewLazy(postgres.Options{DSN: isolatedPostgres(t)})
+		},
+	}
+	for name, open := range stores {
+		t.Run(name, func(t *testing.T) { itemTicketsContract(t, open(t)) })
+	}
+}
+
+func itemTicketsContract(t *testing.T, s history.Store) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	base := history.Snapshot{
+		Key: history.Key("eng", "orders", "app", "svc"), Repository: "app", Class: "eng", Team: "orders",
+		Target: "svc", TargetVersion: "1.1", Rule: "any-critical", Priority: "high", Images: []string{"app:1"},
+	}
+	withTickets := func(keys ...string) history.Snapshot {
+		s := base
+		s.Tickets = keys
+		return s
+	}
+	run := 0
+	// record runs one assessment through Diff the way the server does and returns
+	// the events it produced.
+	record := func(live history.Snapshot, unavailable bool) []history.Event {
+		t.Helper()
+		run++
+		open, err := s.Open(ctx)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		at := t0.Add(time.Duration(run) * time.Hour)
+		events, marks := history.Diff(history.Input{
+			Open: open, Current: []history.Snapshot{live}, TicketsUnavailable: unavailable, Now: at,
+		})
+		if _, err := s.Record(ctx, history.Assessment{StartedAt: at, FinishedAt: at}, events, marks); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+		return events
+	}
+	stored := func() []string {
+		t.Helper()
+		open, err := s.Open(ctx)
+		if err != nil || len(open) != 1 {
+			t.Fatalf("open = %+v (%v), want one item", open, err)
+		}
+		return open[0].Current.Tickets
+	}
+	kinds := func(events []history.Event) map[history.Kind]int {
+		out := map[history.Kind]int{}
+		for _, e := range events {
+			out[e.Kind]++
+		}
+		return out
+	}
+
+	if k := kinds(record(withTickets("PROJ-1"), false)); k[history.KindOpened] != 1 {
+		t.Fatalf("first run = %v, want the item opened", k)
+	}
+
+	// A second ticket appears: stored without a changed event.
+	if k := kinds(record(withTickets("PROJ-1", "PROJ-2"), false)); len(k) != 0 {
+		t.Errorf("a new ticket recorded %v, want nothing", k)
+	}
+	if got := stored(); fmt.Sprint(got) != "[PROJ-1 PROJ-2]" {
+		t.Errorf("stored tickets = %v, want the addition followed", got)
+	}
+
+	// The index cannot be read: nothing closes and the stored list stands.
+	if k := kinds(record(base, true)); len(k) != 0 {
+		t.Errorf("a failed index lookup recorded %v, want nothing", k)
+	}
+	if got := stored(); fmt.Sprint(got) != "[PROJ-1 PROJ-2]" {
+		t.Errorf("stored tickets after a failed lookup = %v, want them untouched", got)
+	}
+
+	// PROJ-1 leaves the index and stays gone for three runs: one close.
+	closes := 0
+	for i := 0; i < 3; i++ {
+		for _, e := range record(withTickets("PROJ-2"), false) {
+			if e.Kind != history.KindTicketClosed || e.Payload.Ticket != "PROJ-1" {
+				t.Fatalf("unexpected event %+v", e)
+			}
+			closes++
+		}
+	}
+	if closes != 1 {
+		t.Errorf("PROJ-1 closed %d times over three runs, want once", closes)
+	}
+	if got := stored(); fmt.Sprint(got) != "[PROJ-2]" {
+		t.Errorf("stored tickets = %v, want PROJ-2 only", got)
+	}
+
+	// The last ticket goes too, leaving none stored.
+	if k := kinds(record(base, false)); k[history.KindTicketClosed] != 1 || len(k) != 1 {
+		t.Errorf("PROJ-2 leaving recorded %v, want one ticket_closed", k)
+	}
+	if got := stored(); len(got) != 0 {
+		t.Errorf("stored tickets = %v, want none", got)
+	}
+	if k := kinds(record(base, false)); len(k) != 0 {
+		t.Errorf("a quiet run recorded %v, want nothing", k)
+	}
+	all, err := s.Events(ctx, t0, t0.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := kinds(all); k[history.KindTicketClosed] != 2 || k[history.KindChanged] != 0 {
+		t.Errorf("stored events = %v, want two ticket_closed and no changed", k)
+	}
+}
+
 // isolatedPostgres creates a database for this test alone and drops it afterwards.
 func isolatedPostgres(t *testing.T) string {
 	t.Helper()

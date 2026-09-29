@@ -71,6 +71,9 @@ type snapshot struct {
 	// beside the findings rather than inside them: a ticket is external state
 	// someone else can change, not a fact the assessment measured.
 	tickets map[string][]ticketRef
+	// ticketsFailed is set when the index was configured but could not be read, so
+	// an empty tickets map means "unknown" rather than "none open".
+	ticketsFailed bool
 	// sources is what the run was configured to do, so a consumer can tell an
 	// absent signal from an absent finding.
 	sources model.Sources
@@ -213,15 +216,16 @@ func (s *Server) WithTickets(idx TicketIndex, baseURL string) *Server {
 
 // lookupTickets fetches the open-ticket index, if one is configured. A failure is
 // logged and returns nothing: findings are the point of this service, and losing
-// the ability to say "there is already a ticket" must not cost the assessment.
-func (s *Server) lookupTickets(ctx context.Context) map[string][]ticketRef {
+// the ability to say "there is already a ticket" must not cost the assessment. ok
+// is false only for that failure, so history can tell it from no tickets being open.
+func (s *Server) lookupTickets(ctx context.Context) (_ map[string][]ticketRef, ok bool) {
 	if s.tickets == nil {
-		return nil
+		return nil, true
 	}
 	byImage, err := s.tickets.OpenByImage(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "server: could not list open tickets", "error", err)
-		return nil
+		return nil, false
 	}
 	out := make(map[string][]ticketRef, len(byImage))
 	for image, issues := range byImage {
@@ -235,7 +239,7 @@ func (s *Server) lookupTickets(ctx context.Context) map[string][]ticketRef {
 		}
 		out[image] = refs
 	}
-	return out
+	return out, true
 }
 
 // Refresh runs an assessment and replaces the cached snapshot. Concurrent
@@ -303,7 +307,9 @@ func (s *Server) Refresh(ctx context.Context) {
 		snap.byImage = indexByImage(snap.views)
 		// Tickets first: the owner rollup counts how much of each team's work is
 		// already tracked.
-		snap.tickets = s.lookupTickets(ctx)
+		var ticketsOK bool
+		snap.tickets, ticketsOK = s.lookupTickets(ctx)
+		snap.ticketsFailed = !ticketsOK
 		snap.owners = buildOwnerStats(findings, snap.tickets)
 		// Same findings and the same ticket index as the owner rollup, so the two
 		// pages cannot disagree about the same team.

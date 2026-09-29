@@ -292,7 +292,26 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 	toDue := map[int][]float64{}
 	cves := map[int]map[string]bool{}
 	kevs := map[int]map[string]bool{}
+	// Earlier versions recorded the same close on every run until something else
+	// rewrote the item, and those rows are still in the record. A close counts once
+	// per item and ticket, and again only after the ticket was raised again.
+	type itemTicket struct {
+		item   int64
+		key    string
+		ticket string
+	}
+	closedTickets := map[itemTicket]bool{}
 	for _, e := range events {
+		switch e.Kind {
+		case KindTicketRaised:
+			delete(closedTickets, itemTicket{e.ItemID, e.Key, e.Payload.Ticket})
+		case KindTicketClosed:
+			k := itemTicket{e.ItemID, e.Key, e.Payload.Ticket}
+			if closedTickets[k] {
+				continue
+			}
+			closedTickets[k] = true
+		}
 		i := periodOf(e.At)
 		if i < 0 {
 			continue
