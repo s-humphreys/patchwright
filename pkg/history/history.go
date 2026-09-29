@@ -192,12 +192,20 @@ type State struct {
 	TicketDue map[string]time.Time `json:"ticket_due,omitempty"`
 }
 
-// Mark is a change to an open item's missing counter, recorded alongside the
-// events of the same run. Zero Missing clears it: the item is back.
+// Mark is a change to an open item that is not an event of its own, recorded
+// alongside the events of the same run: its missing counter and, for an item present
+// in the run, the tickets covering it. Zero Missing clears the counter: the item is
+// back.
 type Mark struct {
 	ItemID       int64
 	Missing      int
 	MissingSince *time.Time
+	// RefreshTickets replaces the tickets on the item's current snapshot with
+	// Tickets, empty included. Without it the stored list would only move on a
+	// changed event, and every run in between would compare against a ticket that
+	// had already closed and record the close again.
+	RefreshTickets bool
+	Tickets        []string
 }
 
 // DefaultLapseAfter is the grace period when none is configured: the number of
@@ -446,6 +454,11 @@ type Input struct {
 	// with why. A ticket gone from the open index without an entry here was closed
 	// by a person.
 	ClosedReasons map[string]string
+	// TicketsUnavailable says the open-ticket index could not be read this run, so
+	// OpenTickets and every snapshot's Tickets are empty for want of an answer rather
+	// than because the tickets closed. No ticket_closed is recorded and the stored
+	// ticket lists are left as they were.
+	TicketsUnavailable bool
 	// LapseAfter is the grace period in consecutive absent assessments. Zero means
 	// DefaultLapseAfter. Resolution with evidence is never delayed by it.
 	LapseAfter int
@@ -485,6 +498,9 @@ func Diff(in Input) ([]Event, []Mark) {
 		}
 		if to, ok := reassignedTo(st.Current, in.Current, open); ok && !claimed[to.Key] {
 			claimed[to.Key] = true
+			if in.TicketsUnavailable {
+				to.Tickets = st.Current.Tickets
+			}
 			events = append(events, reassigned(st, to, in.Now))
 			continue
 		}
@@ -505,7 +521,9 @@ func Diff(in Input) ([]Event, []Mark) {
 			ev.Payload.MissedRuns = st.Missing + 1
 		}
 		events = append(events, ev)
-		events = append(events, ticketsClosed(st, ticketsFor(st.Current, in.OpenTickets), ev.Kind == KindResolved, in.ClosedReasons, in.Now)...)
+		if !in.TicketsUnavailable {
+			events = append(events, ticketsClosed(st, ticketsFor(st.Current, in.OpenTickets), ev.Kind == KindResolved, in.ClosedReasons, in.Now)...)
+		}
 	}
 
 	for _, s := range in.Current {
@@ -518,15 +536,24 @@ func Diff(in Input) ([]Event, []Mark) {
 			events = append(events, Event{Key: s.Key, Kind: KindOpened, At: in.Now, Payload: Payload{Snapshot: &snap}})
 			continue
 		}
-		if st.Missing > 0 {
-			// Back within the grace period: nothing happened, as far as the record
-			// is concerned.
-			marks = append(marks, Mark{ItemID: st.ID})
+		if in.TicketsUnavailable {
+			s.Tickets = st.Current.Tickets
+		}
+		// Back within the grace period is nothing happening, as far as the record is
+		// concerned, so the counter is cleared without an event.
+		mark := Mark{ItemID: st.ID}
+		if added, gone := diffStrings(st.Current.Tickets, s.Tickets); len(added)+len(gone) > 0 {
+			mark.RefreshTickets, mark.Tickets = true, s.Tickets
+		}
+		if st.Missing > 0 || mark.RefreshTickets {
+			marks = append(marks, mark)
 		}
 		if ev, changed := changed(st, s, in.Now); changed {
 			events = append(events, ev)
 		}
-		events = append(events, ticketsClosed(st, s.Tickets, false, in.ClosedReasons, in.Now)...)
+		if !in.TicketsUnavailable {
+			events = append(events, ticketsClosed(st, s.Tickets, false, in.ClosedReasons, in.Now)...)
+		}
 	}
 	return events, marks
 }
