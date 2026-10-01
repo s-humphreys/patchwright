@@ -142,6 +142,7 @@ func resolveOperatorUpgrades(merged map[string]model.Upgrade) {
 		case ok && op.Kind == "chart" && op.Available && op.Actionable:
 			p := op
 			p.ImageCurrent, p.ImageLatest, p.ImagePinned = u.Current, "", false
+			p.ImageLatestFrom, p.ImageLatestRepo = "", ""
 			p.Managed, p.Manager = "operator", u.Manager
 			p.OperatorChosen, p.OperatorImage = true, u.OperatorImage
 			p.Reason = ""

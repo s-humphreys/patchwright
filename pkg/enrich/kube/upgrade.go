@@ -28,8 +28,9 @@ var (
 // chartChecker is the Helm-repo lookup, an interface so tests can stub it.
 type chartChecker interface {
 	Check(ctx context.Context, ref upgrade.ChartRef) (model.Upgrade, error)
-	// Values reads a chart version's values.yaml, for the image tags it would deploy.
-	Values(ctx context.Context, ref upgrade.ChartRef, version string) (map[string]any, error)
+	// Values reads a chart version's values.yaml and appVersion, for the image tags
+	// it would deploy.
+	Values(ctx context.Context, ref upgrade.ChartRef, version string) (upgrade.ChartValues, error)
 }
 
 // Upgrades runs the configured UpgradeResolvers across every cluster and merges
@@ -103,7 +104,7 @@ func clusterUpgrades(ctx context.Context, typed kubernetes.Interface, dyn dynami
 		needed[releaseKey] = struct{}{}
 	}
 	resolved := make(map[string]model.Upgrade, len(needed))
-	targets := make(map[string]map[string]any, len(needed))
+	targets := make(map[string]upgrade.ChartValues, len(needed))
 	for releaseKey := range needed {
 		rel, ok := releases[releaseKey]
 		if !ok {
@@ -145,7 +146,9 @@ func clusterUpgrades(ctx context.Context, typed kubernetes.Interface, dyn dynami
 		img := model.ParseImageRef(image)
 		up.ImageCurrent = img.Tag
 		if up.Available {
-			up.ImageLatest, up.ImagePinned = upgrade.ChartImageTag(img, releases[releaseKey].values, targets[releaseKey])
+			target := upgrade.ChartImageTag(img, releases[releaseKey].values, targets[releaseKey])
+			up.ImageLatest, up.ImagePinned = target.Tag, target.Pinned
+			up.ImageLatestFrom, up.ImageLatestRepo = target.From, target.Repo
 		}
 		result[image] = up
 	}

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
@@ -135,11 +136,16 @@ func verdict(f sink.FindingView, v sink.VulnView) (measured, fixed bool) {
 }
 
 // unmoved reports that the finding's upgrade was measured to leave its image on
-// the tag it already runs: a chart bump whose target chart deploys the same tag,
-// or whose tag our own release values pin.
+// the tag it already runs: a chart bump whose target chart deploys the same tag
+// from the same repository, or whose tag our own release values pin.
+//
+// A tag taken from the chart's appVersion is how its templates usually behave
+// rather than something read off the image entry, and a moved repository is a
+// different image whatever its tag, so neither is ever proof of staying put.
 func unmoved(f sink.FindingView) bool {
 	u := f.Upgrade
-	return u != nil && u.Kind == "chart" && u.ImageCurrent != "" && u.ImageLatest == u.ImageCurrent
+	return u != nil && u.Kind == "chart" && u.ImageCurrent != "" && u.ImageLatest == u.ImageCurrent &&
+		u.ImageLatestFrom != model.ImageTagFromAppVersion && u.ImageLatestRepo == ""
 }
 
 // clearsNone reports that the proposed change was measured to clear none of the

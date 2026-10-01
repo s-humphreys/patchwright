@@ -600,6 +600,23 @@ Summary: Upgrade retool to 6.11.33
 * ghcr.io/acme/agent: 1.4.0 -> 1.5.0 (set by the retool chart, which moves 6.11.32 -> 6.11.33)
 ```
 
+Many charts leave an image's tag empty in values and let their templates fall back
+to the chart's `appVersion`. patchwright reads that too, styled like the running
+tag (a leading `v` added or dropped to match), and sets `.LatestFrom` to
+`appVersion` (`values` when a tag was read). A new chart version can also move an
+image to a different repository: when nothing in the target chart's values names the
+running repository but exactly one repository there has the same last path segment,
+that is the image's target, and `.LatestRepo` holds it. The bundled template shows
+both:
+
+```
+* vendor/app: v1.9.5 -> v1.10.0 (appVersion) (set by the app chart, which moves 1.4.0 -> 2.0.0; the image moves to registry.example.org/vendor/oss/app:v1.10.0 (from vendor/app))
+```
+
+Neither counts as measuring the image unchanged: an `appVersion` tag is how the
+chart's templates usually behave rather than something read off the image entry,
+and a moved repository is a different image whatever its tag.
+
 ### When two tickets say the same thing
 
 One service can produce two tickets that word themselves identically: a rebuild

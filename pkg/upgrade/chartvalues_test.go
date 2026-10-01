@@ -68,7 +68,7 @@ func TestValuesReadsTheTargetChartFromAnHTTPRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dp, _ := values["devicePlugin"].(map[string]any)
+	dp, _ := values.Values["devicePlugin"].(map[string]any)
 	image, _ := dp["image"].(map[string]any)
 	if image["tag"] != "v1.20.12" {
 		t.Errorf("values = %v, want the chart's own values.yaml", values)
@@ -96,7 +96,7 @@ func TestValuesWithoutACheckFirstReadsTheIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := values["image"]; !ok {
+	if _, ok := values.Values["image"]; !ok {
 		t.Errorf("values = %v", values)
 	}
 }
@@ -116,8 +116,45 @@ func TestValuesReadsAnOCIChart(t *testing.T) {
 	if asked != "registry.example.com/charts/retool:6.11.33" {
 		t.Errorf("asked for %q", asked)
 	}
-	if _, ok := values["devicePlugin"]; !ok {
+	if _, ok := values.Values["devicePlugin"]; !ok {
 		t.Errorf("values = %v", values)
+	}
+}
+
+func TestValuesReadsTheChartsAppVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		chart string
+		want  string
+	}{
+		// Unquoted, as most Chart.yaml files write it: still the text as written.
+		{"unquoted", "name: app\nversion: 2.0.0\nappVersion: 1.10\n", "1.10"},
+		{"quoted", "name: app\nversion: 2.0.0\nappVersion: \"v1.10.0\"\n", "v1.10.0"},
+		{"unset", "name: app\nversion: 2.0.0\n", ""},
+		{"Chart.yaml does not parse", "name: [\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			archive := packChart(t, map[string]string{
+				"app/Chart.yaml":  tc.chart,
+				"app/values.yaml": "image:\n  repository: registry.example.org/new/app\n  tag: \"\"\n",
+				// A subchart's appVersion must not be mistaken for the chart's own.
+				"app/charts/db/Chart.yaml": "name: db\nversion: 1.0.0\nappVersion: \"16\"\n",
+			})
+			got, err := valuesFromArchive(bytes.NewReader(archive))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.AppVersion != tc.want || got.Values["image"] == nil {
+				t.Errorf("got %+v, want appVersion %q and the chart's values", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValuesWithoutChartYAMLStillReadsValues(t *testing.T) {
+	got, err := valuesFromArchive(bytes.NewReader(packChart(t, map[string]string{"app/values.yaml": "a: 1\n"})))
+	if err != nil || got.AppVersion != "" || got.Values["a"] != 1 {
+		t.Errorf("got %+v, %v", got, err)
 	}
 }
 
