@@ -195,11 +195,18 @@ type UpgradeView struct {
 	// ImageCurrent and ImageLatest are the image's own tag before and after, for an
 	// upgrade that versions something else (a chart). ImageLatest absent means it
 	// could not be established; equal to ImageCurrent means the upgrade provably
-	// leaves this image where it is. ImagePinned marks a tag our own release values
-	// set, which no chart bump moves.
-	ImageCurrent string `json:"image_current,omitempty"`
-	ImageLatest  string `json:"image_latest,omitempty"`
-	ImagePinned  bool   `json:"image_pinned,omitempty"`
+	// leaves this image where it is, unless ImageLatestFrom is "appVersion" or
+	// ImageLatestRepo is set. ImagePinned marks a tag our own release values set,
+	// which no chart bump moves.
+	//
+	// ImageLatestFrom is where ImageLatest was read ("values" or "appVersion").
+	// ImageLatestRepo is the repository the target chart deploys the image from,
+	// present only when the bump moves it to a different one.
+	ImageCurrent    string `json:"image_current,omitempty"`
+	ImageLatest     string `json:"image_latest,omitempty"`
+	ImagePinned     bool   `json:"image_pinned,omitempty"`
+	ImageLatestFrom string `json:"image_latest_from,omitempty"`
+	ImageLatestRepo string `json:"image_latest_repo,omitempty"`
 	// Reason explains an unresolved upgrade: what stopped the lookup, and therefore
 	// what would fix it. An unreadable registry and an image that never recorded its
 	// base need different people to do different things. It also says why an
@@ -418,22 +425,24 @@ func ToFindingView(f model.Finding) FindingView {
 			Kind: f.Upgrade.Kind, Name: f.Upgrade.Name,
 			Current: f.Upgrade.Current, Latest: f.Upgrade.Latest,
 			Available: f.Upgrade.Available, Resolved: f.Upgrade.Resolved,
-			Reason:         f.Upgrade.Reason,
-			Newest:         f.Upgrade.Newest,
-			Strategy:       f.Upgrade.Strategy,
-			Ceiling:        f.Upgrade.Ceiling,
-			CeilingReason:  f.Upgrade.CeilingReason,
-			CeilingExpired: f.Upgrade.CeilingExpired,
-			Rule:           f.Upgrade.Rule,
-			OutOfTrack:     f.Upgrade.OutOfTrack,
-			Support:        toSupportView(f.Upgrade.Support),
-			HeldBack:       f.Upgrade.HeldBack,
-			Comparison:     f.Upgrade.Comparison,
-			ImageCurrent:   f.Upgrade.ImageCurrent,
-			ImageLatest:    f.Upgrade.ImageLatest,
-			ImagePinned:    f.Upgrade.ImagePinned,
-			Actionable:     f.Upgrade.Actionable,
-			Managed:        f.Upgrade.Managed, Manager: f.Upgrade.Manager,
+			Reason:          f.Upgrade.Reason,
+			Newest:          f.Upgrade.Newest,
+			Strategy:        f.Upgrade.Strategy,
+			Ceiling:         f.Upgrade.Ceiling,
+			CeilingReason:   f.Upgrade.CeilingReason,
+			CeilingExpired:  f.Upgrade.CeilingExpired,
+			Rule:            f.Upgrade.Rule,
+			OutOfTrack:      f.Upgrade.OutOfTrack,
+			Support:         toSupportView(f.Upgrade.Support),
+			HeldBack:        f.Upgrade.HeldBack,
+			Comparison:      f.Upgrade.Comparison,
+			ImageCurrent:    f.Upgrade.ImageCurrent,
+			ImageLatest:     f.Upgrade.ImageLatest,
+			ImagePinned:     f.Upgrade.ImagePinned,
+			ImageLatestFrom: f.Upgrade.ImageLatestFrom,
+			ImageLatestRepo: f.Upgrade.ImageLatestRepo,
+			Actionable:      f.Upgrade.Actionable,
+			Managed:         f.Upgrade.Managed, Manager: f.Upgrade.Manager,
 			Source: f.Upgrade.Source, SourcePath: f.Upgrade.SourcePath,
 			OperatorChosen: f.Upgrade.OperatorChosen,
 		}

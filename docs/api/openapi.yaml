@@ -1809,8 +1809,27 @@ components:
           type: string
           description: |
             The image's own tag after the upgrade: the tag the target chart deploys.
-            Absent when that could not be read. Equal to `image_current` when the
-            upgrade provably leaves the image where it is, so it clears nothing on it.
+            Absent when that could not be read. Equal to `image_current` with
+            `image_latest_from` `values` and no `image_latest_repo` when the upgrade
+            provably leaves the image where it is, so it clears nothing on it.
+        image_latest_from:
+          type: string
+          enum: [values, appVersion]
+          description: |
+            Where `image_latest` was read. `values` is a tag set in the target chart's
+            or the release's values. `appVersion` means values left the tag empty and
+            the target chart's `appVersion` stands in, styled like `image_current`
+            (with or without a leading `v`); that is how most charts' templates
+            behave, but it is never taken as proof the image is unchanged. Absent
+            when `image_latest` is.
+        image_latest_repo:
+          type: string
+          description: |
+            The repository, registry included, the target chart deploys this image
+            from, present only when it differs from the one running: the new chart
+            version moves the image (for example to another registry). Found as the
+            one repository in the target chart's values with the same last path
+            segment as the running one.
         image_pinned:
           type: boolean
           description: |

@@ -37,6 +37,18 @@ func chartFinding(repo, tag, targetTag string, vulns ...sink.VulnView) sink.Find
 	})
 }
 
+// appVersionTarget marks f's target tag as read from the target chart's appVersion.
+func appVersionTarget(f sink.FindingView) sink.FindingView {
+	f.Upgrade.ImageLatestFrom = "appVersion"
+	return f
+}
+
+// movedTo marks f's target chart as deploying it from repo.
+func movedTo(f sink.FindingView, repo string) sink.FindingView {
+	f.Upgrade.ImageLatestRepo = repo
+	return f
+}
+
 // dvop4476 is the case that motivated this: the chart bump moves neither image.
 // The backend's tag is pinned in our release values; the device manager's is the
 // same in both chart versions, and it carries the only exploited CVE.
@@ -270,6 +282,8 @@ func TestClearsNone(t *testing.T) {
 			[]sink.FindingView{chartFinding("a/y", "1", "2")}, false},
 		{"the same CVE on a moving image might be cleared there",
 			[]sink.FindingView{chartFinding("a/x", "1", "1", exploited), chartFinding("a/y", "1", "2", exploited)}, false},
+		{"the same tag from appVersion is not measured", []sink.FindingView{appVersionTarget(chartFinding("a/x", "1", "1", exploited))}, false},
+		{"the same tag from another repository is not measured", []sink.FindingView{movedTo(chartFinding("a/x", "1", "1", exploited), "registry.example.org/new/x")}, false},
 		{"image tag bump is never measured", []sink.FindingView{finding("a/x", func(f *sink.FindingView) {
 			f.Vulns = []sink.VulnView{exploited}
 		})}, false},

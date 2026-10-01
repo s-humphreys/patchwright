@@ -341,6 +341,7 @@ func TestUpgradeViewMapsEveryField(t *testing.T) {
 		CeilingReason: "dependencies are not 3.14 ready", CeilingExpired: true, HeldBack: true,
 		Rule: "docker.io/python", OutOfTrack: true,
 		ImageCurrent: "1.0.0", ImageLatest: "1.0.0", ImagePinned: true, OperatorChosen: true,
+		ImageLatestFrom: "values", ImageLatestRepo: "registry.example.org/new/app",
 		Support: &model.Support{
 			Product: "nodejs", Cycle: "20", EOL: "2026-04-30", Known: true, Supported: true,
 			Recommended: "24", Nearest: "22", Newest: "26", Source: "endoflife.date",
