@@ -211,6 +211,13 @@ type ImageUpgrade struct {
 	// deploys, and empty when that could not be read from it.
 	Current string
 	Latest  string
+	// LatestFrom says where a chart bump's Latest was read: "values", "appVersion"
+	// when values left the tag empty and the target chart's appVersion stands in,
+	// or "" when Latest is unknown or not a chart's.
+	LatestFrom string
+	// LatestRepo is the repository, registry included, the target chart deploys
+	// this image from, set only when the bump moves it away from Repo.
+	LatestRepo string
 	// Chart, ChartCurrent and ChartLatest name the Helm chart whose bump moves this
 	// image, and its versions, when a chart owns the image's version. Empty
 	// otherwise.
@@ -405,6 +412,7 @@ func imageUpgrades(findings []sink.FindingView) []ImageUpgrade {
 		if u.Kind == "chart" {
 			up.Chart, up.ChartCurrent, up.ChartLatest = u.Name, u.Current, u.Latest
 			up.Current, up.Latest = u.ImageCurrent, u.ImageLatest
+			up.LatestFrom, up.LatestRepo = u.ImageLatestFrom, u.ImageLatestRepo
 			if up.Current == "" {
 				up.Current = f.Tag
 			}

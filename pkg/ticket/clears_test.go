@@ -295,3 +295,80 @@ func TestClearsNone(t *testing.T) {
 		})
 	}
 }
+
+// appChartFinding is an image whose version a generic "app" chart owns, bumped
+// from 1.4.0 to 2.0.0.
+func appChartFinding(repo, tag string, target sink.UpgradeView) sink.FindingView {
+	return finding(repo, func(f *sink.FindingView) {
+		f.Image, f.Tag = repo+":"+tag, tag
+		f.Vulns = []sink.VulnView{exploited}
+		target.Kind, target.Name, target.Current, target.Latest = "chart", "app", "1.4.0", "2.0.0"
+		target.Available, target.Resolved, target.Actionable = true, true, true
+		target.ImageCurrent = tag
+		f.Upgrade = &target
+	})
+}
+
+// A tag taken from the chart's appVersion is marked as such, and a registry move
+// names where the image goes, so whoever does the work knows both.
+func TestTheUpgradeRowShowsAnAppVersionTagAndARegistryMove(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target sink.UpgradeView
+		want   string
+		never  []string
+	}{
+		{
+			name: "appVersion tag on a moved repository",
+			target: sink.UpgradeView{
+				ImageLatest: "v1.10.0", ImageLatestFrom: "appVersion",
+				ImageLatestRepo: "registry.example.org/vendor/oss/app",
+			},
+			want: "* vendor/app: v1.9.5 -> v1.10.0 (appVersion) (set by the app chart, which moves 1.4.0 -> 2.0.0; " +
+				"the image moves to registry.example.org/vendor/oss/app:v1.10.0 (from vendor/app))",
+		},
+		{
+			name:   "appVersion tag on the same repository",
+			target: sink.UpgradeView{ImageLatest: "v1.10.0", ImageLatestFrom: "appVersion"},
+			want:   "* vendor/app: v1.9.5 -> v1.10.0 (appVersion) (set by the app chart, which moves 1.4.0 -> 2.0.0)",
+			never:  []string{"moves to"},
+		},
+		{
+			name:   "a tag read from values",
+			target: sink.UpgradeView{ImageLatest: "v1.10.0", ImageLatestFrom: "values"},
+			want:   "* vendor/app: v1.9.5 -> v1.10.0 (set by the app chart, which moves 1.4.0 -> 2.0.0)",
+			never:  []string{"(appVersion)", "moves to"},
+		},
+		{
+			// A moved image whose tag is unknown still says so rather than naming a
+			// destination it cannot complete.
+			name:   "unknown tag",
+			target: sink.UpgradeView{ImageLatestRepo: "registry.example.org/vendor/oss/app"},
+			want:   "* vendor/app: v1.9.5 (set by the app chart, which moves 1.4.0 -> 2.0.0; the tag it deploys could not be read, so check it after the upgrade)",
+			never:  []string{"(appVersion)", "moves to"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := bundledPlanner(t).Plan([]sink.FindingView{appChartFinding("vendor/app", "v1.9.5", tc.target)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.Drafts) != 1 {
+				t.Fatalf("want one draft, got skips %+v", plan.Skips)
+			}
+			body := plan.Drafts[0].Description
+			if !strings.Contains(body, tc.want+"\n") {
+				t.Errorf("row should read %q:\n%s", tc.want, body)
+			}
+			for _, n := range tc.never {
+				if strings.Contains(body, n) {
+					t.Errorf("body should not contain %q:\n%s", n, body)
+				}
+			}
+			up := plan.Drafts[0].Upgrades[0]
+			if up.Latest != tc.target.ImageLatest || up.LatestFrom != tc.target.ImageLatestFrom || up.LatestRepo != tc.target.ImageLatestRepo {
+				t.Errorf("template data = %+v, want Latest/LatestFrom/LatestRepo copied from %+v", up, tc.target)
+			}
+		})
+	}
+}
