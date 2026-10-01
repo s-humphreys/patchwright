@@ -111,6 +111,13 @@ func TestClusterUpgradesResolvesEachImagesTargetTag(t *testing.T) {
 		if up.Current != "6.11.32" || up.Latest != "6.11.33" {
 			t.Errorf("%s: chart versions should be unchanged: %+v", tc.image, up)
 		}
+		wantFrom := ""
+		if tc.latest != "" {
+			wantFrom = model.ImageTagFromValues
+		}
+		if up.ImageLatestFrom != wantFrom || up.ImageLatestRepo != "" {
+			t.Errorf("%s: from %q repo %q, want from %q and no move", tc.image, up.ImageLatestFrom, up.ImageLatestRepo, wantFrom)
+		}
 		if up.ImageCurrent != tc.current || up.ImageLatest != tc.latest || up.ImagePinned != tc.pinned {
 			t.Errorf("%s: image %q -> %q pinned=%v, want %q -> %q pinned=%v", tc.image,
 				up.ImageCurrent, up.ImageLatest, up.ImagePinned, tc.current, tc.latest, tc.pinned)
@@ -144,5 +151,48 @@ func TestClusterUpgradesWithoutChartValues(t *testing.T) {
 	}
 	if up := result["acme.example.com/pinned:3.0"]; up.ImageLatest != "3.0" || !up.ImagePinned {
 		t.Errorf("a tag pinned in the release is known without the chart: %+v", up)
+	}
+}
+
+// A target chart that leaves tags empty for its appVersion, and moves one image
+// to another registry: the tag comes from appVersion styled like the running
+// tag, and the moved image says where it moves to.
+func TestClusterUpgradesReadsAppVersionAndRegistryMoves(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "app", Labels: fluxLabels("apps", "app")},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Image: "example.com/old/app:v1.9.5"},
+				{Image: "example.com/old/helper:1.9.5"},
+			},
+		}}},
+	}
+	dyn := fluxDynamic(
+		helmRelease("apps", "app", "app", "1.4.0", "repo", nil),
+		helmRepository("apps", "repo", "https://charts.example.com"),
+	)
+	checker := stubChecker{
+		up: model.Upgrade{Kind: "chart", Name: "app", Current: "1.4.0", Latest: "2.0.0", Available: true, Resolved: true},
+		values: map[string]any{
+			"image":  map[string]any{"repository": "registry.example.org/new/app", "tag": ""},
+			"helper": map[string]any{"image": map[string]any{"repository": "example.com/old/helper", "tag": ""}},
+		},
+		appVersion: "1.10.0",
+	}
+	result := map[string]model.Upgrade{}
+	if err := clusterUpgrades(context.Background(), kubefake.NewSimpleClientset(dep), dyn, checker, result); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		image, latest, from, repo string
+	}{
+		{"example.com/old/app:v1.9.5", "v1.10.0", model.ImageTagFromAppVersion, "registry.example.org/new/app"},
+		{"example.com/old/helper:1.9.5", "1.10.0", model.ImageTagFromAppVersion, ""},
+	} {
+		up := result[tc.image]
+		if up.ImageLatest != tc.latest || up.ImageLatestFrom != tc.from || up.ImageLatestRepo != tc.repo || up.ImagePinned {
+			t.Errorf("%s: got %q from %q repo %q pinned=%v, want %q from %q repo %q", tc.image,
+				up.ImageLatest, up.ImageLatestFrom, up.ImageLatestRepo, up.ImagePinned, tc.latest, tc.from, tc.repo)
+		}
 	}
 }

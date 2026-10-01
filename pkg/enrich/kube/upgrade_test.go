@@ -19,8 +19,9 @@ import (
 )
 
 type stubChecker struct {
-	up     model.Upgrade
-	values map[string]any
+	up         model.Upgrade
+	values     map[string]any
+	appVersion string
 	// asked records the chart version whose values were requested.
 	asked *string
 }
@@ -29,14 +30,14 @@ func (s stubChecker) Check(context.Context, upgrade.ChartRef) (model.Upgrade, er
 	return s.up, nil
 }
 
-func (s stubChecker) Values(_ context.Context, _ upgrade.ChartRef, version string) (map[string]any, error) {
+func (s stubChecker) Values(_ context.Context, _ upgrade.ChartRef, version string) (upgrade.ChartValues, error) {
 	if s.asked != nil {
 		*s.asked = version
 	}
 	if s.values == nil {
-		return nil, errors.New("no chart values")
+		return upgrade.ChartValues{}, errors.New("no chart values")
 	}
-	return s.values, nil
+	return upgrade.ChartValues{Values: s.values, AppVersion: s.appVersion}, nil
 }
 
 // TestClusterUpgrades exercises the full Flux path against fake clients: a

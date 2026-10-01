@@ -453,6 +453,12 @@ type BaseDiff struct {
 	Determined bool
 }
 
+// Where a chart bump's target tag for an image was read (Upgrade.ImageLatestFrom).
+const (
+	ImageTagFromValues     = "values"
+	ImageTagFromAppVersion = "appVersion"
+)
+
 // Upgrade describes a newer version available for the artifact that deploys an
 // image — the concrete remediation. Kind is the deployment source that would be
 // bumped ("chart" for Helm today; "image"/"git"/"oci" to follow). Source is
@@ -535,9 +541,20 @@ type Upgrade struct {
 	//
 	// ImagePinned reports that our own release values set this image's tag, so no
 	// chart bump moves it whatever the chart ships.
-	ImageCurrent string
-	ImageLatest  string
-	ImagePinned  bool
+	//
+	// ImageLatestFrom says where ImageLatest was read: ImageTagFromValues for a tag
+	// set in values, ImageTagFromAppVersion when values left it empty and the target
+	// chart's appVersion stands in, "" when ImageLatest is unknown. An appVersion
+	// tag is how most charts' templates behave, not something read off the image
+	// entry, so it is never taken as proof the image stays put.
+	//
+	// ImageLatestRepo is the repository (registry included) the target chart
+	// deploys this image from, set only when that differs from the one running.
+	ImageCurrent    string
+	ImageLatest     string
+	ImagePinned     bool
+	ImageLatestFrom string
+	ImageLatestRepo string
 
 	// Reason explains an unresolved upgrade, in terms a reader can act on. "We
 	// could not find out" is only useful with the "because": an unreadable registry

@@ -9,12 +9,16 @@ import (
 func TestChartImageTag(t *testing.T) {
 	img := func(ref string) model.Image { return model.ParseImageRef(ref) }
 	for _, tc := range []struct {
-		name    string
-		image   string
-		release map[string]any
-		chart   map[string]any
-		tag     string
-		pinned  bool
+		name       string
+		image      string
+		release    map[string]any
+		chart      map[string]any
+		appVersion string
+		tag        string
+		pinned     bool
+		// from defaults to "values" whenever tag is set.
+		from string
+		repo string
 	}{
 		{
 			name:  "chart pins the same tag it already runs",
@@ -62,9 +66,106 @@ func TestChartImageTag(t *testing.T) {
 			tag:   "4",
 		},
 		{
-			name:  "empty tag defers to the chart's templates: unknown",
+			name:  "empty tag and no appVersion: unknown",
 			image: "acme/app:1.0",
 			chart: map[string]any{"image": map[string]any{"repository": "acme/app", "tag": ""}},
+		},
+		{
+			name:       "empty tag falls back to appVersion, gaining the running tag's v",
+			image:      "example.com/old/app:v1.9.5",
+			chart:      map[string]any{"image": map[string]any{"repository": "example.com/old/app", "tag": ""}},
+			appVersion: "1.10.0",
+			tag:        "v1.10.0", from: "appVersion",
+		},
+		{
+			name:       "absent tag falls back to appVersion, losing a v the running tag lacks",
+			image:      "example.com/old/app:1.9.5",
+			chart:      map[string]any{"image": map[string]any{"repository": "example.com/old/app"}},
+			appVersion: "v1.10.0",
+			tag:        "1.10.0", from: "appVersion",
+		},
+		{
+			name:       "appVersion styled like the running tag is used as is",
+			image:      "example.com/old/app:v1.9.5",
+			chart:      map[string]any{"image": map[string]any{"repository": "example.com/old/app", "tag": ""}},
+			appVersion: "v1.10.0",
+			tag:        "v1.10.0", from: "appVersion",
+		},
+		{
+			name:       "a running tag that merely starts with v is not v-styled",
+			image:      "example.com/old/app:valid-1",
+			chart:      map[string]any{"image": map[string]any{"repository": "example.com/old/app", "tag": ""}},
+			appVersion: "2.0",
+			tag:        "2.0", from: "appVersion",
+		},
+		{
+			name:  "a digest beside an empty tag: no appVersion fallback",
+			image: "example.com/old/app:1.9.5",
+			chart: map[string]any{"image": map[string]any{
+				"repository": "example.com/old/app", "tag": "", "digest": "sha256:0123"}},
+			appVersion: "1.10.0",
+		},
+		{
+			name:       "a digest the release sets: no appVersion fallback",
+			image:      "example.com/old/app:1.9.5",
+			release:    map[string]any{"image": map[string]any{"digest": "sha256:0123"}},
+			chart:      map[string]any{"image": map[string]any{"repository": "example.com/old/app", "tag": ""}},
+			appVersion: "1.10.0",
+		},
+		{
+			name:       "a tag the release pins wins over appVersion",
+			image:      "example.com/old/app:1.9.5",
+			release:    map[string]any{"image": map[string]any{"tag": "1.9.5"}},
+			chart:      map[string]any{"image": map[string]any{"repository": "example.com/old/app", "tag": ""}},
+			appVersion: "1.10.0",
+			tag:        "1.9.5", pinned: true,
+		},
+		{
+			name:       "a tag the release pins beside the repository wins over appVersion",
+			image:      "example.com/old/app:1.9.5",
+			release:    map[string]any{"image": map[string]any{"repository": "example.com/old/app", "tag": "1.9.5"}},
+			chart:      map[string]any{"image": map[string]any{"repository": "example.com/old/app", "tag": ""}},
+			appVersion: "1.10.0",
+			tag:        "1.9.5", pinned: true,
+		},
+		{
+			name:       "registry move to the one repository with the same name, tag from appVersion",
+			image:      "docker.io/vendor/app:v1.9.5",
+			chart:      map[string]any{"image": map[string]any{"repository": "registry.example.org/vendor/oss/app", "tag": ""}},
+			appVersion: "1.10.0",
+			tag:        "v1.10.0", from: "appVersion", repo: "registry.example.org/vendor/oss/app",
+		},
+		{
+			name:  "registry move with a values tag, registry split out",
+			image: "example.com/old/app:1.0",
+			chart: map[string]any{"image": map[string]any{
+				"registry": "registry.example.org", "repository": "new/app", "tag": "2.0"}},
+			tag:  "2.0",
+			repo: "registry.example.org/new/app",
+		},
+		{
+			name:  "registry move named in two places agreeing on the tag",
+			image: "example.com/old/app:1.0",
+			chart: map[string]any{
+				"image":      map[string]any{"repository": "registry.example.org/new/app", "tag": "2.0"},
+				"migrations": map[string]any{"image": "registry.example.org/new/app:2.0"},
+			},
+			tag:  "2.0",
+			repo: "registry.example.org/new/app",
+		},
+		{
+			name:  "registry move with two same-name candidates: unknown",
+			image: "example.com/old/app:1.0",
+			chart: map[string]any{
+				"a": map[string]any{"image": map[string]any{"repository": "registry.example.org/new/app", "tag": "2.0"}},
+				"b": map[string]any{"image": map[string]any{"repository": "registry.example.org/other/app", "tag": "2.0"}},
+			},
+		},
+		{
+			name:       "registry move with no same-name candidate: unknown",
+			image:      "example.com/old/app:1.0",
+			chart:      map[string]any{"image": map[string]any{"repository": "registry.example.org/new/server", "tag": ""}},
+			appVersion: "2.0",
 		},
 		{
 			name:  "a numeric tag has lost its formatting: unknown",
@@ -85,16 +186,22 @@ func TestChartImageTag(t *testing.T) {
 			chart: map[string]any{"image": map[string]any{"repository": "acme/app", "tag": "1.0"}},
 		},
 		{
+			// The same tag on another registry is a move, never the image staying put.
 			name:  "a different registry is a different image",
 			image: "ghcr.io/acme/app:1.0",
 			chart: map[string]any{"image": map[string]any{"repository": "acme/app", "tag": "1.0"}},
+			tag:   "1.0", repo: "docker.io/acme/app",
 		},
 		{name: "nothing to read", image: "acme/app:1.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tag, pinned := ChartImageTag(img(tc.image), tc.release, tc.chart)
-			if tag != tc.tag || pinned != tc.pinned {
-				t.Errorf("got %q pinned=%v, want %q pinned=%v", tag, pinned, tc.tag, tc.pinned)
+			want := ChartImage{Tag: tc.tag, Pinned: tc.pinned, From: tc.from, Repo: tc.repo}
+			if want.Tag != "" && want.From == "" {
+				want.From = model.ImageTagFromValues
+			}
+			got := ChartImageTag(img(tc.image), tc.release, ChartValues{Values: tc.chart, AppVersion: tc.appVersion})
+			if got != want {
+				t.Errorf("got %+v, want %+v", got, want)
 			}
 		})
 	}
