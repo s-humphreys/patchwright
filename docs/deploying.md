@@ -649,6 +649,12 @@ with `create: false` the account you name is the one the cluster-read role is bo
 `split.web.serviceAccountName` to use an account you manage instead; the chart then
 creates none, and that account should be bound to nothing.
 
+`split.worker.podAnnotations` and `split.web.podAnnotations` are merged over the
+top-level `podAnnotations` for that Deployment's pods, the role's value winning on a
+clashing key. On Karpenter, consider `karpenter.sh/do-not-disrupt: "true"` on the
+worker: consolidation evicting it kills the assessment in flight. The web replicas have
+the PodDisruptionBudget and need nothing of the kind.
+
 Rendering refuses `split.enabled` without `history.enabled`, without `server.enabled`,
 with no web replicas, and with `auth.oidc` but no source for `PATCHWRIGHT_SESSION_KEY`
 (`auth.oidc.sessionKeyRef` or the credentials Secret). The binary makes the same checks:
