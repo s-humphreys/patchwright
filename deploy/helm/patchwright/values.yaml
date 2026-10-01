@@ -82,8 +82,16 @@ server:
 # credentials Secret). See docs/deploying.md.
 split:
   enabled: false
+  # podAnnotations here and under web are merged over the top-level podAnnotations,
+  # winning on a clashing key, for the one Deployment each names.
+  worker:
+    # On Karpenter, consider karpenter.sh/do-not-disrupt: "true": consolidation
+    # evicting the worker kills the assessment in flight, and with one replica there
+    # is nothing to take over. Not a default because not every cluster runs Karpenter.
+    podAnnotations: {}
   web:
     replicas: 2
+    podAnnotations: {}
     # For the web replicas only; the worker keeps `resources` below. A web replica
     # holds one decoded assessment in memory and does no scanning, so it needs a
     # fraction of what the worker does. Set by default, limits included, because

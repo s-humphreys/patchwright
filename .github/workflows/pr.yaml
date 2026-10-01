@@ -147,6 +147,20 @@ jobs:
             exit 1
           fi
 
+          # A role's podAnnotations reach only its own pods and win over the shared ones: an
+          # annotation meant for the single worker, such as do-not-disrupt, has no place on
+          # the web replicas, which have the disruption budget.
+          split=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true \
+            --set podAnnotations.shared=s --set podAnnotations.clash=shared \
+            --set split.worker.podAnnotations.clash=worker --set split.web.podAnnotations.webonly=w)
+          web=$(doc Deployment pw-patchwright-web <<<"$split")
+          worker=$(doc Deployment pw-patchwright-worker <<<"$split")
+          if ! grep -qF 'clash: worker' <<<"$worker" || ! grep -qF 'shared: s' <<<"$worker" || grep -qF 'webonly' <<<"$worker" \
+              || ! grep -qF 'clash: shared' <<<"$web" || ! grep -qF 'webonly: w' <<<"$web"; then
+            echo 'split.worker.podAnnotations and split.web.podAnnotations did not merge over podAnnotations for their own pods only' >&2
+            exit 1
+          fi
+
           # The disruption budget bounds how many web replicas go at once; a minimum would
           # block every drain of a single replica.
           pdb=$(helm template pw "${main[@]}" "${history[@]}" --set split.enabled=true --set split.web.replicas=1 \

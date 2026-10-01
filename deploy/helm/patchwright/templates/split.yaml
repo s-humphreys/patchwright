@@ -48,7 +48,7 @@ spec:
       app.kubernetes.io/component: worker
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- with merge (deepCopy (.Values.split.worker.podAnnotations | default dict)) (.Values.podAnnotations | default dict) }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -113,7 +113,7 @@ spec:
       app.kubernetes.io/component: web
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- with merge (deepCopy (.Values.split.web.podAnnotations | default dict)) (.Values.podAnnotations | default dict) }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
