@@ -127,6 +127,15 @@ var (
 	remediationBlockers = gaugeVec("remediation_blocked_by_reason",
 		"Findings whose upgrade could not be resolved, by the stated reason.",
 		[]string{"reason"})
+
+	// baseDifferential is the one place an outage of the base scanner shows. When it
+	// fails, every image it covers quietly reverts to "unknown", which looks like a
+	// differential that was never configured rather than one that broke.
+	baseDifferential = gaugeVec("base_differential_images",
+		"Images the base differential set out to measure in the latest run, by result. "+
+			"failed means a scan it needed failed this run, so what an upgrade clears is "+
+			"unknown for now rather than unmeasurable.",
+		[]string{"result"})
 )
 
 // Failures.
@@ -475,6 +484,13 @@ func jiraOutcome(status int, err error) string {
 // "noop" or "failed".
 func TicketAction(action, result string) {
 	ticketActions.WithLabelValues(action, result).Inc()
+}
+
+// BaseDifferential publishes how many images the base differential measured in the
+// latest run, and how many it could not.
+func BaseDifferential(measured, failed int) {
+	baseDifferential.WithLabelValues("measured").Set(float64(measured))
+	baseDifferential.WithLabelValues("failed").Set(float64(failed))
 }
 
 // ImageScan records one image scan attempt: "ok", "failed" or "skipped".

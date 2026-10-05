@@ -52,6 +52,7 @@ func TestEveryMetricIsPrefixed(t *testing.T) {
 	TicketAction("create", "applied")
 	ImageScan("ok")
 	ProviderFetch("success")
+	BaseDifferential(1, 0)
 	AssessmentStarted()(nil)
 
 	names := gathered(t)
@@ -259,4 +260,29 @@ func labelsMatch(got []*dto.LabelPair, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// Per run, not cumulative: a run that recovered must stop reporting the failures
+// of the one before it.
+func TestBaseDifferentialPublishesTheLatestRun(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		measured, failed int
+	}{
+		{"all failed", 0, 201},
+		{"recovered", 198, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			BaseDifferential(tc.measured, tc.failed)
+			out := scrape(t)
+			for _, want := range []string{
+				fmt.Sprintf(`patchwright_base_differential_images{result="measured"} %d`, tc.measured),
+				fmt.Sprintf(`patchwright_base_differential_images{result="failed"} %d`, tc.failed),
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("scrape is missing %q:\n%s", want, grepPrefix(out, "patchwright_base_differential"))
+				}
+			}
+		})
+	}
 }

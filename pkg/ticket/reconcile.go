@@ -21,10 +21,13 @@ import (
 //   - the work gets done, but the ticket stays open because nothing told it.
 //
 // Everything here is expressed as an Action so a dry run shows exactly what would
-// happen. Notably absent: closing tickets. A finding can vanish because it was
-// fixed OR because the provider stopped assessing the image, and those are
-// indistinguishable from the queue alone. Closing on the second would quietly
-// retire real work, so reconciliation comments and leaves the decision to a human.
+// happen. Closing is the guarded exception, never inferred from a finding having
+// disappeared: a finding can vanish because it was fixed OR because the provider
+// stopped assessing the image, and those are indistinguishable from the queue
+// alone. A ticket is closed only on positive evidence, where the route allows it
+// (autoClose, or a not-done transition for work that stopped mattering) and nobody
+// has picked it up; otherwise reconciliation comments and leaves the decision to a
+// human.
 
 // ActionKind is what reconciliation wants done.
 type ActionKind string
@@ -92,8 +95,9 @@ type Action struct {
 	// rather than because it was done, so the writer uses that transition and the
 	// history records the reason.
 	NoLongerActionable bool
-	// Reason is the machine-readable cause of a close or done-note: upgrade-landed,
-	// not-running, no-longer-actionable, upgrade-clears-nothing, operator-chosen.
+	// Reason is the machine-readable cause of a close, a done-note or a hold:
+	// upgrade-landed, not-running, no-longer-actionable, upgrade-clears-nothing,
+	// operator-chosen, unmeasured.
 	Reason string
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
@@ -199,8 +203,41 @@ func Reconcile(in ReconcileInput) []Action {
 		})
 	}
 
+	actions = append(actions, unmeasuredHolds(in)...)
 	actions = append(actions, doneActions(in, claimed)...)
 	return actions
+}
+
+// unmeasuredHolds reports the changes held because they could not be measured this
+// run, where no ticket is open for them. Nothing is written for these; the hold is
+// what makes "no ticket raised" visible as waiting rather than as nothing to do.
+// One per distinct reason, which is one per held change.
+func unmeasuredHolds(in ReconcileInput) []Action {
+	byReason := map[string][]string{}
+	var order []string
+	for _, s := range in.Skipped {
+		if !s.Unmeasured || len(in.OpenByImage[skipKey(s)]) > 0 {
+			continue
+		}
+		if byReason[s.Reason] == nil {
+			order = append(order, s.Reason)
+		}
+		byReason[s.Reason] = append(byReason[s.Reason], skipKey(s))
+	}
+	out := make([]Action, 0, len(order))
+	for _, reason := range order {
+		out = append(out, Action{
+			Kind: ActionHold, Images: byReason[reason], Reason: ReasonUnmeasured, Why: reason,
+		})
+	}
+	return out
+}
+
+func skipKey(s Skip) string {
+	if s.Repository != "" {
+		return s.Repository
+	}
+	return s.Image
 }
 
 // doneActions flags open tickets that no draft accounts for any more.
@@ -225,6 +262,18 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 			seen[t.Key] = true
 
 			images := imagesOfTicket(in.OpenByImage, t.Key)
+
+			// First, before anything that might close or comment: this run could not
+			// measure the change the ticket is about, so it has nothing to say about
+			// the ticket either.
+			if held := unmeasuredSkips(images, in.Skipped); len(held) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key, Reason: ReasonUnmeasured,
+					Why: "the change could not be measured this run, so nothing was raised or changed: " +
+						strings.Join(held, "; "),
+				})
+				continue
+			}
 
 			// The one case where closing is defensible: not "the finding went
 			// away" but "the images are still here, we checked, and they are all
@@ -353,6 +402,9 @@ const (
 	// ReasonOperatorChosen is a ticket for images whose versions an operator picks
 	// at runtime, where no upgrade of the operator is on offer.
 	ReasonOperatorChosen = "operator-chosen"
+	// ReasonUnmeasured is a hold on a change whose effect could not be measured
+	// this run, because a measurement it depends on failed.
+	ReasonUnmeasured = "unmeasured"
 )
 
 // clearsNothing reports that every one of a ticket's images was skipped because
@@ -669,6 +721,25 @@ func recentlyReported(images []string, recent map[string]bool) []string {
 	for _, img := range images {
 		if recent[img] {
 			out = append(out, img)
+		}
+	}
+	return out
+}
+
+// unmeasuredSkips returns the reasons this ticket's images went unmeasured this
+// run. Any of them, not all: a ticket is one change, and a verdict on it that
+// leaves out part of what it covers is not one to act on.
+func unmeasuredSkips(images []string, skips []Skip) []string {
+	byImage := map[string]string{}
+	for _, s := range skips {
+		if s.Unmeasured {
+			byImage[skipKey(s)] = s.Reason
+		}
+	}
+	var out []string
+	for _, img := range images {
+		if reason, ok := byImage[img]; ok {
+			out = append(out, img+" ("+reason+")")
 		}
 	}
 	return out

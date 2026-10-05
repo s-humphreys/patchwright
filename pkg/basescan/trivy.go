@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 
 	"github.com/s-humphreys/patchwright/pkg/registryauth"
+	"github.com/s-humphreys/patchwright/pkg/trivydb"
 )
 
 // TrivyScanner scans one image reference by shelling out to the trivy binary.
@@ -25,12 +27,13 @@ type TrivyScanner struct {
 	Binary  string // default "trivy"
 	Timeout string // passed through as --timeout
 	// DBRepository overrides where the vulnerability database is pulled from.
-	// Empty uses Trivy's own mirror list.
+	// Empty uses Trivy's own mirror list, then trivydb.FallbackRepository.
 	DBRepository string
 
-	// prepared guards the one-time database download.
-	prepared sync.Once
-	prepErr  error
+	// mu serialises database preparation; prepared records that it succeeded.
+	// A failure is deliberately not remembered: see Prepare.
+	mu       sync.Mutex
+	prepared bool
 
 	// Credentials resolves the credentials for a reference. Defaults to
 	// registryauth.Credentials. Injected so tests need no registry.
@@ -39,28 +42,55 @@ type TrivyScanner struct {
 
 func (t *TrivyScanner) Name() string { return "trivy" }
 
-// prepare downloads the vulnerability database once, before any scan.
+// ErrDBUnavailable marks a scan that did not run because the vulnerability
+// database could not be prepared. It says nothing about the image, so nothing
+// may be concluded or cached about the image from it.
+var ErrDBUnavailable = errors.New("vulnerability database unavailable")
+
+// ErrNotFound marks a reference the registry says does not exist: a base whose
+// recorded digest or tag has since been deleted. Unlike any other failure it is
+// an answer about the image, and retrying will not change it.
+var ErrNotFound = errors.New("image not found in its registry")
+
+// Prepare downloads the vulnerability database, before any scan.
 //
 // Serialised deliberately. Concurrent scans each racing to populate the database
 // is the failure --skip-db-update exists to avoid, and doing it here means the
 // bound on concurrent scans does not also become a bound on concurrent downloads.
-func (t *TrivyScanner) prepare(ctx context.Context) error {
-	t.prepared.Do(func() {
-		args := []string{"image", "--quiet", "--download-db-only"}
-		if t.Timeout != "" {
-			args = append(args, "--timeout", t.Timeout)
-		}
-		if t.DBRepository != "" {
-			args = append(args, "--db-repository", t.DBRepository)
-		}
-		cmd := exec.CommandContext(ctx, t.binary(), args...)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			t.prepErr = fmt.Errorf("trivy --download-db-only: %w: %s", err, lastLine(stderr.String()))
-		}
-	})
-	return t.prepErr
+//
+// A failure is not remembered. It once was, behind a sync.Once, and one 404 from
+// the mirror on the first run after a restart failed every base scan for the life
+// of the process. The next caller tries again; the differential calls this once
+// per run, so a lasting outage costs one bounded retry per run rather than one
+// per image.
+func (t *TrivyScanner) Prepare(ctx context.Context) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.prepared {
+		return nil
+	}
+	if err := trivydb.Download(ctx, t.DBRepository, t.downloadDB); err != nil {
+		return fmt.Errorf("%w: %w", ErrDBUnavailable, err)
+	}
+	t.prepared = true
+	return nil
+}
+
+func (t *TrivyScanner) downloadDB(ctx context.Context, repo string) error {
+	args := []string{"image", "--quiet", "--download-db-only"}
+	if t.Timeout != "" {
+		args = append(args, "--timeout", t.Timeout)
+	}
+	if repo != "" {
+		args = append(args, "--db-repository", repo)
+	}
+	cmd := exec.CommandContext(ctx, t.binary(), args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("trivy --download-db-only: %w: %s", err, lastLine(stderr.String()))
+	}
+	return nil
 }
 
 func (t *TrivyScanner) binary() string {
@@ -105,7 +135,7 @@ func (t *TrivyScanner) ScanRef(ctx context.Context, ref string) (*Result, error)
 	// fast; the database download is a network fetch, and doing it first turns a
 	// misconfigured identity into a slow failure - and made the test for that
 	// path pass for the wrong reason.
-	if err := t.prepare(ctx); err != nil {
+	if err := t.Prepare(ctx); err != nil {
 		return nil, err
 	}
 
@@ -115,6 +145,9 @@ func (t *TrivyScanner) ScanRef(ctx context.Context, ref string) (*Result, error)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if notFound(stderr.String()) {
+			err = fmt.Errorf("%w: %w", ErrNotFound, err)
+		}
 		return nil, fmt.Errorf("trivy %s: %w: %s", ref, err, lastLine(stderr.String()))
 	}
 	return parseRefReport(ref, stdout.Bytes())
@@ -174,6 +207,13 @@ func parseRefReport(ref string, data []byte) (*Result, error) {
 		}
 	}
 	return out, nil
+}
+
+// notFound reports a registry saying the reference does not exist. Matched on the
+// OCI distribution spec's error codes, which registries return verbatim and Trivy
+// passes through, rather than on Trivy's own wording around them.
+func notFound(stderr string) bool {
+	return strings.Contains(stderr, "MANIFEST_UNKNOWN") || strings.Contains(stderr, "NAME_UNKNOWN")
 }
 
 func lastLine(s string) string {

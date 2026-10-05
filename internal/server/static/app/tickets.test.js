@@ -44,6 +44,17 @@ test('the plan lists what will be written, and counts what will not', async () =
   assert.match(text(), /auto-ticketing is off/);
 });
 
+test('a hold on an unmeasured upgrade is named apart from other waiting', async () => {
+  reply = { auto_apply: false, actions: [
+    { kind: 'hold', reason: 'unmeasured', images: ['app'], why: 'could not be measured this run' },
+    { kind: 'hold', ticket: 'OPS-2', why: 'no available version could be resolved' },
+  ] };
+  await loadPending();
+  assert.match(text(), /Nothing will be written/);
+  assert.match(text(), /1 held because the upgrade could not be measured this run/);
+  assert.match(text(), /1 cannot be judged yet/);
+});
+
 test('auto-apply is stated, because it is the difference between a plan and a warning', async () => {
   reply = { auto_apply: true, actions: [{ kind: 'create', why: 'x' }] };
   await loadPending();

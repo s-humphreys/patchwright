@@ -42,6 +42,9 @@ type Draft struct {
 	// clearsNone marks a change measured to clear none of the CVEs that make its
 	// findings actionable. Such a draft is never raised.
 	clearsNone bool
+	// unmeasured is why the change could not be judged this run. Such a draft is
+	// never raised either, and nothing open for it is touched.
+	unmeasured string
 }
 
 // Skip records a finding that will not be ticketed, and why. Skips are reported
@@ -68,6 +71,12 @@ type Skip struct {
 	// did not decline it; the change on offer simply fixes nothing, so an open
 	// ticket asking for it is closed rather than held or called finished.
 	ClearsNothing bool
+	// Unmeasured is true when what the proposed change clears could not be
+	// established in this run, because a measurement that would have decided it
+	// failed. Neither the work nor the change is judged: nothing is raised, and an
+	// open ticket is held rather than closed, noted or rewritten on the strength
+	// of data the run did not have.
+	Unmeasured bool
 	// OperatorChosen is true when an operator picks the image's version at runtime
 	// and that operator was shown to be on its latest version, so there is no change
 	// a ticket could ask for. Like ClearsNothing the work is not done; unlike it,
@@ -237,6 +246,19 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 						Image: img, ClearsNothing: true,
 						Reason: "the proposed upgrade (" + describeMove(d) + ") does not clear any of " +
 							"the vulnerabilities that make it actionable; it stays in the queue",
+					})
+				}
+				continue
+			}
+			// Before the threshold too, and for the same reason: it decides what happens
+			// to a ticket already open, which must be nothing at all.
+			if d.unmeasured != "" {
+				for _, img := range d.Images {
+					out.Skips = append(out.Skips, Skip{
+						Image: img, Unmeasured: true,
+						Reason: "the proposed upgrade (" + describeMove(d) + ") could not be measured this run (" +
+							d.unmeasured + "), so nothing was raised or changed; it stays in the queue " +
+							"and is judged again on the next run",
 					})
 				}
 				continue
@@ -659,6 +681,7 @@ func (p *Planner) render(group ticketGroup, route, disambiguator string) (Draft,
 		Key:         groupKey(group.primary[0], p.campaign(route)),
 		Route:       route,
 		clearsNone:  data.clearsNone,
+		unmeasured:  data.unmeasured,
 	}, nil
 }
 

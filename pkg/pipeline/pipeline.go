@@ -284,6 +284,7 @@ func buildFindings(images []model.AssessedImage) []model.Finding {
 				InFlightChecked:    ai.InFlightChecked,
 				InFlightReason:     ai.InFlightReason,
 				BaseDiff:           ai.BaseDiff,
+				BaseDiffError:      ai.BaseDiffError,
 				ImageBuilt:         ai.ImageBuilt,
 				BuildRepo:          ai.BuildRepo,
 			})

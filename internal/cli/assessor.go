@@ -161,7 +161,9 @@ func newAssessor(in assessInputs) (*assessor, error) {
 					ScanExploited: bd.ScansExploited(),
 					ExploitedEPSS: bd.ExploitedEPSS,
 					Resolver: &basescan.Resolver{
-						Scanner:     &basescan.TrivyScanner{Binary: bd.Binary, Timeout: bd.Timeout},
+						Scanner: &basescan.TrivyScanner{
+							Binary: bd.Binary, Timeout: bd.Timeout, DBRepository: bd.DBRepository,
+						},
 						Concurrency: bd.EffectiveConcurrency(),
 						// Bounded, because the server holds this resolver for the life of
 						// the process and an unexpiring base scan misattributes new CVEs

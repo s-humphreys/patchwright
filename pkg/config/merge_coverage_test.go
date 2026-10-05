@@ -30,6 +30,7 @@ remediation:
     enabled: true
     binary: /usr/local/bin/trivy
     timeout: 9m
+    dbRepository: registry.example.com/trivy-db:2
     concurrency: 6
     maxAge: 8h
     scanExploited: true

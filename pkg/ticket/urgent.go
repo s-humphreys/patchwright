@@ -158,8 +158,14 @@ func unmoved(f sink.FindingView) bool {
 // change that moves no image at all clears nothing whatever the CVEs are.
 //
 // Judged per image: every image carrying one of those CVEs has to have been
-// measured and found to keep it. An image nothing measured might lose it, and not
-// knowing is never a reason to withhold a ticket.
+// measured and found to keep it. An image nothing measured might lose it, and an
+// image that cannot be measured - no differential configured, no base resolved, a
+// base gone from its registry - is never a reason to withhold a ticket: that gap
+// is permanent, and holding on it would mean never raising one.
+//
+// An image whose measurement failed in THIS run is a different gap, and is
+// unmeasured's to judge, not this function's: it is temporary, and the run that
+// cannot see is not the one to act on what it cannot see.
 func clearsNone(group []sink.FindingView, epss float64) bool {
 	if len(group) == 0 {
 		return false
@@ -193,6 +199,45 @@ func clearsNone(group []sink.FindingView, epss float64) bool {
 		}
 	}
 	return picked
+}
+
+// unmeasured returns why the proposed change could not be judged in this run, or
+// "" when it could. That is when a measurement that would have decided it failed:
+// an image carrying one of the actionable CVEs went unmeasured because its base
+// differential failed this run, and nothing else in the group was measured to
+// clear one.
+//
+// Raising a ticket on that unknown is how one unavailable vulnerability database
+// raised tickets for upgrades already measured, the run before, to fix nothing.
+// Acting on it the other way, closing or commenting, is no better. So the change
+// is held: nothing raised, nothing open touched, until a run can see it.
+//
+// A change some image was measured to clear stands on that measurement and is not
+// held: whatever the unmeasured images would have said, the ticket is justified.
+func unmeasured(group []sink.FindingView, epss float64) string {
+	if epss <= 0 {
+		epss = DefaultUrgentEPSS
+	}
+	pick := func(v sink.VulnView) bool { return isUrgent(v, epss) }
+	if !carries(group, pick) {
+		pick = isFixableCritical
+	}
+	reason := ""
+	for _, f := range group {
+		for _, v := range f.Vulns {
+			if !pick(v) {
+				continue
+			}
+			measured, fixed := verdict(f, v)
+			if measured && fixed {
+				return ""
+			}
+			if !measured && f.BaseDiffError != "" && reason == "" {
+				reason = f.BaseDiffError
+			}
+		}
+	}
+	return reason
 }
 
 func carries(group []sink.FindingView, pick func(sink.VulnView) bool) bool {

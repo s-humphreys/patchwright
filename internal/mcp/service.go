@@ -141,6 +141,12 @@ type UpgradeAdvice struct {
 	// DeploymentsMeasured is how many of the service's deployments a differential ran
 	// for, so a partial answer can be read as partial.
 	DeploymentsMeasured int `json:"deployments_measured"`
+	// DeploymentsUnmeasured is how many the differential set out to measure and could
+	// not in this run, and UnmeasuredReason the first reason why. Kept apart from the
+	// deployments it could never measure: this gap is temporary, the next run retries
+	// it, and no ticket is raised or changed on it in the meantime.
+	DeploymentsUnmeasured int    `json:"deployments_unmeasured_this_run,omitempty"`
+	UnmeasuredReason      string `json:"unmeasured_reason,omitempty"`
 	// Clears, Leaves and Introduces are DISTINCT CVEs, on the same footing as
 	// vulnerabilities.total, so the four numbers can be read against each other:
 	// clears + leaves + from_application + unattributed is the total.
@@ -502,6 +508,12 @@ func upgradeAdvice(mine []sink.FindingView, lead group.Item) *UpgradeAdvice {
 	// so the four numbers would stop adding up. The second pass puts it where it belongs:
 	// unattributed, which is what "nothing established its origin" means.
 	for _, f := range mine {
+		if f.BaseDiffError != "" {
+			out.DeploymentsUnmeasured++
+			if out.UnmeasuredReason == "" {
+				out.UnmeasuredReason = f.BaseDiffError
+			}
+		}
 		d := f.BaseDiff
 		if d == nil || !d.Determined {
 			continue
@@ -697,10 +709,17 @@ func inProgress(lead group.Item) *InProgress {
 func caveats(a Assessment, r ServiceReport) []string {
 	// Configuration first, for the same reason as the estate summary: a signal
 	// nobody asked for is explained by the command line, not by this service.
-	out := configCaveats(a, Coverage{
+	cov := Coverage{
 		Scanned: r.Vulnerabilities.ScannedOf[0], Total: r.Vulnerabilities.ScannedOf[1],
 		BaseDiffs: baseDiffsAmong(r),
-	})
+	}
+	// The service's own split, so a partial failure this run is worded by configCaveats
+	// the same way as on every other report; upgrade.unmeasured_reason carries why.
+	if r.Upgrade != nil {
+		cov.BaseDiffs = r.Upgrade.DeploymentsMeasured
+		cov.BaseDiffFailed = r.Upgrade.DeploymentsUnmeasured
+	}
+	out := configCaveats(a, cov)
 	if r.Vulnerabilities.AssessedOf[0] < r.Vulnerabilities.AssessedOf[1] {
 		out = append(out, fmt.Sprintf(
 			"The scan provider never assessed %d of %d deployments; their counts are absent data, not zero.",
@@ -709,14 +728,16 @@ func caveats(a Assessment, r ServiceReport) []string {
 	// Only worth saying when the differential was enabled: when it was not, the
 	// configuration caveat above has already said why, and repeating it as a
 	// property of this service points at the wrong thing.
-	if r.Upgrade != nil && r.Upgrade.Measured && r.Upgrade.DeploymentsMeasured < len(r.Deployments) {
+	if r.Upgrade != nil && r.Upgrade.Measured &&
+		r.Upgrade.DeploymentsMeasured+r.Upgrade.DeploymentsUnmeasured < len(r.Deployments) {
 		out = append(out, fmt.Sprintf(
 			"A base differential ran for %d of %d deployments. The rest usually means the base "+
 				"image recorded in the build has since been deleted from its registry, so nothing "+
 				"can establish where their CVEs came from; those are counted as unattributed.",
 			r.Upgrade.DeploymentsMeasured, len(r.Deployments)))
 	}
-	if a.Sources.BaseDiff && r.Upgrade != nil && !r.Upgrade.Measured {
+	// A failed run is configCaveats' to explain; this is the standing kind.
+	if a.Sources.BaseDiff && r.Upgrade != nil && !r.Upgrade.Measured && r.Upgrade.DeploymentsUnmeasured == 0 {
 		out = append(out, "The base differential is enabled but did not measure this service, so what an "+
 			"upgrade would clear is unknown rather than nothing - its base could not be resolved or scanned.")
 	}

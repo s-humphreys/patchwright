@@ -29,6 +29,7 @@ Enabling both is refused: two monitors on one target double every counter.
 | `patchwright_owner_findings{class,team,state}` | `total`, `actionable`, `unassessed`, `ticketed` |
 | `patchwright_owner_responsiveness{class,team,metric}` | `unstarted`, `stale_unstarted`, `in_flight_stale`, `median_age_days` |
 | `patchwright_images_unique` | |
+| `patchwright_base_differential_images{result}` | `measured` / `failed` in the latest run. `failed` is a scan the differential needed that failed this run, so those upgrades are held rather than ticketed |
 
 ## Failures
 
@@ -66,6 +67,10 @@ topk(3, patchwright_findings_fallback_failed_by_reason)
 # Ticketing stopped because credentials expired, which otherwise looks
 # identical to having no work to raise.
 increase(patchwright_jira_requests_total{outcome="auth_error"}[15m]) > 0
+
+# The base differential failing: its upgrades are held rather than ticketed
+# until it measures them again.
+patchwright_base_differential_images{result="failed"} > patchwright_base_differential_images{result="measured"}
 
 # Nothing has completed an assessment recently.
 time() - patchwright_assessment_last_success_timestamp_seconds > 7200

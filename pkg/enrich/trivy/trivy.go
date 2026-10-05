@@ -25,13 +25,13 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/registryauth"
+	"github.com/s-humphreys/patchwright/pkg/trivydb"
 )
 
 func init() {
@@ -59,25 +59,6 @@ type source struct {
 	credentials func(ref string) (*authn.AuthConfig, bool, error)
 }
 
-// dbDownloadAttempts is how many times Prepare will try to fetch the DB.
-//
-// Downloading it is the one step in a run that depends on a public CDN, and it
-// is observably flaky: mirror.gcr.io serves a 404 for a layer it has just
-// advertised in its own manifest, and the same command succeeds seconds later.
-// Trivy does not retry that itself, so a single bad response would otherwise
-// cost the entire assessment, including the provider data that needed no
-// network at all.
-const dbDownloadAttempts = 3
-
-// dbDownloadBackoff is the wait before each retry. Short: a mirror 404 clears
-// immediately, and anything that does not is not worth waiting minutes for.
-var dbDownloadBackoff = []time.Duration{2 * time.Second, 5 * time.Second}
-
-// fallbackDBRepository is tried when the default mirror list fails and the
-// caller has not named a repository of its own. This is the upstream source
-// rather than a cache of it, so it is not subject to the mirror's staleness.
-const fallbackDBRepository = "ghcr.io/aquasecurity/trivy-db:2"
-
 func (s *source) Name() string { return "trivy" }
 
 // Prepare downloads the vulnerability DB once, up front, so concurrent scans
@@ -85,37 +66,13 @@ func (s *source) Name() string { return "trivy" }
 // concurrent scan loop.
 // It retries, and falls back to the upstream DB repository, because the download
 // is the flakiest step in a run and losing a whole assessment to one bad CDN
-// response is a poor trade.
+// response is a poor trade. See trivydb.Download.
 func (s *source) Prepare(ctx context.Context) error {
-	var lastErr error
-	for attempt := 1; attempt <= dbDownloadAttempts; attempt++ {
-		// Stick with the configured repository when there is one: the caller
-		// naming a repository usually means the default is unreachable (an
-		// air-gapped mirror), so silently reaching past it to the internet
-		// would be wrong.
-		repo := s.dbRepo
-		if repo == "" && attempt > 1 {
-			repo = fallbackDBRepository
-		}
-		if err := s.downloadDB(ctx, repo); err == nil {
-			s.prepared = true
-			return nil
-		} else if lastErr = err; ctx.Err() != nil {
-			// A cancelled context will not heal, so stop rather than burning
-			// the remaining attempts on it.
-			return lastErr
-		}
-		if attempt < dbDownloadAttempts {
-			slog.WarnContext(ctx, "trivy vulnerability DB download failed, retrying",
-				"attempt", attempt, "of", dbDownloadAttempts, "error", lastErr)
-			select {
-			case <-time.After(dbDownloadBackoff[min(attempt, len(dbDownloadBackoff))-1]):
-			case <-ctx.Done():
-				return lastErr
-			}
-		}
+	if err := trivydb.Download(ctx, s.dbRepo, s.downloadDB); err != nil {
+		return err
 	}
-	return lastErr
+	s.prepared = true
+	return nil
 }
 
 func (s *source) downloadDB(ctx context.Context, repo string) error {
