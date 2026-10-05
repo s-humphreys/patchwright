@@ -279,7 +279,8 @@ func (r *BaseResolver) resolve(ctx context.Context, ref string, cache *baseCache
 	} else {
 		act = withBase(act, base)
 	}
-	up, err := r.baseUpgrade(ctx, base, firstLabel(labels, r.Cfg.Base.EffectiveDigestLabels()), act)
+	builtDigest := normaliseDigest(firstLabel(labels, r.Cfg.Base.EffectiveDigestLabels()))
+	up, err := r.baseUpgrade(ctx, base, builtDigest, act)
 	if err != nil {
 		return nil, err
 	}
@@ -531,6 +532,17 @@ func firstLabel(labels map[string]string, keys []string) string {
 		}
 	}
 	return ""
+}
+
+// normaliseDigest gives a recorded base digest its algorithm prefix when the label
+// holds only the hex. Some build pipelines write the bare sha256, and a reference
+// built from it ("repo@<hex>") is unparseable, so every scan of it failed, and a
+// digest comparison against the registry's prefixed answer could never match.
+func normaliseDigest(d string) string {
+	if len(d) == 64 && strings.Trim(strings.ToLower(d), "0123456789abcdef") == "" {
+		return "sha256:" + strings.ToLower(d)
+	}
+	return d
 }
 
 func shortDigest(d string) string {
