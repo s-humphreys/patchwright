@@ -882,8 +882,29 @@ components:
               additionalProperties: { type: integer }
             by_signal: { type: object, additionalProperties: { type: integer } }
             age_days: { type: object, additionalProperties: { type: integer } }
+        totals: { $ref: "#/components/schemas/HistoryTotals" }
         tracker: { $ref: "#/components/schemas/HistoryTracker" }
         caveats: { type: array, items: { type: string } }
+    HistoryTotals:
+      type: object
+      description: >-
+        The movement's CVE figures over the whole range, each CVE counted once however many periods it cleared in.
+        Summing the per-period figures counts a CVE cleared in two periods twice; these do not.
+      properties:
+        cves_resolved: { type: integer, description: Distinct CVEs carried by the items resolved in the range }
+        kev_cves_resolved: { type: integer, description: Known-exploited CVEs among those }
+        cves_cleared: { type: integer, description: Distinct CVEs cleared in the range, as cves_cleared on a period }
+        kev_cves_cleared: { type: integer }
+        epss_high_cves_cleared: { type: integer }
+        cleared_ticketed: { $ref: "#/components/schemas/HistoryCVETally" }
+        cleared_unticketed: { $ref: "#/components/schemas/HistoryCVETally" }
+        items_partly_cleared: { type: integer, description: Distinct work items that cleared CVEs while staying open }
+    HistoryCVETally:
+      type: object
+      properties:
+        cves: { type: integer }
+        kev: { type: integer, description: Known-exploited among cves }
+        epss_high: { type: integer, description: EPSS above 0.5 among cves }
     HistoryTracker:
       type: object
       description: >-
@@ -980,6 +1001,23 @@ components:
         resolved: { type: integer, description: Work items that left the queue with evidence the work is done }
         cves_resolved: { type: integer, description: Distinct CVEs carried by the items resolved this period }
         kev_cves_resolved: { type: integer, description: Known-exploited CVEs among those }
+        cves_cleared:
+          type: integer
+          description: >-
+            Distinct CVEs that left work items with evidence of remediation this period: those carried by resolved
+            items, plus those that left an item which stayed open because its running image was replaced, both
+            assessments scanned it by the same source and it kept running everywhere it ran. A CVE dropping off KEV
+            or its EPSS decaying is not a clearance. An item's CVE counts once unless it came back. Recorded from
+            the release that added it onward; no backfill
+        kev_cves_cleared: { type: integer, description: Known-exploited CVEs among cves_cleared, as the replaced image carried them }
+        epss_high_cves_cleared: { type: integer, description: CVEs with EPSS above 0.5 among cves_cleared, as the replaced image carried them }
+        cleared_ticketed:
+          allOf: [{ $ref: "#/components/schemas/HistoryCVETally" }]
+          description: The cleared CVEs on an item a ticket covered at the time. A CVE cleared on both a ticketed and an unticketed item is ticketed, so this and cleared_unticketed sum to the totals
+        cleared_unticketed:
+          allOf: [{ $ref: "#/components/schemas/HistoryCVETally" }]
+          description: The cleared CVEs no ticket covered; landed by another route
+        items_partly_cleared: { type: integer, description: Work items that cleared CVEs this period while staying open }
         lapsed: { type: integer, description: Left the queue without evidence. Never remediation }
         reassigned: { type: integer }
         resolved_ticketed: { type: integer, description: Subset of resolved }
@@ -1052,7 +1090,11 @@ components:
                   raised with. On ticket_closed, `due_date` is repeated, `days_to_due` is
                   the due date less the close date in whole UTC days (negative when
                   late) and `overdue` is the same as a flag. All three are absent when
-                  no due date was recorded, which is not the same as on time.
+                  no due date was recorded, which is not the same as on time. On changed,
+                  `cves_removed` is every CVE that left the item and `cves_cleared` those
+                  credited as remediated, as the item carried them before, with `evidence`,
+                  `ticketed` and `tickets` (the tickets covering it before the change);
+                  when CVEs left without being credited, `reason` says why.
     AssessmentMeta:
       type: object
       required: [generated_at, running]

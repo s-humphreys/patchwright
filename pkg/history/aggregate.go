@@ -50,6 +50,10 @@ type Report struct {
 	Movement []Movement `json:"movement"`
 	// Open is the queue as the record holds it now.
 	Open OpenSummary `json:"open"`
+	// Totals are the CVE figures over the whole range, each CVE counted once
+	// however many periods it cleared in. The per-period figures cannot be summed
+	// to these.
+	Totals RangeTotals `json:"totals"`
 	// Tracker is set when tickets have been read from the tracker, and says which
 	// fields came from there. Nil when the tracker has never been read.
 	Tracker *TrackerSummary `json:"tracker,omitempty"`
@@ -103,6 +107,8 @@ type Movement struct {
 	// work; the CVE is what security asked about, and one item can clear hundreds.
 	CVEsResolved    int `json:"cves_resolved"`
 	KEVCVEsResolved int `json:"kev_cves_resolved"`
+	// Cleared widens CVEsResolved to CVEs that left items still open.
+	Cleared
 
 	// The delineation. ResolvedTicketed is a subset of Resolved, never a separate
 	// total; Resolved less ResolvedTicketed is work that landed by another route.
@@ -163,6 +169,72 @@ type Movement struct {
 	ByRule     map[string]Counts `json:"by_rule,omitempty"`
 	ByPriority map[string]Counts `json:"by_priority,omitempty"`
 	ByTeam     map[string]Counts `json:"by_team,omitempty"`
+}
+
+// Cleared is the distinct CVEs that left work items with evidence of remediation:
+// those carried by resolved items, plus those that left an item which stayed open
+// (see Clearance). An item's CVE counts once, and again only after it
+// came back.
+type Cleared struct {
+	CVEsCleared         int `json:"cves_cleared"`
+	KEVCVEsCleared      int `json:"kev_cves_cleared"`
+	EPSSHighCVEsCleared int `json:"epss_high_cves_cleared"`
+	// ClearedTicketed and ClearedUnticketed split the three by whether a ticket
+	// covered the item at the time. A CVE cleared on a ticketed item and on an
+	// unticketed one is ticketed, so the two sum to the totals.
+	ClearedTicketed   CVETally `json:"cleared_ticketed"`
+	ClearedUnticketed CVETally `json:"cleared_unticketed"`
+	// ItemsPartlyCleared is the work items that cleared CVEs while staying open.
+	ItemsPartlyCleared int `json:"items_partly_cleared"`
+}
+
+// CVETally is distinct CVEs, and the known-exploited and EPSS-high among them.
+type CVETally struct {
+	CVEs     int `json:"cves"`
+	KEV      int `json:"kev"`
+	EPSSHigh int `json:"epss_high"`
+}
+
+// RangeTotals are a range's CVE figures with each CVE counted once.
+type RangeTotals struct {
+	CVEsResolved    int `json:"cves_resolved"`
+	KEVCVEsResolved int `json:"kev_cves_resolved"`
+	Cleared
+}
+
+// clearedSet collects distinct CVEs cleared, with the strongest reading of each.
+type clearedSet map[string]clearedCVE
+
+type clearedCVE struct{ kev, epssHigh, ticketed bool }
+
+func (cs clearedSet) add(c CVE, ticketed bool) {
+	prev := cs[c.ID]
+	cs[c.ID] = clearedCVE{
+		kev:      prev.kev || c.KEV,
+		epssHigh: prev.epssHigh || c.EPSS > EPSSHigh,
+		ticketed: prev.ticketed || ticketed,
+	}
+}
+
+func (cs clearedSet) cleared(items int) Cleared {
+	out := Cleared{ItemsPartlyCleared: items}
+	for _, c := range cs {
+		split := &out.ClearedUnticketed
+		if c.ticketed {
+			split = &out.ClearedTicketed
+		}
+		out.CVEsCleared++
+		split.CVEs++
+		if c.kev {
+			out.KEVCVEsCleared++
+			split.KEV++
+		}
+		if c.epssHigh {
+			out.EPSSHighCVEsCleared++
+			split.EPSSHigh++
+		}
+	}
+	return out
 }
 
 // Counts is opened, resolved and lapsed for one split.
@@ -292,6 +364,31 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 	toDue := map[int][]float64{}
 	cves := map[int]map[string]bool{}
 	kevs := map[int]map[string]bool{}
+	rangeCVEs, rangeKEVs := map[string]bool{}, map[string]bool{}
+	cleared := map[int]clearedSet{}
+	partly := map[int]map[int64]bool{}
+	rangeCleared, rangePartly := clearedSet{}, map[int64]bool{}
+	// An item's CVE is credited once. It can only clear again after coming back,
+	// which a changed event's CVEsAdded or a reassignment's snapshot records.
+	type itemCVE struct {
+		item int64
+		key  string
+		cve  string
+	}
+	credited := map[itemCVE]bool{}
+	credit := func(i int, e Event, c CVE, ticketed bool) bool {
+		k := itemCVE{e.ItemID, e.Key, c.ID}
+		if credited[k] {
+			return false
+		}
+		credited[k] = true
+		if cleared[i] == nil {
+			cleared[i] = clearedSet{}
+		}
+		cleared[i].add(c, ticketed)
+		rangeCleared.add(c, ticketed)
+		return true
+	}
 	// Earlier versions recorded the same close on every run until something else
 	// rewrote the item, and those rows are still in the record. A close counts once
 	// per item and ticket, and again only after the ticket was raised again.
@@ -311,6 +408,18 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 				continue
 			}
 			closedTickets[k] = true
+		}
+		switch e.Kind {
+		case KindChanged:
+			for _, id := range e.Payload.CVEsAdded {
+				delete(credited, itemCVE{e.ItemID, e.Key, id})
+			}
+		case KindReassigned:
+			if e.Payload.Snapshot != nil {
+				for _, id := range e.Payload.Snapshot.CVEIDs() {
+					delete(credited, itemCVE{e.ItemID, e.Key, id})
+				}
+			}
 		}
 		i := periodOf(e.At)
 		if i < 0 {
@@ -338,9 +447,12 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 				}
 				for _, c := range snap.CVEs {
 					cves[i][c.ID] = true
+					rangeCVEs[c.ID] = true
 					if c.KEV {
 						kevs[i][c.ID] = true
+						rangeKEVs[c.ID] = true
 					}
+					credit(i, e, c, e.Payload.Ticketed)
 				}
 			}
 			if e.Payload.Ticketed {
@@ -372,6 +484,19 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		case KindReassigned:
 			m.Reassigned++
 		case KindChanged:
+			n := 0
+			for _, c := range e.Payload.CVEsCleared {
+				if credit(i, e, c, e.Payload.Ticketed) {
+					n++
+				}
+			}
+			if n > 0 {
+				if partly[i] == nil {
+					partly[i] = map[int64]bool{}
+				}
+				partly[i][e.ItemID] = true
+				rangePartly[e.ItemID] = true
+			}
 			for _, s := range e.Payload.SignalsRemoved {
 				if s == SignalEPSSHigh {
 					m.EPSSDecayed++
@@ -421,6 +546,11 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		}
 		rep.Movement[i].CVEsResolved = len(cves[i])
 		rep.Movement[i].KEVCVEsResolved = len(kevs[i])
+		rep.Movement[i].Cleared = cleared[i].cleared(len(partly[i]))
+	}
+	rep.Totals = RangeTotals{
+		CVEsResolved: len(rangeCVEs), KEVCVEsResolved: len(rangeKEVs),
+		Cleared: rangeCleared.cleared(len(rangePartly)),
 	}
 	return rep
 }

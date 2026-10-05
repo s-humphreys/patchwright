@@ -186,7 +186,14 @@ func TestSpecCoversEveryOwnerField(t *testing.T) {
 func jsonFieldNames(t reflect.Type) []string {
 	var out []string
 	for i := 0; i < t.NumField(); i++ {
-		tag := t.Field(i).Tag.Get("json")
+		f := t.Field(i)
+		tag := f.Tag.Get("json")
+		// encoding/json promotes an untagged embedded struct's fields, so the guard has
+		// to as well or they escape it.
+		if tag == "" && f.Anonymous && f.Type.Kind() == reflect.Struct {
+			out = append(out, jsonFieldNames(f.Type)...)
+			continue
+		}
 		if tag == "" || tag == "-" {
 			continue
 		}
@@ -253,6 +260,8 @@ func TestSpecCoversEveryHistoryField(t *testing.T) {
 	for name, typ := range map[string]reflect.Type{
 		"HistoryReport":        reflect.TypeOf(history.Report{}),
 		"HistoryMovement":      reflect.TypeOf(history.Movement{}),
+		"HistoryTotals":        reflect.TypeOf(history.RangeTotals{}),
+		"HistoryCVETally":      reflect.TypeOf(history.CVETally{}),
 		"HistoryRiskPoint":     reflect.TypeOf(history.RiskPoint{}),
 		"HistoryTracker":       reflect.TypeOf(history.TrackerSummary{}),
 		"HistoryTicketsPerDay": reflect.TypeOf(ticketsPerDay{}),
