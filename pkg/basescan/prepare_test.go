@@ -142,16 +142,22 @@ func TestPrepareFallsBackOnlyWhenNoRepositoryIsConfigured(t *testing.T) {
 	}
 }
 
+// Deterministic failures (a deleted reference, one that does not parse) recur every
+// run and must be told from failures a retry could clear.
 func TestScanRefTellsADeletedReferenceFromOtherFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		stderr   string
 		notFound bool
+		invalid  bool
 	}{
-		{"deleted digest", "GET https://example.io/v2/base/manifests/sha256:aaa: MANIFEST_UNKNOWN: manifest unknown", true},
-		{"deleted repository", "GET https://example.io/v2/gone/manifests/1: NAME_UNKNOWN: repository name not known", true},
-		{"unauthorised", "GET https://example.io/v2/base/manifests/1: UNAUTHORIZED: authentication required", false},
-		{"timeout", "context deadline exceeded", false},
+		{name: "deleted digest", stderr: "GET https://example.io/v2/base/manifests/sha256:aaa: MANIFEST_UNKNOWN: manifest unknown", notFound: true},
+		{name: "deleted repository", stderr: "GET https://example.io/v2/gone/manifests/1: NAME_UNKNOWN: repository name not known", notFound: true},
+		{name: "unparseable reference", stderr: "image scan error: could not parse reference: example.io/base@0081", invalid: true},
+		{name: "invalid reference format", stderr: "unable to initialize: invalid reference format", invalid: true},
+		{name: "unauthorised", stderr: "GET https://example.io/v2/base/manifests/1: UNAUTHORIZED: authentication required"},
+		{name: "server error", stderr: "GET https://example.io/v2/base/manifests/1: unexpected status code 503 Service Unavailable"},
+		{name: "timeout", stderr: "context deadline exceeded"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			binary, _ := fakeTrivy(t, tc.stderr, 0)
@@ -163,10 +169,32 @@ func TestScanRefTellsADeletedReferenceFromOtherFailures(t *testing.T) {
 			if got := errors.Is(err, ErrNotFound); got != tc.notFound {
 				t.Errorf("errors.Is(err, ErrNotFound) = %v, want %v: %v", got, tc.notFound, err)
 			}
+			if got := errors.Is(err, ErrInvalidReference); got != tc.invalid {
+				t.Errorf("errors.Is(err, ErrInvalidReference) = %v, want %v: %v", got, tc.invalid, err)
+			}
+			if got := Unmeasurable(err); got != (tc.notFound || tc.invalid) {
+				t.Errorf("Unmeasurable(err) = %v, want %v: %v", got, tc.notFound || tc.invalid, err)
+			}
 			if errors.Is(err, ErrDBUnavailable) {
 				t.Errorf("a scan failure is not a database failure: %v", err)
 			}
 		})
+	}
+}
+
+// The production failure: the reference was rejected while resolving credentials,
+// before Trivy ran, and was reported as an ordinary failure to retry next run.
+func TestScanRefClassifiesAReferenceThatDoesNotParse(t *testing.T) {
+	s := &TrivyScanner{Binary: "/nonexistent/trivy"}
+	for _, ref := range []string{
+		"docker.io/ubuntu@008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+		"example.io/Base:1",
+		"example.io/base:bad tag",
+	} {
+		_, err := s.ScanRef(context.Background(), ref)
+		if !errors.Is(err, ErrInvalidReference) || !Unmeasurable(err) {
+			t.Errorf("%s: err = %v, want ErrInvalidReference", ref, err)
+		}
 	}
 }
 

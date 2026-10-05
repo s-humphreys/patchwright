@@ -202,9 +202,12 @@ unavailable is not cached against the base.
 
 An image the differential set out to measure and could not, in this run, carries
 `base_diff_error` with the reason. That is distinct from a differential that never
-could (off, no base resolved, a base deleted from its registry), which carries
-nothing: "unknown for now" holds ticketing for the change until a run measures it,
-while "unmeasurable" tickets on what is known. See
+could (off, no base resolved, a base deleted from its registry, a base reference
+that does not parse), which carries nothing: "unknown for now" holds ticketing for
+the change until a run measures it, while "unmeasurable" tickets on what is known.
+A reference that does not parse fails the same way every run, so holding on it would
+hold for ever; each run names such references once in a `WARN` line, since the cause
+is patchwright or the image label it was read from rather than the registry. See
 [Only ticket what the change fixes](ticketing.md#only-ticket-what-the-change-fixes).
 `patchwright_base_differential_images{result}` reports the measured and failed
 counts for the latest run.

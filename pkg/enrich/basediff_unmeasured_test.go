@@ -1,8 +1,10 @@
 package enrich
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +19,7 @@ type preparingScanner struct {
 	stubScanner
 	prepFails int
 	missing   map[string]bool
+	invalid   map[string]bool
 
 	pmu   sync.Mutex
 	preps int
@@ -36,6 +39,9 @@ func (s *preparingScanner) ScanRef(ctx context.Context, ref string) (*basescan.R
 	if s.missing[ref] {
 		return nil, fmt.Errorf("trivy %s: %w", ref, basescan.ErrNotFound)
 	}
+	if s.invalid[ref] {
+		return nil, fmt.Errorf("credentials for %s: %w", ref, basescan.ErrInvalidReference)
+	}
 	return s.stubScanner.ScanRef(ctx, ref)
 }
 
@@ -43,7 +49,7 @@ func newPreparing() *preparingScanner {
 	return &preparingScanner{stubScanner: stubScanner{byRef: map[string][]string{
 		"base@sha256:aaa": {"CVE-1", "CVE-2"},
 		"base:new":        {"CVE-2"},
-	}, fail: map[string]bool{}}, missing: map[string]bool{}}
+	}, fail: map[string]bool{}}, missing: map[string]bool{}, invalid: map[string]bool{}}
 }
 
 func TestEnrichMarksWhatThisRunCouldNotMeasure(t *testing.T) {
@@ -72,6 +78,13 @@ func TestEnrichMarksWhatThisRunCouldNotMeasure(t *testing.T) {
 			setup: func(s *preparingScanner) { s.missing["base@sha256:aaa"] = true }},
 		{name: "candidate deleted from its registry",
 			setup:    func(s *preparingScanner) { s.missing["base:new"] = true },
+			wantDiff: true},
+		// A reference that does not parse fails identically every run, so holding
+		// on it would hold for ever too.
+		{name: "base reference does not parse",
+			setup: func(s *preparingScanner) { s.invalid["base@sha256:aaa"] = true }},
+		{name: "candidate reference does not parse",
+			setup:    func(s *preparingScanner) { s.invalid["base:new"] = true },
 			wantDiff: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,5 +155,33 @@ func TestEnrichNeedsNoPreparer(t *testing.T) {
 	}
 	if images[0].BaseDiff == nil || images[0].BaseDiffError != "" {
 		t.Errorf("want a measured differential, got %+v / %q", images[0].BaseDiff, images[0].BaseDiffError)
+	}
+}
+
+// Unparseable references are named once per run, not once per image built on them.
+func TestEnrichWarnsOnceAboutUnparseableReferences(t *testing.T) {
+	var buf bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(restore)
+
+	s := newPreparing()
+	s.invalid["base@sha256:aaa"] = true
+	e := &BaseDiffEnricher{Resolver: &basescan.Resolver{Scanner: s}}
+	images := []model.AssessedImage{image("CVE-1"), image("CVE-2"), image("CVE-1", "CVE-2")}
+	if err := e.EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	for i, img := range images {
+		if img.BaseDiffError != "" || img.BaseDiff != nil {
+			t.Errorf("image %d: want unmeasurable, got error %q diff %+v", i, img.BaseDiffError, img.BaseDiff)
+		}
+	}
+	out := buf.String()
+	if n := strings.Count(out, "base references could not be parsed"); n != 1 {
+		t.Errorf("warned %d times, want once:\n%s", n, out)
+	}
+	if !strings.Contains(out, "base@sha256:aaa") {
+		t.Errorf("warning does not name the reference:\n%s", out)
 	}
 }
