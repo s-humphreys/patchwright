@@ -361,8 +361,8 @@ function signalsPanel(h) {
   const decayed = periods.reduce((n, m) => n + (m.epss_decayed || 0), 0);
   const becameKEV = periods.reduce((n, m) => n + (m.became_known_exploited || 0), 0);
   const figures = periods.length ? `
-    <div class="dr"><dt title="Left the EPSS band by score decay while open, once per decay: not remediation. A CVE fixed, or a run whose exploit lookup failed, is not a decay">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
-    <div class="dr"><dt title="Once per move into KEV: an item counts again only after its exploited CVEs left it. A run that lost the KEV flags because the exploit lookup failed is not a move">Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>` : "";
+    <div class="dr"><dt title="Left the EPSS band by score decay while open, once per decay: not remediation. A CVE fixed, a run that could not see it, or a run whose exploit lookup failed, is not a decay">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
+    <div class="dr"><dt title="Once per move into KEV: an item counts again only after it left KEV, by a new image without its exploited CVEs or a CVE losing the flag. A run that could not see the CVEs, or lost the flags because the exploit lookup failed, is not a move">Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>` : "";
   return `<section class="panel"><h3>Open work items by signal</h3>
     ${body}${figures}
   </section>`;

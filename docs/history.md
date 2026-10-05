@@ -288,18 +288,24 @@ not by the current configuration:
   found it.
 - CVEs join KEV after the fact. That is a `changed` event and is counted as
   `became_known_exploited`.
-- Both count once per transition, not once per `changed` event. A run whose exploit
-  lookup fails keeps every CVE but loses its KEV flags and EPSS scores, so every item
-  drops `kev` and `epss-high` and the next complete run adds them back; counting those
-  events read one outage as a fresh KEV and an EPSS decay for every exploited item, and
-  `became_known_exploited` once stood at several times the number of KEV items. An item
-  now leaves KEV only when the CVEs that were exploited leave it, and decays only when a
-  CVE that was above 0.5 is still there with a lower, non-zero score. A CVE fixed takes
-  its signals with it, which is not a decay; a CVE still there unflagged or unscored, or
-  a run that missed a source, keeps the item's standing. An item counts again only after
-  it really left and came back. This is read from the stored events, so past periods
-  are corrected too; an item first seen in the range by a `changed` event is judged by
-  that event's own signal moves.
+- Both count once per transition, not once per `changed` event. An item's CVEs, and
+  the KEV flags and EPSS scores on them, come and go with what a run could see: a run
+  whose vuln source could not answer for an image records the item without that
+  image's CVEs, and one whose exploit lookup failed keeps the CVEs without their flags
+  and scores. Counting those events read every lapse in coverage as the item leaving
+  KEV and the next complete run as a fresh entry, and `became_known_exploited` once
+  stood at several times the number of KEV items. So leaving takes the evidence a
+  cleared CVE takes: the CVEs that carried the signal count as gone only when the image
+  they were last seen on was replaced, both runs scanned by the same source and
+  running. Gone any other way, or in a run that missed a source, the item keeps its
+  standing. A CVE still there with its KEV flag removed has left KEV, and one still
+  there with a lower score has decayed, unless the item carries no EPSS score at all,
+  which is the exploit feed not answering. A CVE fixed takes its signals with it, which
+  is not a decay. An item counts again only after it really left and came back. This
+  is read from the stored events, so past periods are corrected too: events recorded
+  before snapshots carried their scan state cannot show a CVE was remediated, so a CVE
+  leaving them never ends an item's standing. An item first seen in the range by a
+  `changed` event is judged by that event's own signal moves.
 - Rules are first-match-wins and get renamed. Signals (`kev`, `epss-high`,
   `fixable-critical`, `end-of-life`) are what rules are made of and do not depend on
   order, so the per-signal split is the one to compare month on month. The per-rule
