@@ -1233,6 +1233,9 @@ func Load(paths ...string) (*Config, error) {
 		if part.History.Auth != "" {
 			cfg.History.Auth = part.History.Auth
 		}
+		if part.History.DecommissionAfter != "" {
+			cfg.History.DecommissionAfter = part.History.DecommissionAfter
+		}
 		if part.History.LapseAfter != 0 {
 			cfg.History.LapseAfter = part.History.LapseAfter
 		}

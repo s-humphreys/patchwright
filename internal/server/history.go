@@ -27,9 +27,10 @@ import (
 const defaultHistorySince = 90 * 24 * time.Hour
 
 type historyRecorder struct {
-	store      history.Store
-	retention  time.Duration
-	lapseAfter int
+	store             history.Store
+	retention         time.Duration
+	lapseAfter        int
+	decommissionAfter time.Duration
 
 	mu sync.Mutex
 	// assessmentID and open are from the most recent record, so ticket events
@@ -42,6 +43,10 @@ type historyRecorder struct {
 	lastErr       string
 	lastRecorded  time.Time
 	lastPruned    history.Pruned
+
+	// decommissioned are the repositories credited as decommissioned within the
+	// lookback, as of the most recent record, for ticket reconciliation.
+	decommissioned map[string]bool
 }
 
 // WithHistory attaches a store. retention bounds what Prune keeps; it is required
@@ -50,8 +55,44 @@ func (s *Server) WithHistory(store history.Store, retention time.Duration) *Serv
 	if store == nil {
 		return s
 	}
-	s.history = &historyRecorder{store: store, retention: retention, lapseAfter: history.DefaultLapseAfter}
+	s.history = &historyRecorder{store: store, retention: retention, lapseAfter: history.DefaultLapseAfter,
+		decommissionAfter: history.DefaultDecommissionAfter}
 	return s
+}
+
+// WithDecommissionAfter sets how long a removed item must stay gone before its
+// removal is credited as remediation.
+func (s *Server) WithDecommissionAfter(d time.Duration) *Server {
+	if s.history != nil && d > 0 {
+		s.history.decommissionAfter = d
+	}
+	return s
+}
+
+// decommissionedRepos lists the repositories the record has credited as
+// decommissioned recently, so ticket reconciliation can close their tickets.
+func (s *Server) decommissionedRepos() map[string]bool {
+	if s.history == nil {
+		return nil
+	}
+	s.history.mu.Lock()
+	defer s.history.mu.Unlock()
+	return s.history.decommissioned
+}
+
+// decommissionedFromStore is decommissionedRepos for a web replica, which records
+// nothing and so reads the record.
+func (s *Server) decommissionedFromStore(ctx context.Context) map[string]bool {
+	if s.history == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	events, err := s.history.store.Events(ctx, now.Add(-history.DecommissionLookback(s.history.decommissionAfter)), now)
+	if err != nil {
+		slog.WarnContext(ctx, "server: could not read recent events for the ticket plan; no ticket is closed as decommissioned", "error", err)
+		return nil
+	}
+	return history.DecommissionedRepositories(events)
 }
 
 // WithLapseAfter sets the grace period before an absent item lapses.
@@ -109,12 +150,16 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	// error the grant had already fixed.
 	rec.clearError()
 	current := history.Snapshots(snap.views, tickets)
+	partial := len(snap.summary.SourceFailures) > 0
 	events, marks := history.Diff(history.Input{
 		Open: open, Current: current, Views: snap.views, OpenTickets: tickets,
 		ClosedReasons: closedReasons, TicketsUnavailable: snap.ticketsFailed, LapseAfter: rec.lapseAfter,
-		Partial: len(snap.summary.SourceFailures) > 0, Now: snap.generatedAt,
+		Partial: partial, Now: snap.generatedAt,
 	})
+	decom, recent := rec.decommissions(ctx, snap, current, partial)
+	events = append(events, decom...)
 	a := history.Summarise(started, snap.generatedAt, snap.views, current, snap.summary)
+	a.Partial = partial
 	id, err := rec.store.Record(ctx, a, events, marks)
 	if err != nil {
 		rec.fail(ctx, "record assessment", err)
@@ -141,7 +186,8 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 		"assessment_id", id, "items", len(current), "missing", missing,
 		"opened", counts[history.KindOpened], "resolved", counts[history.KindResolved],
 		"lapsed", counts[history.KindLapsed], "changed", counts[history.KindChanged],
-		"reassigned", counts[history.KindReassigned], "tickets_closed", counts[history.KindTicketClosed])
+		"reassigned", counts[history.KindReassigned], "tickets_closed", counts[history.KindTicketClosed],
+		"decommissioned", counts[history.KindDecommissioned])
 
 	pruned, perr := rec.store.Prune(ctx, snap.generatedAt.Add(-rec.retention))
 	if perr != nil {
@@ -154,7 +200,32 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 
 	rec.mu.Lock()
 	rec.assessmentID, rec.open, rec.lastErr, rec.lastRecorded, rec.lastPruned = id, open, "", snap.generatedAt, pruned
+	if recent != nil {
+		rec.decommissioned = history.DecommissionedRepositories(append(recent, decom...))
+	}
 	rec.mu.Unlock()
+}
+
+// decommissions judges this run's decommission candidates from the recent record,
+// and returns them with the recent events they were judged from. A record that
+// cannot be read credits nothing this run rather than failing it: each lapse is
+// judged by the first run after its deadline that can read the record.
+func (r *historyRecorder) decommissions(ctx context.Context, snap *snapshot, current []history.Snapshot, partial bool) ([]history.Event, []history.Event) {
+	from := snap.generatedAt.Add(-history.DecommissionLookback(r.decommissionAfter))
+	recent, err := r.store.Events(ctx, from, snap.generatedAt)
+	if err != nil {
+		slog.WarnContext(ctx, "history: recent events could not be read, so no decommission is judged this run", "error", err)
+		return nil, nil
+	}
+	runs, err := r.store.Assessments(ctx, from, snap.generatedAt)
+	if err != nil {
+		slog.WarnContext(ctx, "history: recent assessments could not be read, so no decommission is judged this run", "error", err)
+		return nil, nil
+	}
+	return history.Decommissions(history.DecommissionInput{
+		After: r.decommissionAfter, Events: recent, Assessments: runs,
+		Current: current, Views: snap.views, Partial: partial, Now: snap.generatedAt,
+	}), recent
 }
 
 // recordTicketWrites attributes successful creates and extends to the open items
@@ -428,7 +499,12 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	}
 	rep.Caveats = append(rep.Caveats,
 		"counts are work items: one service and the one upgrade that would fix it, classified by how each looked when the record first saw it",
-		"fixed (confirmed), the resolved field, requires evidence the upgrade landed; left without a fix, the lapsed field, is everything else that left the queue, and is never remediation",
+		"fixed (confirmed), the resolved field, requires evidence the upgrade landed; left without a fix, the lapsed field, is everything else that left the queue, and is never remediation in itself",
+		fmt.Sprintf("remediated by decommissioning, the decommissioned field, is the items left without a fix because nothing ran them that then stayed gone for %s, "+
+			"with every assessment in that time reading every source and the image running nowhere else; they stay counted as left without a fix too. "+
+			"Each is credited to the period its workloads disappeared, once the window has passed, so recent periods can still rise; recorded from the release that added it onward",
+			history.DurationWords(s.history.decommissionAfter)),
+		"remediated is fixed (confirmed) plus remediated by decommissioning",
 		"open work items by signal count each item once, under its most severe signal: known-exploited, then EPSS above 0.5, then fixable critical, then end-of-life")
 	if tr := rep.Tracker; tr != nil {
 		rep.Caveats = append(rep.Caveats,

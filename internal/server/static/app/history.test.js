@@ -117,6 +117,30 @@ test('cleared CVEs, including from items still open, come from the range totals 
   assert.doesNotMatch(shown, /\b(resolved|lapsed|Resolved|Lapsed)\b/);
 });
 
+test('remediation by decommissioning is its own line beside fixed, with the combined remediated figure, never inside fixed', () => {
+  const b = body();
+  b.history.movement[2] = { ...b.history.movement[2], remediated: 8,
+    decommissioned: { items: 3, items_ticketed: 1, cves: 40, kev: 4, epss_high: 2, ticketed: { cves: 10, kev: 3, epss_high: 0 }, unticketed: { cves: 30, kev: 1, epss_high: 2 } } };
+  b.history.totals = { cves_resolved: 40, kev_cves_resolved: 3, cves_cleared: 40, kev_cves_cleared: 3, epss_high_cves_cleared: 0,
+    cleared_ticketed: { cves: 0, kev: 0, epss_high: 0 }, cleared_unticketed: { cves: 40, kev: 3, epss_high: 0 }, items_partly_cleared: 0,
+    decommissioned: { items: 3, items_ticketed: 1, cves: 40, kev: 4, epss_high: 2, ticketed: { cves: 10, kev: 3, epss_high: 0 }, unticketed: { cves: 30, kev: 1, epss_high: 2 } },
+    remediated_items: 10, remediated_cves: { cves: 70, kev: 6, epss_high: 2 } };
+  const html = render(b);
+  // Fixed stays 7: decommissions are beside it, never added into it.
+  assert.match(html, /<strong class="ok">7<\/strong> fixed \(confirmed\), clearing 40 CVEs \(3 known-exploited\) · <strong class="ok">3<\/strong> remediated by decommissioning · <span class="muted">9 left without a fix<\/span>/);
+  assert.match(html, /Remediated by decommissioning<\/dt>\s*<dd><strong class="ok">3<\/strong> work items switched off, carrying 4 known-exploited \(KEV\) · 2 with EPSS above 0\.5 · 40 CVEs in all\. KEVs: 3 on ticketed items, 1 otherwise<\/dd>/);
+  assert.match(html, /Remediated<\/dt>\s*<dd><strong class="ok">10<\/strong> work items fixed \(confirmed\) or decommissioned, clearing 70 CVEs \(6 known-exploited, 2 with EPSS above 0\.5\)<\/dd>/);
+  assert.match(html, /<th title="[^"]*">Remediated by decommissioning<\/th>/);
+  assert.match(html, /<td>3 <span class="sub">\(4 KEV\)<\/span><\/td>/);
+  assert.match(html, /<strong>Remediated by decommissioning<\/strong> is items left without a fix/);
+});
+
+test('without the decommissioned totals the page shows no decommission figures', () => {
+  const html = render(body());
+  assert.doesNotMatch(html, /Remediated by decommissioning<\/(dt|th)>/);
+  assert.doesNotMatch(html, /remediated by decommissioning · /);
+});
+
 test('a period whose only movement is CVEs cleared from items still open is still shown', () => {
   const b = body();
   b.history.movement.splice(2, 0, period('2026-08b', { cves_cleared: 13, kev_cves_cleared: 13 }));

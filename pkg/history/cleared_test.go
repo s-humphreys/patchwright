@@ -326,6 +326,7 @@ func TestAggregateCountsClearedCVEsOnce(t *testing.T) {
 			ClearedUnticketed:  CVETally{CVEs: 1, EPSSHigh: 1},
 			ItemsPartlyCleared: 2,
 		},
+		RemediatedItems: 1, RemediatedCVEs: CVETally{CVEs: 4, KEV: 2, EPSSHigh: 2},
 	}
 	if rep.Totals != want {
 		t.Errorf("totals = %+v, want %+v", rep.Totals, want)

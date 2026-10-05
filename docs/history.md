@@ -22,6 +22,7 @@ history:
   retention: 400d      # required: how long events and closed items are kept
   auth: azure          # optional: mint an Entra token per connection; default password
   lapseAfter: 3        # optional: absent assessments before an item lapses; default 3
+  decommissionAfter: 7d # optional: how long a removed item stays gone before it counts as remediated; default 7d
 ```
 
 The connection string is the credential, so it comes from the environment and its
@@ -95,9 +96,10 @@ one as a lapse.
 | `changed` | Its rule, priority, signals, target or CVEs moved while open. CVEs that left with evidence of remediation are recorded as cleared on it |
 | `reassigned` | Its owner changed but the service and target did not. Not a close and an open |
 | `ticket_raised` | Reconciliation created or extended a ticket covering it |
-| `ticket_closed` | A ticket that covered it is no longer open, with whether patchwright had evidence the work was done at the time, and the reason when patchwright closed it itself (`upgrade-landed`, `not-running`, `no-longer-actionable`, `upgrade-clears-nothing`) |
+| `ticket_closed` | A ticket that covered it is no longer open, with whether patchwright had evidence the work was done at the time, and the reason when patchwright closed it itself (`upgrade-landed`, `not-running`, `no-longer-actionable`, `upgrade-clears-nothing`, `decommissioned`) |
 | `resolved` | It left the queue **with evidence**: every image still reported, checked for a newer version, on the latest, with liveness reconciled. The test auto-close uses |
 | `lapsed` | It left the queue without that evidence: no longer reported, no longer running, or the data to judge it missing |
+| `decommissioned` | A lapsed item whose workloads were removed and stayed gone: see [remediated by decommissioning](#remediated-by-decommissioning). Dated when they disappeared |
 
 A reader sees these two as **fixed (confirmed)** and **left without a fix**: the page,
 the report caveats and the `trend_report` sentences use those words, while the event
@@ -164,6 +166,56 @@ there rather than adding up periods.
 Partial clears are recorded from the release that added them onward; there is no
 backfill. The first assessment after upgrading stores each open item's scan state, so
 the earliest credit comes from the second.
+
+### Remediated by decommissioning
+
+Switching a service off removes its risk as surely as upgrading it, so an item whose
+workloads were removed is credited as remediated, once that removal has proved real.
+An item that lapsed as **no longer running** (still reported, liveness reconciled, no
+workload anywhere) becomes `decommissioned` when all of these hold:
+
+- it has been gone for `decommissionAfter` (default 7 days), counted from the first
+  assessment it was absent from;
+- every assessment in that time read every source: no cluster left out and no
+  enrichment failed, the same test partial clears use, because a cluster nobody read
+  looks exactly like one where nothing runs;
+- it has not come back: not reopened under its own key, and its repository not in the
+  queue under any other item since;
+- nothing in the estate runs its repository now, under any owner, namespace or
+  cluster, and no finding on it has unknown liveness. The same image live elsewhere is
+  a move or a rename, not a removal.
+
+An item that lapsed because the provider stopped reporting it is never a candidate:
+that is coverage lost while the workload may still run. Each lapse is judged once, by
+the first assessment at or after its deadline, so the verdict cannot flip on a later
+run.
+
+The `decommissioned` event is dated when the workloads disappeared and recorded only
+once the window has passed, so it is credited to the period of the disappearance and
+a period's figure can still rise for a week after it ends. It carries the item's
+last-known snapshot (`closed`), so its CVEs are the ones that were switched off. Each
+movement period has `decommissioned` with `items`, `items_ticketed`, `cves`, `kev` and
+`epss_high`, split into `ticketed` and `unticketed` CVE tallies, and `remediated`,
+which is `resolved` plus decommissioned items. An item's CVE that was already cleared
+(a partial clear) is not counted again. `totals` counts each CVE once across the range
+and adds `remediated_items` and `remediated_cves`, the distinct CVEs cleared or
+decommissioned.
+
+`lapsed` keeps its meaning: a decommissioned item was also counted as left without a
+fix when it left the queue, and still is. Decommissioning is a later verdict on a
+subset of those lapses, not a reclassification.
+
+There is no backfill. Lapse events record their reason and last snapshot, and stored
+assessments record whether they were partial, but nothing stored says whether the
+image ran elsewhere, outside the queue, during a past window, so a past lapse cannot be
+judged to the same standard. Lapses whose window ends after the upgrade are judged;
+earlier ones stay left without a fix.
+
+Ticket reconciliation reads the same credit: an open ticket whose every image was
+decommissioned within the last two windows, and none of which is seen running now, is
+closed as `decommissioned` through `closeTransitionNoLongerActionable` when nobody has
+picked it up and the board sets that transition, and otherwise gets a single comment
+saying so instead of the "coverage is missing" note.
 
 ### Absence is counted before it is believed
 
@@ -251,9 +303,11 @@ Four buckets, and a report shows all four:
 | Fixed (confirmed), never ticketed | `resolved_unticketed` | Landed by another route: an update bot, a Flux automation, a rebuild done in passing |
 | Fixed (confirmed), ticketed | `resolved_ticketed` | Ticketed work completed. A **subset** of fixed, never a separate total |
 | Ticket closed, finding open | `tickets_closed_finding_open` | A human closed the ticket and the old image still runs |
-| Left without a fix | `lapsed` | Coverage loss or the workload went away. Excluded from every remediation figure |
+| Left without a fix | `lapsed` | Coverage loss or the workload went away. Excluded from every remediation figure, except the subset later credited as decommissioned |
 
-`resolved_unticketed + resolved_ticketed` is total upgrades and patches.
+`resolved_unticketed + resolved_ticketed` is total upgrades and patches. Remediation
+by decommissioning is reported beside it, never inside it: `remediated` is the two
+added together.
 
 ### Deadlines
 

@@ -75,11 +75,17 @@ const (
 	KindTicketRaised Kind = "ticket_raised"
 	// KindTicketClosed is a ticket that covered the item no longer being open.
 	KindTicketClosed Kind = "ticket_closed"
+	// KindDecommissioned credits a lapsed item as remediated by its workloads being
+	// removed: absent for the decommission window, running nowhere, with every run in
+	// between reading every source. Dated when the workloads disappeared, recorded
+	// only once the window has passed, and never alongside a reopening. See
+	// Decommissions.
+	KindDecommissioned Kind = "decommissioned"
 )
 
 // Kinds lists every kind, in lifecycle order, for consumers that render a legend.
 func Kinds() []Kind {
-	return []Kind{KindOpened, KindChanged, KindReassigned, KindTicketRaised, KindTicketClosed, KindResolved, KindLapsed}
+	return []Kind{KindOpened, KindChanged, KindReassigned, KindTicketRaised, KindTicketClosed, KindResolved, KindLapsed, KindDecommissioned}
 }
 
 // Snapshot is one work item as one assessment saw it.
@@ -256,18 +262,20 @@ type Payload struct {
 	// Snapshot is the item's state after this event: the opening state for opened,
 	// the new state for changed and reassigned.
 	Snapshot *Snapshot `json:"snapshot,omitempty"`
-	// Opened is how the item looked when it opened, repeated on resolved and lapsed
-	// so a report classifies a resolution without a join, and so the classification
-	// survives the item row being pruned.
+	// Opened is how the item looked when it opened, repeated on resolved, lapsed and
+	// decommissioned so a report classifies a resolution without a join, and so the
+	// classification survives the item row being pruned.
 	Opened   *Snapshot  `json:"opened,omitempty"`
 	OpenedAt *time.Time `json:"opened_at,omitempty"`
 	// Closed is the item's last recorded state before it resolved or lapsed, so
-	// what was actually fixed (its CVEs, its versions) is on the closing event.
+	// what was actually fixed (its CVEs, its versions) is on the closing event. A
+	// decommissioned event repeats the lapse's, which is what was switched off.
 	Closed *Snapshot `json:"closed,omitempty"`
 	// DaysOpen is the age at resolution or lapse.
 	DaysOpen *int `json:"days_open,omitempty"`
 	// MissingSince and MissedRuns say, on a lapse, how long the item had been absent
-	// before the grace period ran out.
+	// before the grace period ran out. On a decommissioned event MissingSince is when
+	// the workloads disappeared, which is also the event's date.
 	MissingSince *time.Time `json:"missing_since,omitempty"`
 	MissedRuns   int        `json:"missed_runs,omitempty"`
 	// Ticketed is whether an open ticket covered the item when it resolved or lapsed,
@@ -1008,6 +1016,9 @@ type Assessment struct {
 	// ByClass and ByTeam split the risk the same way the owners page does.
 	ByClass map[string]RiskStats `json:"by_class,omitempty"`
 	ByTeam  map[string]RiskStats `json:"by_team,omitempty"`
+	// Partial says a source could not be read in full: a cluster left out or an
+	// enrichment that failed. A decommission needs every run in its window complete.
+	Partial bool `json:"partial,omitempty"`
 
 	// Counts are severity totals summed over every unsuppressed finding, and
 	// ActionableCounts over the actionable ones: "total criticals across the

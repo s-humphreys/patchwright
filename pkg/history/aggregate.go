@@ -110,6 +110,14 @@ type Movement struct {
 	// Cleared widens CVEsResolved to CVEs that left items still open.
 	Cleared
 
+	// Decommissioned is the items whose workloads were removed, credited in the
+	// period they disappeared (see Decommissions). Each was also counted in Lapsed
+	// when it left the queue; this is the later verdict on a subset of those.
+	Decommissioned Decommissioned `json:"decommissioned"`
+	// Remediated is Resolved plus Decommissioned.Items: every item that left the
+	// queue because its risk went, by an upgrade or by switching it off.
+	Remediated int `json:"remediated"`
+
 	// The delineation. ResolvedTicketed is a subset of Resolved, never a separate
 	// total; Resolved less ResolvedTicketed is work that landed by another route.
 	ResolvedTicketed   int `json:"resolved_ticketed"`
@@ -188,6 +196,17 @@ type Cleared struct {
 	ItemsPartlyCleared int `json:"items_partly_cleared"`
 }
 
+// Decommissioned is items remediated by removing their workloads, and the CVEs
+// they last carried. An item's CVE already credited as cleared is not counted
+// again, and a CVE carried by a ticketed item and an unticketed one is ticketed.
+type Decommissioned struct {
+	Items         int `json:"items"`
+	ItemsTicketed int `json:"items_ticketed"`
+	CVETally
+	Ticketed   CVETally `json:"ticketed"`
+	Unticketed CVETally `json:"unticketed"`
+}
+
 // CVETally is distinct CVEs, and the known-exploited and EPSS-high among them.
 type CVETally struct {
 	CVEs     int `json:"cves"`
@@ -200,6 +219,11 @@ type RangeTotals struct {
 	CVEsResolved    int `json:"cves_resolved"`
 	KEVCVEsResolved int `json:"kev_cves_resolved"`
 	Cleared
+	Decommissioned Decommissioned `json:"decommissioned"`
+	// Remediated is the distinct CVEs cleared or decommissioned, and Remediated
+	// Items the items fixed (confirmed) or decommissioned.
+	RemediatedItems int      `json:"remediated_items"`
+	RemediatedCVEs  CVETally `json:"remediated_cves"`
 }
 
 // clearedSet collects distinct CVEs cleared, with the strongest reading of each.
@@ -214,6 +238,41 @@ func (cs clearedSet) add(c CVE, ticketed bool) {
 		epssHigh: prev.epssHigh || c.EPSS > EPSSHigh,
 		ticketed: prev.ticketed || ticketed,
 	}
+}
+
+func (cs clearedSet) tally() CVETally {
+	var out CVETally
+	for _, c := range cs {
+		out.CVEs++
+		if c.kev {
+			out.KEV++
+		}
+		if c.epssHigh {
+			out.EPSSHigh++
+		}
+	}
+	return out
+}
+
+func (cs clearedSet) decommissioned(items, ticketed int) Decommissioned {
+	c := cs.cleared(0)
+	return Decommissioned{
+		Items: items, ItemsTicketed: ticketed,
+		CVETally: CVETally{CVEs: c.CVEsCleared, KEV: c.KEVCVEsCleared, EPSSHigh: c.EPSSHighCVEsCleared},
+		Ticketed: c.ClearedTicketed, Unticketed: c.ClearedUnticketed,
+	}
+}
+
+// union is every CVE in either set, with the strongest reading of each.
+func (cs clearedSet) union(other clearedSet) clearedSet {
+	out := clearedSet{}
+	for _, set := range []clearedSet{cs, other} {
+		for id, c := range set {
+			p := out[id]
+			out[id] = clearedCVE{kev: p.kev || c.kev, epssHigh: p.epssHigh || c.epssHigh, ticketed: p.ticketed || c.ticketed}
+		}
+	}
+	return out
 }
 
 func (cs clearedSet) cleared(items int) Cleared {
@@ -389,6 +448,12 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		rangeCleared.add(c, ticketed)
 		return true
 	}
+	// Decommissioned CVEs share the credit with clears, so a CVE an item already
+	// cleared is not counted again when the rest of the item is switched off.
+	decom := map[int]clearedSet{}
+	decomItems, decomTicketed := map[int]int{}, map[int]int{}
+	rangeDecom := clearedSet{}
+	rangeDecomItems, rangeDecomTicketed := 0, 0
 	// Earlier versions recorded the same close on every run until something else
 	// rewrote the item, and those rows are still in the record. A close counts once
 	// per item and ticket, and again only after the ticket was raised again.
@@ -483,6 +548,27 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 			}
 		case KindReassigned:
 			m.Reassigned++
+		case KindDecommissioned:
+			decomItems[i]++
+			rangeDecomItems++
+			if e.Payload.Ticketed {
+				decomTicketed[i]++
+				rangeDecomTicketed++
+			}
+			if snap := e.Payload.Closed; snap != nil {
+				for _, c := range snap.CVEs {
+					k := itemCVE{e.ItemID, e.Key, c.ID}
+					if credited[k] {
+						continue
+					}
+					credited[k] = true
+					if decom[i] == nil {
+						decom[i] = clearedSet{}
+					}
+					decom[i].add(c, e.Payload.Ticketed)
+					rangeDecom.add(c, e.Payload.Ticketed)
+				}
+			}
 		case KindChanged:
 			n := 0
 			for _, c := range e.Payload.CVEsCleared {
@@ -547,10 +633,19 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		rep.Movement[i].CVEsResolved = len(cves[i])
 		rep.Movement[i].KEVCVEsResolved = len(kevs[i])
 		rep.Movement[i].Cleared = cleared[i].cleared(len(partly[i]))
+		rep.Movement[i].Decommissioned = decom[i].decommissioned(decomItems[i], decomTicketed[i])
+		rep.Movement[i].Remediated = rep.Movement[i].Resolved + decomItems[i]
+	}
+	resolved := 0
+	for _, m := range rep.Movement {
+		resolved += m.Resolved
 	}
 	rep.Totals = RangeTotals{
 		CVEsResolved: len(rangeCVEs), KEVCVEsResolved: len(rangeKEVs),
-		Cleared: rangeCleared.cleared(len(rangePartly)),
+		Cleared:         rangeCleared.cleared(len(rangePartly)),
+		Decommissioned:  rangeDecom.decommissioned(rangeDecomItems, rangeDecomTicketed),
+		RemediatedItems: resolved + rangeDecomItems,
+		RemediatedCVEs:  rangeCleared.union(rangeDecom).tally(),
 	}
 	return rep
 }

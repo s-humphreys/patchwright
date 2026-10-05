@@ -246,11 +246,16 @@ func newServeCmd() *cobra.Command {
 						"which services carried exploitable vulnerabilities, and how long to keep it is a "+
 						"decision to make, not a default to inherit", envHistoryDSN)
 				}
+				decommissionAfter, err := cfg.History.DecommissionDuration()
+				if err != nil {
+					return err
+				}
 				store := postgres.NewLazy(postgres.Options{
 					DSN: dsn, Auth: postgres.Auth(cfg.History.Auth), Password: os.Getenv(envHistoryPassword),
 				})
 				defer store.Close()
-				srv = srv.WithHistory(store, retention).WithLapseAfter(cfg.History.LapseAfter)
+				srv = srv.WithHistory(store, retention).WithLapseAfter(cfg.History.LapseAfter).
+					WithDecommissionAfter(decommissionAfter)
 				slog.InfoContext(cmd.Context(), "history enabled",
 					"retention", cfg.History.Retention, "auth", authSummary(cfg.History.Auth))
 			}

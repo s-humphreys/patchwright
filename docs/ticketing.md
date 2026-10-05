@@ -454,6 +454,11 @@ ticket's images leave the queue without that proof while still being assessed:
 - **Upgrade clears nothing.** Still actionable, but the change the ticket asks for
   was measured to clear none of the CVEs that raised it. See
   [only ticket what the change fixes](#only-ticket-what-the-change-fixes).
+- **Decommissioned.** With a [history store](history.md#remediated-by-decommissioning),
+  every image the ticket covers was credited as decommissioned: gone for the
+  decommission window with every run complete and the image running nowhere else.
+  This also covers images the provider has since stopped reporting, which would
+  otherwise stay open with a note that coverage for them is missing.
 
 ```yaml
 jira:

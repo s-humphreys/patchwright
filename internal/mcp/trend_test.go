@@ -179,3 +179,29 @@ func TestTrendReportStatesClearedCVEsFromTheRangeTotals(t *testing.T) {
 		}
 	}
 }
+
+func TestTrendReportStatesDecommissions(t *testing.T) {
+	rep := trendFixture()
+	if s := strings.Join(NewTrendReport(rep).Summary, " "); strings.Contains(s, "decommissioning") {
+		t.Errorf("nothing decommissioned, nothing said: %s", s)
+	}
+	rep.Movement[1].Decommissioned = history.Decommissioned{Items: 3}
+	rep.Totals.Decommissioned = history.Decommissioned{Items: 3, ItemsTicketed: 1, CVETally: history.CVETally{CVEs: 40, KEV: 5, EPSSHigh: 2},
+		Ticketed: history.CVETally{CVEs: 10, KEV: 4}, Unticketed: history.CVETally{CVEs: 30, KEV: 1, EPSSHigh: 2}}
+	rep.Totals.RemediatedItems, rep.Totals.RemediatedCVEs = 10, history.CVETally{CVEs: 45, KEV: 6}
+	r := NewTrendReport(rep)
+	if r.Movement.Decommissioned != 3 || r.Movement.Remediated != 10 || r.Movement.Lapsed != 9 {
+		t.Errorf("decommissioned/remediated/lapsed = %d/%d/%d, want 3/10/9", r.Movement.Decommissioned, r.Movement.Remediated, r.Movement.Lapsed)
+	}
+	s := strings.Join(r.Summary, " ")
+	for _, want := range []string{
+		"Remediated by decommissioning: 3 items (1 ticketed)",
+		"carrying 40 distinct CVEs, 5 of them known-exploited and 2 with EPSS above 0.5",
+		"ticketed 10, 4 known-exploited; other routes 30, 1 known-exploited",
+		"10 items were remediated, clearing 45 distinct CVEs (6 known-exploited)",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("summary should say %q:\n%s", want, s)
+		}
+	}
+}

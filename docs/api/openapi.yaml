@@ -899,6 +899,31 @@ components:
         cleared_ticketed: { $ref: "#/components/schemas/HistoryCVETally" }
         cleared_unticketed: { $ref: "#/components/schemas/HistoryCVETally" }
         items_partly_cleared: { type: integer, description: Distinct work items that cleared CVEs while staying open }
+        decommissioned:
+          allOf: [{ $ref: "#/components/schemas/HistoryDecommissioned" }]
+          description: Items decommissioned in the range and their CVEs, each CVE counted once
+        remediated_items: { type: integer, description: Items fixed (confirmed) plus items decommissioned in the range }
+        remediated_cves:
+          allOf: [{ $ref: "#/components/schemas/HistoryCVETally" }]
+          description: Distinct CVEs cleared or decommissioned in the range, each counted once
+    HistoryDecommissioned:
+      type: object
+      description: >-
+        Work items remediated by removing their workloads: lapsed as no longer running, then gone for the
+        decommission window (history.decommissionAfter, default 7 days) with every assessment in it reading every
+        source and the image running nowhere else in the estate. Credited to the period the workloads disappeared,
+        and recorded only once the window has passed, so a period's figure can still rise for a window after it
+        ends. The CVEs are those the item last carried; one the item already cleared is not counted again. Each of
+        these items is also in lapsed, which keeps its meaning. Recorded from the release that added it onward;
+        lapses whose window had already passed are not backfilled.
+      properties:
+        items: { type: integer }
+        items_ticketed: { type: integer, description: Items an open ticket covered when they lapsed }
+        cves: { type: integer }
+        kev: { type: integer, description: Known-exploited among cves, as the item last carried them }
+        epss_high: { type: integer, description: EPSS above 0.5 among cves, as the item last carried them }
+        ticketed: { $ref: "#/components/schemas/HistoryCVETally" }
+        unticketed: { $ref: "#/components/schemas/HistoryCVETally" }
     HistoryCVETally:
       type: object
       properties:
@@ -1018,7 +1043,9 @@ components:
           allOf: [{ $ref: "#/components/schemas/HistoryCVETally" }]
           description: The cleared CVEs no ticket covered; landed by another route
         items_partly_cleared: { type: integer, description: Work items that cleared CVEs this period while staying open }
-        lapsed: { type: integer, description: Left the queue without evidence. Never remediation }
+        lapsed: { type: integer, description: Left the queue without evidence. Never remediation in itself; see decommissioned for the subset later credited as removed }
+        decommissioned: { $ref: "#/components/schemas/HistoryDecommissioned" }
+        remediated: { type: integer, description: resolved plus decommissioned.items }
         reassigned: { type: integer }
         resolved_ticketed: { type: integer, description: Subset of resolved }
         resolved_unticketed: { type: integer, description: Resolved less resolved_ticketed; work that landed by another route }
@@ -1027,7 +1054,7 @@ components:
         tickets_closed_finding_open: { type: integer, description: Closed while patchwright had no evidence the work was done }
         tickets_closed_by_tool:
           type: object
-          description: Tickets patchwright itself closed, by reason (upgrade-landed, not-running, no-longer-actionable). The rest of tickets_closed were closed by people.
+          description: Tickets patchwright itself closed, by reason (upgrade-landed, not-running, no-longer-actionable, decommissioned). The rest of tickets_closed were closed by people.
           additionalProperties: { type: integer }
         tickets_closed_on_time: { type: integer, description: Closed on or before the due date recorded when the ticket was raised. Tickets with no due date are in neither this nor tickets_closed_overdue }
         tickets_closed_overdue: { type: integer, description: Closed after the recorded due date }
@@ -1080,7 +1107,7 @@ components:
             properties:
               id: { type: integer }
               key: { type: string }
-              kind: { type: string, enum: [opened, changed, reassigned, ticket_raised, ticket_closed, resolved, lapsed] }
+              kind: { type: string, enum: [opened, changed, reassigned, ticket_raised, ticket_closed, resolved, lapsed, decommissioned] }
               at: { type: string, format: date-time }
               payload:
                 type: object
@@ -1094,7 +1121,10 @@ components:
                   `cves_removed` is every CVE that left the item and `cves_cleared` those
                   credited as remediated, as the item carried them before, with `evidence`,
                   `ticketed` and `tickets` (the tickets covering it before the change);
-                  when CVEs left without being credited, `reason` says why.
+                  when CVEs left without being credited, `reason` says why. On
+                  decommissioned, dated when the workloads disappeared, `closed` is the
+                  item as it lapsed, with `opened`, `opened_at`, `missing_since`,
+                  `days_open`, `ticketed`, `tickets` and `evidence`.
     AssessmentMeta:
       type: object
       required: [generated_at, running]

@@ -60,12 +60,15 @@ is the confusion `exploit.go` already documents.
 | `reassigned` | The owner changed but service and target did not | Old and new owner |
 | `ticket_raised` | Reconciliation created or extended a ticket for it | Key, project |
 | `ticket_closed` | A ticket covering it reached a done status category | Key, whether patchwright had evidence at the time |
+| `decommissioned` | A lapse as not running stayed gone for the decommission window, every run complete, the image running nowhere else | The lapse's snapshots, dated when the workloads disappeared |
 
 `resolved` uses exactly the test ticket auto-close uses (`upgradeComplete`): every
 image still reported, remediation checked, versions resolved, no upgrade still
 available for the repository, liveness reconciled. Anything short of that is
 `lapsed`, and the two are never summed. A time-to-remediate that counts coverage loss
-as remediation improves fastest when the scanner breaks.
+as remediation improves fastest when the scanner breaks. Removal is the one exception,
+and only once proved: `decommissioned` is a later verdict on a lapse, never a
+reclassification of it (see [remediated by decommissioning](../history.md#remediated-by-decommissioning)).
 
 ### Classify by what it was when it opened
 

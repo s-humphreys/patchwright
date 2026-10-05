@@ -401,6 +401,12 @@ split into `cleared_ticketed` and `cleared_unticketed`; `cves_resolved` keeps it
 meaning, the fixed items' CVEs only. The summary states the cleared figures in one
 sentence, including that a CVE which only left KEV or whose EPSS fell is not one.
 
+Items [remediated by decommissioning](history.md#remediated-by-decommissioning) are
+`movement.decommissioned`, with `movement.remediated` the fixed items plus those, and
+`totals.decommissioned` their CVEs (KEV, EPSS above 0.5, ticketed and not), each once.
+The summary states them in their own sentence, says they are also among those left
+without a fix, and gives the combined remediated items and CVEs.
+
 Without a history store the tool says so, rather than answering from an empty record.
 
 ## What is deliberately absent

@@ -170,13 +170,13 @@ func (s *Server) planTickets(ctx context.Context) ([]ticket.Action, error) {
 	if err != nil {
 		return nil, err
 	}
-	recent := s.recentlyMissing()
+	recent, decommissioned := s.recentlyMissing(), s.decommissionedRepos()
 	if s.role == RoleWeb {
-		recent = s.recentlyMissingFromStore(ctx)
+		recent, decommissioned = s.recentlyMissingFromStore(ctx), s.decommissionedFromStore(ctx)
 	}
 	return ticket.Reconcile(ticket.ReconcileInput{
 		Drafts: plan.Drafts, Skipped: plan.Skips, OpenByImage: index, Findings: snap.views,
-		Config: s.ticketer.Config(), RecentlyReported: recent,
+		Config: s.ticketer.Config(), RecentlyReported: recent, Decommissioned: decommissioned,
 	}), nil
 }
 
