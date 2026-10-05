@@ -457,7 +457,7 @@ func newestInTrack(current *semver.Version, tags []string) *semver.Version {
 func newestWithin(current *semver.Version, tags []string, strategy, ceiling string) *semver.Version {
 	var best *semver.Version
 	for _, t := range tags {
-		v, err := semver.StrictNewVersion(strings.TrimPrefix(t, "v"))
+		v, err := tagVersion(t)
 		if err != nil {
 			continue
 		}
@@ -480,6 +480,17 @@ func newestWithin(current *semver.Version, tags []string, strategy, ceiling stri
 		}
 	}
 	return best
+}
+
+// tagVersion parses a tag as strict semver, tolerating a leading "v", and returns a
+// version whose Original is the tag exactly as published. Callers name the result as
+// a tag to move to, and the "v"-less string is a tag that may not exist.
+func tagVersion(tag string) (*semver.Version, error) {
+	trimmed := strings.TrimPrefix(tag, "v")
+	if _, err := semver.StrictNewVersion(trimmed); err != nil {
+		return nil, err
+	}
+	return semver.NewVersion(tag)
 }
 
 // withinCeiling reports whether a version is at or below a version prefix ("3.12").
