@@ -110,12 +110,17 @@ func (s *Server) decommissionedFromStore(ctx context.Context) map[string]bool {
 		return nil
 	}
 	now := time.Now().UTC()
-	events, err := s.history.store.Events(ctx, now.Add(-history.DecommissionLookback(s.history.decommissionAfter)), now)
+	var decom []history.Event
+	err := history.EachEvent(ctx, s.history.store, now.Add(-history.DecommissionLookback(s.history.decommissionAfter)), now, func(e history.Event) {
+		if e.Kind == history.KindDecommissioned {
+			decom = append(decom, e)
+		}
+	})
 	if err != nil {
 		slog.WarnContext(ctx, "server: could not read recent events for the ticket plan; no ticket is closed as decommissioned", "error", err)
 		return nil
 	}
-	return history.DecommissionedRepositories(events)
+	return history.DecommissionedRepositories(decom)
 }
 
 // WithLapseAfter sets the grace period before an absent item lapses.
@@ -237,7 +242,12 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 // read the record judges the lapses this one could not.
 func (r *historyRecorder) decommissions(ctx context.Context, snap *snapshot, current []history.Snapshot, partial bool, scope string) ([]history.Event, []history.Event, bool) {
 	from := snap.generatedAt.Add(-history.DecommissionLookback(r.decommissionAfter))
-	recent, err := r.store.Events(ctx, from, snap.generatedAt)
+	var recent []history.Event
+	err := history.EachEvent(ctx, r.store, from, snap.generatedAt, func(e history.Event) {
+		if e, ok := history.DecommissionEvent(e); ok {
+			recent = append(recent, e)
+		}
+	})
 	if err != nil {
 		slog.WarnContext(ctx, "history: recent events could not be read, so no decommission is judged this run; the next run judges them", "error", err)
 		return nil, nil, false
