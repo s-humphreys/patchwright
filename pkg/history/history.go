@@ -815,12 +815,16 @@ func Clearance(prev, now Snapshot, missed int, partial bool) (cleared []CVE, evi
 		now.Repository, shortBuilds(replaced), shortBuilds(added), now.Scan.Source), ""
 }
 
+// reasonPartial is why nothing leaving an item in a run that missed a source is
+// credited, and how a report knows the run could not vouch for an absence.
+const reasonPartial = "the assessment could not read every source"
+
 // withheld is the first reason the CVEs leaving an item cannot be credited, or
 // empty when they can.
 func withheld(prev, now Snapshot, missed int, partial bool) string {
 	switch {
 	case partial:
-		return "the assessment could not read every source"
+		return reasonPartial
 	case missed > 0:
 		return "the item was absent from the previous assessment"
 	case prev.Scan == nil || now.Scan == nil:

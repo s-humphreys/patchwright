@@ -884,6 +884,19 @@ components:
             age_days: { type: object, additionalProperties: { type: integer } }
         totals: { $ref: "#/components/schemas/HistoryTotals" }
         tracker: { $ref: "#/components/schemas/HistoryTracker" }
+        tickets_excluded:
+          type: object
+          description: >-
+            Present when jira routes set countInAnalytics false. Their tickets, told apart by project and epic, are
+            left out of tickets_raised, tickets_closed, the tracker counts and cycle times, and the per-day tickets;
+            they are still reconciled. These say how many were left out over the range.
+          properties:
+            routes: { type: array, items: { type: string }, description: Each excluded route with its project and epic }
+            tickets: { type: integer, description: Distinct excluded tickets created or resolved in the range }
+            tickets_raised: { type: integer, description: What tickets_raised would have counted for them }
+            tickets_closed: { type: integer, description: What tickets_closed would have counted for them }
+            tracker_tickets_raised: { type: integer }
+            tracker_tickets_closed: { type: integer }
         caveats: { type: array, items: { type: string } }
     HistoryTotals:
       type: object
@@ -954,7 +967,12 @@ components:
           type: array
           description: Every UTC day from since to until, oldest first
           items: { $ref: "#/components/schemas/HistoryTicketDay" }
-        total: { type: integer, description: Tickets created in the range }
+        total: { type: integer, description: Tickets created in the range, less those excluded }
+        excluded:
+          type: integer
+          description: >-
+            Tickets created in the range on routes set countInAnalytics false, left out of days and total. Absent
+            when none were
         first_created: { type: string, format: date-time, description: The oldest indexed ticket. Days before it are before ticketing }
         last_synced: { type: string, format: date-time, description: When the tracker was last read. Absent when it never has been }
         caveats: { type: array, items: { type: string } }
@@ -1049,8 +1067,8 @@ components:
         reassigned: { type: integer }
         resolved_ticketed: { type: integer, description: Subset of resolved }
         resolved_unticketed: { type: integer, description: Resolved less resolved_ticketed; work that landed by another route }
-        tickets_raised: { type: integer }
-        tickets_closed: { type: integer }
+        tickets_raised: { type: integer, description: Tickets reconciliation created or extended, once per work item they cover, less any on routes excluded from the counts }
+        tickets_closed: { type: integer, description: Tickets that stopped covering a work item, once per item and ticket until raised again, less any on excluded routes. A ticket covering three items is three }
         tickets_closed_finding_open: { type: integer, description: Closed while patchwright had no evidence the work was done }
         tickets_closed_by_tool:
           type: object
@@ -1059,14 +1077,23 @@ components:
         tickets_closed_on_time: { type: integer, description: Closed on or before the due date recorded when the ticket was raised. Tickets with no due date are in neither this nor tickets_closed_overdue }
         tickets_closed_overdue: { type: integer, description: Closed after the recorded due date }
         mean_days_to_due_at_close: { type: number, description: Mean of due date less close date in whole UTC days over tickets that had one; negative is late. Absent when none did }
-        epss_decayed: { type: integer, description: Left the EPSS bucket by score decay, not by a patch }
-        became_known_exploited: { type: integer }
+        epss_decayed:
+          type: integer
+          description: >-
+            Items that left the EPSS bucket by score decay, not by a patch: once per decay. An item whose high-EPSS CVEs
+            left it, or that lost its scores in a run whose exploit lookup failed or that missed a source, did not decay
+        became_known_exploited:
+          type: integer
+          description: >-
+            Items that moved into KEV while open, once per move: an item counts again only after its exploited CVEs
+            left it. Losing the flag in a run whose exploit lookup failed, or that missed a source, is not leaving
         median_days_to_resolve: { type: number, description: Over resolved items only }
         tracker_tickets_raised:
           type: integer
           description: >-
             From the tracker. Tickets created this period on the configured projects and issue type, by the tracker's
-            own date. Tickets, not resolutions. Absent for a period that ended before the first indexed ticket
+            own date, less any on routes excluded from the counts. Tickets, not resolutions. Absent for a period that
+            ended before the first indexed ticket
         tracker_tickets_closed: { type: integer, description: From the tracker. Tickets resolved this period, by the tracker's resolution date }
         median_days_told:
           type: number

@@ -107,6 +107,7 @@
       "items_partly_cleared": 6,
       "decommissioned": { "items": 4, "items_ticketed": 1, "cves": 310, "kev": 3, "epss_high": 5, "ticketed": { "cves": 60, "kev": 2, "epss_high": 1 }, "unticketed": { "cves": 250, "kev": 1, "epss_high": 4 } },
       "remediated_items": 93, "remediated_cves": { "cves": 11100, "kev": 42, "epss_high": 48 } },
+    "tickets_excluded": { "routes": ["test (project PROJ, epic PROJ-9)"], "tickets": 4, "tickets_raised": 4, "tickets_closed": 2, "tracker_tickets_raised": 4, "tracker_tickets_closed": 2 },
     "tracker": { "source": "tracker", "tickets": 62, "first_created": "2026-06-02T09:00:00Z", "last_synced": "2026-11-21T10:00:00Z" },
     "caveats": [
       "the record begins 2026-09-21; periods before it are empty because nothing was watching, not because nothing happened",

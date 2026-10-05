@@ -373,6 +373,16 @@ test('tickets per day sit in the ticketed panel, say they are per day, and offer
   assert.match(panel, /<div class="ticket-day-list" id="ticketDayList" hidden><\/div>/);
 });
 
+test('tickets left out of the counts by configuration are said, with how many, in the ticketed panel and the per-day chart', () => {
+  const b = body();
+  assert.doesNotMatch(render(b), /leave out/);
+  b.history.tickets_excluded = { routes: ['test (project PROJ, epic PROJ-9)'], tickets: 78, tickets_raised: 70, tickets_closed: 48, tracker_tickets_raised: 78, tracker_tickets_closed: 50 };
+  const tickets = { tickets: { total: 32, excluded: 78, days: [{ date: '2026-09-02', created: 32, tickets: [] }] } };
+  const html = render(b, tickets);
+  assert.match(html, /Ticket counts here leave out 78 tickets on test \(project PROJ, epic PROJ-9\), as configured: 70 raised and 48 closed by the record, 78 raised and 50 closed by the tracker\. They are still reconciled like any other ticket\./);
+  assert.match(html, /32 in the range, leaving out 78 on routes excluded from the counts\./);
+});
+
 test('no tickets in the range, or no tickets response at all, renders nothing', () => {
   const empty = ticketsBody({ total: 0, days: [{ date: '2026-09-01', created: 0, tickets: [] }] });
   for (const t of [empty, null, undefined, { status: { enabled: false }, tickets: { days: [], total: 0 } }]) {

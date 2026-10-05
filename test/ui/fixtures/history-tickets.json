@@ -568,6 +568,7 @@
    }
   ],
   "total": 10,
+  "excluded": 4,
   "first_created": "2026-06-02T09:00:00Z",
   "last_synced": "2026-11-21T10:00:00Z"
  }

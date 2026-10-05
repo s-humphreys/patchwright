@@ -205,3 +205,20 @@ func TestTrendReportStatesDecommissions(t *testing.T) {
 		}
 	}
 }
+
+func TestTrendReportSaysWhichTicketsWereExcluded(t *testing.T) {
+	rep := trendFixture()
+	if s := strings.Join(NewTrendReport(rep).Summary, " "); strings.Contains(s, "leaves out") {
+		t.Errorf("nothing excluded, nothing said: %s", s)
+	}
+	rep.TicketsExcluded = &history.ExcludedTickets{Routes: []string{"test (project PROJ, epic PROJ-9)"}, Tickets: 78,
+		TicketsRaised: 70, TicketsClosed: 48, TrackerTicketsRaised: 78, TrackerTicketsClosed: 50}
+	r := NewTrendReport(rep)
+	if r.TicketsExcluded == nil || r.TicketsExcluded.Tickets != 78 {
+		t.Errorf("excluded = %+v", r.TicketsExcluded)
+	}
+	want := "Every ticket count here leaves out 78 tickets on test (project PROJ, epic PROJ-9), as configured: 70 raised and 48 closed by the record, 78 raised and 50 closed by the tracker"
+	if s := strings.Join(r.Summary, " "); !strings.Contains(s, want) {
+		t.Errorf("summary should say %q:\n%s", want, s)
+	}
+}

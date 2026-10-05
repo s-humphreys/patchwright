@@ -612,10 +612,11 @@ func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTick
 		// a read without a title does not erase one.
 		batch.Queue(`INSERT INTO tickets
 			(key, project, item_key, item_opened_at, created_at, started_at, started_from, resolved_at, due_at,
-			 status, status_category, last_seen_at, raw, summary)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14, ''))
+			 status, status_category, last_seen_at, raw, summary, parent)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14, ''), $15)
 			ON CONFLICT (key) DO UPDATE SET
 				project = EXCLUDED.project,
+				parent = EXCLUDED.parent,
 				summary = COALESCE(EXCLUDED.summary, tickets.summary),
 				item_key = COALESCE(tickets.item_key, EXCLUDED.item_key),
 				item_opened_at = CASE WHEN tickets.item_key IS NULL THEN EXCLUDED.item_opened_at ELSE tickets.item_opened_at END,
@@ -631,7 +632,7 @@ func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTick
 				last_seen_at = EXCLUDED.last_seen_at,
 				raw = EXCLUDED.raw`,
 			t.Key, t.Project, itemKey, t.ItemOpenedAt, t.CreatedAt, t.StartedAt, t.StartedFrom, t.ResolvedAt, t.DueAt,
-			t.Status, t.StatusCategory, t.LastSeenAt, raw, t.Summary)
+			t.Status, t.StatusCategory, t.LastSeenAt, raw, t.Summary, t.Parent)
 	}
 	br := tx.SendBatch(ctx, batch)
 	for _, t := range tickets {
@@ -650,7 +651,7 @@ func (s *Store) UpsertTickets(ctx context.Context, tickets []history.TrackerTick
 func (s *Store) Tickets(ctx context.Context, since, until time.Time) ([]history.TrackerTicket, error) {
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
-	rows, err := s.pool.Query(ctx, `SELECT key, project, COALESCE(summary, ''), COALESCE(item_key, ''), item_opened_at, created_at, started_at,
+	rows, err := s.pool.Query(ctx, `SELECT key, project, COALESCE(summary, ''), COALESCE(parent, ''), COALESCE(item_key, ''), item_opened_at, created_at, started_at,
 		started_from, resolved_at, due_at, status, status_category, last_seen_at
 		FROM tickets
 		WHERE (created_at >= $1 AND created_at < $2)
@@ -664,7 +665,7 @@ func (s *Store) Tickets(ctx context.Context, since, until time.Time) ([]history.
 	var out []history.TrackerTicket
 	for rows.Next() {
 		var t history.TrackerTicket
-		if err := rows.Scan(&t.Key, &t.Project, &t.Summary, &t.ItemKey, &t.ItemOpenedAt, &t.CreatedAt, &t.StartedAt,
+		if err := rows.Scan(&t.Key, &t.Project, &t.Summary, &t.Parent, &t.ItemKey, &t.ItemOpenedAt, &t.CreatedAt, &t.StartedAt,
 			&t.StartedFrom, &t.ResolvedAt, &t.DueAt, &t.Status, &t.StatusCategory, &t.LastSeenAt); err != nil {
 			return nil, err
 		}
@@ -679,8 +680,12 @@ func (s *Store) TicketsIndexed(ctx context.Context) (history.TicketIndexState, e
 	defer cancel()
 	var st history.TicketIndexState
 	var first, last *time.Time
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*), MIN(created_at), MAX(last_seen_at) FROM tickets`).
-		Scan(&st.Tickets, &first, &last); err != nil {
+	// Unparented counts only the rows the last read touched: a ticket a full read no
+	// longer returns is out of every route's scope and must not ask for another.
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*), MIN(created_at), MAX(last_seen_at),
+		COUNT(*) FILTER (WHERE parent IS NULL AND last_seen_at = (SELECT MAX(last_seen_at) FROM tickets))
+		FROM tickets`).
+		Scan(&st.Tickets, &first, &last, &st.Unparented); err != nil {
 		return st, fmt.Errorf("history: tickets indexed: %w", err)
 	}
 	if first != nil {

@@ -43,6 +43,9 @@ type TrendReport struct {
 
 	Periods []history.Movement  `json:"periods"`
 	Open    history.OpenSummary `json:"open"`
+	// TicketsExcluded says which routes' tickets the ticket counts leave out, as
+	// configured, and how many. Nil when none are.
+	TicketsExcluded *history.ExcludedTickets `json:"tickets_excluded,omitempty"`
 }
 
 // Direction is the risk score at the two ends of the range.
@@ -110,7 +113,7 @@ const flatBand = 5.0
 func NewTrendReport(rep history.Report) TrendReport {
 	out := TrendReport{
 		Caveats: append([]string{}, rep.Caveats...), Since: rep.Since, Until: rep.Until, Bucket: string(rep.Bucket),
-		FirstRecorded: rep.FirstRecorded, Periods: rep.Movement, Open: rep.Open, Totals: rep.Totals,
+		FirstRecorded: rep.FirstRecorded, Periods: rep.Movement, Open: rep.Open, Totals: rep.Totals, TicketsExcluded: rep.TicketsExcluded,
 		BySignal: map[string]history.Counts{}, ByRule: map[string]history.Counts{}, ByTeam: map[string]history.Counts{},
 		Movement: TrendTotals{LapseReasons: map[string]int{}, TicketsClosedByTool: map[string]int{}},
 	}
@@ -322,6 +325,10 @@ func trendSummary(r TrendReport) []string {
 	if m.TrackerTicketsRaised != nil {
 		out = append(out, fmt.Sprintf("By the tracker's own dates, %d tickets were raised and %d closed in this range, including any raised by hand or before the record began; those are tickets, not resolutions, and carry no rule or signal.",
 			*m.TrackerTicketsRaised, deref(m.TrackerTicketsClosed)))
+	}
+	if ex := r.TicketsExcluded; ex != nil {
+		out = append(out, fmt.Sprintf("Every ticket count here leaves out %d tickets on %s, as configured: %d raised and %d closed by the record, %d raised and %d closed by the tracker. They are still reconciled like any other ticket.",
+			ex.Tickets, joinAnd(ex.Routes), ex.TicketsRaised, ex.TicketsClosed, ex.TrackerTicketsRaised, ex.TrackerTicketsClosed))
 	}
 	if n := r.Open.ClosedTicketFindingOpen; n != nil && *n > 0 {
 		out = append(out, fmt.Sprintf("%d open items had their ticket closed while the finding stayed open and have no ticket now (days since the close: %s).",

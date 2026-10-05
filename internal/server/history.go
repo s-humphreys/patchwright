@@ -47,6 +47,8 @@ type historyRecorder struct {
 	// decommissioned are the repositories credited as decommissioned within the
 	// lookback, as of the most recent record, for ticket reconciliation.
 	decommissioned map[string]bool
+	// excluded are the routes whose tickets the ticket counts leave out.
+	excluded []history.TicketScope
 }
 
 // WithHistory attaches a store. retention bounds what Prune keeps; it is required
@@ -65,6 +67,15 @@ func (s *Server) WithHistory(store history.Store, retention time.Duration) *Serv
 func (s *Server) WithDecommissionAfter(d time.Duration) *Server {
 	if s.history != nil && d > 0 {
 		s.history.decommissionAfter = d
+	}
+	return s
+}
+
+// WithTicketExclusions leaves the tickets in scopes out of the history's ticket
+// counts. Reconciliation is unaffected: it is given the same tickets as ever.
+func (s *Server) WithTicketExclusions(scopes []history.TicketScope) *Server {
+	if s.history != nil {
+		s.history.excluded = scopes
 	}
 	return s
 }
@@ -315,7 +326,7 @@ func SyncTrackerTickets(ctx context.Context, store history.Store, src TrackerSou
 		out := make([]history.TrackerTicket, 0, len(dated))
 		for _, d := range dated {
 			out = append(out, history.TrackerTicket{
-				Key: d.Key, Project: d.Project, Summary: d.Summary, Images: d.Images, CreatedAt: d.Created,
+				Key: d.Key, Project: d.Project, Summary: d.Summary, Parent: d.Parent, Images: d.Images, CreatedAt: d.Created,
 				StartedAt: d.Started, StartedFrom: d.StartedFrom, ResolvedAt: d.Resolved, DueAt: d.Due,
 				Status: d.Status, StatusCategory: d.Category, Raw: d.Fields,
 			})
@@ -456,13 +467,12 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		}
 		assessments[i].Items = items
 	}
-	rep := history.Aggregate(rng, assessments, events, open, first, now)
-	rep.RetentionDays = int(s.history.retention.Hours() / 24)
 	idx, err := store.TicketsIndexed(ctx)
 	if err != nil {
 		return history.Report{}, err
 	}
 	periods := history.Periods(rng)
+	var tickets []history.TrackerTicket
 	if idx.Tickets > 0 {
 		// The first period is calendar-aligned and can start before the range, and a
 		// tracker count labelled with a month should cover the whole month.
@@ -470,10 +480,20 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		if len(periods) > 0 && periods[0].Start.Before(from) {
 			from = periods[0].Start
 		}
-		tickets, err := store.Tickets(ctx, from, rng.Until)
-		if err != nil {
+		// An exclusion has to recognise a ticket raised before the range that an
+		// event in it names, so it reads them all; the counts only look at the range.
+		if len(s.history.excluded) > 0 {
+			from = time.Time{}
+		}
+		if tickets, err = store.Tickets(ctx, from, rng.Until); err != nil {
 			return history.Report{}, err
 		}
+	}
+	events, tickets, excluded := history.ExcludeTickets(rng, events, tickets, s.history.excluded)
+	rep := history.Aggregate(rng, assessments, events, open, first, now)
+	rep.RetentionDays = int(s.history.retention.Hours() / 24)
+	rep.TicketsExcluded = excluded
+	if idx.Tickets > 0 {
 		rep.AddTracker(tickets, idx, open, first, now)
 	}
 	switch {
@@ -497,6 +517,7 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		rep.Caveats = append(rep.Caveats, fmt.Sprintf(
 			"the work-item list of %d periods' last assessment could not be read, so those periods carry no open work items by signal", unread))
 	}
+	rep.Caveats = append(rep.Caveats, excludedCaveats(excluded, idx)...)
 	rep.Caveats = append(rep.Caveats,
 		"counts are work items: one service and the one upgrade that would fix it, classified by how each looked when the record first saw it",
 		"fixed (confirmed), the resolved field, requires evidence the upgrade landed; left without a fix, the lapsed field, is everything else that left the queue, and is never remediation in itself",
@@ -527,6 +548,27 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		}
 	}
 	return rep, nil
+}
+
+// excludedCaveats say which routes' tickets the counts leave out and how many, or
+// why none could be told apart.
+func excludedCaveats(ex *history.ExcludedTickets, idx history.TicketIndexState) []string {
+	if ex == nil {
+		return nil
+	}
+	routes := strings.Join(ex.Routes, "; ")
+	if idx.Tickets == 0 {
+		return []string{"tickets on " + routes + " are configured to be left out of the ticket counts, but the tracker " +
+			"has not been read, so none could be told apart and none was left out"}
+	}
+	out := []string{fmt.Sprintf("the ticket counts leave out %d tickets on %s, as configured: %d raised and %d closed by the record, "+
+		"%d raised and %d closed by the tracker. They are still reconciled like any other ticket",
+		ex.Tickets, routes, ex.TicketsRaised, ex.TicketsClosed, ex.TrackerTicketsRaised, ex.TrackerTicketsClosed)}
+	if idx.Unparented > 0 {
+		out = append(out, fmt.Sprintf("%d tickets were read before their epic was, so any of them on an excluded epic is still "+
+			"counted until the next sync reads the tracker in full", idx.Unparented))
+	}
+	return out
 }
 
 // historySource hands the MCP tools the same report builder, or nil when history
@@ -577,7 +619,10 @@ type ticketsPerDay struct {
 	Total        int         `json:"total"`
 	FirstCreated *time.Time  `json:"first_created,omitempty"`
 	LastSynced   *time.Time  `json:"last_synced,omitempty"`
-	Caveats      []string    `json:"caveats,omitempty"`
+	// Excluded is the tickets created in the range on routes configured out of the
+	// ticket counts, which Days and Total leave out.
+	Excluded int      `json:"excluded,omitempty"`
+	Caveats  []string `json:"caveats,omitempty"`
 }
 
 type ticketDay struct {
@@ -655,6 +700,10 @@ func (s *Server) ticketsCreatedPerDay(ctx context.Context, from, until time.Time
 		if created.Before(from) || !created.Before(until) {
 			continue
 		}
+		if history.InAnyScope(t, s.history.excluded) {
+			out.Excluded++
+			continue
+		}
 		day := &out.Days[int(created.Sub(from)/(24*time.Hour))]
 		day.Created++
 		day.Tickets = append(day.Tickets, createdTicket{
@@ -669,6 +718,15 @@ func (s *Server) ticketsCreatedPerDay(ctx context.Context, from, until time.Time
 	}
 	first, last := idx.FirstCreated, idx.LastSynced
 	out.FirstCreated, out.LastSynced = &first, &last
+	if out.Excluded > 0 {
+		names := make([]string, 0, len(s.history.excluded))
+		for _, sc := range s.history.excluded {
+			names = append(names, sc.String())
+		}
+		out.Caveats = append(out.Caveats, fmt.Sprintf(
+			"%d tickets created in the range on %s are left out, as configured; they are still reconciled",
+			out.Excluded, strings.Join(names, "; ")))
+	}
 	if first.After(from) {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
 			"the oldest ticket the tracker holds was raised %s; days before it are before ticketing, not days with none",

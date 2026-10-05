@@ -217,9 +217,20 @@ function delineationPanel(h, tickets) {
     <tbody>${rows}</tbody></table>
     ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
     ${measured ? `<p class="sub">Against the due date: ${fmt(onTime)} of ${fmt(measured)} (${pct(onTime, measured)}) closed on time.${meanDaysToDue(periods)}</p>` : ""}
+    ${excludedNote(h.tickets_excluded)}
     ${cycleTimeTable(h)}
     ${ticketsPerDay(tickets)}
   </section>`;
+}
+
+/**
+ * excludedNote says which routes' tickets the counts leave out, as configured, and
+ * how many, so a ticket count never silently differs from the tracker's own.
+ */
+function excludedNote(ex) {
+  if (!ex) return "";
+  const routes = (ex.routes || []).map(esc).join("; ");
+  return `<p class="sub tickets-excluded">Ticket counts here leave out ${fmt(ex.tickets)} ticket${ex.tickets === 1 ? "" : "s"} on ${routes}, as configured: ${fmt(ex.tickets_raised)} raised and ${fmt(ex.tickets_closed)} closed by the record, ${fmt(ex.tracker_tickets_raised)} raised and ${fmt(ex.tracker_tickets_closed)} closed by the tracker. They are still reconciled like any other ticket.</p>`;
 }
 
 /** dayLabel renders a UTC calendar date, "2026-09-01", as "1 Sep 2026". */
@@ -240,7 +251,7 @@ function ticketsPerDay(body) {
       data-day="${esc(d.date)}" aria-pressed="false" aria-controls="ticketDayList"
       title="${esc(`${d.created} created ${dayLabel(d.date)}`)}">${esc(dayLabel(d.date, false))} <span class="n">${fmt(d.created)}</span></button></li>`).join("");
   return `<h4>Tickets created, per day</h4>
-    <p class="sub">Per day whatever the period above, by the tracker's created date: ${fmt(t.total)} in the range. Click a day, or choose one below, for its tickets.</p>
+    <p class="sub">Per day whatever the period above, by the tracker's created date: ${fmt(t.total)} in the range${t.excluded ? `, leaving out ${fmt(t.excluded)} on routes excluded from the counts` : ""}. Click a day, or choose one below, for its tickets.</p>
     <div class="chart-slot" data-chart="tickets-per-day"></div>
     <ul class="day-picks" aria-label="Days with tickets created">${picks}</ul>
     <div class="ticket-day-list" id="ticketDayList" hidden></div>`;
@@ -350,8 +361,8 @@ function signalsPanel(h) {
   const decayed = periods.reduce((n, m) => n + (m.epss_decayed || 0), 0);
   const becameKEV = periods.reduce((n, m) => n + (m.became_known_exploited || 0), 0);
   const figures = periods.length ? `
-    <div class="dr"><dt title="Left the EPSS band by score decay while open: not remediation">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
-    <div class="dr"><dt>Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>` : "";
+    <div class="dr"><dt title="Left the EPSS band by score decay while open, once per decay: not remediation. A CVE fixed, or a run whose exploit lookup failed, is not a decay">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
+    <div class="dr"><dt title="Once per move into KEV: an item counts again only after its exploited CVEs left it. A run that lost the KEV flags because the exploit lookup failed is not a move">Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>` : "";
   return `<section class="panel"><h3>Open work items by signal</h3>
     ${body}${figures}
   </section>`;

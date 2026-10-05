@@ -267,6 +267,18 @@ not by the current configuration:
   found it.
 - CVEs join KEV after the fact. That is a `changed` event and is counted as
   `became_known_exploited`.
+- Both count once per transition, not once per `changed` event. A run whose exploit
+  lookup fails keeps every CVE but loses its KEV flags and EPSS scores, so every item
+  drops `kev` and `epss-high` and the next complete run adds them back; counting those
+  events read one outage as a fresh KEV and an EPSS decay for every exploited item, and
+  `became_known_exploited` once stood at several times the number of KEV items. An item
+  now leaves KEV only when the CVEs that were exploited leave it, and decays only when a
+  CVE that was above 0.5 is still there with a lower, non-zero score. A CVE fixed takes
+  its signals with it, which is not a decay; a CVE still there unflagged or unscored, or
+  a run that missed a source, keeps the item's standing. An item counts again only after
+  it really left and came back. This is read from the stored events, so past periods
+  are corrected too; an item first seen in the range by a `changed` event is judged by
+  that event's own signal moves.
 - Rules are first-match-wins and get renamed. Signals (`kev`, `epss-high`,
   `fixable-critical`, `end-of-life`) are what rules are made of and do not depend on
   order, so the per-signal split is the one to compare month on month. The per-rule
@@ -293,6 +305,24 @@ were kept, or unreadable, which the caveats then say). Unlike the movement split
 is the item's state at the end of the period, not when it was first seen, so an item
 whose EPSS decayed moves out of that band; `epss_decayed` and `became_known_exploited`
 count those moves. Added without a schema version bump, like the tracker fields.
+
+### Leaving a route's tickets out of the counts
+
+A route set `countInAnalytics: false` (see [routing](ticketing.md#routing)) keeps
+raising, reconciling and closing tickets as any route does, but its tickets are left
+out of every ticket count the record serves: `tickets_raised` and `tickets_closed`,
+the tracker's `tracker_tickets_raised` and `tracker_tickets_closed`, the cycle-time
+medians, the closed-ticket ages and `/api/v1/history/tickets`. It is for a test or
+sandbox epic whose tickets are not remediation work. Tickets are told apart by project
+and the epic they are filed under, which the tracker read stores; the first sync after
+upgrading reads the tracker in full once to learn the epic of tickets already held.
+
+The report's `tickets_excluded` names the routes and says how many tickets it left out
+and what each count would otherwise have included, the caveats say the same, and the
+analytics page and `trend_report` state it beside the figures. Whether an item was
+ticketed (`resolved_ticketed`, `cleared_ticketed`) still counts a ticket on such a
+route: that is a fact about the item, not a count of tickets. Before the tracker has
+been read nothing can be told apart, and the caveat says none was left out.
 
 ### Total remediation against ticketed work
 

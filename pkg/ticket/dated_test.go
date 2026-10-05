@@ -51,6 +51,7 @@ func (ds *datedServer) jira(t *testing.T, routes []config.TicketRoute) *Jira {
 				_, _ = w.Write([]byte(`{"issues":[
 				  {"key":"PROJ-1","fields":{
 				     "summary":"Upgrade app to 1.1",
+				     "parent":{"id":"10100","key":"PROJ-100","fields":{"summary":"Container vulnerabilities"}},
 				     "created":"2026-07-01T10:00:00.000+0100",
 				     "resolutiondate":"2026-07-10T16:30:00.000+0000",
 				     "duedate":"2026-07-15",
@@ -167,7 +168,7 @@ func TestDatedTicketsReadsTheTrackersDates(t *testing.T) {
 			t.Errorf("a backfill has no updated window: %s", jql)
 		}
 	}
-	for _, want := range []string{"summary", "created", "resolutiondate", "duedate", "status", "statuscategorychangedate", "customfield_1"} {
+	for _, want := range []string{"summary", "parent", "created", "resolutiondate", "duedate", "status", "statuscategorychangedate", "customfield_1"} {
 		if !strings.Contains(ds.fields, want) {
 			t.Errorf("fields %q do not request %s", ds.fields, want)
 		}
@@ -187,6 +188,9 @@ func TestDatedTicketsReadsTheTrackersDates(t *testing.T) {
 	}
 	if p1.Summary != "Upgrade app to 1.1" {
 		t.Errorf("PROJ-1 summary = %q", p1.Summary)
+	}
+	if p1.Parent != "PROJ-100" || byKey["PROJ-2"].Parent != "" {
+		t.Errorf("parents = %q, %q; want the epic's key, and empty at the project root", p1.Parent, byKey["PROJ-2"].Parent)
 	}
 	// The earliest move into any indeterminate status, not the latest and not the
 	// first entry in the list.

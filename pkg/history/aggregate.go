@@ -57,6 +57,9 @@ type Report struct {
 	// Tracker is set when tickets have been read from the tracker, and says which
 	// fields came from there. Nil when the tracker has never been read.
 	Tracker *TrackerSummary `json:"tracker,omitempty"`
+	// TicketsExcluded is set when configuration leaves routes' tickets out of the
+	// ticket counts, and says how many it left out. Nil when nothing is excluded.
+	TicketsExcluded *ExcludedTickets `json:"tickets_excluded,omitempty"`
 
 	Caveats []string `json:"caveats,omitempty"`
 }
@@ -463,7 +466,9 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 		ticket string
 	}
 	closedTickets := map[itemTicket]bool{}
+	standings := feedStandings{}
 	for _, e := range events {
+		becameKEV, decayed := standings.observe(e)
 		switch e.Kind {
 		case KindTicketRaised:
 			delete(closedTickets, itemTicket{e.ItemID, e.Key, e.Payload.Ticket})
@@ -583,15 +588,11 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 				partly[i][e.ItemID] = true
 				rangePartly[e.ItemID] = true
 			}
-			for _, s := range e.Payload.SignalsRemoved {
-				if s == SignalEPSSHigh {
-					m.EPSSDecayed++
-				}
+			if decayed {
+				m.EPSSDecayed++
 			}
-			for _, s := range e.Payload.SignalsAdded {
-				if s == "kev" {
-					m.BecameKnownExploited++
-				}
+			if becameKEV {
+				m.BecameKnownExploited++
 			}
 		case KindTicketRaised:
 			m.TicketsRaised++

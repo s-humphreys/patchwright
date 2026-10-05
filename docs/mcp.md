@@ -404,6 +404,8 @@ sentence, including that a CVE which only left KEV or whose EPSS fell is not one
 Items [remediated by decommissioning](history.md#remediated-by-decommissioning) are
 `movement.decommissioned`, with `movement.remediated` the fixed items plus those, and
 `totals.decommissioned` their CVEs (KEV, EPSS above 0.5, ticketed and not), each once.
+When routes are [left out of the ticket counts](history.md#leaving-a-routes-tickets-out-of-the-counts),
+`tickets_excluded` says which and how many, and a sentence says the same.
 The summary states them in their own sentence, says they are also among those left
 without a fix, and gives the combined remediated items and CVEs.
 

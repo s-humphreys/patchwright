@@ -816,7 +816,7 @@ func (j JiraConfig) validateRoutes(writing bool) error {
 			return fmt.Errorf("jira route %q: %w", r.Name, err)
 		}
 	}
-	return nil
+	return j.validateAnalytics()
 }
 
 // validateTracker checks one resolved route: everything needed to raise a ticket
@@ -930,6 +930,61 @@ type TicketRoute struct {
 	PriorityMap map[string]string `yaml:"priorityMap"`
 	DueDays     map[string]int    `yaml:"dueDays"`
 	Labels      []string          `yaml:"labels"`
+
+	// CountInAnalytics, set false, leaves this route's tickets out of the ticket
+	// counts the history page, its API and trend_report report: a test or sandbox
+	// epic whose tickets are not remediation work. They are still raised, reconciled
+	// and closed as on any route. Identified afterwards by project and epic, so the
+	// route needs an epic of its own unless no counted route writes to its project.
+	CountInAnalytics *bool `yaml:"countInAnalytics"`
+}
+
+// AnalyticsScope is where an excluded route's tickets live: a project, and the
+// epic they are filed under when the route sets one.
+type AnalyticsScope struct {
+	Route   string
+	Project string
+	Epic    string
+}
+
+// AnalyticsExclusions lists the scopes of the routes whose tickets are left out of
+// the ticket counts.
+func (c JiraConfig) AnalyticsExclusions() []AnalyticsScope {
+	var out []AnalyticsScope
+	for _, r := range c.Routes {
+		if r.CountInAnalytics == nil || *r.CountInAnalytics {
+			continue
+		}
+		resolved := c.Resolve(r)
+		out = append(out, AnalyticsScope{Route: r.Name, Project: resolved.Project, Epic: resolved.Epic})
+	}
+	return out
+}
+
+// validateAnalytics checks every excluded route's tickets can be told apart from a
+// counted route's: by an epic no counted route on the project shares, or by a
+// project no counted route writes to.
+func (c JiraConfig) validateAnalytics() error {
+	for _, ex := range c.AnalyticsExclusions() {
+		for _, r := range c.Routes {
+			if r.CountInAnalytics != nil && !*r.CountInAnalytics {
+				continue
+			}
+			counted := c.Resolve(r)
+			if counted.Project != ex.Project {
+				continue
+			}
+			if ex.Epic == "" {
+				return fmt.Errorf("jira route %q: countInAnalytics false needs an epic, or a project no counted route "+
+					"writes to: route %q also raises tickets on %s, and the two could not be told apart", ex.Route, r.Name, ex.Project)
+			}
+			if counted.Epic == ex.Epic {
+				return fmt.Errorf("jira route %q: countInAnalytics false, but counted route %q files under the same epic %s, "+
+					"so the two could not be told apart", ex.Route, r.Name, ex.Epic)
+			}
+		}
+	}
+	return nil
 }
 
 // Resolve returns the configuration for a route: the base with this route's
