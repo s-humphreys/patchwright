@@ -43,6 +43,9 @@ type TrendReport struct {
 
 	Periods []history.Movement  `json:"periods"`
 	Open    history.OpenSummary `json:"open"`
+	// TicketsExcluded says which routes' tickets the ticket counts leave out, as
+	// configured, and how many. Nil when none are.
+	TicketsExcluded *history.ExcludedTickets `json:"tickets_excluded,omitempty"`
 }
 
 // Direction is the risk score at the two ends of the range.
@@ -78,6 +81,10 @@ type TrendTotals struct {
 	TicketsClosedFindingOpen int `json:"tickets_closed_finding_open"`
 	EPSSDecayed              int `json:"epss_decayed"`
 	BecameKnownExploited     int `json:"became_known_exploited"`
+	// Decommissioned is the lapsed items later credited as remediated by removing
+	// their workloads; still counted in Lapsed. Remediated is Resolved plus these.
+	Decommissioned int `json:"decommissioned"`
+	Remediated     int `json:"remediated"`
 	// MedianDaysToResolve is the median of the per-period medians, weighted by how
 	// many resolved in each; nil when nothing resolved.
 	MedianDaysToResolve *float64       `json:"median_days_to_resolve,omitempty"`
@@ -106,7 +113,7 @@ const flatBand = 5.0
 func NewTrendReport(rep history.Report) TrendReport {
 	out := TrendReport{
 		Caveats: append([]string{}, rep.Caveats...), Since: rep.Since, Until: rep.Until, Bucket: string(rep.Bucket),
-		FirstRecorded: rep.FirstRecorded, Periods: rep.Movement, Open: rep.Open, Totals: rep.Totals,
+		FirstRecorded: rep.FirstRecorded, Periods: rep.Movement, Open: rep.Open, Totals: rep.Totals, TicketsExcluded: rep.TicketsExcluded,
 		BySignal: map[string]history.Counts{}, ByRule: map[string]history.Counts{}, ByTeam: map[string]history.Counts{},
 		Movement: TrendTotals{LapseReasons: map[string]int{}, TicketsClosedByTool: map[string]int{}},
 	}
@@ -128,6 +135,7 @@ func NewTrendReport(rep history.Report) TrendReport {
 		t.ResolvedTicketed += m.ResolvedTicketed
 		t.ResolvedUnticketed += m.ResolvedUnticketed
 		t.Lapsed += m.Lapsed
+		t.Decommissioned += m.Decommissioned.Items
 		t.Reassigned += m.Reassigned
 		t.TicketsRaised += m.TicketsRaised
 		t.TicketsClosed += m.TicketsClosed
@@ -147,6 +155,7 @@ func NewTrendReport(rep history.Report) TrendReport {
 		sumCounts(out.ByRule, m.ByRule)
 		sumCounts(out.ByTeam, m.ByTeam)
 	}
+	out.Movement.Remediated = out.Movement.Resolved + out.Movement.Decommissioned
 	if med, ok := weightedMedian(medians); ok {
 		out.Movement.MedianDaysToResolve = &med
 	}
@@ -282,8 +291,13 @@ func trendSummary(r TrendReport) []string {
 	out = append(out, fmt.Sprintf("%d work items opened and %d were fixed (confirmed): they left the queue with evidence the upgrade landed. Of those, %d were ticketed work and %d landed by another route (an update bot, a Flux automation, a rebuild done in passing). A work item is one service and the one upgrade that would fix it; the fixed ones cleared %d distinct CVEs, %d of them known-exploited (summed over periods, so a CVE cleared in two periods counts twice).",
 		m.Opened, m.Resolved, m.ResolvedTicketed, m.ResolvedUnticketed, m.CVEsResolved, m.KEVCVEsResolved))
 	if m.Lapsed > 0 {
-		out = append(out, fmt.Sprintf("%d items left without a fix: they left the queue without evidence the upgrade landed (stopped running, dropped below the rules, no longer reported), and are not counted as remediation. Reasons: %s.",
+		out = append(out, fmt.Sprintf("%d items left without a fix: they left the queue without evidence the upgrade landed (stopped running, dropped below the rules, no longer reported), and are not counted as remediation in themselves. Reasons: %s.",
 			m.Lapsed, describeCounts(m.LapseReasons)))
+	}
+	if d := r.Totals.Decommissioned; d.Items > 0 {
+		out = append(out, fmt.Sprintf("Remediated by decommissioning: %d items (%d ticketed) whose workloads were removed and stayed gone for the decommission window, with every assessment reading every source and the image running nowhere else, carrying %d distinct CVEs, %d of them known-exploited and %d with EPSS above 0.5 (ticketed %d, %d known-exploited; other routes %d, %d known-exploited). They are also among those left without a fix, credited to the period they disappeared, and a CVE already cleared on the item is not counted again. With the fixed items, %d items were remediated, clearing %d distinct CVEs (%d known-exploited).",
+			d.Items, d.ItemsTicketed, d.CVEs, d.KEV, d.EPSSHigh, d.Ticketed.CVEs, d.Ticketed.KEV, d.Unticketed.CVEs, d.Unticketed.KEV,
+			r.Totals.RemediatedItems, r.Totals.RemediatedCVEs.CVEs, r.Totals.RemediatedCVEs.KEV))
 	}
 	if c := r.Totals.Cleared; c.CVEsCleared > 0 {
 		out = append(out, fmt.Sprintf("Counting CVEs rather than items, and including items still open: %d distinct CVEs were cleared with evidence of remediation, %d of them known-exploited and %d with EPSS above 0.5. Ticketed work cleared %d (%d known-exploited, %d EPSS above 0.5) and other routes %d (%d known-exploited, %d EPSS above 0.5). That is the fixed items' CVEs plus those that left %d items still in the queue because the running image was replaced; each CVE is counted once across the range, and a CVE that only left KEV or whose EPSS fell is not counted.",
@@ -311,6 +325,10 @@ func trendSummary(r TrendReport) []string {
 	if m.TrackerTicketsRaised != nil {
 		out = append(out, fmt.Sprintf("By the tracker's own dates, %d tickets were raised and %d closed in this range, including any raised by hand or before the record began; those are tickets, not resolutions, and carry no rule or signal.",
 			*m.TrackerTicketsRaised, deref(m.TrackerTicketsClosed)))
+	}
+	if ex := r.TicketsExcluded; ex != nil {
+		out = append(out, fmt.Sprintf("Every ticket count here leaves out %d tickets on %s, as configured: %d raised and %d closed by the record, %d raised and %d closed by the tracker. They are still reconciled like any other ticket.",
+			ex.Tickets, joinAnd(ex.Routes), ex.TicketsRaised, ex.TicketsClosed, ex.TrackerTicketsRaised, ex.TrackerTicketsClosed))
 	}
 	if n := r.Open.ClosedTicketFindingOpen; n != nil && *n > 0 {
 		out = append(out, fmt.Sprintf("%d open items had their ticket closed while the finding stayed open and have no ticket now (days since the close: %s).",

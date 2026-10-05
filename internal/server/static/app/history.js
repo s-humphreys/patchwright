@@ -38,7 +38,30 @@ function pct(n, d) {
 /** withMovement keeps the periods in which anything happened, plus the latest. */
 function activePeriods(movement) {
   const rows = movement || [];
-  return rows.filter((m, i) => i === rows.length - 1 || m.baseline || m.opened || m.resolved || m.lapsed || m.tickets_closed || m.cves_cleared);
+  return rows.filter((m, i) => i === rows.length - 1 || m.baseline || m.opened || m.resolved || m.lapsed || m.tickets_closed || m.cves_cleared || m.decommissioned?.items);
+}
+
+/**
+ * decommissionLines state the range's remediation by decommissioning, and fixed plus
+ * decommissioned as one remediated figure, from the totals so each CVE counts once.
+ * Nothing from a server that predates the field, rather than a zero it never measured.
+ */
+function decommissionLines(t) {
+  const d = t?.decommissioned;
+  if (!d) return "";
+  const kev = d.ticketed?.kev || 0, kevOther = d.unticketed?.kev || 0;
+  const r = t.remediated_cves || {};
+  return `<div class="dr"><dt title="Items left without a fix because nothing ran them, that then stayed gone for the decommission window with every assessment reading every source and the image running nowhere else. Credited to the period they disappeared, once the window has passed; they stay among those left without a fix too">Remediated by decommissioning</dt>
+      <dd><strong class="ok">${fmt(d.items)}</strong> work item${d.items === 1 ? "" : "s"} switched off, carrying ${fmt(d.kev)} known-exploited (KEV) · ${fmt(d.epss_high)} with EPSS above 0.5 · ${fmt(d.cves)} CVEs in all. KEVs: ${fmt(kev)} on ticketed items, ${fmt(kevOther)} otherwise</dd></div>
+    <div class="dr"><dt title="Fixed (confirmed) plus remediated by decommissioning, each CVE once">Remediated</dt>
+      <dd><strong class="ok">${fmt(t.remediated_items)}</strong> work items fixed (confirmed) or decommissioned, clearing ${fmt(r.cves)} CVEs (${fmt(r.kev)} known-exploited, ${fmt(r.epss_high)} with EPSS above 0.5)</dd></div>`;
+}
+
+/** decommissionCell is one period's items remediated by decommissioning. */
+function decommissionCell(m) {
+  const d = m.decommissioned;
+  if (!d) return `<td class="muted">-</td>`;
+  return `<td>${fmt(d.items)}${d.kev ? ` <span class="sub">(${fmt(d.kev)} KEV)</span>` : ""}</td>`;
 }
 
 /**
@@ -79,6 +102,7 @@ function caveatsPanel(h, status) {
   // data and this one note carries the reading of it.
   items.push("A <strong>work item</strong> is one service and the one upgrade that would fix it: the unit a queue row and a ticket share. Every count below is work items unless it says CVEs.");
   items.push("<strong>Fixed (confirmed)</strong> means the item left the queue with evidence the upgrade landed: every image still reported, checked, on the latest version, and running. <strong>Left without a fix</strong> is leaving without that evidence, and is never counted as remediation.");
+  items.push("<strong>Remediated by decommissioning</strong> is items left without a fix because nothing ran them that then stayed gone for the decommission window, every assessment in it reading every source and the image running nowhere else. It is credited to the period the workloads disappeared, once the window has passed, so recent periods can still rise; those items stay among those left without a fix. <strong>Remediated</strong> is fixed (confirmed) plus these. Recorded from the release that added it onward.");
   items.push("<strong>CVEs cleared, including from items still open</strong> adds to the fixed items' CVEs those that left an item still in the queue, when its running image was replaced, both runs scanned it the same way and it kept running everywhere it ran. A CVE that only dropped off KEV, or whose EPSS fell, is not cleared. Recorded from the release that added it onward.");
   items.push("Each row of the direction table is the last assessment of its period. A period with one run is a point, not a trend.");
   items.push("Open work items by signal are counted at the last assessment of each period, each item once under its most severe signal. EPSS is a forecast, so an item whose score decays below 0.5 moves out of that band without anything being fixed; the count of those sits under the chart.");
@@ -133,21 +157,24 @@ function movementPanel(h) {
     totals.cves = h.totals.cves_resolved || 0;
     totals.kev = h.totals.kev_cves_resolved || 0;
   }
+  const decom = !!h.totals?.decommissioned;
   const rows = periods.map((m) => `<tr>
       <td>${esc(m.period)}</td>${totals.baseline ? `<td class="muted">${fmt(m.baseline)}</td>` : ""}<td>${fmt(m.opened)}</td>
       <td><strong class="ok">${fmt(m.resolved)}</strong></td>
       <td>${fmt(m.cves_resolved)}${m.kev_cves_resolved ? ` <span class="sub">(${fmt(m.kev_cves_resolved)} KEV)</span>` : ""}</td>
       ${h.totals ? clearedCell(m) : ""}
+      ${decom ? decommissionCell(m) : ""}
       <td class="muted" title="${esc(Object.entries(m.lapse_reasons || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "none left without a fix")}">${fmt(m.lapsed)}</td>
       <td class="muted">${fmt(m.reassigned)}</td>
       <td>${m.median_days_to_resolve != null ? `${Math.round(m.median_days_to_resolve)}d` : "-"}</td></tr>`).join("");
   return `<section class="panel"><h3>Movement, in work items</h3>
     <p class="sub unit">A work item is one service and the one upgrade that would fix it. <strong>Fixed (confirmed)</strong> means it left the queue with evidence the upgrade landed; <strong>left without a fix</strong> is everything else that left the queue: it stopped running, dropped below the rules, or is no longer reported.</p>
     <div class="dr"><dt>Across the range</dt>
-      <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> fixed (confirmed), clearing ${fmt(totals.cves)} CVEs${totals.kev ? ` (${fmt(totals.kev)} known-exploited)` : ""} · <span class="muted">${fmt(totals.lapsed)} left without a fix</span></dd></div>
+      <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> fixed (confirmed), clearing ${fmt(totals.cves)} CVEs${totals.kev ? ` (${fmt(totals.kev)} known-exploited)` : ""}${decom ? ` · <strong class="ok">${fmt(h.totals.decommissioned.items)}</strong> remediated by decommissioning` : ""} · <span class="muted">${fmt(totals.lapsed)} left without a fix</span></dd></div>
+    ${decommissionLines(h.totals)}
     ${clearedLine(h.totals)}
     ${periods.length > 1 ? `<div class="chart-slot" data-chart="movement"></div>` : ""}
-    <table class="mini"><thead><tr><th>Period</th>${totals.baseline ? `<th title="Already open when the record began">Baseline</th>` : ""}<th title="Work items that entered the queue">Opened</th><th title="Left the queue with evidence the upgrade landed">Fixed (confirmed)</th><th title="Distinct CVEs carried by the fixed items">CVEs on fixed items</th>${h.totals ? `<th title="Distinct CVEs that left work items with evidence of remediation this period, including items still open. Each period counts its own; the range line above counts each CVE once">CVEs cleared, incl. items still open</th>` : ""}<th title="Left the queue without evidence the upgrade landed; hover a cell for why">Left without a fix</th><th title="Owner changed">Reassigned</th><th>Median days to fix</th></tr></thead>
+    <table class="mini"><thead><tr><th>Period</th>${totals.baseline ? `<th title="Already open when the record began">Baseline</th>` : ""}<th title="Work items that entered the queue">Opened</th><th title="Left the queue with evidence the upgrade landed">Fixed (confirmed)</th><th title="Distinct CVEs carried by the fixed items">CVEs on fixed items</th>${h.totals ? `<th title="Distinct CVEs that left work items with evidence of remediation this period, including items still open. Each period counts its own; the range line above counts each CVE once">CVEs cleared, incl. items still open</th>` : ""}${decom ? `<th title="Items whose workloads were removed and stayed gone for the decommission window, credited to the period they disappeared. Also counted as left without a fix">Remediated by decommissioning</th>` : ""}<th title="Left the queue without evidence the upgrade landed; hover a cell for why">Left without a fix</th><th title="Owner changed">Reassigned</th><th>Median days to fix</th></tr></thead>
     <tbody>${rows}</tbody></table>
   </section>`;
 }
@@ -190,9 +217,20 @@ function delineationPanel(h, tickets) {
     <tbody>${rows}</tbody></table>
     ${toolRows ? `<p class="sub">Closed by patchwright, by reason: ${toolRows}. The rest were closed by people.</p>` : ""}
     ${measured ? `<p class="sub">Against the due date: ${fmt(onTime)} of ${fmt(measured)} (${pct(onTime, measured)}) closed on time.${meanDaysToDue(periods)}</p>` : ""}
+    ${excludedNote(h.tickets_excluded)}
     ${cycleTimeTable(h)}
     ${ticketsPerDay(tickets)}
   </section>`;
+}
+
+/**
+ * excludedNote says which routes' tickets the counts leave out, as configured, and
+ * how many, so a ticket count never silently differs from the tracker's own.
+ */
+function excludedNote(ex) {
+  if (!ex) return "";
+  const routes = (ex.routes || []).map(esc).join("; ");
+  return `<p class="sub tickets-excluded">Ticket counts here leave out ${fmt(ex.tickets)} ticket${ex.tickets === 1 ? "" : "s"} on ${routes}, as configured: ${fmt(ex.tickets_raised)} raised and ${fmt(ex.tickets_closed)} closed by the record, ${fmt(ex.tracker_tickets_raised)} raised and ${fmt(ex.tracker_tickets_closed)} closed by the tracker. They are still reconciled like any other ticket.</p>`;
 }
 
 /** dayLabel renders a UTC calendar date, "2026-09-01", as "1 Sep 2026". */
@@ -213,7 +251,7 @@ function ticketsPerDay(body) {
       data-day="${esc(d.date)}" aria-pressed="false" aria-controls="ticketDayList"
       title="${esc(`${d.created} created ${dayLabel(d.date)}`)}">${esc(dayLabel(d.date, false))} <span class="n">${fmt(d.created)}</span></button></li>`).join("");
   return `<h4>Tickets created, per day</h4>
-    <p class="sub">Per day whatever the period above, by the tracker's created date: ${fmt(t.total)} in the range. Click a day, or choose one below, for its tickets.</p>
+    <p class="sub">Per day whatever the period above, by the tracker's created date: ${fmt(t.total)} in the range${t.excluded ? `, leaving out ${fmt(t.excluded)} on routes excluded from the counts` : ""}. Click a day, or choose one below, for its tickets.</p>
     <div class="chart-slot" data-chart="tickets-per-day"></div>
     <ul class="day-picks" aria-label="Days with tickets created">${picks}</ul>
     <div class="ticket-day-list" id="ticketDayList" hidden></div>`;
@@ -323,8 +361,8 @@ function signalsPanel(h) {
   const decayed = periods.reduce((n, m) => n + (m.epss_decayed || 0), 0);
   const becameKEV = periods.reduce((n, m) => n + (m.became_known_exploited || 0), 0);
   const figures = periods.length ? `
-    <div class="dr"><dt title="Left the EPSS band by score decay while open: not remediation">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
-    <div class="dr"><dt>Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>` : "";
+    <div class="dr"><dt title="Left the EPSS band by score decay while open, once per decay: not remediation. A CVE fixed, or a run whose exploit lookup failed, is not a decay">EPSS decayed below 0.5</dt><dd>${fmt(decayed)}</dd></div>
+    <div class="dr"><dt title="Once per move into KEV: an item counts again only after its exploited CVEs left it. A run that lost the KEV flags because the exploit lookup failed is not a move">Became known-exploited while open</dt><dd>${fmt(becameKEV)}</dd></div>` : "";
   return `<section class="panel"><h3>Open work items by signal</h3>
     ${body}${figures}
   </section>`;

@@ -19,6 +19,8 @@ type TrackerTicket struct {
 	// Summary is the ticket's title. Empty for a ticket last read before titles
 	// were, until the tracker is read in full again.
 	Summary string `json:"summary,omitempty"`
+	// Parent is the epic the ticket is filed under, empty at the project root.
+	Parent string `json:"parent,omitempty"`
 	// ItemKey is the work item the ticket was matched to by image, best effort, and
 	// ItemOpenedAt when that item's current span opened. Empty for a ticket whose
 	// images match nothing open, which is every ticket on an item that closed before
@@ -54,6 +56,9 @@ type TicketIndexState struct {
 	Tickets      int
 	FirstCreated time.Time
 	LastSynced   time.Time
+	// Unparented is how many of the tickets the last read touched were stored
+	// before their epic was read, which a full read corrects once.
+	Unparented int
 }
 
 // TicketFetcher reads the tracker: tickets updated within the window, or every
@@ -73,16 +78,16 @@ type TicketSync struct {
 // leave a ticket unread; the upsert makes re-reading free.
 const minTicketWindow = 48 * time.Hour
 
-// SyncTickets reads the tracker into the store: everything when full is set or the
-// index is empty, otherwise what changed since the last sync or in the last two
-// days, whichever is longer. Tickets are matched to the open items first, so a
+// SyncTickets reads the tracker into the store: everything when full is set, the
+// index is empty or holds tickets read before their epic was, otherwise what
+// changed since the last sync or in the last two days, whichever is longer. Tickets are matched to the open items first, so a
 // close can later be dated against the item it left open.
 func SyncTickets(ctx context.Context, store Store, fetch TicketFetcher, full bool, now time.Time) (TicketSync, error) {
 	idx, err := store.TicketsIndexed(ctx)
 	if err != nil {
 		return TicketSync{}, err
 	}
-	out := TicketSync{Full: full || idx.Tickets == 0}
+	out := TicketSync{Full: full || idx.Tickets == 0 || idx.Unparented > 0}
 	if !out.Full {
 		out.Window = minTicketWindow
 		if since := now.Sub(idx.LastSynced) + time.Hour; since > out.Window {

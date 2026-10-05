@@ -26,6 +26,17 @@ type HistoryConfig struct {
 	// few repositories from one response and return them in the next; counting each
 	// as a lapse and a reopening would turn that jitter into movement. Default 3.
 	LapseAfter int `yaml:"lapseAfter"`
+	// DecommissionAfter is how long an item that lapsed because nothing runs it any
+	// more must stay gone, with every assessment reading every source and its image
+	// running nowhere else, before its removal is credited as remediation. Days
+	// ("7d") or a Go duration. Default 7d.
+	DecommissionAfter string `yaml:"decommissionAfter"`
+}
+
+// DecommissionDuration parses DecommissionAfter. Zero with no error when unset,
+// which the record reads as its default.
+func (h HistoryConfig) DecommissionDuration() (time.Duration, error) {
+	return parseRetention(h.DecommissionAfter)
 }
 
 // RetentionDuration parses Retention. Zero with no error when unset.
@@ -36,6 +47,9 @@ func (h HistoryConfig) RetentionDuration() (time.Duration, error) {
 func (h HistoryConfig) validate() error {
 	if _, err := parseRetention(h.Retention); err != nil {
 		return fmt.Errorf("history.retention: %w", err)
+	}
+	if _, err := parseRetention(h.DecommissionAfter); err != nil {
+		return fmt.Errorf("history.decommissionAfter: %w", err)
 	}
 	if h.LapseAfter < 0 {
 		return fmt.Errorf("history.lapseAfter: %d must be at least 1 (1 lapses on the first absent assessment)", h.LapseAfter)

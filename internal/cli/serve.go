@@ -14,6 +14,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/internal/server"
 	"github.com/s-humphreys/patchwright/pkg/config"
+	"github.com/s-humphreys/patchwright/pkg/history"
 	"github.com/s-humphreys/patchwright/pkg/history/postgres"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
@@ -246,11 +247,20 @@ func newServeCmd() *cobra.Command {
 						"which services carried exploitable vulnerabilities, and how long to keep it is a "+
 						"decision to make, not a default to inherit", envHistoryDSN)
 				}
+				decommissionAfter, err := cfg.History.DecommissionDuration()
+				if err != nil {
+					return err
+				}
 				store := postgres.NewLazy(postgres.Options{
 					DSN: dsn, Auth: postgres.Auth(cfg.History.Auth), Password: os.Getenv(envHistoryPassword),
 				})
 				defer store.Close()
-				srv = srv.WithHistory(store, retention).WithLapseAfter(cfg.History.LapseAfter)
+				var excluded []history.TicketScope
+				for _, sc := range cfg.Jira.AnalyticsExclusions() {
+					excluded = append(excluded, history.TicketScope{Route: sc.Route, Project: sc.Project, Epic: sc.Epic})
+				}
+				srv = srv.WithHistory(store, retention).WithLapseAfter(cfg.History.LapseAfter).
+					WithDecommissionAfter(decommissionAfter).WithTicketExclusions(excluded)
 				slog.InfoContext(cmd.Context(), "history enabled",
 					"retention", cfg.History.Retention, "auth", authSummary(cfg.History.Auth))
 			}

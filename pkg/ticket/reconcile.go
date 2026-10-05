@@ -97,7 +97,7 @@ type Action struct {
 	NoLongerActionable bool
 	// Reason is the machine-readable cause of a close, a done-note or a hold:
 	// upgrade-landed, not-running, no-longer-actionable, upgrade-clears-nothing,
-	// operator-chosen, unmeasured.
+	// operator-chosen, unmeasured, decommissioned.
 	Reason string
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
@@ -141,6 +141,11 @@ type ReconcileInput struct {
 	// Once the history lapses the item the repository leaves this set, and the
 	// close follows on that run.
 	RecentlyReported map[string]bool
+	// Decommissioned are repositories the history record has credited as removed:
+	// gone for its decommission window, with every run reading every source and the
+	// image running nowhere else. A ticket whose images are all decommissioned, and
+	// none seen running now, is done by decommission rather than blind.
+	Decommissioned map[string]bool
 }
 
 // Reconcile turns the difference between drafts and open tickets into actions.
@@ -349,6 +354,10 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				})
 				continue
 			}
+			if decommissioned(images, in.Decommissioned, byRepo(in.Findings)) {
+				out = append(out, decommissionedAction(t, in.Config.ForProject(projectOf(t.Key)), images))
+				continue
+			}
 			if blind := unknownImages(images, byImage); len(blind) > 0 {
 				out = append(out, Action{
 					Kind: ActionNoteDone, TicketKey: t.Key,
@@ -405,7 +414,56 @@ const (
 	// ReasonUnmeasured is a hold on a change whose effect could not be measured
 	// this run, because a measurement it depends on failed.
 	ReasonUnmeasured = "unmeasured"
+	// ReasonDecommissioned is a ticket whose images the history record credited as
+	// removed from every cluster for its decommission window.
+	ReasonDecommissioned = "decommissioned"
 )
+
+// decommissioned reports that every image a ticket covers has been credited as
+// decommissioned and that nothing in this assessment shows one running, or with
+// liveness unknown: a decommission is history, and an image back on a cluster
+// since is not finished.
+func decommissioned(images []string, credited map[string]bool, byRepo map[string][]sink.FindingView) bool {
+	if len(images) == 0 || len(credited) == 0 {
+		return false
+	}
+	for _, img := range images {
+		if !credited[img] {
+			return false
+		}
+		for _, f := range byRepo[img] {
+			if f.Liveness == nil || f.Liveness.Live {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// decommissionedAction closes an untouched ticket whose images were decommissioned,
+// through the same no-longer-actionable transition as an image switched off, and
+// comments on one somebody picked up. Removing the workloads is remediation, so the
+// close says so; nobody actioned the ticket, which the not-worked status records.
+func decommissionedAction(t Existing, cfg config.JiraConfig, images []string) Action {
+	detail := "nothing has run " + strings.Join(images, ", ") + " for the history record's decommission " +
+		"window, every assessment in that time read every source, and the image runs nowhere else. " +
+		"Removing the workloads remediated what this ticket was raised for."
+	if cfg.CloseTransitionNoLongerActionable != "" && t.Untouched() {
+		return Action{
+			Kind: ActionClose, TicketKey: t.Key, Unworked: true, NoLongerActionable: true, Reason: ReasonDecommissioned,
+			Message: "Closing: the workloads this ticket covers were decommissioned.\n\n" + detail +
+				"\n\nNobody had picked this ticket up, so it is being closed as not-worked. Reopen if the service is coming back.",
+			Why: "decommissioned: its images have run nowhere for the decommission window",
+		}
+	}
+	return Action{
+		Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonDecommissioned,
+		Message: "patchwright credits this ticket's images as decommissioned: " + detail +
+			" Left open deliberately: closing is a human decision.",
+		Dedupe: "note-done:" + ReasonDecommissioned,
+		Why:    "decommissioned: its images have run nowhere for the decommission window",
+	}
+}
 
 // clearsNothing reports that every one of a ticket's images was skipped because
 // the change on offer clears nothing. All of them, not any: a ticket with one image

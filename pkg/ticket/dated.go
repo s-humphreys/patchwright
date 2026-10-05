@@ -23,6 +23,9 @@ type Dated struct {
 	Project string
 	// Summary is the issue's title.
 	Summary string
+	// Parent is the key of the epic the ticket is filed under, empty at the
+	// project root. It is how a route's tickets are told apart afterwards.
+	Parent string
 	// Images are what the ticket covers, read from the route's image field.
 	Images   []string
 	Status   string
@@ -185,7 +188,7 @@ func (j *Jira) datedIn(ctx context.Context, cfg config.JiraConfig, epics []strin
 		}
 		q := url.Values{}
 		q.Set("jql", jql)
-		q.Set("fields", "summary,created,resolutiondate,duedate,status,statuscategorychangedate,"+jiraImageFieldName(cfg))
+		q.Set("fields", "summary,parent,created,resolutiondate,duedate,status,statuscategorychangedate,"+jiraImageFieldName(cfg))
 		// Half the usual page: each issue carries its change history, and a
 		// project with long-lived tickets makes a hundred of them a large body.
 		q.Set("maxResults", "50")
@@ -248,6 +251,9 @@ func parseDated(cfg config.JiraConfig, key string, raw json.RawMessage) (Dated, 
 				Key string `json:"key"`
 			} `json:"statusCategory"`
 		} `json:"status"`
+		Parent *struct {
+			Key string `json:"key"`
+		} `json:"parent"`
 	}
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return Dated{}, fmt.Errorf("decode %s fields: %w", key, err)
@@ -260,6 +266,9 @@ func parseDated(cfg config.JiraConfig, key string, raw json.RawMessage) (Dated, 
 	d := Dated{
 		Key: key, Project: project, Summary: f.Summary, Created: created,
 		Status: f.Status.Name, Category: f.Status.StatusCategory.Key, Fields: raw,
+	}
+	if f.Parent != nil {
+		d.Parent = f.Parent.Key
 	}
 	var loose map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &loose); err == nil {

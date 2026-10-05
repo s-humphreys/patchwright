@@ -180,6 +180,7 @@ func TestSyncTicketsWindow(t *testing.T) {
 		{name: "asked to backfill", idx: TicketIndexState{Tickets: 3, LastSynced: now.Add(-time.Hour)}, full: true, wantFull: true},
 		{name: "recent sync reads two days", idx: TicketIndexState{Tickets: 3, LastSynced: now.Add(-time.Hour)}, wantWindow: 48 * time.Hour},
 		{name: "old sync reads since then", idx: TicketIndexState{Tickets: 3, LastSynced: now.Add(-5 * 24 * time.Hour)}, wantWindow: 5*24*time.Hour + time.Hour},
+		{name: "tickets read before their epic read everything once", idx: TicketIndexState{Tickets: 3, LastSynced: now.Add(-time.Hour), Unparented: 2}, wantFull: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

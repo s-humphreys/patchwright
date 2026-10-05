@@ -79,6 +79,26 @@ test.describe('analytics page', () => {
     await expect(lapsedCell).toHaveCount(1);
   });
 
+  test('remediation by decommissioning sits beside fixed, with fixed plus decommissioned as one remediated figure', async ({ page }) => {
+    await page.goto('/analytics');
+    const movement = page.locator('section.panel', { hasText: 'Movement, in work items' });
+    await expect(movement).toContainText('89 fixed (confirmed), clearing 9,850 CVEs (30 known-exploited) · 4 remediated by decommissioning · 32 left without a fix');
+    await expect(movement.locator('.dr').filter({ has: page.locator('dt', { hasText: /^Remediated by decommissioning$/ }) }))
+      .toContainText('4 work items switched off, carrying 3 known-exploited (KEV) · 5 with EPSS above 0.5 · 310 CVEs in all. KEVs: 2 on ticketed items, 1 otherwise');
+    await expect(movement.locator('.dr').filter({ has: page.locator('dt', { hasText: /^Remediated$/ }) }))
+      .toContainText('93 work items fixed (confirmed) or decommissioned, clearing 11,100 CVEs (42 known-exploited, 48 with EPSS above 0.5)');
+    await expect(movement.locator('table.mini thead')).toContainText('Remediated by decommissioning');
+    await expect(movement.locator('tbody tr', { hasText: '2026-10' })).toContainText('4 (3 KEV)');
+  });
+
+  test('tickets left out of the counts by configuration are said in the ticketed panel and under the per-day chart', async ({ page }) => {
+    await page.goto('/analytics');
+    const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
+    await expect(panel.locator('p.tickets-excluded')).toContainText(
+      'Ticket counts here leave out 4 tickets on test (project PROJ, epic PROJ-9), as configured: 4 raised and 2 closed by the record, 4 raised and 2 closed by the tracker.');
+    await expect(panel).toContainText('10 in the range, leaving out 4 on routes excluded from the counts.');
+  });
+
   test('KEVs and EPSS-high CVEs cleared include items still open, once across the range, split by ticketed work', async ({ page }) => {
     await page.goto('/analytics');
     const movement = page.locator('section.panel', { hasText: 'Movement, in work items' });

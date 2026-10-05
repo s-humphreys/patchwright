@@ -52,6 +52,32 @@ func TestHistoryConfigLoadsAndValidates(t *testing.T) {
 	if _, err := Load(write("ret.yaml", "history:\n  retention: soon\n")); err == nil || !strings.Contains(err.Error(), "history.retention") {
 		t.Errorf("bad retention should fail at load, got %v", err)
 	}
+	for _, c := range []struct {
+		body string
+		want time.Duration
+		err  bool
+	}{
+		{"history:\n  retention: 400d\n", 0, false},
+		{"history:\n  decommissionAfter: 14d\n", 14 * 24 * time.Hour, false},
+		{"history:\n  decommissionAfter: 36h\n", 36 * time.Hour, false},
+		{"history:\n  decommissionAfter: 0d\n", 0, true},
+		{"history:\n  decommissionAfter: a week\n", 0, true},
+	} {
+		cfg, err := Load(write("decom.yaml", c.body))
+		if c.err {
+			if err == nil || !strings.Contains(err.Error(), "history.decommissionAfter") {
+				t.Errorf("%q: want a decommissionAfter error, got %v", c.body, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: %v", c.body, err)
+			continue
+		}
+		if got, err := cfg.History.DecommissionDuration(); err != nil || got != c.want {
+			t.Errorf("%q: decommission = %v (%v), want %v", c.body, got, err, c.want)
+		}
+	}
 	// Unset is allowed: history is off unless a DSN is present, and the check that
 	// retention is set when it is on belongs to the command that has the DSN.
 	if _, err := Load(write("none.yaml", "owners: []\n")); err != nil {
