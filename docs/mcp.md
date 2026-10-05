@@ -393,6 +393,14 @@ The summary states the three intervals apart, because one number would flatter
 whichever part a team is good at, and says of the tracker counts that they are
 tickets, not resolutions. Without tracker data none of this appears.
 
+`totals` carries the range's CVE figures with each CVE counted once, where the
+movement sums count a CVE cleared in two periods twice. `cves_cleared`,
+`kev_cves_cleared` and `epss_high_cves_cleared` include CVEs that left items still in
+the queue (see [CVEs cleared from items still open](history.md#cves-cleared-from-items-still-open)),
+split into `cleared_ticketed` and `cleared_unticketed`; `cves_resolved` keeps its
+meaning, the fixed items' CVEs only. The summary states the cleared figures in one
+sentence, including that a CVE which only left KEV or whose EPSS fell is not one.
+
 Without a history store the tool says so, rather than answering from an empty record.
 
 ## What is deliberately absent

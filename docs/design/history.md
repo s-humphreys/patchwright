@@ -276,6 +276,25 @@ not. Ticket reconciliation holds a ticket whose image is inside that window rath
 than telling it coverage is gone. The first day's events are left as written; the
 caveats say when the record began.
 
+## Learned from the first month: fixes that leave the item open
+
+An upgrade that cleared every known-exploited CVE on an item but left lesser ones
+recorded nothing, because CVEs were only credited when an item resolved. Security's
+headline questions ("KEVs resolved this month", "EPSS above 0.5 resolved") are about
+CVEs, so the record undercounted exactly the work they asked about.
+
+A `changed` event now credits the CVEs that left an item still open, on evidence held
+to the same standard as a resolution: both runs scanned every image by the same
+source, everything ran in both, nothing ran in fewer places, and the image itself was
+replaced. Without the last condition a scanner's answer moving between calls would be
+reported as remediation, which is the failure the evidence rule exists to prevent. To
+make "between consecutive assessments" true, each run refreshes an open item's stored
+snapshot when its images, locations or scan state moved without a changed event;
+otherwise the comparison would be against whenever the item last changed. An item's
+CVE is credited once until it reappears, so the cleared totals (resolved items' CVEs
+plus partial clears) never count one CVE twice for one item. No new event kind or
+column was needed: the evidence rides in the snapshot and payload JSON.
+
 ## Considered and deferred: a separate UI deployment
 
 The page serves from process memory, and readiness means an assessment is cached.
