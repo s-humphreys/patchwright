@@ -65,9 +65,17 @@ func (fs feedStandings) observe(e Event) (becameKEV, decayed bool) {
 		return becameKEV, decayed
 	}
 
-	present := map[string]CVE{}
-	for _, c := range snap.CVEs {
-		present[c.ID] = c
+	// Only a signal leaving needs the CVEs by ID, and most changed events have none
+	// leave: built for every one, these maps were a quarter of a report's allocation.
+	var byID map[string]CVE
+	present := func() map[string]CVE {
+		if byID == nil {
+			byID = make(map[string]CVE, len(snap.CVEs))
+			for _, c := range snap.CVEs {
+				byID[c.ID] = c
+			}
+		}
+		return byID
 	}
 	// A run that missed a source cannot vouch for anything leaving, so the item
 	// keeps its standing through it, as through an outage.
@@ -76,7 +84,7 @@ func (fs feedStandings) observe(e Event) (becameKEV, decayed bool) {
 		becameKEV = !st.kev && (st.known || added(SignalKnownExploit))
 		st.kev, st.kevIDs = true, flagged(*snap)
 	} else if st.kev || (!st.known && removed(SignalKnownExploit)) {
-		switch still := stillPresent(st.kevIDs, present); {
+		switch still := stillPresent(st.kevIDs, present()); {
 		case partial:
 			st.kev = true
 		case st.kevIDs != nil:
@@ -94,17 +102,17 @@ func (fs feedStandings) observe(e Event) (becameKEV, decayed bool) {
 		if partial {
 			st.epss = true
 		} else if st.epssIDs != nil {
-			still := stillPresent(st.epssIDs, present)
+			still := stillPresent(st.epssIDs, present())
 			switch {
 			case len(still) == 0:
 				st.epss, st.epssIDs = false, nil
-			case unscored(still, present):
+			case unscored(still, present()):
 				st.epssIDs = still
 			default:
 				decayed = true
 				st.epss, st.epssIDs = false, nil
 			}
-		} else if len(snap.CVEs) > 0 && unscored(nil, present) {
+		} else if len(snap.CVEs) > 0 && unscored(nil, present()) {
 			st.epss = true
 		} else if len(e.Payload.CVEsRemoved) > 0 {
 			// Which CVEs were above the threshold is not known; one leaving with the

@@ -127,3 +127,29 @@ type Pruned struct {
 	Assessments int64 `json:"assessments"`
 	Tickets     int64 `json:"tickets"`
 }
+
+// eventChunk is how much of the record EachEvent reads at once.
+const eventChunk = 24 * time.Hour
+
+// EachEvent hands fn the events in [since, until), oldest first, reading them a day
+// at a time. Every changed event carries the item's whole snapshot, so a long
+// range's events run to hundreds of megabytes once decoded; a caller that folds or
+// filters them holds one day's worth instead, and no single read comes near the
+// store's query timeout.
+func EachEvent(ctx context.Context, store Store, since, until time.Time, fn func(Event)) error {
+	for from := since; from.Before(until); {
+		to := from.Add(eventChunk)
+		if to.After(until) {
+			to = until
+		}
+		events, err := store.Events(ctx, from, to)
+		if err != nil {
+			return err
+		}
+		for _, e := range events {
+			fn(e)
+		}
+		from = to
+	}
+	return nil
+}

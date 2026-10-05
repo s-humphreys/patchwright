@@ -474,10 +474,6 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 	if err != nil {
 		return history.Report{}, err
 	}
-	events, err := store.Events(ctx, rng.Since, rng.Until)
-	if err != nil {
-		return history.Report{}, err
-	}
 	open, err := store.Open(ctx)
 	if err != nil {
 		return history.Report{}, err
@@ -503,7 +499,7 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		if items == nil && assessments[i].ItemCount == 0 {
 			items = []history.Snapshot{}
 		}
-		assessments[i].Items = items
+		assessments[i].Items = history.SignalsOnly(items)
 	}
 	idx, err := store.TicketsIndexed(ctx)
 	if err != nil {
@@ -527,12 +523,23 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 			return history.Report{}, err
 		}
 	}
-	events, tickets, excluded := history.ExcludeTickets(rng, events, tickets, s.history.excluded)
+	// The events are folded as they are read rather than held: they are most of what
+	// the report reads, and a long range of them is more than a replica can hold.
+	exclusion, tickets := history.NewTicketExclusion(rng, tickets, s.history.excluded)
+	agg := history.NewAggregation(rng, assessments, open, first, now)
+	if err := history.EachEvent(ctx, store, rng.Since, rng.Until, func(e history.Event) {
+		if exclusion.Keep(&e) {
+			agg.Add(e)
+		}
+	}); err != nil {
+		return history.Report{}, err
+	}
+	excluded := exclusion.Excluded()
 	if idx.Tickets == 0 {
 		// Nothing could be told apart, so nothing was left out; the caveat says why.
 		excluded = nil
 	}
-	rep := history.Aggregate(rng, assessments, events, open, first, now)
+	rep := agg.Report()
 	rep.RetentionDays = int(s.history.retention.Hours() / 24)
 	rep.TicketsExcluded = excluded
 	if idx.Tickets > 0 {
