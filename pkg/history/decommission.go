@@ -217,3 +217,21 @@ func DecommissionedRepositories(events []Event) map[string]bool {
 	}
 	return out
 }
+
+// DecommissionEvent cuts an event down to what Decommissions reads of it, and
+// reports whether it reads the event at all, so a caller can hold the lookback's
+// events without every snapshot they carry. Lapsed and decommissioned events are
+// kept whole: a decommission repeats its lapse's payload.
+func DecommissionEvent(e Event) (Event, bool) {
+	switch e.Kind {
+	case KindLapsed, KindDecommissioned:
+		return e, true
+	case KindOpened, KindChanged, KindReassigned:
+		out := Event{ID: e.ID, ItemID: e.ItemID, Key: e.Key, Kind: e.Kind, At: e.At}
+		if e.Payload.Snapshot != nil {
+			out.Payload.Snapshot = &Snapshot{Repository: e.Payload.Snapshot.Repository}
+		}
+		return out, true
+	}
+	return Event{}, false
+}

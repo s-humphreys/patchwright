@@ -46,8 +46,34 @@ type ExcludedTickets struct {
 // must hold every ticket an event in the range can name, so a ticket raised before
 // the range and extended in it is still recognised. Nil when no scope is set.
 func ExcludeTickets(r Range, events []Event, tickets []TrackerTicket, scopes []TicketScope) ([]Event, []TrackerTicket, *ExcludedTickets) {
-	if len(scopes) == 0 {
+	x, keptTickets := NewTicketExclusion(r, tickets, scopes)
+	if x == nil {
 		return events, tickets, nil
+	}
+	var keptEvents []Event
+	for _, e := range events {
+		if x.Keep(&e) {
+			keptEvents = append(keptEvents, e)
+		}
+	}
+	return keptEvents, keptTickets, x.Excluded()
+}
+
+// TicketExclusion is ExcludeTickets one event at a time, for a caller that reads a
+// range's events in pieces. A nil exclusion keeps every event as it is.
+type TicketExclusion struct {
+	r        Range
+	excluded map[string]bool
+	out      *ExcludedTickets
+	dropped  []Event
+}
+
+// NewTicketExclusion returns the exclusion for scopes, and the tickets the counts
+// keep. tickets is as ExcludeTickets takes it. Nil, and tickets unchanged, when no
+// scope is set.
+func NewTicketExclusion(r Range, tickets []TrackerTicket, scopes []TicketScope) (*TicketExclusion, []TrackerTicket) {
+	if len(scopes) == 0 {
+		return nil, tickets
 	}
 	out := &ExcludedTickets{Routes: make([]string, 0, len(scopes))}
 	for _, s := range scopes {
@@ -78,22 +104,37 @@ func ExcludeTickets(r Range, events []Event, tickets []TrackerTicket, scopes []T
 			out.Tickets++
 		}
 	}
-	var keptEvents, dropped []Event
-	for _, e := range events {
-		if (e.Kind == KindTicketRaised || e.Kind == KindTicketClosed) && excluded[e.Payload.Ticket] {
-			dropped = append(dropped, e)
-			continue
-		}
-		e.Payload.Ticketed = ticketedWithout(e, excluded)
-		keptEvents = append(keptEvents, e)
+	return &TicketExclusion{r: r, excluded: excluded, out: out}, keptTickets
+}
+
+// Keep reports whether the counts read e, and drops excluded tickets from whether
+// it counts as ticketed.
+func (x *TicketExclusion) Keep(e *Event) bool {
+	if x == nil {
+		return true
 	}
+	if (e.Kind == KindTicketRaised || e.Kind == KindTicketClosed) && x.excluded[e.Payload.Ticket] {
+		x.dropped = append(x.dropped, *e)
+		return false
+	}
+	e.Payload.Ticketed = ticketedWithout(*e, x.excluded)
+	return true
+}
+
+// Excluded says what was left out of the events kept so far. Nil for a nil
+// exclusion.
+func (x *TicketExclusion) Excluded() *ExcludedTickets {
+	if x == nil {
+		return nil
+	}
+	out := *x.out
 	// Counted the way the report counts them, so the two add up to what it showed
 	// before the exclusion.
-	for _, m := range Aggregate(r, nil, dropped, nil, time.Time{}, r.Until).Movement {
+	for _, m := range Aggregate(x.r, nil, x.dropped, nil, time.Time{}, x.r.Until).Movement {
 		out.TicketsRaised += m.TicketsRaised
 		out.TicketsClosed += m.TicketsClosed
 	}
-	return keptEvents, keptTickets, out
+	return &out
 }
 
 // ticketedWithout is whether a ticket other than an excluded one covered the item an

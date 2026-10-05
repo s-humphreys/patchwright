@@ -380,250 +380,297 @@ func periodLabel(start time.Time, b Bucket) string {
 // items currently open. first is when the record began (zero when unknown): the
 // opened events of that first assessment are the baseline, not new work.
 func Aggregate(r Range, assessments []Assessment, events []Event, open []State, first, now time.Time) Report {
-	rep := Report{
-		SchemaVersion: SchemaVersion, Enabled: true,
-		Since: r.Since, Until: r.Until, Bucket: r.Bucket,
-		Assessments: len(assessments),
-		Risk:        []RiskPoint{},
-		Movement:    Periods(r),
-		Open:        openSummary(open, now),
+	agg := NewAggregation(r, assessments, open, first, now)
+	for _, e := range events {
+		agg.Add(e)
+	}
+	return agg.Report()
+}
+
+// Aggregation is Aggregate one event at a time, for a caller that reads a range's
+// events in pieces: they carry a snapshot per changed item, and holding all of a
+// long range's at once is more memory than the report itself ever needs. Events
+// must be added oldest first, as Aggregate takes them.
+type Aggregation struct {
+	rep   Report
+	first time.Time
+
+	days  map[int][]float64
+	toDue map[int][]float64
+	cves  map[int]map[string]bool
+	kevs  map[int]map[string]bool
+
+	rangeCVEs, rangeKEVs map[string]bool
+	cleared              map[int]clearedSet
+	partly               map[int]map[int64]bool
+	rangeCleared         clearedSet
+	rangePartly          map[int64]bool
+	// An item's CVE is credited once. It can only clear again after coming back,
+	// which a changed event's CVEsAdded or a reassignment's snapshot records.
+	credited map[itemCVE]bool
+	// Decommissioned CVEs share the credit with clears, so a CVE an item already
+	// cleared is not counted again when the rest of the item is switched off.
+	decom                               map[int]clearedSet
+	decomItems, decomTicketed           map[int]int
+	rangeDecom                          clearedSet
+	rangeDecomItems, rangeDecomTicketed int
+	// Earlier versions recorded the same close on every run until something else
+	// rewrote the item, and those rows are still in the record. A close counts once
+	// per item and ticket, and again only after the ticket was raised again.
+	closedTickets map[itemTicket]bool
+	standings     feedStandings
+}
+
+type itemCVE struct {
+	item int64
+	key  string
+	cve  string
+}
+
+type itemTicket struct {
+	item   int64
+	key    string
+	ticket string
+}
+
+// NewAggregation starts a report over r. The assessments are read here, so the
+// work-item lists of the ones Aggregate reads may be dropped once it returns.
+func NewAggregation(r Range, assessments []Assessment, open []State, first, now time.Time) *Aggregation {
+	a := &Aggregation{
+		rep: Report{
+			SchemaVersion: SchemaVersion, Enabled: true,
+			Since: r.Since, Until: r.Until, Bucket: r.Bucket,
+			Assessments: len(assessments),
+			Risk:        []RiskPoint{},
+			Movement:    Periods(r),
+			Open:        openSummary(open, now),
+		},
+		first: first,
+		days:  map[int][]float64{}, toDue: map[int][]float64{},
+		cves: map[int]map[string]bool{}, kevs: map[int]map[string]bool{},
+		rangeCVEs: map[string]bool{}, rangeKEVs: map[string]bool{},
+		cleared: map[int]clearedSet{}, partly: map[int]map[int64]bool{},
+		rangeCleared: clearedSet{}, rangePartly: map[int64]bool{},
+		credited: map[itemCVE]bool{},
+		decom:    map[int]clearedSet{}, decomItems: map[int]int{}, decomTicketed: map[int]int{},
+		rangeDecom:    clearedSet{},
+		closedTickets: map[itemTicket]bool{},
+		standings:     feedStandings{},
 	}
 	if !first.IsZero() {
 		f := first
-		rep.FirstRecorded = &f
+		a.rep.FirstRecorded = &f
 	}
-	// The first assessment's opened events all carry its timestamp; a minute of
-	// slack covers the record's own clock against the assessment's.
-	isBaseline := func(at time.Time) bool {
-		return !first.IsZero() && !at.After(first.Add(time.Minute))
-	}
-	periodOf := func(t time.Time) int {
-		for i, m := range rep.Movement {
-			if !t.Before(m.Start) && t.Before(m.End) {
-				return i
-			}
-		}
-		return -1
-	}
-
 	// Risk: the last assessment of each period, with how many the period had.
-	perPeriod := periodEnds(rep.Movement, assessments)
-	for i, m := range rep.Movement {
-		a, ok := perPeriod[i]
+	perPeriod := periodEnds(a.rep.Movement, assessments)
+	for i, m := range a.rep.Movement {
+		pe, ok := perPeriod[i]
 		if !ok {
 			continue
 		}
-		last := assessments[a.last]
-		rep.Risk = append(rep.Risk, RiskPoint{
-			Period: m.Period, At: last.FinishedAt, Assessments: a.count,
+		last := assessments[pe.last]
+		a.rep.Risk = append(a.rep.Risk, RiskPoint{
+			Period: m.Period, At: last.FinishedAt, Assessments: pe.count,
 			Findings: last.Findings, Actionable: last.Actionable,
 			Risk: last.Risk, ByClass: last.ByClass, ByTeam: last.ByTeam,
 			OpenBySignal: openBySignal(last.Items),
 		})
 	}
+	return a
+}
 
-	days := map[int][]float64{}
-	toDue := map[int][]float64{}
-	cves := map[int]map[string]bool{}
-	kevs := map[int]map[string]bool{}
-	rangeCVEs, rangeKEVs := map[string]bool{}, map[string]bool{}
-	cleared := map[int]clearedSet{}
-	partly := map[int]map[int64]bool{}
-	rangeCleared, rangePartly := clearedSet{}, map[int64]bool{}
-	// An item's CVE is credited once. It can only clear again after coming back,
-	// which a changed event's CVEsAdded or a reassignment's snapshot records.
-	type itemCVE struct {
-		item int64
-		key  string
-		cve  string
-	}
-	credited := map[itemCVE]bool{}
-	credit := func(i int, e Event, c CVE, ticketed bool) bool {
-		k := itemCVE{e.ItemID, e.Key, c.ID}
-		if credited[k] {
-			return false
+// isBaseline reports an opened event of the first assessment. They all carry its
+// timestamp; a minute of slack covers the record's own clock against the
+// assessment's.
+func (a *Aggregation) isBaseline(at time.Time) bool {
+	return !a.first.IsZero() && !at.After(a.first.Add(time.Minute))
+}
+
+func (a *Aggregation) periodOf(t time.Time) int {
+	for i, m := range a.rep.Movement {
+		if !t.Before(m.Start) && t.Before(m.End) {
+			return i
 		}
-		credited[k] = true
-		if cleared[i] == nil {
-			cleared[i] = clearedSet{}
+	}
+	return -1
+}
+
+func (a *Aggregation) credit(i int, e Event, c CVE, ticketed bool) bool {
+	k := itemCVE{e.ItemID, e.Key, c.ID}
+	if a.credited[k] {
+		return false
+	}
+	a.credited[k] = true
+	if a.cleared[i] == nil {
+		a.cleared[i] = clearedSet{}
+	}
+	a.cleared[i].add(c, ticketed)
+	a.rangeCleared.add(c, ticketed)
+	return true
+}
+
+// Add folds one event into the report.
+func (a *Aggregation) Add(e Event) {
+	becameKEV, decayed := a.standings.observe(e)
+	switch e.Kind {
+	case KindTicketRaised:
+		delete(a.closedTickets, itemTicket{e.ItemID, e.Key, e.Payload.Ticket})
+	case KindTicketClosed:
+		k := itemTicket{e.ItemID, e.Key, e.Payload.Ticket}
+		if a.closedTickets[k] {
+			return
 		}
-		cleared[i].add(c, ticketed)
-		rangeCleared.add(c, ticketed)
-		return true
+		a.closedTickets[k] = true
 	}
-	// Decommissioned CVEs share the credit with clears, so a CVE an item already
-	// cleared is not counted again when the rest of the item is switched off.
-	decom := map[int]clearedSet{}
-	decomItems, decomTicketed := map[int]int{}, map[int]int{}
-	rangeDecom := clearedSet{}
-	rangeDecomItems, rangeDecomTicketed := 0, 0
-	// Earlier versions recorded the same close on every run until something else
-	// rewrote the item, and those rows are still in the record. A close counts once
-	// per item and ticket, and again only after the ticket was raised again.
-	type itemTicket struct {
-		item   int64
-		key    string
-		ticket string
-	}
-	closedTickets := map[itemTicket]bool{}
-	standings := feedStandings{}
-	for _, e := range events {
-		becameKEV, decayed := standings.observe(e)
-		switch e.Kind {
-		case KindTicketRaised:
-			delete(closedTickets, itemTicket{e.ItemID, e.Key, e.Payload.Ticket})
-		case KindTicketClosed:
-			k := itemTicket{e.ItemID, e.Key, e.Payload.Ticket}
-			if closedTickets[k] {
-				continue
+	switch e.Kind {
+	case KindChanged:
+		for _, id := range e.Payload.CVEsAdded {
+			delete(a.credited, itemCVE{e.ItemID, e.Key, id})
+		}
+	case KindReassigned:
+		if e.Payload.Snapshot != nil {
+			for _, id := range e.Payload.Snapshot.CVEIDs() {
+				delete(a.credited, itemCVE{e.ItemID, e.Key, id})
 			}
-			closedTickets[k] = true
 		}
-		switch e.Kind {
-		case KindChanged:
-			for _, id := range e.Payload.CVEsAdded {
-				delete(credited, itemCVE{e.ItemID, e.Key, id})
+	}
+	i := a.periodOf(e.At)
+	if i < 0 {
+		return
+	}
+	m := &a.rep.Movement[i]
+	switch e.Kind {
+	case KindOpened:
+		if a.isBaseline(e.At) {
+			m.Baseline++
+			a.rep.Baseline++
+			return
+		}
+		m.Opened++
+		if e.Payload.Snapshot != nil {
+			m.split(*e.Payload.Snapshot, func(c *Counts) { c.Opened++ })
+		}
+	case KindResolved:
+		m.Resolved++
+		if snap := e.Payload.Closed; snap == nil {
+			snap = e.Payload.Opened
+		} else {
+			if a.cves[i] == nil {
+				a.cves[i], a.kevs[i] = map[string]bool{}, map[string]bool{}
 			}
-		case KindReassigned:
-			if e.Payload.Snapshot != nil {
-				for _, id := range e.Payload.Snapshot.CVEIDs() {
-					delete(credited, itemCVE{e.ItemID, e.Key, id})
+			for _, c := range snap.CVEs {
+				a.cves[i][c.ID] = true
+				a.rangeCVEs[c.ID] = true
+				if c.KEV {
+					a.kevs[i][c.ID] = true
+					a.rangeKEVs[c.ID] = true
 				}
+				a.credit(i, e, c, e.Payload.Ticketed)
 			}
 		}
-		i := periodOf(e.At)
-		if i < 0 {
-			continue
+		if e.Payload.Ticketed {
+			m.ResolvedTicketed++
+		} else {
+			m.ResolvedUnticketed++
 		}
-		m := &rep.Movement[i]
-		switch e.Kind {
-		case KindOpened:
-			if isBaseline(e.At) {
-				m.Baseline++
-				rep.Baseline++
-				continue
+		if e.Payload.DaysOpen != nil {
+			a.days[i] = append(a.days[i], float64(*e.Payload.DaysOpen))
+		}
+		if e.Payload.Opened != nil {
+			ticketed := e.Payload.Ticketed
+			m.split(*e.Payload.Opened, func(c *Counts) {
+				c.Resolved++
+				if ticketed {
+					c.ResolvedTicketed++
+				}
+			})
+		}
+	case KindLapsed:
+		m.Lapsed++
+		if m.LapseReasons == nil {
+			m.LapseReasons = map[string]int{}
+		}
+		m.LapseReasons[lapseClass(e.Payload.Reason)]++
+		if e.Payload.Opened != nil {
+			m.split(*e.Payload.Opened, func(c *Counts) { c.Lapsed++ })
+		}
+	case KindReassigned:
+		m.Reassigned++
+	case KindDecommissioned:
+		a.decomItems[i]++
+		a.rangeDecomItems++
+		if e.Payload.Ticketed {
+			a.decomTicketed[i]++
+			a.rangeDecomTicketed++
+		}
+		if snap := e.Payload.Closed; snap != nil {
+			for _, c := range snap.CVEs {
+				k := itemCVE{e.ItemID, e.Key, c.ID}
+				if a.credited[k] {
+					continue
+				}
+				a.credited[k] = true
+				if a.decom[i] == nil {
+					a.decom[i] = clearedSet{}
+				}
+				a.decom[i].add(c, e.Payload.Ticketed)
+				a.rangeDecom.add(c, e.Payload.Ticketed)
 			}
-			m.Opened++
-			if e.Payload.Snapshot != nil {
-				m.split(*e.Payload.Snapshot, func(c *Counts) { c.Opened++ })
+		}
+	case KindChanged:
+		n := 0
+		for _, c := range e.Payload.CVEsCleared {
+			if a.credit(i, e, c, e.Payload.Ticketed) {
+				n++
 			}
-		case KindResolved:
-			m.Resolved++
-			if snap := e.Payload.Closed; snap == nil {
-				snap = e.Payload.Opened
+		}
+		if n > 0 {
+			if a.partly[i] == nil {
+				a.partly[i] = map[int64]bool{}
+			}
+			a.partly[i][e.ItemID] = true
+			a.rangePartly[e.ItemID] = true
+		}
+		if decayed {
+			m.EPSSDecayed++
+		}
+		if becameKEV {
+			m.BecameKnownExploited++
+		}
+	case KindTicketRaised:
+		m.TicketsRaised++
+	case KindTicketClosed:
+		m.TicketsClosed++
+		if e.Payload.EvidenceAtClose != nil && !*e.Payload.EvidenceAtClose {
+			m.TicketsClosedFindingOpen++
+		}
+		if e.Payload.Reason != "" {
+			if m.TicketsClosedByTool == nil {
+				m.TicketsClosedByTool = map[string]int{}
+			}
+			m.TicketsClosedByTool[e.Payload.Reason]++
+		}
+		if d := e.Payload.DaysToDue; d != nil {
+			if *d < 0 {
+				m.TicketsClosedOverdue++
 			} else {
-				if cves[i] == nil {
-					cves[i], kevs[i] = map[string]bool{}, map[string]bool{}
-				}
-				for _, c := range snap.CVEs {
-					cves[i][c.ID] = true
-					rangeCVEs[c.ID] = true
-					if c.KEV {
-						kevs[i][c.ID] = true
-						rangeKEVs[c.ID] = true
-					}
-					credit(i, e, c, e.Payload.Ticketed)
-				}
+				m.TicketsClosedOnTime++
 			}
-			if e.Payload.Ticketed {
-				m.ResolvedTicketed++
-			} else {
-				m.ResolvedUnticketed++
-			}
-			if e.Payload.DaysOpen != nil {
-				days[i] = append(days[i], float64(*e.Payload.DaysOpen))
-			}
-			if e.Payload.Opened != nil {
-				ticketed := e.Payload.Ticketed
-				m.split(*e.Payload.Opened, func(c *Counts) {
-					c.Resolved++
-					if ticketed {
-						c.ResolvedTicketed++
-					}
-				})
-			}
-		case KindLapsed:
-			m.Lapsed++
-			if m.LapseReasons == nil {
-				m.LapseReasons = map[string]int{}
-			}
-			m.LapseReasons[lapseClass(e.Payload.Reason)]++
-			if e.Payload.Opened != nil {
-				m.split(*e.Payload.Opened, func(c *Counts) { c.Lapsed++ })
-			}
-		case KindReassigned:
-			m.Reassigned++
-		case KindDecommissioned:
-			decomItems[i]++
-			rangeDecomItems++
-			if e.Payload.Ticketed {
-				decomTicketed[i]++
-				rangeDecomTicketed++
-			}
-			if snap := e.Payload.Closed; snap != nil {
-				for _, c := range snap.CVEs {
-					k := itemCVE{e.ItemID, e.Key, c.ID}
-					if credited[k] {
-						continue
-					}
-					credited[k] = true
-					if decom[i] == nil {
-						decom[i] = clearedSet{}
-					}
-					decom[i].add(c, e.Payload.Ticketed)
-					rangeDecom.add(c, e.Payload.Ticketed)
-				}
-			}
-		case KindChanged:
-			n := 0
-			for _, c := range e.Payload.CVEsCleared {
-				if credit(i, e, c, e.Payload.Ticketed) {
-					n++
-				}
-			}
-			if n > 0 {
-				if partly[i] == nil {
-					partly[i] = map[int64]bool{}
-				}
-				partly[i][e.ItemID] = true
-				rangePartly[e.ItemID] = true
-			}
-			if decayed {
-				m.EPSSDecayed++
-			}
-			if becameKEV {
-				m.BecameKnownExploited++
-			}
-		case KindTicketRaised:
-			m.TicketsRaised++
-		case KindTicketClosed:
-			m.TicketsClosed++
-			if e.Payload.EvidenceAtClose != nil && !*e.Payload.EvidenceAtClose {
-				m.TicketsClosedFindingOpen++
-			}
-			if e.Payload.Reason != "" {
-				if m.TicketsClosedByTool == nil {
-					m.TicketsClosedByTool = map[string]int{}
-				}
-				m.TicketsClosedByTool[e.Payload.Reason]++
-			}
-			if d := e.Payload.DaysToDue; d != nil {
-				if *d < 0 {
-					m.TicketsClosedOverdue++
-				} else {
-					m.TicketsClosedOnTime++
-				}
-				toDue[i] = append(toDue[i], float64(*d))
-			}
+			a.toDue[i] = append(a.toDue[i], float64(*d))
 		}
 	}
+}
+
+// Report finishes the report. The aggregation is not to be added to after it.
+func (a *Aggregation) Report() Report {
+	rep := a.rep
 	for i := range rep.Movement {
-		if d := days[i]; len(d) > 0 {
+		if d := a.days[i]; len(d) > 0 {
 			sort.Float64s(d)
 			med := median(d)
 			rep.Movement[i].MedianDaysToResolve = &med
 		}
-		if d := toDue[i]; len(d) > 0 {
+		if d := a.toDue[i]; len(d) > 0 {
 			mean := 0.0
 			for _, x := range d {
 				mean += x
@@ -631,22 +678,22 @@ func Aggregate(r Range, assessments []Assessment, events []Event, open []State, 
 			mean /= float64(len(d))
 			rep.Movement[i].MeanDaysToDueAtClose = &mean
 		}
-		rep.Movement[i].CVEsResolved = len(cves[i])
-		rep.Movement[i].KEVCVEsResolved = len(kevs[i])
-		rep.Movement[i].Cleared = cleared[i].cleared(len(partly[i]))
-		rep.Movement[i].Decommissioned = decom[i].decommissioned(decomItems[i], decomTicketed[i])
-		rep.Movement[i].Remediated = rep.Movement[i].Resolved + decomItems[i]
+		rep.Movement[i].CVEsResolved = len(a.cves[i])
+		rep.Movement[i].KEVCVEsResolved = len(a.kevs[i])
+		rep.Movement[i].Cleared = a.cleared[i].cleared(len(a.partly[i]))
+		rep.Movement[i].Decommissioned = a.decom[i].decommissioned(a.decomItems[i], a.decomTicketed[i])
+		rep.Movement[i].Remediated = rep.Movement[i].Resolved + a.decomItems[i]
 	}
 	resolved := 0
 	for _, m := range rep.Movement {
 		resolved += m.Resolved
 	}
 	rep.Totals = RangeTotals{
-		CVEsResolved: len(rangeCVEs), KEVCVEsResolved: len(rangeKEVs),
-		Cleared:         rangeCleared.cleared(len(rangePartly)),
-		Decommissioned:  rangeDecom.decommissioned(rangeDecomItems, rangeDecomTicketed),
-		RemediatedItems: resolved + rangeDecomItems,
-		RemediatedCVEs:  rangeCleared.union(rangeDecom).tally(),
+		CVEsResolved: len(a.rangeCVEs), KEVCVEsResolved: len(a.rangeKEVs),
+		Cleared:         a.rangeCleared.cleared(len(a.rangePartly)),
+		Decommissioned:  a.rangeDecom.decommissioned(a.rangeDecomItems, a.rangeDecomTicketed),
+		RemediatedItems: resolved + a.rangeDecomItems,
+		RemediatedCVEs:  a.rangeCleared.union(a.rangeDecom).tally(),
 	}
 	return rep
 }
@@ -707,6 +754,20 @@ func openBySignal(items []Snapshot) map[string]int {
 				break
 			}
 		}
+	}
+	return out
+}
+
+// SignalsOnly cuts a period's work-item list down to the signals, which are all
+// Aggregate reads of it, so a report over many periods does not hold every whole
+// list at once. Nil stays nil: a list not read is not an empty queue.
+func SignalsOnly(items []Snapshot) []Snapshot {
+	if items == nil {
+		return nil
+	}
+	out := make([]Snapshot, len(items))
+	for i, it := range items {
+		out[i] = Snapshot{Signals: it.Signals}
 	}
 	return out
 }

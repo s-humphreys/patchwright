@@ -52,6 +52,11 @@ type historyRecorder struct {
 	decommissioned map[string]bool
 	// excluded are the routes whose tickets the ticket counts leave out.
 	excluded []history.TicketScope
+
+	// reports admits one history report at a time. Each reads the range's events,
+	// and a page load, a retry and a tool call building theirs together hold that
+	// many times the memory of one.
+	reports chan struct{}
 }
 
 // WithHistory attaches a store. retention bounds what Prune keeps; it is required
@@ -61,7 +66,7 @@ func (s *Server) WithHistory(store history.Store, retention time.Duration) *Serv
 		return s
 	}
 	s.history = &historyRecorder{store: store, retention: retention, lapseAfter: history.DefaultLapseAfter,
-		decommissionAfter: history.DefaultDecommissionAfter}
+		decommissionAfter: history.DefaultDecommissionAfter, reports: make(chan struct{}, 1)}
 	return s
 }
 
@@ -110,12 +115,17 @@ func (s *Server) decommissionedFromStore(ctx context.Context) map[string]bool {
 		return nil
 	}
 	now := time.Now().UTC()
-	events, err := s.history.store.Events(ctx, now.Add(-history.DecommissionLookback(s.history.decommissionAfter)), now)
+	var decom []history.Event
+	err := history.EachEvent(ctx, s.history.store, now.Add(-history.DecommissionLookback(s.history.decommissionAfter)), now, func(e history.Event) {
+		if e.Kind == history.KindDecommissioned {
+			decom = append(decom, e)
+		}
+	})
 	if err != nil {
 		slog.WarnContext(ctx, "server: could not read recent events for the ticket plan; no ticket is closed as decommissioned", "error", err)
 		return nil
 	}
-	return history.DecommissionedRepositories(events)
+	return history.DecommissionedRepositories(decom)
 }
 
 // WithLapseAfter sets the grace period before an absent item lapses.
@@ -237,7 +247,12 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 // read the record judges the lapses this one could not.
 func (r *historyRecorder) decommissions(ctx context.Context, snap *snapshot, current []history.Snapshot, partial bool, scope string) ([]history.Event, []history.Event, bool) {
 	from := snap.generatedAt.Add(-history.DecommissionLookback(r.decommissionAfter))
-	recent, err := r.store.Events(ctx, from, snap.generatedAt)
+	var recent []history.Event
+	err := history.EachEvent(ctx, r.store, from, snap.generatedAt, func(e history.Event) {
+		if e, ok := history.DecommissionEvent(e); ok {
+			recent = append(recent, e)
+		}
+	})
 	if err != nil {
 		slog.WarnContext(ctx, "history: recent events could not be read, so no decommission is judged this run; the next run judges them", "error", err)
 		return nil, nil, false
@@ -469,12 +484,14 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 // historyReport builds the report the API, the page and the MCP tool all read, so
 // none of them can disagree about a period.
 func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.Time) (history.Report, error) {
+	select {
+	case s.history.reports <- struct{}{}:
+		defer func() { <-s.history.reports }()
+	case <-ctx.Done():
+		return history.Report{}, ctx.Err()
+	}
 	store := s.history.store
 	assessments, err := store.Assessments(ctx, rng.Since, rng.Until)
-	if err != nil {
-		return history.Report{}, err
-	}
-	events, err := store.Events(ctx, rng.Since, rng.Until)
 	if err != nil {
 		return history.Report{}, err
 	}
@@ -503,7 +520,7 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		if items == nil && assessments[i].ItemCount == 0 {
 			items = []history.Snapshot{}
 		}
-		assessments[i].Items = items
+		assessments[i].Items = history.SignalsOnly(items)
 	}
 	idx, err := store.TicketsIndexed(ctx)
 	if err != nil {
@@ -527,12 +544,23 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 			return history.Report{}, err
 		}
 	}
-	events, tickets, excluded := history.ExcludeTickets(rng, events, tickets, s.history.excluded)
+	// The events are folded as they are read rather than held: they are most of what
+	// the report reads, and a long range of them is more than a replica can hold.
+	exclusion, tickets := history.NewTicketExclusion(rng, tickets, s.history.excluded)
+	agg := history.NewAggregation(rng, assessments, open, first, now)
+	if err := history.EachEvent(ctx, store, rng.Since, rng.Until, func(e history.Event) {
+		if exclusion.Keep(&e) {
+			agg.Add(e)
+		}
+	}); err != nil {
+		return history.Report{}, err
+	}
+	excluded := exclusion.Excluded()
 	if idx.Tickets == 0 {
 		// Nothing could be told apart, so nothing was left out; the caveat says why.
 		excluded = nil
 	}
-	rep := history.Aggregate(rng, assessments, events, open, first, now)
+	rep := agg.Report()
 	rep.RetentionDays = int(s.history.retention.Hours() / 24)
 	rep.TicketsExcluded = excluded
 	if idx.Tickets > 0 {
