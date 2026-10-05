@@ -97,6 +97,40 @@ test('fixed and left without a fix are shown apart and never summed, with CVEs c
   assert.doesNotMatch(html, /16 /);
 });
 
+test('cleared CVEs, including from items still open, come from the range totals and are never summed over periods', () => {
+  const b = body();
+  // One KEV cleared in August on one item and in September on another: two in the
+  // periods, one CVE across the range.
+  b.history.movement[1] = { ...b.history.movement[1], cves_cleared: 50, kev_cves_cleared: 13, epss_high_cves_cleared: 4,
+    cleared_ticketed: { cves: 30, kev: 13, epss_high: 2 }, cleared_unticketed: { cves: 20, kev: 0, epss_high: 2 }, items_partly_cleared: 1 };
+  b.history.movement[2] = { ...b.history.movement[2], cves_cleared: 3, kev_cves_cleared: 1, epss_high_cves_cleared: 0,
+    cleared_ticketed: { cves: 0, kev: 0, epss_high: 0 }, cleared_unticketed: { cves: 3, kev: 1, epss_high: 0 } };
+  b.history.totals = { cves_resolved: 38, kev_cves_resolved: 3, cves_cleared: 52, kev_cves_cleared: 13, epss_high_cves_cleared: 4,
+    cleared_ticketed: { cves: 30, kev: 13, epss_high: 2 }, cleared_unticketed: { cves: 22, kev: 0, epss_high: 2 }, items_partly_cleared: 1 };
+  const html = render(b);
+  assert.match(html, /CVEs cleared, including from items still open<\/dt>\s*<dd><strong class="ok">13<\/strong> known-exploited \(KEV\) · 4 with EPSS above 0\.5 · 52 CVEs in all, 1 of them work item still open\. KEVs: 13 by ticketed work, 0 by another route<\/dd>/);
+  // The fixed items' CVEs also read the range total, not a sum of periods.
+  assert.match(html, /clearing 38 CVEs \(3 known-exploited\)/);
+  assert.match(html, /<td>50 <span class="sub">\(13 KEV, 4 EPSS&gt;0\.5\)<\/span><\/td>/);
+  assert.match(html, /KEVs cleared, including from items still open<\/dt>\s*<dd><strong>13<\/strong> by ticketed work, 0 by another route/);
+  const shown = html.replace(/<[^>]*>/g, ' ');
+  assert.doesNotMatch(shown, /\b(resolved|lapsed|Resolved|Lapsed)\b/);
+});
+
+test('a period whose only movement is CVEs cleared from items still open is still shown', () => {
+  const b = body();
+  b.history.movement.splice(2, 0, period('2026-08b', { cves_cleared: 13, kev_cves_cleared: 13 }));
+  b.history.totals = { cves_resolved: 40, kev_cves_resolved: 3, cves_cleared: 53, kev_cves_cleared: 16, epss_high_cves_cleared: 0,
+    cleared_ticketed: { cves: 13, kev: 13, epss_high: 0 }, cleared_unticketed: { cves: 40, kev: 3, epss_high: 0 }, items_partly_cleared: 1 };
+  assert.match(render(b), /<td>2026-08b<\/td>/);
+});
+
+test('without range totals the page shows no cleared figures rather than summing periods', () => {
+  const html = render(body());
+  assert.doesNotMatch(html, /including from items still open<\/dt>/);
+  assert.doesNotMatch(html, /incl\. items still open<\/th>/);
+});
+
 test('every heading says the unit, and movement defines it in one line under its heading', () => {
   const html = render(body());
   assert.match(html, /<h3>Movement, in work items<\/h3>\s*<p class="sub unit">A work item is one service and the one upgrade that would fix it\. <strong>Fixed \(confirmed\)<\/strong> means it left the queue with evidence the upgrade landed; <strong>left without a fix<\/strong> is everything else that left the queue: it stopped running, dropped below the rules, or is no longer reported\.<\/p>/);

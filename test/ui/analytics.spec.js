@@ -53,10 +53,12 @@ test.describe('analytics page', () => {
     const movement = page.locator('section.panel', { hasText: 'Movement, in work items' });
     await expect(movement.locator('dt', { hasText: 'Already open when the record began' })).toHaveCount(0);
     await expect(movement).toContainText('303');
-    // 42 + 31 + 18 opened; 9 + 47 + 33 fixed; 11710 CVEs cleared; 32 left without a fix.
+    // 42 + 31 + 18 opened; 9 + 47 + 33 fixed; 32 left without a fix. The fixed
+    // items' CVEs are the range total, each CVE once, not the 11,710 the periods sum to.
     await expect(movement).toContainText('91 opened');
     await expect(movement).toContainText('89');
-    await expect(movement).toContainText('clearing 11,710 CVEs (36 known-exploited)');
+    await expect(movement).toContainText('clearing 9,850 CVEs (30 known-exploited)');
+    await expect(movement).not.toContainText('11,710');
     await expect(movement).toContainText('32 left without a fix');
     // The unit is defined once, directly under the heading.
     await expect(movement.locator('h3 + p.unit')).toContainText('A work item is one service and the one upgrade that would fix it.');
@@ -67,13 +69,26 @@ test.describe('analytics page', () => {
 
     const header = movement.locator('table.mini thead');
     await expect(header).toContainText('Baseline');
-    await expect(header).toContainText('CVEs cleared');
+    await expect(header).toContainText('CVEs on fixed items');
+    await expect(header).toContainText('CVEs cleared, incl. items still open');
     await expect(header).toContainText('Fixed (confirmed)');
     await expect(header).toContainText('Left without a fix');
     await expect(header).not.toContainText(/resolved|lapsed/i);
     // Lapse reasons live on the cell's tooltip rather than as a line under the table.
     const lapsedCell = movement.locator('tbody tr', { hasText: '2026-10' }).locator('td[title*="no longer reported"]');
     await expect(lapsedCell).toHaveCount(1);
+  });
+
+  test('KEVs and EPSS-high CVEs cleared include items still open, once across the range, split by ticketed work', async ({ page }) => {
+    await page.goto('/analytics');
+    const movement = page.locator('section.panel', { hasText: 'Movement, in work items' });
+    const line = movement.locator('.dr', { hasText: 'CVEs cleared, including from items still open' });
+    // The range totals, not 13 + 21 + 12 = 46 KEVs summed over the periods.
+    await expect(line).toContainText('40 known-exploited (KEV) · 45 with EPSS above 0.5 · 10,900 CVEs in all, 6 of them work items still open. KEVs: 31 by ticketed work, 9 by another route');
+    await expect(movement.locator('tbody tr', { hasText: '2026-10' })).toContainText('6,600 (21 KEV, 30 EPSS>0.5)');
+    const panel = page.locator('section.panel', { hasText: 'Total remediation against ticketed work' });
+    await expect(panel.locator('.dr', { hasText: 'KEVs cleared, including from items still open' }))
+      .toContainText('31 by ticketed work, 9 by another route · EPSS above 0.5: 28 ticketed, 17 otherwise · all CVEs: 5,000 ticketed, 5,900 otherwise');
   });
 
   test('the delineation shows ticketed resolutions as a subset and flags tickets closed with the finding open', async ({ page }) => {
