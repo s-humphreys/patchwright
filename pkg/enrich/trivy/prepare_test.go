@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/s-humphreys/patchwright/pkg/trivydb"
 )
 
 // fakeTrivy writes a stub trivy on PATH that appends its arguments to a log and
@@ -58,7 +60,7 @@ func calls(t *testing.T, logPath string) []string {
 // A flaky mirror must not cost the whole assessment: the DB download is retried,
 // and the second attempt reaches past the mirror list to the upstream repository.
 func TestPrepareRetriesAndFallsBackToUpstreamRepository(t *testing.T) {
-	dbDownloadBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	trivydb.Backoff = []time.Duration{time.Millisecond, time.Millisecond}
 	binary, logPath := fakeTrivy(t, 1, 0)
 	s := &source{binary: binary, timeout: "5m"}
 
@@ -75,15 +77,15 @@ func TestPrepareRetriesAndFallsBackToUpstreamRepository(t *testing.T) {
 	if strings.Contains(got[0], "--db-repository") {
 		t.Errorf("first attempt overrode the repository, want Trivy's default: %q", got[0])
 	}
-	if !strings.Contains(got[1], fallbackDBRepository) {
-		t.Errorf("retry did not fall back to %s: %q", fallbackDBRepository, got[1])
+	if !strings.Contains(got[1], trivydb.FallbackRepository) {
+		t.Errorf("retry did not fall back to %s: %q", trivydb.FallbackRepository, got[1])
 	}
 }
 
 // A caller naming a repository usually means the default is unreachable, so the
 // fallback must not quietly reach out to the internet instead.
 func TestPrepareKeepsAConfiguredRepositoryOnRetry(t *testing.T) {
-	dbDownloadBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	trivydb.Backoff = []time.Duration{time.Millisecond, time.Millisecond}
 	binary, logPath := fakeTrivy(t, 1, 0)
 	s := &source{binary: binary, dbRepo: "registry.internal/trivy-db:2"}
 
@@ -94,7 +96,7 @@ func TestPrepareKeepsAConfiguredRepositoryOnRetry(t *testing.T) {
 		if !strings.Contains(c, "registry.internal/trivy-db:2") {
 			t.Errorf("attempt did not use the configured repository: %q", c)
 		}
-		if strings.Contains(c, fallbackDBRepository) {
+		if strings.Contains(c, trivydb.FallbackRepository) {
 			t.Errorf("attempt reached past the configured repository to the internet: %q", c)
 		}
 	}
@@ -103,7 +105,7 @@ func TestPrepareKeepsAConfiguredRepositoryOnRetry(t *testing.T) {
 // Persistent failure still fails, and says why: a retry that hides a real
 // outage would leave the run reporting images as unscanned with no reason.
 func TestPrepareGivesUpAndReportsTheReason(t *testing.T) {
-	dbDownloadBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	trivydb.Backoff = []time.Duration{time.Millisecond, time.Millisecond}
 	binary, logPath := fakeTrivy(t, 1)
 	s := &source{binary: binary}
 
@@ -120,8 +122,8 @@ func TestPrepareGivesUpAndReportsTheReason(t *testing.T) {
 	if s.prepared {
 		t.Error("prepared is true after a failed download")
 	}
-	if n := len(calls(t, logPath)); n != dbDownloadAttempts {
-		t.Errorf("made %d attempts, want %d", n, dbDownloadAttempts)
+	if n := len(calls(t, logPath)); n != trivydb.Attempts {
+		t.Errorf("made %d attempts, want %d", n, trivydb.Attempts)
 	}
 }
 

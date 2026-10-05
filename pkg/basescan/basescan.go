@@ -26,6 +26,7 @@ package basescan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -77,6 +78,12 @@ func (r *Result) Has(cve string) bool {
 type Scanner interface {
 	Name() string
 	ScanRef(ctx context.Context, ref string) (*Result, error)
+}
+
+// Preparer is a Scanner with set-up that every scan depends on, such as a
+// vulnerability database to download. Optional.
+type Preparer interface {
+	Prepare(ctx context.Context) error
 }
 
 // Resolver scans base references, once each, and hands the same result to every
@@ -142,11 +149,26 @@ type entry struct {
 	at time.Time
 }
 
+// Prepare readies the scanner for a run, when it has anything to ready. Called
+// once per run before any Scan, so a scanner that cannot work fails the run once
+// with its real reason instead of once per base with a copy of it.
+func (r *Resolver) Prepare(ctx context.Context) error {
+	if p, ok := r.Scanner.(Preparer); ok {
+		return p.Prepare(ctx)
+	}
+	return nil
+}
+
 // Scan returns the scan of ref, running it at most once per reference.
 //
 // A failed scan is cached too. Retrying it for every image built on the same
 // broken base would multiply one unreachable registry into hundreds of identical
 // failures and a very long run.
+//
+// Except a scan that never ran because the scanner was not ready
+// (ErrDBUnavailable). That failure is the scanner's, not the base's, and caching
+// it would keep reporting a readable base as unreadable until MaxAge, long after
+// the scanner had recovered.
 func (r *Resolver) Scan(ctx context.Context, ref string) (*Result, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("basescan: empty reference")
@@ -165,7 +187,10 @@ func (r *Resolver) Scan(ctx context.Context, ref string) (*Result, error) {
 		case r.sem <- struct{}{}:
 			defer func() { <-r.sem }()
 		case <-ctx.Done():
+			// Never stamped, so it would read as in flight for ever; the run that
+			// gave up waiting says nothing about the base.
 			e.err = ctx.Err()
+			r.forget(ref, e)
 			return
 		}
 		slog.DebugContext(ctx, "scanning base image", "ref", ref, "scanner", r.Scanner.Name())
@@ -175,11 +200,26 @@ func (r *Resolver) Scan(ctx context.Context, ref string) (*Result, error) {
 		}
 		// Stamped under the lock, because entryFor reads it from other goroutines.
 		// Stamped even on failure: a broken base must not be retried per image.
+		if errors.Is(e.err, ErrDBUnavailable) {
+			r.forget(ref, e)
+			return
+		}
 		r.mu.Lock()
 		e.at = r.now()
 		r.mu.Unlock()
 	})
 	return e.res, e.err
+}
+
+// forget drops an entry that holds no answer about its reference. Callers already
+// waiting on it share its error; the next one to ask starts afresh. Only dropped
+// while it is still the entry for ref, since an expiry may have replaced it.
+func (r *Resolver) forget(ref string, e *entry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.entries[ref] == e {
+		delete(r.entries, ref)
+	}
 }
 
 // entryFor returns the cache entry for ref, replacing one that has aged out.
@@ -234,10 +274,27 @@ func (r *Resolver) Rescanned() int {
 	return r.rescans
 }
 
-// Scanned reports how many distinct references have been scanned, for logging the
-// cost of a run against the number of images it covered.
-func (r *Resolver) Scanned() int {
+// Scanned reports how many distinct references are held as successful scans, for
+// logging the cost of a run against the number of images it covered. Failed
+// reports the ones held as failures. Counted apart because a single total read
+// "201 scanned" on a run where all 201 had failed.
+func (r *Resolver) Scanned() int { return r.count(false) }
+
+// Failed reports how many distinct references are held as failed scans.
+func (r *Resolver) Failed() int { return r.count(true) }
+
+func (r *Resolver) count(failed bool) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.entries)
+	n := 0
+	for _, e := range r.entries {
+		// An entry still in flight is neither yet.
+		if e.at.IsZero() {
+			continue
+		}
+		if (e.err != nil) == failed {
+			n++
+		}
+	}
+	return n
 }

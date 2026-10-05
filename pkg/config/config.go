@@ -406,6 +406,11 @@ type BaseDiffConfig struct {
 	Binary string `yaml:"binary"`
 	// Timeout is passed to the scanner per image.
 	Timeout string `yaml:"timeout"`
+	// DBRepository is where the scanner's vulnerability database is pulled from,
+	// e.g. an internal mirror. Empty uses the scanner's default mirror list and
+	// then the upstream repository. A configured one is kept on retry rather than
+	// abandoned for the internet.
+	DBRepository string `yaml:"dbRepository"`
 	// Concurrency bounds simultaneous base scans. Each one pulls an image, so this
 	// is a limit on the registry as much as on this process.
 	Concurrency int `yaml:"concurrency"`
@@ -1255,6 +1260,9 @@ func Load(paths ...string) (*Config, error) {
 		}
 		if part.Remediation.BaseDiff.Timeout != "" {
 			cfg.Remediation.BaseDiff.Timeout = part.Remediation.BaseDiff.Timeout
+		}
+		if part.Remediation.BaseDiff.DBRepository != "" {
+			cfg.Remediation.BaseDiff.DBRepository = part.Remediation.BaseDiff.DBRepository
 		}
 		if part.Remediation.BaseDiff.Concurrency != 0 {
 			cfg.Remediation.BaseDiff.Concurrency = part.Remediation.BaseDiff.Concurrency
