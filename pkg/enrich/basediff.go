@@ -106,6 +106,7 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 	var wg sync.WaitGroup
 	var measured, failed, missing atomic.Int64
 	var firstErr atomic.Value
+	invalid := &refSet{}
 
 	for _, i := range work {
 		img := &images[i]
@@ -121,7 +122,7 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 			// The differential first: it decides which exploited CVEs the base
 			// already explains, and those need no scan of the image to name.
 			if hasBase(img.Upgrade) {
-				switch out, err := e.diff(ctx, img, img.Upgrade); out {
+				switch out, err := e.diff(ctx, img, img.Upgrade, invalid); out {
 				case diffMeasured:
 					measured.Add(1)
 				case diffFailed:
@@ -156,8 +157,42 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 			"are held rather than ticketed until a run measures them",
 			"images_unmeasured", f, "images_measured", measured.Load(), "first_error", firstErr.Load())
 	}
+	if refs := invalid.sorted(); len(refs) > 0 {
+		// Once per run, naming every reference: each recurs every run until
+		// patchwright or the image label producing it is fixed, and no registry
+		// change will clear it.
+		slog.WarnContext(ctx, "base references could not be parsed, so their images are unmeasurable "+
+			"rather than held for a retry; this is a patchwright or image-label problem, not a registry one",
+			"refs", refs)
+	}
 	metrics.BaseDifferential(int(measured.Load()), int(failed.Load()))
 	return nil
+}
+
+// refSet collects references from concurrent diffs.
+type refSet struct {
+	mu   sync.Mutex
+	refs map[string]bool
+}
+
+func (s *refSet) add(ref string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refs == nil {
+		s.refs = map[string]bool{}
+	}
+	s.refs[ref] = true
+}
+
+func (s *refSet) sorted() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.refs))
+	for r := range s.refs {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // hasBase reports an upgrade the differential can measure: a base-image move with
@@ -173,8 +208,9 @@ const (
 	diffMeasured diffOutcome = iota
 	// diffFailed is a scan that failed this run; the image carries BaseDiffError.
 	diffFailed
-	// diffMissing is a base the registry says no longer exists, which no retry
-	// will measure. Left unmarked, as unmeasurable rather than unmeasured.
+	// diffMissing is a base no retry will measure: one the registry says no
+	// longer exists, or a reference that does not parse. Left unmarked, as
+	// unmeasurable rather than unmeasured.
 	diffMissing
 )
 
@@ -263,10 +299,13 @@ func affected(pkgs []basescan.Package) []model.AffectedPackage {
 	return out
 }
 
-func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, up *model.Upgrade) (diffOutcome, error) {
+func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, up *model.Upgrade, invalid *refSet) (diffOutcome, error) {
 	built, err := e.Resolver.Scan(ctx, up.FromRef)
-	if errors.Is(err, basescan.ErrNotFound) {
-		slog.DebugContext(ctx, "base image no longer in its registry", "image", img.Image.Ref, "base", up.FromRef)
+	if basescan.Unmeasurable(err) {
+		if errors.Is(err, basescan.ErrInvalidReference) {
+			invalid.add(up.FromRef)
+		}
+		slog.DebugContext(ctx, "base image cannot be measured", "image", img.Image.Ref, "base", up.FromRef, "error", err)
 		return diffMissing, nil
 	}
 	if err != nil {
@@ -285,6 +324,8 @@ func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, u
 		switch {
 		case cerr == nil:
 			candidate = c
+		case errors.Is(cerr, basescan.ErrInvalidReference):
+			invalid.add(up.ToRef)
 		case !errors.Is(cerr, basescan.ErrNotFound):
 			// Ownership still stands; only the upgrade went unmeasured.
 			img.BaseDiffError = "candidate base scan failed: " + cerr.Error()

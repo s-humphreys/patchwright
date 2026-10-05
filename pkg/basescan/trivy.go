@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/s-humphreys/patchwright/pkg/registryauth"
 	"github.com/s-humphreys/patchwright/pkg/trivydb"
@@ -51,6 +52,19 @@ var ErrDBUnavailable = errors.New("vulnerability database unavailable")
 // recorded digest or tag has since been deleted. Unlike any other failure it is
 // an answer about the image, and retrying will not change it.
 var ErrNotFound = errors.New("image not found in its registry")
+
+// ErrInvalidReference marks a reference that is not a valid image reference at
+// all. Like ErrNotFound it is deterministic: the same reference fails the same way
+// every run, so it must never be treated as a failure that a retry could clear. It
+// points at patchwright or at the label the reference was read from, not at the
+// registry.
+var ErrInvalidReference = errors.New("invalid image reference")
+
+// Unmeasurable reports a scan failure that will recur on every run for the same
+// reference, so its image is unmeasurable rather than unmeasured this run.
+func Unmeasurable(err error) bool {
+	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidReference)
+}
 
 // Prepare downloads the vulnerability database, before any scan.
 //
@@ -127,6 +141,9 @@ func (t *TrivyScanner) ScanRef(ctx context.Context, ref string) (*Result, error)
 	// up the ambient docker config and its credential helpers.
 	dir, cleanup, err := registryauth.IsolatedDockerConfig(ref, t.Credentials)
 	if err != nil {
+		if name.IsErrBadName(err) {
+			err = fmt.Errorf("%w: %w", ErrInvalidReference, err)
+		}
 		return nil, fmt.Errorf("credentials for %s: %w", ref, err)
 	}
 	defer cleanup()
@@ -145,8 +162,11 @@ func (t *TrivyScanner) ScanRef(ctx context.Context, ref string) (*Result, error)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		if notFound(stderr.String()) {
+		switch {
+		case notFound(stderr.String()):
 			err = fmt.Errorf("%w: %w", ErrNotFound, err)
+		case invalidReference(stderr.String()):
+			err = fmt.Errorf("%w: %w", ErrInvalidReference, err)
 		}
 		return nil, fmt.Errorf("trivy %s: %w: %s", ref, err, lastLine(stderr.String()))
 	}
@@ -214,6 +234,14 @@ func parseRefReport(ref string, data []byte) (*Result, error) {
 // passes through, rather than on Trivy's own wording around them.
 func notFound(stderr string) bool {
 	return strings.Contains(stderr, "MANIFEST_UNKNOWN") || strings.Contains(stderr, "NAME_UNKNOWN")
+}
+
+// invalidReference reports Trivy rejecting the reference itself, before any registry
+// was asked. Matched on the reference parsers' own messages, which Trivy passes
+// through: go-containerregistry's and the docker distribution library's.
+func invalidReference(stderr string) bool {
+	return strings.Contains(stderr, "could not parse reference") ||
+		strings.Contains(stderr, "invalid reference format")
 }
 
 func lastLine(s string) string {
