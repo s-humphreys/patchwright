@@ -132,6 +132,9 @@ type TemplateData struct {
 	// clearsNone is set when the change was measured to clear none of the CVEs
 	// that make this group actionable, which means there is no ticket to raise.
 	clearsNone bool
+	// unmeasured is why the change could not be judged this run, when it could
+	// not: a measurement that would have decided it failed. See unmeasured.
+	unmeasured string
 }
 
 // UrgentRemaining is always zero: Urgent lists only what the change clears. Kept
@@ -269,6 +272,7 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 	}
 	d.UrgentCleared = len(d.Urgent)
 	d.clearsNone = clearsNone(group, urgentEPSS)
+	d.unmeasured = unmeasured(group, urgentEPSS)
 
 	d.Deployments = deployments(group, envs)
 

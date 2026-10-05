@@ -53,11 +53,15 @@ export async function loadPending() {
   const writes = all.filter((a) => a.kind !== "skip" && a.kind !== "hold");
   const skipped = all.filter((a) => a.kind === "skip").length;
   const held = all.filter((a) => a.kind === "hold").length;
+  const unmeasured = all.filter((a) => a.kind === "hold" && a.reason === "unmeasured").length;
   const context = [
     skipped ? (skipped === 1
       ? "1 ticket already covers its findings"
       : `${skipped} tickets already cover their findings`) : "",
-    held ? `${held} cannot be judged yet, because an upgrade could not be resolved` : "",
+    held - unmeasured ? `${held - unmeasured} cannot be judged yet, waiting on data` : "",
+    // Named apart: a scanner outage holds tickets that would otherwise be raised, and
+    // that is worth seeing as such rather than as one more thing waiting.
+    unmeasured ? `${unmeasured} held because the upgrade could not be measured this run (base scan failed)` : "",
   ].filter(Boolean).join("; ");
 
   if (writes.length === 0) {

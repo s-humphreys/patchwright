@@ -102,6 +102,11 @@ func configCaveats(a Assessment, cov Coverage) []string {
 	case !s.BaseDiff:
 		out = append(out, "The base differential is not enabled (remediation.baseDiff in config), so what "+
 			"rebuilding would clear was never measured. This is a setting, not a finding.")
+	case cov.BaseDiffs == 0 && cov.BaseDiffFailed > 0:
+		out = append(out, fmt.Sprintf("The base differential is enabled but could not measure any "+
+			"deployment this run: %d failed (a base scan failing, or the scanner's vulnerability database "+
+			"being unavailable). What rebuilding would clear is unknown for now, not unmeasurable; the next "+
+			"run tries again, and no ticket is raised or changed on it until then.", cov.BaseDiffFailed))
 	case cov.BaseDiffs == 0:
 		out = append(out, "The base differential is enabled and yet measured no deployment. Base images could "+
 			"not be resolved or scanned - registry access is the usual cause.")

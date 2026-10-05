@@ -1543,6 +1543,14 @@ components:
             versions merely could not be resolved.
         upgrade: { $ref: "#/components/schemas/Upgrade" }
         base_diff: { $ref: "#/components/schemas/BaseDiff" }
+        base_diff_error:
+          type: string
+          description: >-
+            Why the base differential could not measure this image in this run: a base
+            scan failed, or the scanner's vulnerability database was unavailable. Absent
+            when it measured, and also when it never could (differential off, no base
+            resolved, a base deleted from its registry). Not measured this run is
+            temporary and holds ticketing for the change; not measurable is not.
         build_repo:
           type: string
           description: >-
@@ -2444,7 +2452,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [create, extend, update, close, note-stale, note-done, skip]
+          enum: [create, extend, update, close, note-stale, note-done, hold, skip]
         why: { type: string }
         ticket: { type: string }
         summary: { type: string }
@@ -2460,6 +2468,13 @@ components:
           type: array
           items: { type: string }
         comment: { type: string }
+        reason:
+          type: string
+          description: |
+            Machine-readable cause of a close, done-note or hold: upgrade-landed,
+            not-running, no-longer-actionable, upgrade-clears-nothing, operator-chosen,
+            unmeasured. A hold with reason unmeasured is a change the base differential
+            could not measure this run; it may carry no ticket, when none is open.
         error:
           type: string
           description: Set on an applied action that failed; others may have succeeded.

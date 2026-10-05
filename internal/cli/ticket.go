@@ -215,6 +215,14 @@ func reportActions(w io.Writer, cfg config.JiraConfig, actions []ticket.Action) 
 			fmt.Fprintf(w, "Images:   %v\n\n%s\n", a.Draft.Images, a.Draft.Description)
 		case ticket.ActionSkip:
 			fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+		case ticket.ActionHold:
+			// A hold can concern a change with no ticket open yet, which is
+			// precisely when "Ticket:" with nothing after it would mislead.
+			if a.TicketKey != "" {
+				fmt.Fprintf(w, "Ticket:   %s\n", a.TicketKey)
+			} else {
+				fmt.Fprintf(w, "Images:   %v (no ticket open; none raised)\n", a.Images)
+			}
 		case ticket.ActionClose:
 			// Closing is the only action that ends a piece of work, so the dry run
 			// shows the evidence rather than just the verdict.

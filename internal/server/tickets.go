@@ -70,6 +70,10 @@ type actionView struct {
 	URL     string   `json:"url,omitempty"`
 	Images  []string `json:"images,omitempty"`
 	Comment string   `json:"comment,omitempty"`
+	// Reason is the machine-readable cause of a close, done-note or hold, so a
+	// caller can tell a hold waiting on a failed measurement from one waiting on a
+	// registry without parsing the prose in Why.
+	Reason string `json:"reason,omitempty"`
 	// Error is set on an applied action that failed. Present so a caller sees
 	// partial success rather than assuming all or nothing.
 	Error string `json:"error,omitempty"`
@@ -362,7 +366,7 @@ func viewAction(a ticket.Action) actionView {
 	return actionView{
 		Kind: string(a.Kind), Why: a.Why, Ticket: a.TicketKey,
 		Summary: a.Draft.Summary, Route: a.Draft.Route,
-		Images: actionImages(a), Comment: a.Message,
+		Images: actionImages(a), Comment: a.Message, Reason: a.Reason,
 	}
 }
 

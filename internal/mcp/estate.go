@@ -77,6 +77,10 @@ type Coverage struct {
 	Scanned   int `json:"scanned_deployments"`
 	Total     int `json:"total_deployments"`
 	BaseDiffs int `json:"deployments_with_base_differential"`
+	// BaseDiffFailed is deployments the base differential set out to measure and could
+	// not in this run. Distinct from the rest of the shortfall, which it never could:
+	// this is an outage the next run retries, not a property of the estate.
+	BaseDiffFailed int `json:"deployments_base_differential_failed,omitempty"`
 	// FallbackScanned is deployments the provider never assessed whose counts a
 	// fallback scanner supplied instead, and Uncovered the unassessed ones nothing
 	// has data for.
@@ -184,6 +188,9 @@ func estateSummary(a Assessment) EstateSummary {
 		if f.BaseDiff != nil && f.BaseDiff.Determined {
 			out.Coverage.BaseDiffs++
 			measured = true
+		}
+		if f.BaseDiffError != "" {
+			out.Coverage.BaseDiffFailed++
 		}
 		for _, v := range f.Vulns {
 			cves[v.ID] = true
@@ -364,6 +371,9 @@ func coverageOf(a Assessment) Coverage {
 		}
 		if f.BaseDiff != nil && f.BaseDiff.Determined {
 			c.BaseDiffs++
+		}
+		if f.BaseDiffError != "" {
+			c.BaseDiffFailed++
 		}
 	}
 	return c

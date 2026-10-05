@@ -180,7 +180,34 @@ of Trivy's own database updates.
 
 `base_images_rescanned` in the run log counts scans discarded as too old, reported
 apart from `base_images_scanned` because re-reading forty bases is different work from
-finding forty new ones.
+finding forty new ones. `base_images_failed` counts the ones held as failures, so a run
+in which every base failed does not read as one that scanned them all.
+
+The base scanner downloads Trivy's vulnerability database with the same policy as the
+vuln source above: three attempts, reaching past the default mirror list to
+`ghcr.io/aquasecurity/trivy-db:2` from the second, or staying on a configured
+repository:
+
+```yaml
+remediation:
+  baseDiff:
+    dbRepository: registry.example.com/aquasecurity/trivy-db:2   # optional
+```
+
+A download that fails all three is not remembered: the differential measures nothing
+that run, says so once in a `WARN` line with the error, and tries again on the next
+run. A failed base scan is cached for `maxAge` like a successful one, so one broken
+base is not retried per image, but a scan that never ran because the database was
+unavailable is not cached against the base.
+
+An image the differential set out to measure and could not, in this run, carries
+`base_diff_error` with the reason. That is distinct from a differential that never
+could (off, no base resolved, a base deleted from its registry), which carries
+nothing: "unknown for now" holds ticketing for the change until a run measures it,
+while "unmeasurable" tickets on what is known. See
+[Only ticket what the change fixes](ticketing.md#only-ticket-what-the-change-fixes).
+`patchwright_base_differential_images{result}` reports the measured and failed
+counts for the latest run.
 
 The base is identified by digest wherever the build recorded one, because a tag can
 have moved since and scanning where it points now would credit the base's

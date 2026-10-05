@@ -176,7 +176,7 @@ is the list that made the finding urgent. See [Done means](#done-means).
 | `close` | the work is provably finished (needs `autoClose`), or nobody picked the ticket up and its work stopped mattering (needs `closeTransitionNoLongerActionable`) |
 | `note-stale` | the target moved on, but someone has picked the ticket up |
 | `note-done` | the finding no longer asks for anything, so the work appears done |
-| `hold` | nothing can be judged yet, because the data needed is missing, or the image left the queue within the last few assessments and may come back. **Writes nothing** |
+| `hold` | nothing can be judged yet, because the data needed is missing, the change could not be measured this run (reason `unmeasured`, possibly with no ticket open), or the image left the queue within the last few assessments and may come back. **Writes nothing** |
 | `skip` | already covers the change correctly |
 
 **A policy decision is not the work being done.** A finding that leaves the queue because
@@ -307,6 +307,17 @@ What the change clears is known for two kinds of change:
 Only "measured, and clears none" withholds a ticket. A change nothing could measure
 is raised as before, but the ticket makes no claim about what it clears: no count,
 and no "Done means" rows for CVEs nobody measured.
+
+"Could not measure" means a standing gap: the differential is off, the image's base
+could not be resolved, the base has been deleted from its registry, or the change is
+a kind nothing measures. A base rebuild the differential set out to measure and
+**failed to in this run** (a base scan failing, or the scanner's vulnerability
+database being unavailable) is different, because the next run may well answer it.
+Such a change is held: no ticket is raised, and a ticket already open for it is not
+closed, commented on or rewritten. The plan reports a `hold` with the reason
+`unmeasured`, with no ticket key when none is open, and the change is judged again on
+the next run. A change some other image was measured to clear is not held: the
+ticket stands on that measurement.
 
 A ticket already open for a change that turns out to clear nothing is closed, the
 same way as one whose work [stopped mattering](#updating-and-closing): through

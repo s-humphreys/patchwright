@@ -119,6 +119,12 @@ type FindingView struct {
 	// count the base accounts for, and what upgrading it would clear. Absent when
 	// the differential did not run, which is not the same as it finding nothing.
 	BaseDiff *BaseDiffView `json:"base_diff,omitempty"`
+	// BaseDiffError is why the differential could not measure this image in this
+	// run, such as a base scan failing or the scanner's database being
+	// unavailable. Absent when it measured, and also when it never could:
+	// differential off, no base resolved, or a base deleted from its registry.
+	// "Not measured this run" is temporary; "not measurable" is not.
+	BaseDiffError string `json:"base_diff_error,omitempty"`
 	// ImageBuilt is when the image was built, per its own config, and
 	// ImageAgeDays how long ago that is. Absent when unread or unstated - never
 	// zero, which would read as "built at the epoch".
@@ -498,6 +504,7 @@ func ToFindingView(f model.Finding) FindingView {
 		Upgrade:            upgrade,
 		InFlight:           inflight,
 		BaseDiff:           baseDiff,
+		BaseDiffError:      f.BaseDiffError,
 		ImageBuilt:         imageBuilt,
 		BuildRepo:          f.BuildRepo,
 		ImageAgeDays:       imageAgeDays,

@@ -2,11 +2,13 @@ package enrich
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"sync"
 	"sync/atomic"
 
+	"github.com/s-humphreys/patchwright/internal/metrics"
 	"github.com/s-humphreys/patchwright/pkg/basescan"
 	"github.com/s-humphreys/patchwright/pkg/model"
 )
@@ -52,17 +54,15 @@ const DefaultExploitedEPSS = 0.5
 // An image with no resolvable base is left alone rather than marked. Every CVE on
 // it then reports an unknown origin, which is the honest answer: nothing was
 // compared, so nothing is known about where its packages came from.
+//
+// An image whose measurement failed in this run is marked, with BaseDiffError,
+// because that unknown is temporary and must not be acted on as if it were the
+// standing kind.
 func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.AssessedImage) error {
 	if e == nil || e.Resolver == nil {
 		return nil
 	}
-	n := e.Concurrency
-	if n <= 0 {
-		n = 8
-	}
-	sem := make(chan struct{}, n)
-	var wg sync.WaitGroup
-
+	var work []int
 	for i := range images {
 		img := &images[i]
 		// Nothing to attribute. Scanning a base for an image whose own scan failed
@@ -71,11 +71,44 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 		if !img.Scanned || len(img.Vulns) == 0 {
 			continue
 		}
-		up := img.Upgrade
-		hasBase := up != nil && up.Kind == "base" && up.FromRef != ""
-		if !hasBase && !e.ScanExploited {
+		if !hasBase(img.Upgrade) && !e.ScanExploited {
 			continue
 		}
+		work = append(work, i)
+	}
+	if len(work) == 0 {
+		metrics.BaseDifferential(0, 0)
+		return nil
+	}
+
+	// Once per run, before any scan. A scanner that cannot run fails every scan
+	// for the same reason, and saying so once beats saying it per base.
+	if err := e.Resolver.Prepare(ctx); err != nil {
+		failed := 0
+		for _, i := range work {
+			if hasBase(images[i].Upgrade) {
+				images[i].BaseDiffError = "the base scanner could not run: " + err.Error()
+				failed++
+			}
+		}
+		slog.WarnContext(ctx, "base differential measured nothing this run: the scanner could not be "+
+			"prepared, so no upgrade was measured and none will be ticketed on it; retried next run",
+			"error", err, "images_unmeasured", failed, "images", len(images))
+		metrics.BaseDifferential(0, failed)
+		return nil
+	}
+
+	n := e.Concurrency
+	if n <= 0 {
+		n = 8
+	}
+	sem := make(chan struct{}, n)
+	var wg sync.WaitGroup
+	var measured, failed, missing atomic.Int64
+	var firstErr atomic.Value
+
+	for _, i := range work {
+		img := &images[i]
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -87,8 +120,16 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 			}
 			// The differential first: it decides which exploited CVEs the base
 			// already explains, and those need no scan of the image to name.
-			if hasBase {
-				e.diff(ctx, img, up)
+			if hasBase(img.Upgrade) {
+				switch out, err := e.diff(ctx, img, img.Upgrade); out {
+				case diffMeasured:
+					measured.Add(1)
+				case diffFailed:
+					failed.Add(1)
+					firstErr.CompareAndSwap(nil, err.Error())
+				case diffMissing:
+					missing.Add(1)
+				}
 			}
 			if e.ScanExploited {
 				e.namePackages(ctx, img)
@@ -99,13 +140,43 @@ func (e *BaseDiffEnricher) EnrichImages(ctx context.Context, images []model.Asse
 
 	// Re-scans reported separately from scans: a run that re-read forty bases because
 	// their scans had aged out has done different work from one that found forty new
-	// ones, and a single count reads the same for both.
+	// ones, and a single count reads the same for both. Failures likewise, or a run in
+	// which every base failed reports them all as scanned.
 	slog.InfoContext(ctx, "base differential complete",
 		"base_images_scanned", e.Resolver.Scanned(),
+		"base_images_failed", e.Resolver.Failed(),
 		"base_images_rescanned", e.Resolver.Rescanned(),
+		"images_measured", measured.Load(), "images_unmeasured", failed.Load(),
+		"images_base_missing", missing.Load(),
 		"images_scanned_for_packages", e.imagesScanned.Load(), "images", len(images))
+	if f := failed.Load(); f > 0 && f >= measured.Load() {
+		// One line with one example, rather than relying on the per-base warnings:
+		// on a broken scanner those are hundreds of copies of the same cause.
+		slog.WarnContext(ctx, "base differential mostly failed this run: upgrades it could not measure "+
+			"are held rather than ticketed until a run measures them",
+			"images_unmeasured", f, "images_measured", measured.Load(), "first_error", firstErr.Load())
+	}
+	metrics.BaseDifferential(int(measured.Load()), int(failed.Load()))
 	return nil
 }
+
+// hasBase reports an upgrade the differential can measure: a base-image move with
+// the base the image was built on known.
+func hasBase(up *model.Upgrade) bool {
+	return up != nil && up.Kind == "base" && up.FromRef != ""
+}
+
+// diffOutcome is what one image's differential came to, for the run's accounting.
+type diffOutcome int
+
+const (
+	diffMeasured diffOutcome = iota
+	// diffFailed is a scan that failed this run; the image carries BaseDiffError.
+	diffFailed
+	// diffMissing is a base the registry says no longer exists, which no retry
+	// will measure. Left unmarked, as unmeasurable rather than unmeasured.
+	diffMissing
+)
 
 // exploitedThreshold is the configured EPSS bound, or the default.
 func (e *BaseDiffEnricher) exploitedThreshold() float64 {
@@ -192,20 +263,32 @@ func affected(pkgs []basescan.Package) []model.AffectedPackage {
 	return out
 }
 
-func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, up *model.Upgrade) {
+func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, up *model.Upgrade) (diffOutcome, error) {
 	built, err := e.Resolver.Scan(ctx, up.FromRef)
+	if errors.Is(err, basescan.ErrNotFound) {
+		slog.DebugContext(ctx, "base image no longer in its registry", "image", img.Image.Ref, "base", up.FromRef)
+		return diffMissing, nil
+	}
 	if err != nil {
 		// Left undetermined rather than failed. One unreadable base should cost
 		// its own images their attribution, not the run.
-		return
+		img.BaseDiffError = "base scan failed: " + err.Error()
+		return diffFailed, err
 	}
 
 	// A candidate is optional: the base may be current, or the recommendation may
 	// belong to a deeper link in the chain. Ownership is answerable either way.
 	var candidate *basescan.Result
+	var candErr error
 	if up.ToRef != "" {
-		if c, cerr := e.Resolver.Scan(ctx, up.ToRef); cerr == nil {
+		c, cerr := e.Resolver.Scan(ctx, up.ToRef)
+		switch {
+		case cerr == nil:
 			candidate = c
+		case !errors.Is(cerr, basescan.ErrNotFound):
+			// Ownership still stands; only the upgrade went unmeasured.
+			img.BaseDiffError = "candidate base scan failed: " + cerr.Error()
+			candErr = cerr
 		}
 	}
 
@@ -243,4 +326,8 @@ func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, u
 	if candidate != nil {
 		img.BaseDiff.ToRef = candidate.Ref
 	}
+	if candErr != nil {
+		return diffFailed, candErr
+	}
+	return diffMeasured, nil
 }

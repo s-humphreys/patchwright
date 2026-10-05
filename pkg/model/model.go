@@ -361,6 +361,16 @@ type AssessedImage struct {
 	// would fix. Nil means the differential did not run for this image, which is
 	// not the same as it finding nothing.
 	BaseDiff *BaseDiff
+	// BaseDiffError is why the differential could not measure this image in this
+	// run: a scan it needed failed, or the scanner itself could not be readied.
+	// Empty when it measured, and also when it was never going to: differential
+	// off, no base resolved, or a base that no longer exists in its registry.
+	//
+	// The difference is what decides whether a ticket can be raised. Not
+	// measurable is a standing fact, and the ticket goes ahead on what is known;
+	// not measured THIS RUN is an outage, and acting on it once raised tickets for
+	// upgrades already measured to fix nothing.
+	BaseDiffError string
 
 	// BuildRepo is the source repository that built this image, read from the labels
 	// named by remediation.base.repoLabels. Empty when the image records none, which is
@@ -689,6 +699,9 @@ type Finding struct {
 	// BaseDiff is what scanning this image's base established. Nil when the
 	// differential did not run.
 	BaseDiff *BaseDiff
+	// BaseDiffError mirrors the assessed image: why the differential could not
+	// measure it this run.
+	BaseDiffError string
 	// BuildRepo is the source repository that built this image, when it records one.
 	BuildRepo string
 	// ImageBuilt is when the image was built, per its own config. Zero when unread
