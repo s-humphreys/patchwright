@@ -52,6 +52,11 @@ type historyRecorder struct {
 	decommissioned map[string]bool
 	// excluded are the routes whose tickets the ticket counts leave out.
 	excluded []history.TicketScope
+
+	// reports admits one history report at a time. Each reads the range's events,
+	// and a page load, a retry and a tool call building theirs together hold that
+	// many times the memory of one.
+	reports chan struct{}
 }
 
 // WithHistory attaches a store. retention bounds what Prune keeps; it is required
@@ -61,7 +66,7 @@ func (s *Server) WithHistory(store history.Store, retention time.Duration) *Serv
 		return s
 	}
 	s.history = &historyRecorder{store: store, retention: retention, lapseAfter: history.DefaultLapseAfter,
-		decommissionAfter: history.DefaultDecommissionAfter}
+		decommissionAfter: history.DefaultDecommissionAfter, reports: make(chan struct{}, 1)}
 	return s
 }
 
@@ -479,6 +484,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 // historyReport builds the report the API, the page and the MCP tool all read, so
 // none of them can disagree about a period.
 func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.Time) (history.Report, error) {
+	select {
+	case s.history.reports <- struct{}{}:
+		defer func() { <-s.history.reports }()
+	case <-ctx.Done():
+		return history.Report{}, ctx.Err()
+	}
 	store := s.history.store
 	assessments, err := store.Assessments(ctx, rng.Since, rng.Until)
 	if err != nil {
