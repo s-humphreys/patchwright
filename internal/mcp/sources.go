@@ -110,6 +110,14 @@ func configCaveats(a Assessment, cov Coverage) []string {
 	case cov.BaseDiffs == 0:
 		out = append(out, "The base differential is enabled and yet measured no deployment. Base images could "+
 			"not be resolved or scanned - registry access is the usual cause.")
+	case cov.BaseDiffFailed > 0:
+		// Partial: said here rather than by each report, so every report that measured
+		// some and failed others words the gap the same way.
+		out = append(out, fmt.Sprintf("The base differential could not measure %d of the %d deployments "+
+			"it set out to this run (a base scan failing, or the scanner's vulnerability database being "+
+			"unavailable). What rebuilding would clear on those is unknown for now, not unmeasurable; the "+
+			"next run tries again, and no ticket is raised or changed on them until then.",
+			cov.BaseDiffFailed, cov.BaseDiffs+cov.BaseDiffFailed))
 	}
 	return append(out, clusterCaveats(a.Failures)...)
 }

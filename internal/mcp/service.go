@@ -713,7 +713,10 @@ func caveats(a Assessment, r ServiceReport) []string {
 		Scanned: r.Vulnerabilities.ScannedOf[0], Total: r.Vulnerabilities.ScannedOf[1],
 		BaseDiffs: baseDiffsAmong(r),
 	}
+	// The service's own split, so a partial failure this run is worded by configCaveats
+	// the same way as on every other report; upgrade.unmeasured_reason carries why.
 	if r.Upgrade != nil {
+		cov.BaseDiffs = r.Upgrade.DeploymentsMeasured
 		cov.BaseDiffFailed = r.Upgrade.DeploymentsUnmeasured
 	}
 	out := configCaveats(a, cov)
@@ -725,13 +728,6 @@ func caveats(a Assessment, r ServiceReport) []string {
 	// Only worth saying when the differential was enabled: when it was not, the
 	// configuration caveat above has already said why, and repeating it as a
 	// property of this service points at the wrong thing.
-	if r.Upgrade != nil && r.Upgrade.Measured && r.Upgrade.DeploymentsUnmeasured > 0 {
-		out = append(out, fmt.Sprintf(
-			"The base differential could not measure %d of %d deployments this run (see "+
-				"upgrade.unmeasured_reason). What the upgrade clears on those is unknown for now, "+
-				"not unmeasurable: the next run tries again.",
-			r.Upgrade.DeploymentsUnmeasured, len(r.Deployments)))
-	}
 	if r.Upgrade != nil && r.Upgrade.Measured &&
 		r.Upgrade.DeploymentsMeasured+r.Upgrade.DeploymentsUnmeasured < len(r.Deployments) {
 		out = append(out, fmt.Sprintf(

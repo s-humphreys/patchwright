@@ -21,10 +21,13 @@ import (
 //   - the work gets done, but the ticket stays open because nothing told it.
 //
 // Everything here is expressed as an Action so a dry run shows exactly what would
-// happen. Notably absent: closing tickets. A finding can vanish because it was
-// fixed OR because the provider stopped assessing the image, and those are
-// indistinguishable from the queue alone. Closing on the second would quietly
-// retire real work, so reconciliation comments and leaves the decision to a human.
+// happen. Closing is the guarded exception, never inferred from a finding having
+// disappeared: a finding can vanish because it was fixed OR because the provider
+// stopped assessing the image, and those are indistinguishable from the queue
+// alone. A ticket is closed only on positive evidence, where the route allows it
+// (autoClose, or a not-done transition for work that stopped mattering) and nobody
+// has picked it up; otherwise reconciliation comments and leaves the decision to a
+// human.
 
 // ActionKind is what reconciliation wants done.
 type ActionKind string

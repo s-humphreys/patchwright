@@ -586,6 +586,7 @@ func teamReport(a Assessment, team string) (TeamReport, []string, bool) {
 	}
 	out.Caveats = append(out.Caveats, configCaveats(a, Coverage{
 		Scanned: coveredBy(a, team), Total: q.Total, BaseDiffs: measuredFor(a, team),
+		BaseDiffFailed: failedFor(a, team),
 	})...)
 	if out.StaleInFlight > 0 {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
@@ -611,6 +612,17 @@ func measuredFor(a Assessment, team string) int {
 	var n int
 	for _, f := range a.active() {
 		if strings.EqualFold(f.Owner.Team, team) && f.BaseDiff != nil && f.BaseDiff.Determined {
+			n++
+		}
+	}
+	return n
+}
+
+// failedFor is this team's deployments the differential could not measure this run.
+func failedFor(a Assessment, team string) int {
+	var n int
+	for _, f := range a.active() {
+		if strings.EqualFold(f.Owner.Team, team) && f.BaseDiffError != "" {
 			n++
 		}
 	}
@@ -658,6 +670,7 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 	teams := map[string]bool{}
 	pkgs := map[string]bool{}
 	var found bool
+	var failedThisRun int
 	for _, f := range a.Findings {
 		for _, v := range f.Vulns {
 			if strings.ToUpper(v.ID) != id {
@@ -696,6 +709,8 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 				} else {
 					out.StaysAfterRebuild++
 				}
+			} else if f.BaseDiffError != "" {
+				failedThisRun++
 			}
 		}
 	}
@@ -717,7 +732,7 @@ func cveReport(a Assessment, id string) (CVEReport, bool) {
 
 	out.Caveats = append(out.Caveats, configCaveats(a, Coverage{
 		Scanned: out.Deployments, Total: out.Deployments,
-		BaseDiffs: out.ClearedByRebuild + out.StaysAfterRebuild,
+		BaseDiffs: out.ClearedByRebuild + out.StaysAfterRebuild, BaseDiffFailed: failedThisRun,
 	})...)
 	if out.ClearedByRebuild+out.StaysAfterRebuild < out.Deployments {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
