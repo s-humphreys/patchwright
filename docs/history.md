@@ -92,7 +92,7 @@ one as a lapse.
 | Event | When |
 |---|---|
 | `opened` | The item first carried an actionable finding |
-| `changed` | Its rule, priority, signals or target moved while open |
+| `changed` | Its rule, priority, signals, target or CVEs moved while open. CVEs that left with evidence of remediation are recorded as cleared on it |
 | `reassigned` | Its owner changed but the service and target did not. Not a close and an open |
 | `ticket_raised` | Reconciliation created or extended a ticket covering it |
 | `ticket_closed` | A ticket that covered it is no longer open, with whether patchwright had evidence the work was done at the time, and the reason when patchwright closed it itself (`upgrade-landed`, `not-running`, `no-longer-actionable`, `upgrade-clears-nothing`) |
@@ -117,6 +117,53 @@ stored lists alone, and a warning is logged: an empty answer is not every ticket
 closing. Earlier versions did repeat the close on every run; reports count at most one
 close per item and ticket in the range, and the rows can be removed with the
 [clean-up below](#removing-repeated-ticket-closes).
+
+### CVEs cleared from items still open
+
+An upgrade often clears the CVEs that mattered without clearing every CVE, so the item
+stays in the queue, perhaps at a lower priority, and is never resolved. Its `changed`
+event carries `cves_removed`, every CVE that left, and `cves_cleared`, the ones
+credited as remediated, with `evidence`, `ticketed` and `tickets`: the tickets that
+covered the item at the previous assessment, which is when the work was being done.
+
+A CVE is credited only on evidence, the same standard a resolution holds, adapted to
+an item that is still open. Between two consecutive assessments:
+
+- the item was in both, and the run read every source (no cluster left out, no
+  enrichment failed);
+- every image was fully scanned in both, by the same source (the provider in both, or
+  the same fallback in both; a vuln source in both or neither), so the absence is the
+  scanner's answer about a new image rather than a different feed's;
+- every image's liveness was reconciled as running in both, and it runs in no fewer
+  accounts or namespaces than before, so nothing disappeared by being switched off;
+- the running image was replaced: a digest or, without one, a reference the previous
+  run did not have, in place of one this run does not.
+
+Anything else is recorded with the CVEs in `cves_removed` and a `reason`, and counted
+nowhere. A CVE that stays on the image but drops off KEV, or whose EPSS falls below
+0.5, never leaves the item at all, so it is never cleared; the second is
+`epss_decayed`, as before. The KEV and EPSS readings of a cleared CVE are those of
+the image that was replaced.
+
+Each movement period carries `cves_cleared`, `kev_cves_cleared` and
+`epss_high_cves_cleared`: distinct CVEs cleared that period, **counting resolved items'
+CVEs as well as those cleared from items still open**, so they are the figures to
+quote for "KEVs resolved this month". `cleared_ticketed` and `cleared_unticketed` split
+them by whether a ticket covered the item; a CVE cleared on both kinds of item that
+period is ticketed, so the two sum to the total. `items_partly_cleared` is the items
+that cleared CVEs while staying open. An item's CVE counts once, and again only after
+it came back and cleared again, so a resolved item's final CVEs and its earlier partial
+clears never count the same CVE twice. `cves_resolved` and `kev_cves_resolved` keep
+their meaning, the CVEs of resolved items only, so nothing published before changes.
+
+Periods are distinct within themselves; a CVE cleared from one item in March and from
+another in April counts in both months. The report's `totals` counts each CVE once
+across the whole range, and the page and `trend_report` read their range figures from
+there rather than adding up periods.
+
+Partial clears are recorded from the release that added them onward; there is no
+backfill. The first assessment after upgrading stores each open item's scan state, so
+the earliest credit comes from the second.
 
 ### Absence is counted before it is believed
 
@@ -293,6 +340,9 @@ period, opened against fixed (confirmed) against left without a fix, with the un
 defined under the heading, the four-bucket delineation, a stacked bar per period of the
 open work items by signal (each item under its most severe signal) with the EPSS decay
 and newly known-exploited counts under it, and the queue as the record holds it now.
+The movement panel carries a CVE line beside the fixed items: CVEs, known-exploited
+CVEs and EPSS-above-0.5 CVEs cleared, including from items still open, ticketed and
+otherwise, each counted once across the range.
 The per-rule and per-team splits stay in the API and the MCP tool but are not drawn.
 Once the tracker has been read, the ticketed panel adds a cycle-time table and the
 tracker's own ticket counts, each only for the periods that have them, and a chart of

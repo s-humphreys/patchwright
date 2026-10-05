@@ -151,3 +151,31 @@ func TestTrendReportWithoutTheTrackerSaysNothingOfIt(t *testing.T) {
 		t.Errorf("summary mentions the tracker without data: %s", joined)
 	}
 }
+
+func TestTrendReportStatesClearedCVEsFromTheRangeTotals(t *testing.T) {
+	rep := trendFixture()
+	if s := strings.Join(NewTrendReport(rep).Summary, " "); strings.Contains(s, "including items still open") {
+		t.Errorf("nothing cleared, nothing said: %s", s)
+	}
+	rep.Totals = history.RangeTotals{CVEsResolved: 40, KEVCVEsResolved: 3, Cleared: history.Cleared{
+		CVEsCleared: 52, KEVCVEsCleared: 13, EPSSHighCVEsCleared: 4,
+		ClearedTicketed:    history.CVETally{CVEs: 30, KEV: 13, EPSSHigh: 2},
+		ClearedUnticketed:  history.CVETally{CVEs: 22, EPSSHigh: 2},
+		ItemsPartlyCleared: 1,
+	}}
+	r := NewTrendReport(rep)
+	if r.Totals != rep.Totals {
+		t.Errorf("totals should be carried as given: %+v", r.Totals)
+	}
+	s := strings.Join(r.Summary, " ")
+	for _, want := range []string{
+		"including items still open: 52 distinct CVEs were cleared with evidence of remediation, 13 of them known-exploited and 4 with EPSS above 0.5",
+		"Ticketed work cleared 30 (13 known-exploited, 2 EPSS above 0.5) and other routes 22 (0 known-exploited, 2 EPSS above 0.5)",
+		"1 items still in the queue",
+		"a CVE that only left KEV or whose EPSS fell is not counted",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("summary should say %q:\n%s", want, s)
+		}
+	}
+}

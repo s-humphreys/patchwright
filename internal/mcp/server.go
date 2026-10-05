@@ -211,8 +211,10 @@ func register(s *sdk.Server, src Source) {
 			"is going. Counts are work items (one service and the one upgrade that would fix it), " +
 			"classified by how each looked when the record first saw it, so a KEV fix is one that was " +
 			"known-exploited when found. Fixed (confirmed) and left without a fix are never summed; " +
-			"ticketed fixes are a subset of fixed. Use this for 'what did we fix last " +
-			"month', 'how much of it was ticketed work', or 'is the risk going down'. The caveats " +
+			"ticketed fixes are a subset of fixed. totals counts CVEs once across the range, including " +
+			"KEV and EPSS-above-0.5 CVEs cleared from items still open because their image was replaced. " +
+			"Use this for 'what did we fix last month', 'how many KEVs were resolved', 'how much of it " +
+			"was ticketed work', or 'is the risk going down'. The caveats " +
 			"come first: the record begins on a date, and a period before it is unwatched, not quiet.",
 	}, func(ctx context.Context, req *sdk.CallToolRequest, args trendArgs) (*sdk.CallToolResult, any, error) {
 		a := src()

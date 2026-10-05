@@ -32,6 +32,9 @@ type TrendReport struct {
 
 	Direction Direction   `json:"direction"`
 	Movement  TrendTotals `json:"movement"`
+	// Totals are the range's CVE figures with each CVE counted once, unlike the
+	// sums in Movement. The cleared figures include items still open.
+	Totals history.RangeTotals `json:"totals"`
 	// BySignal sums the per-period splits over the range, classified by each item's
 	// opening state. KEV is the headline; EPSS is a forecast and sits beside it.
 	BySignal map[string]history.Counts `json:"by_signal,omitempty"`
@@ -103,7 +106,7 @@ const flatBand = 5.0
 func NewTrendReport(rep history.Report) TrendReport {
 	out := TrendReport{
 		Caveats: append([]string{}, rep.Caveats...), Since: rep.Since, Until: rep.Until, Bucket: string(rep.Bucket),
-		FirstRecorded: rep.FirstRecorded, Periods: rep.Movement, Open: rep.Open,
+		FirstRecorded: rep.FirstRecorded, Periods: rep.Movement, Open: rep.Open, Totals: rep.Totals,
 		BySignal: map[string]history.Counts{}, ByRule: map[string]history.Counts{}, ByTeam: map[string]history.Counts{},
 		Movement: TrendTotals{LapseReasons: map[string]int{}, TicketsClosedByTool: map[string]int{}},
 	}
@@ -281,6 +284,12 @@ func trendSummary(r TrendReport) []string {
 	if m.Lapsed > 0 {
 		out = append(out, fmt.Sprintf("%d items left without a fix: they left the queue without evidence the upgrade landed (stopped running, dropped below the rules, no longer reported), and are not counted as remediation. Reasons: %s.",
 			m.Lapsed, describeCounts(m.LapseReasons)))
+	}
+	if c := r.Totals.Cleared; c.CVEsCleared > 0 {
+		out = append(out, fmt.Sprintf("Counting CVEs rather than items, and including items still open: %d distinct CVEs were cleared with evidence of remediation, %d of them known-exploited and %d with EPSS above 0.5. Ticketed work cleared %d (%d known-exploited, %d EPSS above 0.5) and other routes %d (%d known-exploited, %d EPSS above 0.5). That is the fixed items' CVEs plus those that left %d items still in the queue because the running image was replaced; each CVE is counted once across the range, and a CVE that only left KEV or whose EPSS fell is not counted.",
+			c.CVEsCleared, c.KEVCVEsCleared, c.EPSSHighCVEsCleared,
+			c.ClearedTicketed.CVEs, c.ClearedTicketed.KEV, c.ClearedTicketed.EPSSHigh,
+			c.ClearedUnticketed.CVEs, c.ClearedUnticketed.KEV, c.ClearedUnticketed.EPSSHigh, c.ItemsPartlyCleared))
 	}
 	if kev, ok := r.BySignal["kev"]; ok && (kev.Opened > 0 || kev.Resolved > 0) {
 		out = append(out, fmt.Sprintf("Known-exploited: %d opened, %d fixed (confirmed) (%d ticketed), %d left without a fix, classified by the item's state when first seen.",

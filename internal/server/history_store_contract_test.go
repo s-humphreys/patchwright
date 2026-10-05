@@ -13,6 +13,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/history"
 	"github.com/s-humphreys/patchwright/pkg/history/postgres"
+	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
 // The server's tests run on memStore, so memStore has to merge tracker tickets the
@@ -284,6 +285,98 @@ func itemTicketsContract(t *testing.T, s history.Store) {
 }
 
 // isolatedPostgres creates a database for this test alone and drops it afterwards.
+// A CVE that leaves an open item is credited against the run before, so the store
+// must keep an item's stored snapshot in step when its image moves quietly, and
+// round-trip what a clearance carries. Run through Diff and Aggregate the way the
+// server does, on both stores.
+func TestClearedCVEsStoreContract(t *testing.T) {
+	stores := map[string]func(t *testing.T) history.Store{
+		"memStore": func(*testing.T) history.Store { return newMemStore() },
+		"postgres.Lazy": func(t *testing.T) history.Store {
+			return postgres.NewLazy(postgres.Options{DSN: isolatedPostgres(t)})
+		},
+	}
+	for name, open := range stores {
+		t.Run(name, func(t *testing.T) { clearedContract(t, open(t)) })
+	}
+}
+
+func clearedContract(t *testing.T, s history.Store) {
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	deploy := func(tag, digest string, cves ...sink.VulnView) sink.FindingView {
+		return sink.FindingView{
+			Image: "acr.io/app:" + tag, Repository: "acr.io/app", Tag: tag, Digest: digest,
+			Owner: sink.OwnerView{Class: "eng", Team: "orders"}, Actionable: true, Priority: "urgent", Rule: "any-critical",
+			ProviderAssessed: true, Liveness: &sink.LivenessView{Live: true},
+			Upgrade:    &sink.UpgradeView{Kind: "helm", Name: "svc", Current: "1.0", Latest: "2.0", Available: true, Resolved: true},
+			Dimensions: map[string][]string{"namespace": {"orders"}},
+			Vulns:      cves,
+		}
+	}
+	kev := sink.VulnView{ID: "CVE-KEV", Severity: "critical", KEV: true, EPSS: 0.8}
+	noisy := sink.VulnView{ID: "CVE-NOISY", Severity: "high"}
+	stays := sink.VulnView{ID: "CVE-STAYS", Severity: "medium"}
+	run := 0
+	record := func(views ...sink.FindingView) []history.Event {
+		t.Helper()
+		run++
+		open, err := s.Open(ctx)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		at := t0.Add(time.Duration(run) * time.Hour)
+		events, marks := history.Diff(history.Input{
+			Open: open, Current: history.Snapshots(views, map[string][]string{"acr.io/app": {"PROJ-1"}}), Views: views, Now: at,
+		})
+		if _, err := s.Record(ctx, history.Assessment{StartedAt: at, FinishedAt: at}, events, marks); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+		return events
+	}
+
+	record(deploy("1", "sha256:aaa", kev, noisy, stays))
+	// The image moves with the same CVEs: no event, but the stored snapshot follows.
+	if ev := record(deploy("2", "sha256:bbb", kev, noisy, stays)); len(ev) != 0 {
+		t.Fatalf("same CVEs on a new image recorded %+v", ev)
+	}
+	open, err := s.Open(ctx)
+	if err != nil || len(open) != 1 || open[0].Current.Scan == nil || open[0].Current.Scan.Builds[0] != "sha256:bbb" {
+		t.Fatalf("the stored snapshot should carry the new image: %+v (%v)", open, err)
+	}
+	// A CVE drops off that same image: not a fix.
+	if ev := record(deploy("2", "sha256:bbb", kev, stays)); len(ev) != 1 || len(ev[0].Payload.CVEsCleared) != 0 {
+		t.Fatalf("a CVE leaving an unchanged image was credited: %+v", ev)
+	}
+	// The upgrade lands and takes the KEV with it; the item stays open.
+	if ev := record(deploy("3", "sha256:ccc", stays)); len(ev) != 1 || len(ev[0].Payload.CVEsCleared) != 1 {
+		t.Fatalf("the KEV leaving with a new image should be credited: %+v", ev)
+	}
+
+	events, err := s.Events(ctx, t0, t0.Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	var got *history.Event
+	for i := range events {
+		if len(events[i].Payload.CVEsCleared) > 0 {
+			got = &events[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("the clearance did not round-trip: %+v", events)
+	}
+	c := got.Payload.CVEsCleared[0]
+	if c.ID != "CVE-KEV" || !c.KEV || c.EPSS != 0.8 || !got.Payload.Ticketed || len(got.Payload.Tickets) != 1 || got.Payload.Evidence == "" {
+		t.Errorf("clearance payload = %+v", got.Payload)
+	}
+	rep := history.Aggregate(history.Range{Since: t0, Until: t0.Add(24 * time.Hour), Bucket: history.BucketMonth},
+		nil, events, nil, t0, t0.Add(24*time.Hour))
+	if rep.Totals.KEVCVEsCleared != 1 || rep.Totals.CVEsCleared != 1 || rep.Totals.ClearedTicketed.KEV != 1 || rep.Totals.ItemsPartlyCleared != 1 {
+		t.Errorf("totals = %+v", rep.Totals)
+	}
+}
+
 func isolatedPostgres(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("PATCHWRIGHT_TEST_POSTGRES_DSN")

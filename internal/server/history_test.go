@@ -74,6 +74,9 @@ func (m *memStore) Record(_ context.Context, a history.Assessment, events []hist
 			continue
 		}
 		st.Missing, st.MissingSince = mk.Missing, mk.MissingSince
+		if mk.Snapshot != nil {
+			st.Current = *mk.Snapshot
+		}
 		if mk.RefreshTickets {
 			st.Current.Tickets = nil
 			if len(mk.Tickets) > 0 {
@@ -977,5 +980,65 @@ func TestTicketLinksWithoutJiraCredentials(t *testing.T) {
 	}
 	if url != "https://jira.example.com/browse/PROJ-7" {
 		t.Errorf("url = %q, want a browse link built from the base URL alone", url)
+	}
+}
+
+// partialAssessor is an assessor whose findings and source failures a test moves
+// between refreshes.
+type partialAssessor struct {
+	findings []model.Finding
+	failures []model.SourceFailure
+}
+
+func (p *partialAssessor) Run(context.Context) ([]model.Finding, error) { return p.findings, nil }
+func (p *partialAssessor) Failures() []model.SourceFailure              { return p.failures }
+
+// A run that left a source out cannot vouch for a CVE's absence, so nothing it sees
+// leave an item is credited; the same move in a complete run is.
+func TestHistoryCreditsClearedCVEsOnlyFromCompleteRuns(t *testing.T) {
+	deployed := func(ref, digest string, cves ...string) model.Finding {
+		f := upgradable(ref, "orders")
+		f.Image.Digest = digest
+		f.Occurrences = []model.Occurrence{{Assessed: true}}
+		for _, id := range cves {
+			f.Vulns = append(f.Vulns, model.Vulnerability{ID: id, Severity: "critical", KEV: id == "CVE-KEV"})
+		}
+		return f
+	}
+	cleared := func(store *memStore) (n int, reasons []string) {
+		for _, e := range store.events {
+			if e.Kind == history.KindChanged {
+				n += len(e.Payload.CVEsCleared)
+				if e.Payload.Reason != "" {
+					reasons = append(reasons, e.Payload.Reason)
+				}
+			}
+		}
+		return n, reasons
+	}
+	for _, tc := range []struct {
+		name     string
+		failures []model.SourceFailure
+		want     int
+	}{
+		{name: "complete", want: 1},
+		{name: "a cluster left out", failures: []model.SourceFailure{{Stage: model.StageLive, Cluster: "remote", Error: "Unauthorized"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMemStore()
+			a := &partialAssessor{findings: []model.Finding{deployed("acr.io/app:1", "sha256:aaa", "CVE-KEV", "CVE-STAYS")}}
+			s := New(a).WithHistory(store, 30*24*time.Hour)
+			s.Refresh(context.Background())
+			a.findings = []model.Finding{deployed("acr.io/app:2", "sha256:bbb", "CVE-STAYS")}
+			a.failures = tc.failures
+			s.Refresh(context.Background())
+			n, reasons := cleared(store)
+			if n != tc.want {
+				t.Errorf("cleared %d, want %d (reasons %v)", n, tc.want, reasons)
+			}
+			if tc.want == 0 && (len(reasons) != 1 || !strings.Contains(reasons[0], "could not read every source")) {
+				t.Errorf("reasons = %v", reasons)
+			}
+		})
 	}
 }

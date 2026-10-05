@@ -126,6 +126,24 @@ type Snapshot struct {
 	// Tickets are the open tickets covering any of the item's images at this
 	// assessment, so a resolution can be classified as ticketed or not.
 	Tickets []string `json:"tickets,omitempty"`
+	// Scan is what the next assessment needs to tell a CVE that was remediated from
+	// one that stopped being reported. Nil on snapshots recorded before it existed,
+	// which credits nothing.
+	Scan *Scan `json:"scan,omitempty"`
+}
+
+// Scan is how an item's images were scanned and run at one assessment.
+type Scan struct {
+	// Source is who reported the item's CVEs, the same for every image: "provider"
+	// or "fallback:" and its name, with "+scan" when a vuln source also scanned.
+	// Empty when any image was not fully scanned or the images disagree, because
+	// such a run cannot vouch for a CVE's absence.
+	Source string `json:"source,omitempty"`
+	// Live is every image's liveness reconciled and running.
+	Live bool `json:"live,omitempty"`
+	// Builds identify the images that ran: the digest when known, otherwise the
+	// reference, so a floating tag rebuilt in place still counts as a new image.
+	Builds []string `json:"builds,omitempty"`
 }
 
 // CVE is one vulnerability as an item carried it.
@@ -206,6 +224,11 @@ type Mark struct {
 	// had already closed and record the close again.
 	RefreshTickets bool
 	Tickets        []string
+	// Snapshot, when set, replaces the item's current snapshot outright. Set when
+	// where the item runs or what scanned it moved without a changed event, so the
+	// next run judges a CVE's absence against the run before it rather than against
+	// whenever the item last changed.
+	Snapshot *Snapshot
 }
 
 // DefaultLapseAfter is the grace period when none is configured: the number of
@@ -247,15 +270,18 @@ type Payload struct {
 	// before the grace period ran out.
 	MissingSince *time.Time `json:"missing_since,omitempty"`
 	MissedRuns   int        `json:"missed_runs,omitempty"`
-	// Ticketed is whether an open ticket covered the item when it resolved or lapsed.
+	// Ticketed is whether an open ticket covered the item when it resolved or lapsed,
+	// or, on a changed event that cleared CVEs, before the change.
 	Ticketed bool `json:"ticketed,omitempty"`
-	// Evidence is the observed state that justified a resolution.
+	// Evidence is the observed state that justified a resolution, or on a changed
+	// event the clearing of CVEsCleared.
 	Evidence string `json:"evidence,omitempty"`
 	// Reason is why a lapse could not be called a resolution. On a ticket_closed
 	// event it is instead why patchwright itself closed the ticket (upgrade-landed,
 	// not-running, no-longer-actionable, upgrade-clears-nothing, operator-chosen),
 	// and empty when a person closed it: a ticket closed because the image was
-	// switched off is not a ticket closed because the work was done.
+	// switched off is not a ticket closed because the work was done. On a changed
+	// event it is why CVEsRemoved were not credited as cleared.
 	Reason string `json:"reason,omitempty"`
 
 	// Changes describe a changed event in words; SignalsAdded and SignalsRemoved are
@@ -265,6 +291,12 @@ type Payload struct {
 	SignalsRemoved []string `json:"signals_removed,omitempty"`
 	CVEsAdded      []string `json:"cves_added,omitempty"`
 	CVEsRemoved    []string `json:"cves_removed,omitempty"`
+	// CVEsCleared are the CVEsRemoved that left with evidence of remediation, as the
+	// item carried them before, so the KEV and EPSS readings are those of the image
+	// that was replaced rather than whatever the feeds say later. Tickets are the
+	// tickets covering the item before the change, when the work was being done.
+	CVEsCleared []CVE    `json:"cves_cleared,omitempty"`
+	Tickets     []string `json:"tickets,omitempty"`
 
 	// From and To are the owners either side of a reassignment.
 	From *Owner `json:"from,omitempty"`
@@ -346,8 +378,21 @@ func snapshot(key string, members []sink.FindingView, tickets map[string][]strin
 	ticketed := map[string]bool{}
 	accounts, namespaces := map[string]bool{}, map[string]bool{}
 	cves := map[string]CVE{}
+	builds := map[string]bool{}
+	scan := &Scan{Source: scanSource(lead), Live: true}
 	for _, f := range members {
 		s.Images = append(s.Images, f.Image)
+		build := f.Digest
+		if build == "" {
+			build = f.Image
+		}
+		builds[build] = true
+		if scanSource(f) != scan.Source {
+			scan.Source = ""
+		}
+		if f.Liveness == nil || !f.Liveness.Live {
+			scan.Live = false
+		}
 		if f.Risk > s.Risk {
 			s.Risk = f.Risk
 		}
@@ -414,7 +459,31 @@ func snapshot(key string, members []sink.FindingView, tickets map[string][]strin
 		s.CVEs = append(s.CVEs, cves[id])
 	}
 	sort.Strings(s.Images)
+	scan.Builds = sortedKeys(builds)
+	s.Scan = scan
 	return s
+}
+
+// scanSource names who reported a finding's CVEs, or nothing when the finding was
+// not fully scanned. A fallback answer and the provider's are different feeds, so a
+// CVE missing from one that the other reported is a change of scanner, not a fix.
+func scanSource(f sink.FindingView) string {
+	if f.ScanError != "" {
+		return ""
+	}
+	var src string
+	switch {
+	case f.ProviderAssessed && !f.FallbackScanned:
+		src = "provider"
+	case f.FallbackScanned && f.FallbackError == "":
+		src = "fallback:" + f.FallbackSource
+	default:
+		return ""
+	}
+	if f.Scanned {
+		src += "+scan"
+	}
+	return src
 }
 
 func boolKeys(m map[string]CVE) map[string]bool {
@@ -462,7 +531,11 @@ type Input struct {
 	// LapseAfter is the grace period in consecutive absent assessments. Zero means
 	// DefaultLapseAfter. Resolution with evidence is never delayed by it.
 	LapseAfter int
-	Now        time.Time
+	// Partial says a source could not be read in full this run (a cluster left out,
+	// an enrichment that failed), so no CVE leaving an item is credited as cleared:
+	// what the run did not see it cannot vouch for.
+	Partial bool
+	Now     time.Time
 }
 
 // Diff compares the open items against the current assessment and returns the
@@ -545,10 +618,24 @@ func Diff(in Input) ([]Event, []Mark) {
 		if added, gone := diffStrings(st.Current.Tickets, s.Tickets); len(added)+len(gone) > 0 {
 			mark.RefreshTickets, mark.Tickets = true, s.Tickets
 		}
-		if st.Missing > 0 || mark.RefreshTickets {
+		ev, isChanged := changed(st, s, in.Now)
+		if !isChanged && footprintMoved(st.Current, s) {
+			snap := s
+			mark.Snapshot = &snap
+		}
+		if st.Missing > 0 || mark.RefreshTickets || mark.Snapshot != nil {
 			marks = append(marks, mark)
 		}
-		if ev, changed := changed(st, s, in.Now); changed {
+		if isChanged {
+			if len(ev.Payload.CVEsRemoved) > 0 {
+				cleared, evidence, reason := Clearance(st.Current, s, st.Missing, in.Partial)
+				if len(cleared) > 0 {
+					ev.Payload.CVEsCleared, ev.Payload.Evidence = cleared, evidence
+					ev.Payload.Tickets, ev.Payload.Ticketed = st.Current.Tickets, st.Current.Ticketed()
+				} else {
+					ev.Payload.Reason = reason
+				}
+			}
 			events = append(events, ev)
 		}
 		if !in.TicketsUnavailable {
@@ -662,6 +749,102 @@ func Evidence(item Snapshot, byRepo map[string][]sink.FindingView) (evidence, re
 		}
 	}
 	return strings.Join(observed, "; ") + ".", ""
+}
+
+// footprintMoved reports whether what Clearance compares, beyond the CVEs themselves,
+// differs between two snapshots of an open item.
+func footprintMoved(prev, now Snapshot) bool {
+	if !equalStrings(prev.Images, now.Images) || !equalStrings(prev.Namespaces, now.Namespaces) ||
+		!equalStrings(prev.Accounts, now.Accounts) {
+		return true
+	}
+	if (prev.Scan == nil) != (now.Scan == nil) {
+		return true
+	}
+	if prev.Scan == nil {
+		return false
+	}
+	return prev.Scan.Source != now.Scan.Source || prev.Scan.Live != now.Scan.Live ||
+		!equalStrings(prev.Scan.Builds, now.Scan.Builds)
+}
+
+func equalStrings(a, b []string) bool {
+	added, removed := diffStrings(a, b)
+	return len(added)+len(removed) == 0
+}
+
+// Clearance returns the CVEs that left an item which stayed open, as prev carried
+// them, when the two assessments carry evidence they were remediated; otherwise
+// none, and why not. missed is how many assessments the item had been absent from
+// before now, and partial whether now could not read every source.
+//
+// The evidence mirrors what a resolution demands, for an item that is still in the
+// queue: both runs scanned every image by the same source, every image was running
+// in both, nothing stopped running anywhere it ran, and the image itself was
+// replaced. A CVE that vanishes without a new image is the scanner's answer moving,
+// not a fix; one that vanishes because a deployment went away was not fixed either.
+// A CVE that stays but leaves KEV, or whose EPSS falls, has not left at all, so it
+// is never here.
+func Clearance(prev, now Snapshot, missed int, partial bool) (cleared []CVE, evidence, reason string) {
+	_, removed := diffStrings(prev.CVEIDs(), now.CVEIDs())
+	if len(removed) == 0 {
+		return nil, "", ""
+	}
+	if r := withheld(prev, now, missed, partial); r != "" {
+		return nil, "", r
+	}
+	gone := map[string]bool{}
+	for _, id := range removed {
+		gone[id] = true
+	}
+	for _, c := range prev.CVEs {
+		if gone[c.ID] {
+			cleared = append(cleared, c)
+		}
+	}
+	added, replaced := diffStrings(prev.Scan.Builds, now.Scan.Builds)
+	return cleared, fmt.Sprintf("%s: %s replaced by %s, both scanned by %s and running.",
+		now.Repository, shortBuilds(replaced), shortBuilds(added), now.Scan.Source), ""
+}
+
+// withheld is the first reason the CVEs leaving an item cannot be credited, or
+// empty when they can.
+func withheld(prev, now Snapshot, missed int, partial bool) string {
+	switch {
+	case partial:
+		return "the assessment could not read every source"
+	case missed > 0:
+		return "the item was absent from the previous assessment"
+	case prev.Scan == nil || now.Scan == nil:
+		return "the previous assessment recorded no scan state"
+	case prev.Scan.Source == "" || now.Scan.Source == "":
+		return "not every image was fully scanned in both assessments"
+	case prev.Scan.Source != now.Scan.Source:
+		return fmt.Sprintf("scanned by %s, then by %s", prev.Scan.Source, now.Scan.Source)
+	case !prev.Scan.Live || !now.Scan.Live:
+		return "liveness was not reconciled as running in both assessments"
+	}
+	if _, lost := diffStrings(prev.Accounts, now.Accounts); len(lost) > 0 {
+		return "no longer running in " + strings.Join(lost, ", ")
+	}
+	if _, lost := diffStrings(prev.Namespaces, now.Namespaces); len(lost) > 0 {
+		return "no longer running in " + strings.Join(lost, ", ")
+	}
+	if added, replaced := diffStrings(prev.Scan.Builds, now.Scan.Builds); len(added) == 0 || len(replaced) == 0 {
+		return "the running image did not change"
+	}
+	return ""
+}
+
+func shortBuilds(builds []string) string {
+	out := make([]string, 0, len(builds))
+	for _, b := range builds {
+		if strings.HasPrefix(b, "sha256:") && len(b) > len("sha256:")+12 {
+			b = b[:len("sha256:")+12]
+		}
+		out = append(out, b)
+	}
+	return strings.Join(out, ", ")
 }
 
 // changed reports the item's movement while open, when there was any. Risk moves on

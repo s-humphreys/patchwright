@@ -244,6 +244,43 @@ func TestMarksPersistAndClearOnClose(t *testing.T) {
 	}
 }
 
+// A snapshot mark replaces the stored snapshot outright, scan state included, and a
+// mark without one leaves it alone.
+func TestSnapshotMarkReplacesCurrent(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	a := snap("eng|orders|app|svc", "app", "orders", "PROJ-1")
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0},
+		[]history.Event{{Key: a.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &a}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := s.Open(ctx)
+	moved := a
+	moved.Images = []string{"app:2"}
+	moved.Scan = &history.Scan{Source: "provider", Live: true, Builds: []string{"sha256:bbb"}}
+	at := t0.Add(time.Hour)
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: at, FinishedAt: at}, nil,
+		[]history.Mark{{ItemID: open[0].ID, Snapshot: &moved}}); err != nil {
+		t.Fatal(err)
+	}
+	open, _ = s.Open(ctx)
+	if got := open[0].Current; got.Scan == nil || got.Scan.Builds[0] != "sha256:bbb" || got.Images[0] != "app:2" || got.Tickets[0] != "PROJ-1" {
+		t.Fatalf("snapshot mark should replace current: %+v", got)
+	}
+	if o := open[0].Opened; o.Images[0] != "app:1" || o.Scan != nil {
+		t.Errorf("the opening snapshot is never touched: %+v", open[0].Opened)
+	}
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: at, FinishedAt: at}, nil,
+		[]history.Mark{{ItemID: open[0].ID, Missing: 1, MissingSince: &at}}); err != nil {
+		t.Fatal(err)
+	}
+	open, _ = s.Open(ctx)
+	if got := open[0].Current; got.Scan == nil || got.Scan.Builds[0] != "sha256:bbb" {
+		t.Errorf("a mark without a snapshot leaves it alone: %+v", got)
+	}
+}
+
 // A ticket gone from the open index is recorded closed once, however many runs it
 // stays gone: the mark rewrites the stored list in the same transaction as the close.
 func TestTicketCloseIsRecordedOnce(t *testing.T) {

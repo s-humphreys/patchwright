@@ -111,7 +111,8 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	current := history.Snapshots(snap.views, tickets)
 	events, marks := history.Diff(history.Input{
 		Open: open, Current: current, Views: snap.views, OpenTickets: tickets,
-		ClosedReasons: closedReasons, TicketsUnavailable: snap.ticketsFailed, LapseAfter: rec.lapseAfter, Now: snap.generatedAt,
+		ClosedReasons: closedReasons, TicketsUnavailable: snap.ticketsFailed, LapseAfter: rec.lapseAfter,
+		Partial: len(snap.summary.SourceFailures) > 0, Now: snap.generatedAt,
 	})
 	a := history.Summarise(started, snap.generatedAt, snap.views, current, snap.summary)
 	id, err := rec.store.Record(ctx, a, events, marks)

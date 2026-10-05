@@ -38,7 +38,28 @@ function pct(n, d) {
 /** withMovement keeps the periods in which anything happened, plus the latest. */
 function activePeriods(movement) {
   const rows = movement || [];
-  return rows.filter((m, i) => i === rows.length - 1 || m.baseline || m.opened || m.resolved || m.lapsed || m.tickets_closed);
+  return rows.filter((m, i) => i === rows.length - 1 || m.baseline || m.opened || m.resolved || m.lapsed || m.tickets_closed || m.cves_cleared);
+}
+
+/**
+ * clearedLine states the range's cleared CVEs from the report's totals, which count
+ * each CVE once; adding up the periods would count a CVE cleared in two of them twice.
+ */
+function clearedLine(t) {
+  if (!t) return "";
+  const kev = t.cleared_ticketed?.kev || 0, kevOther = t.cleared_unticketed?.kev || 0;
+  const partly = t.items_partly_cleared
+    ? `, ${fmt(t.items_partly_cleared)} of them work item${t.items_partly_cleared === 1 ? "" : "s"} still open`
+    : "";
+  return `<div class="dr"><dt title="Distinct CVEs that left work items with evidence of remediation: the fixed items' CVEs, plus those that left items still open because the running image was replaced. A CVE that only left KEV or whose EPSS fell is not counted">CVEs cleared, including from items still open</dt>
+      <dd><strong class="ok">${fmt(t.kev_cves_cleared)}</strong> known-exploited (KEV) · ${fmt(t.epss_high_cves_cleared)} with EPSS above 0.5 · ${fmt(t.cves_cleared)} CVEs in all${partly}. KEVs: ${fmt(kev)} by ticketed work, ${fmt(kevOther)} by another route</dd></div>`;
+}
+
+/** clearedCell is one period's cleared CVEs, including from items still open. */
+function clearedCell(m) {
+  if (m.cves_cleared == null) return `<td class="muted">-</td>`;
+  const parts = [m.kev_cves_cleared ? `${fmt(m.kev_cves_cleared)} KEV` : "", m.epss_high_cves_cleared ? `${fmt(m.epss_high_cves_cleared)} EPSS&gt;0.5` : ""].filter(Boolean);
+  return `<td>${fmt(m.cves_cleared)}${parts.length ? ` <span class="sub">(${parts.join(", ")})</span>` : ""}</td>`;
 }
 
 /** caveatsPanel puts the record's own caveats first, where they cannot be missed. */
@@ -58,6 +79,7 @@ function caveatsPanel(h, status) {
   // data and this one note carries the reading of it.
   items.push("A <strong>work item</strong> is one service and the one upgrade that would fix it: the unit a queue row and a ticket share. Every count below is work items unless it says CVEs.");
   items.push("<strong>Fixed (confirmed)</strong> means the item left the queue with evidence the upgrade landed: every image still reported, checked, on the latest version, and running. <strong>Left without a fix</strong> is leaving without that evidence, and is never counted as remediation.");
+  items.push("<strong>CVEs cleared, including from items still open</strong> adds to the fixed items' CVEs those that left an item still in the queue, when its running image was replaced, both runs scanned it the same way and it kept running everywhere it ran. A CVE that only dropped off KEV, or whose EPSS fell, is not cleared. Recorded from the release that added it onward.");
   items.push("Each row of the direction table is the last assessment of its period. A period with one run is a point, not a trend.");
   items.push("Open work items by signal are counted at the last assessment of each period, each item once under its most severe signal. EPSS is a forecast, so an item whose score decays below 0.5 moves out of that band without anything being fixed; the count of those sits under the chart.");
   // Collapsed by default, with the one fact that changes how the charts read kept
@@ -107,10 +129,15 @@ function movementPanel(h) {
     baseline: t.baseline + (m.baseline || 0), opened: t.opened + m.opened, resolved: t.resolved + m.resolved,
     lapsed: t.lapsed + m.lapsed, cves: t.cves + (m.cves_resolved || 0), kev: t.kev + (m.kev_cves_resolved || 0),
   }), { baseline: 0, opened: 0, resolved: 0, lapsed: 0, cves: 0, kev: 0 });
+  if (h.totals) {
+    totals.cves = h.totals.cves_resolved || 0;
+    totals.kev = h.totals.kev_cves_resolved || 0;
+  }
   const rows = periods.map((m) => `<tr>
       <td>${esc(m.period)}</td>${totals.baseline ? `<td class="muted">${fmt(m.baseline)}</td>` : ""}<td>${fmt(m.opened)}</td>
       <td><strong class="ok">${fmt(m.resolved)}</strong></td>
       <td>${fmt(m.cves_resolved)}${m.kev_cves_resolved ? ` <span class="sub">(${fmt(m.kev_cves_resolved)} KEV)</span>` : ""}</td>
+      ${h.totals ? clearedCell(m) : ""}
       <td class="muted" title="${esc(Object.entries(m.lapse_reasons || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "none left without a fix")}">${fmt(m.lapsed)}</td>
       <td class="muted">${fmt(m.reassigned)}</td>
       <td>${m.median_days_to_resolve != null ? `${Math.round(m.median_days_to_resolve)}d` : "-"}</td></tr>`).join("");
@@ -118,8 +145,9 @@ function movementPanel(h) {
     <p class="sub unit">A work item is one service and the one upgrade that would fix it. <strong>Fixed (confirmed)</strong> means it left the queue with evidence the upgrade landed; <strong>left without a fix</strong> is everything else that left the queue: it stopped running, dropped below the rules, or is no longer reported.</p>
     <div class="dr"><dt>Across the range</dt>
       <dd>${fmt(totals.opened)} opened · <strong class="ok">${fmt(totals.resolved)}</strong> fixed (confirmed), clearing ${fmt(totals.cves)} CVEs${totals.kev ? ` (${fmt(totals.kev)} known-exploited)` : ""} · <span class="muted">${fmt(totals.lapsed)} left without a fix</span></dd></div>
+    ${clearedLine(h.totals)}
     ${periods.length > 1 ? `<div class="chart-slot" data-chart="movement"></div>` : ""}
-    <table class="mini"><thead><tr><th>Period</th>${totals.baseline ? `<th title="Already open when the record began">Baseline</th>` : ""}<th title="Work items that entered the queue">Opened</th><th title="Left the queue with evidence the upgrade landed">Fixed (confirmed)</th><th title="Distinct CVEs carried by the fixed items">CVEs cleared</th><th title="Left the queue without evidence the upgrade landed; hover a cell for why">Left without a fix</th><th title="Owner changed">Reassigned</th><th>Median days to fix</th></tr></thead>
+    <table class="mini"><thead><tr><th>Period</th>${totals.baseline ? `<th title="Already open when the record began">Baseline</th>` : ""}<th title="Work items that entered the queue">Opened</th><th title="Left the queue with evidence the upgrade landed">Fixed (confirmed)</th><th title="Distinct CVEs carried by the fixed items">CVEs on fixed items</th>${h.totals ? `<th title="Distinct CVEs that left work items with evidence of remediation this period, including items still open. Each period counts its own; the range line above counts each CVE once">CVEs cleared, incl. items still open</th>` : ""}<th title="Left the queue without evidence the upgrade landed; hover a cell for why">Left without a fix</th><th title="Owner changed">Reassigned</th><th>Median days to fix</th></tr></thead>
     <tbody>${rows}</tbody></table>
   </section>`;
 }
@@ -137,6 +165,9 @@ function delineationPanel(h, tickets) {
   const measured = onTime + overdue;
   const byTool = {};
   for (const m of periods) for (const [k, v] of Object.entries(m.tickets_closed_by_tool || {})) byTool[k] = (byTool[k] || 0) + v;
+  const ct = h.totals?.cleared_ticketed, cu = h.totals?.cleared_unticketed;
+  const clearedSplit = ct && cu && (ct.cves || cu.cves) ? `<div class="dr"><dt title="Counted in CVEs, each once across the range, including CVEs cleared from items still open">KEVs cleared, including from items still open</dt>
+      <dd><strong>${fmt(ct.kev)}</strong> by ticketed work, ${fmt(cu.kev)} by another route · EPSS above 0.5: ${fmt(ct.epss_high)} ticketed, ${fmt(cu.epss_high)} otherwise · all CVEs: ${fmt(ct.cves)} ticketed, ${fmt(cu.cves)} otherwise</dd></div>` : "";
   const strip = stackedBar([
     { label: "fixed (confirmed), never ticketed", value: unticketed, cls: "age-0" },
     { label: "fixed (confirmed), ticketed", value: ticketed, cls: "age-1" },
@@ -153,6 +184,7 @@ function delineationPanel(h, tickets) {
   return `<section class="panel"><h3>Total remediation against ticketed work, in work items</h3>
     <div class="dr"><dt>Upgrades and patches landed</dt>
       <dd><strong class="ok">${fmt(unticketed + ticketed)}</strong> fixed (confirmed), of which <strong>${fmt(ticketed)}</strong> (${pct(ticketed, unticketed + ticketed)}) were ticketed work</dd></div>
+    ${clearedSplit}
     ${strip}
     <table class="mini"><thead><tr><th>Period</th><th title="Landed by another route: an update bot, a Flux automation, a rebuild done in passing">Fixed, unticketed</th><th title="Ticketed work completed; a subset of fixed (confirmed)">Fixed, ticketed</th><th>Tickets raised</th><th>Tickets closed</th><th title="A ticket somebody closed while the image still ran: neither fixed nor left without a fix">Closed, finding open</th>${measured ? `<th title="Closed against the due date set when the ticket was raised; tickets without one are in neither">Closed on time / overdue</th>` : ""}</tr></thead>
     <tbody>${rows}</tbody></table>
