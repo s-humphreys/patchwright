@@ -71,3 +71,34 @@ func equalExcluded(a, b ExcludedTickets) bool {
 		a.TicketsRaised == b.TicketsRaised && a.TicketsClosed == b.TicketsClosed &&
 		a.TrackerTicketsRaised == b.TrackerTicketsRaised && a.TrackerTicketsClosed == b.TrackerTicketsClosed
 }
+
+// An item covered only by tickets on an excluded route was not ticketed work, for
+// resolutions, clears and decommissions alike; one also covered by a counted ticket was.
+func TestExcludedTicketsDoNotMakeAnItemTicketed(t *testing.T) {
+	r := Range{Since: day(2026, 9, 1), Until: day(2026, 9, 30), Bucket: BucketMonth}
+	tickets := []TrackerTicket{
+		{Key: "T-1", Project: "PROJ", Parent: "PROJ-9", CreatedAt: day(2026, 9, 2)},
+		{Key: "R-1", Project: "PROJ", Parent: "PROJ-1", CreatedAt: day(2026, 9, 2)},
+	}
+	cve := []CVE{{ID: "CVE-1", KEV: true}}
+	events := []Event{
+		{ItemID: 1, Key: "a", Kind: KindResolved, At: day(2026, 9, 5), Payload: Payload{Ticketed: true, Closed: &Snapshot{Key: "a", Tickets: []string{"T-1"}, CVEs: cve}}},
+		{ItemID: 2, Key: "b", Kind: KindResolved, At: day(2026, 9, 5), Payload: Payload{Ticketed: true, Closed: &Snapshot{Key: "b", Tickets: []string{"T-1", "R-1"}}}},
+		{ItemID: 3, Key: "c", Kind: KindChanged, At: day(2026, 9, 6), Payload: Payload{Ticketed: true, Tickets: []string{"T-1"}, CVEsCleared: []CVE{{ID: "CVE-2"}}}},
+		{ItemID: 4, Key: "d", Kind: KindDecommissioned, At: day(2026, 9, 7), Payload: Payload{Ticketed: true, Tickets: []string{"T-1"}, Closed: &Snapshot{Key: "d", CVEs: []CVE{{ID: "CVE-3"}}}}},
+	}
+	evs, _, _ := ExcludeTickets(r, events, tickets, []TicketScope{{Route: "test", Project: "PROJ", Epic: "PROJ-9"}})
+	m := Aggregate(r, nil, evs, nil, time.Time{}, r.Until).Movement[0]
+	if m.ResolvedTicketed != 1 || m.ResolvedUnticketed != 1 {
+		t.Errorf("resolved ticketed/unticketed = %d/%d, want 1/1", m.ResolvedTicketed, m.ResolvedUnticketed)
+	}
+	if m.ClearedTicketed.CVEs != 0 || m.ClearedUnticketed.CVEs != 2 {
+		t.Errorf("cleared ticketed/unticketed = %+v / %+v, want 0 and 2", m.ClearedTicketed, m.ClearedUnticketed)
+	}
+	if m.Decommissioned.ItemsTicketed != 0 || m.Decommissioned.Ticketed.CVEs != 0 {
+		t.Errorf("decommissioned = %+v, want nothing ticketed", m.Decommissioned)
+	}
+	if events[0].Payload.Ticketed != true {
+		t.Errorf("the caller's events were modified")
+	}
+}

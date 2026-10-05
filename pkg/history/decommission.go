@@ -3,6 +3,7 @@ package history
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/s-humphreys/patchwright/pkg/sink"
@@ -37,7 +38,9 @@ type DecommissionInput struct {
 	Current []Snapshot
 	Views   []sink.FindingView
 	Partial bool
-	Now     time.Time
+	// LiveScope is this run's Assessment.LiveScope.
+	LiveScope string
+	Now       time.Time
 }
 
 // Decommissions credits lapsed items whose workloads were removed. An item lapsed
@@ -73,7 +76,7 @@ func Decommissions(in DecommissionInput) []Event {
 	var out []Event
 	for _, lapse := range in.Events {
 		if lapse.Kind != KindLapsed || done[lapse.ItemID] || lapse.Payload.Closed == nil ||
-			lapseClass(lapse.Payload.Reason) != "no longer running" {
+			lapse.Payload.NotCreditable != "" || lapseClass(lapse.Payload.Reason) != "no longer running" {
 			continue
 		}
 		since := lapse.At
@@ -86,8 +89,8 @@ func Decommissions(in DecommissionInput) []Event {
 		}
 		closed := lapse.Payload.Closed
 		if current[closed.Key] || repos[closed.Repository] || in.Partial ||
-			partialSince(in.Assessments, since, in.Now) || runsElsewhere(closed.Repository, in.Views) ||
-			cameBack(lapse, closed.Repository, since, in.Events) {
+			partialSince(in.Assessments, since, in.Now) || !scopeHeld(in.Assessments, since, in.Now, in.LiveScope) ||
+			runsElsewhere(*closed, in.Views) || cameBack(lapse, closed.Repository, since, in.Events) {
 			continue
 		}
 		done[lapse.ItemID] = true
@@ -98,10 +101,10 @@ func Decommissions(in DecommissionInput) []Event {
 }
 
 // judgedBefore reports whether an assessment already recorded fell at or after the
-// deadline: that run judged the lapse, whatever it decided.
+// deadline and judged decommissions: that run judged the lapse, whatever it decided.
 func judgedBefore(assessments []Assessment, deadline, now time.Time) bool {
 	for _, a := range assessments {
-		if !a.FinishedAt.Before(deadline) && a.FinishedAt.Before(now) {
+		if !a.Unjudged && !a.FinishedAt.Before(deadline) && a.FinishedAt.Before(now) {
 			return true
 		}
 	}
@@ -117,11 +120,41 @@ func partialSince(assessments []Assessment, since, now time.Time) bool {
 	return false
 }
 
-// runsElsewhere reports a finding on the repository that is running, or whose
-// liveness is unknown and so cannot vouch that it is not.
-func runsElsewhere(repo string, views []sink.FindingView) bool {
+// scopeHeld reports that the live source read the same clusters in the run the item
+// was last seen in, in every run since, and in this one. Without the run before the
+// disappearance there is nothing to compare, so nothing is credited.
+func scopeHeld(assessments []Assessment, since, now time.Time, current string) bool {
+	var last *Assessment
+	for i, a := range assessments {
+		if a.FinishedAt.Before(since) && (last == nil || a.FinishedAt.After(last.FinishedAt)) {
+			last = &assessments[i]
+		}
+	}
+	if last == nil || last.LiveScope != current {
+		return false
+	}
+	for _, a := range assessments {
+		if !a.FinishedAt.Before(since) && a.FinishedAt.Before(now) && a.LiveScope != current {
+			return false
+		}
+	}
+	return true
+}
+
+// runsElsewhere reports a finding on the item's repository, or on an image built
+// from one of its digests, that is running or whose liveness is unknown and so
+// cannot vouch that it is not. The digest catches a repository renamed in place.
+func runsElsewhere(item Snapshot, views []sink.FindingView) bool {
+	digests := map[string]bool{}
+	if item.Scan != nil {
+		for _, b := range item.Scan.Builds {
+			if strings.HasPrefix(b, "sha256:") {
+				digests[b] = true
+			}
+		}
+	}
 	for _, v := range views {
-		if v.Repository == repo && (v.Liveness == nil || v.Liveness.Live) {
+		if (v.Repository == item.Repository || digests[v.Digest]) && (v.Liveness == nil || v.Liveness.Live) {
 			return true
 		}
 	}

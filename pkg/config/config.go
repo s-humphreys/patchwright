@@ -1288,6 +1288,9 @@ func Load(paths ...string) (*Config, error) {
 		if part.History.Auth != "" {
 			cfg.History.Auth = part.History.Auth
 		}
+		if part.History.DecommissionMaxLapses != 0 {
+			cfg.History.DecommissionMaxLapses = part.History.DecommissionMaxLapses
+		}
 		if part.History.DecommissionAfter != "" {
 			cfg.History.DecommissionAfter = part.History.DecommissionAfter
 		}

@@ -102,6 +102,9 @@ func TestHistoryExclusionWithoutTheTracker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if rep.TicketsExcluded != nil {
+		t.Errorf("nothing was told apart, so nothing is reported as excluded: %+v", rep.TicketsExcluded)
+	}
 	if !strings.Contains(strings.Join(rep.Caveats, "\n"), "the tracker has not been read, so none could be told apart") {
 		t.Errorf("caveats = %v", rep.Caveats)
 	}

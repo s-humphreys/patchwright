@@ -152,6 +152,8 @@ func TestFeedTransitionsForAnItemOpenedBeforeTheRange(t *testing.T) {
 			{SignalsAdded: []string{SignalKnownExploit, SignalEPSSHigh}, Snapshot: snap(CVE{ID: "A", KEV: true, EPSS: 0.9})},
 		}},
 		{name: "a genuine decay", events: []Payload{{SignalsRemoved: []string{SignalEPSSHigh}, Snapshot: snap(CVE{ID: "A", EPSS: 0.2})}}, epss: 1},
+		{name: "the high CVE fixed is not a decay", events: []Payload{{SignalsRemoved: []string{SignalEPSSHigh}, CVEsRemoved: []string{"A"},
+			Snapshot: snap(CVE{ID: "B", EPSS: 0.1})}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

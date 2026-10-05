@@ -875,6 +875,11 @@ type Sources struct {
 	AgeSource          string
 	LiveSource         string
 	SupportSource      string
+	// LiveClusters are the clusters the live source was configured to read, whether
+	// or not each read succeeded. A cluster leaving this list is a change in what
+	// liveness can see, not a failure, and the history record must not mistake the
+	// images that stop running with it for decommissions.
+	LiveClusters []string
 
 	// Remediation is whether upgrades were looked for at all; BaseDiff whether base
 	// images were scanned to establish what an upgrade clears; InFlight whether open

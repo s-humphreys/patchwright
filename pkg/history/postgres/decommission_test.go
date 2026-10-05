@@ -14,8 +14,8 @@ func TestAssessmentPartialRoundTripsAndIsBackfilled(t *testing.T) {
 	ctx := context.Background()
 	t0 := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	for i, a := range []history.Assessment{
-		{StartedAt: t0, FinishedAt: t0, Partial: true},
-		{StartedAt: t0.Add(time.Hour), FinishedAt: t0.Add(time.Hour)},
+		{StartedAt: t0, FinishedAt: t0, Partial: true, LiveScope: "kube:a,b"},
+		{StartedAt: t0.Add(time.Hour), FinishedAt: t0.Add(time.Hour), Unjudged: true},
 	} {
 		if _, err := s.Record(ctx, a, nil, nil); err != nil {
 			t.Fatalf("record %d: %v", i, err)
@@ -40,6 +40,9 @@ func TestAssessmentPartialRoundTripsAndIsBackfilled(t *testing.T) {
 	if len(got) != 3 || !got[0].Partial || got[1].Partial || !got[2].Partial {
 		t.Errorf("partial = %v %v %v, want true false true", got[0].Partial, got[1].Partial, got[2].Partial)
 	}
+	if got[0].LiveScope != "kube:a,b" || got[0].Unjudged || !got[1].Unjudged || got[2].LiveScope != "" {
+		t.Errorf("scope/unjudged = %q %v, %q %v, %q", got[0].LiveScope, got[0].Unjudged, got[1].LiveScope, got[1].Unjudged, got[2].LiveScope)
+	}
 }
 
 // The whole path against the store: an item stops running, lapses, and is credited
@@ -55,7 +58,8 @@ func TestDecommissionIsRecordedOnce(t *testing.T) {
 	}
 	item := snap("eng|orders|acr.io/app|svc", "acr.io/app", "orders")
 	item.CVEs = []history.CVE{{ID: "CVE-1", KEV: true}}
-	if _, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0},
+	const scope = "kube:a"
+	if _, err := s.Record(ctx, history.Assessment{StartedAt: t0, FinishedAt: t0, LiveScope: scope},
 		[]history.Event{{Key: item.Key, Kind: history.KindOpened, At: t0, Payload: history.Payload{Snapshot: &item}}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -72,15 +76,15 @@ func TestDecommissionIsRecordedOnce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runs, err := s.Assessments(ctx, from, at)
+		runs, err := s.Assessments(ctx, from.Add(-24*time.Hour), at)
 		if err != nil {
 			t.Fatal(err)
 		}
 		decom := history.Decommissions(history.DecommissionInput{
-			After: after, Events: recent, Assessments: runs, Views: []sink.FindingView{gone}, Now: at,
+			After: after, Events: recent, Assessments: runs, Views: []sink.FindingView{gone}, LiveScope: scope, Now: at,
 		})
 		events = append(events, decom...)
-		if _, err := s.Record(ctx, history.Assessment{StartedAt: at, FinishedAt: at}, events, marks); err != nil {
+		if _, err := s.Record(ctx, history.Assessment{StartedAt: at, FinishedAt: at, LiveScope: scope}, events, marks); err != nil {
 			t.Fatal(err)
 		}
 		return decom

@@ -278,6 +278,10 @@ type Payload struct {
 	// the workloads disappeared, which is also the event's date.
 	MissingSince *time.Time `json:"missing_since,omitempty"`
 	MissedRuns   int        `json:"missed_runs,omitempty"`
+	// NotCreditable, on a lapse, is why it may never be credited as a decommission:
+	// set when one assessment lapsed so many items as not running that a change in
+	// what liveness can see is likelier than that many services switched off at once.
+	NotCreditable string `json:"not_creditable,omitempty"`
 	// Ticketed is whether an open ticket covered the item when it resolved or lapsed,
 	// or, on a changed event that cleared CVEs, before the change.
 	Ticketed bool `json:"ticketed,omitempty"`
@@ -543,8 +547,16 @@ type Input struct {
 	// an enrichment that failed), so no CVE leaving an item is credited as cleared:
 	// what the run did not see it cannot vouch for.
 	Partial bool
-	Now     time.Time
+	// MassLapseLimit is the most items one run may lapse as not running and still
+	// have those lapses creditable as decommissions. Zero means DefaultMassLapseLimit.
+	MassLapseLimit int
+	Now            time.Time
 }
+
+// DefaultMassLapseLimit is MassLapseLimit when none is configured. Services are
+// switched off a few at a time; twenty in one run is a liveness change (a cluster
+// dropped from the source, a workload kind no longer counted) far more often.
+const DefaultMassLapseLimit = 20
 
 // Diff compares the open items against the current assessment and returns the
 // transitions, in a stable order, and the missing-counter marks to apply. Events
@@ -650,7 +662,30 @@ func Diff(in Input) ([]Event, []Mark) {
 			events = append(events, ticketsClosed(st, s.Tickets, false, in.ClosedReasons, in.Now)...)
 		}
 	}
+	markMassLapse(events, in.MassLapseLimit)
 	return events, marks
+}
+
+// markMassLapse makes every not-running lapse of this run uncreditable when there are
+// more than limit of them.
+func markMassLapse(events []Event, limit int) {
+	if limit <= 0 {
+		limit = DefaultMassLapseLimit
+	}
+	var lapses []int
+	for i, e := range events {
+		if e.Kind == KindLapsed && lapseClass(e.Payload.Reason) == "no longer running" {
+			lapses = append(lapses, i)
+		}
+	}
+	if len(lapses) <= limit {
+		return
+	}
+	why := fmt.Sprintf("%d items lapsed as no longer running in one assessment, more than the %d a decommission can be credited from",
+		len(lapses), limit)
+	for _, i := range lapses {
+		events[i].Payload.NotCreditable = why
+	}
 }
 
 // ticketsFor lists the tickets still open for an item's repository.
@@ -1023,6 +1058,13 @@ type Assessment struct {
 	// Partial says a source could not be read in full: a cluster left out or an
 	// enrichment that failed. A decommission needs every run in its window complete.
 	Partial bool `json:"partial,omitempty"`
+	// LiveScope names the live source and the clusters it was configured to read.
+	// Removing a cluster from the source is not a read failure, yet every image on it
+	// stops running, so a decommission needs the scope unchanged through its window.
+	LiveScope string `json:"live_scope,omitempty"`
+	// Unjudged says this run could not read the record it judges decommissions from,
+	// so it judged none and a later run must.
+	Unjudged bool `json:"unjudged,omitempty"`
 
 	// Counts are severity totals summed over every unsuppressed finding, and
 	// ActionableCounts over the actionable ones: "total criticals across the
