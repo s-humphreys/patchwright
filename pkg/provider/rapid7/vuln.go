@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/s-humphreys/patchwright/pkg/enrich"
 	"github.com/s-humphreys/patchwright/pkg/model"
@@ -63,14 +62,6 @@ type vulnSource struct {
 	// concurrency is how many per-image requests may be in flight, from the
 	// "concurrency" option.
 	concurrency int
-
-	// resources maps image reference to a resource that runs it, built once on first
-	// use. The mapping is the only reason a second sweep is needed, and it is the
-	// same listing the provider already reads, so it is cheap relative to the CVE
-	// fetches that follow.
-	once      sync.Once
-	resources map[string]string
-	mapErr    error
 }
 
 func (v *vulnSource) Name() string { return "rapid7" }
@@ -112,14 +103,29 @@ func (v *vulnSource) buildMap(ctx context.Context) (map[string]string, error) {
 	return out, nil
 }
 
+// resources maps image reference to a resource that runs it, swept once per run. The
+// mapping is the only reason a second sweep is needed, and it is the same listing
+// the provider already reads, so it is cheap relative to the CVE fetches that follow.
+//
+// Per run rather than per process: the server keeps this source for its lifetime,
+// and a mapping from its first run knew no image deployed since and kept resources
+// that had been replaced. Every new tag then failed to scan, so the share of images
+// with CVE detail fell run by run until the next restart, taking their KEV flags and
+// EPSS scores with it.
+func (v *vulnSource) resources(ctx context.Context) (map[string]string, error) {
+	return enrich.Memo(ctx, "rapid7:resources:"+v.api.baseURL, func() (map[string]string, error) {
+		return v.buildMap(ctx)
+	})
+}
+
 // Scan implements enrich.VulnSource.
 func (v *vulnSource) Scan(ctx context.Context, image model.Image) ([]model.Vulnerability, error) {
-	v.once.Do(func() { v.resources, v.mapErr = v.buildMap(ctx) })
-	if v.mapErr != nil {
-		return nil, v.mapErr
+	resources, err := v.resources(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	resource, ok := v.lookup(image)
+	resource, ok := lookup(resources, image)
 	if !ok {
 		// The platform has no resource running this image, so it has nothing to say
 		// about it. An error rather than an empty list: empty would be recorded as a
@@ -180,17 +186,17 @@ func (r cveRow) vulnerability() model.Vulnerability {
 // reference. Docker Hub images are recorded without a registry ("n8nio/n8n:2.36.1")
 // while an image parsed from a cluster carries the implied one, so an exact match on
 // the qualified form misses every Docker Hub image in the estate.
-func (v *vulnSource) lookup(image model.Image) (string, bool) {
+func lookup(resources map[string]string, image model.Image) (string, bool) {
 	for _, key := range []string{image.NameTag(), image.Ref} {
 		if key == "" {
 			continue
 		}
-		if r, ok := v.resources[key]; ok {
+		if r, ok := resources[key]; ok {
 			return r, true
 		}
 		for _, implied := range []string{"docker.io/library/", "docker.io/", "index.docker.io/"} {
 			if bare := strings.TrimPrefix(key, implied); bare != key {
-				if r, ok := v.resources[bare]; ok {
+				if r, ok := resources[bare]; ok {
 					return r, true
 				}
 			}
