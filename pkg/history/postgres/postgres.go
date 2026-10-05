@@ -261,10 +261,10 @@ func (s *Store) Record(ctx context.Context, a history.Assessment, events []histo
 	var id int64
 	if err := tx.QueryRow(ctx, `INSERT INTO assessments
 		(started_at, finished_at, findings, actionable, items, risk, by_class, by_team,
-		 counts, actionable_counts, distinct_cves, distinct_kev, distinct_epss_high, summary, snapshot, partial)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+		 counts, actionable_counts, distinct_cves, distinct_kev, distinct_epss_high, summary, snapshot, partial, live_scope, unjudged)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
 		a.StartedAt, a.FinishedAt, a.Findings, a.Actionable, a.ItemCount, risk, byClass, byTeam,
-		counts, actionableCounts, a.DistinctCVEs, a.DistinctKEV, a.DistinctEPSSHigh, summary, snapshot, a.Partial).Scan(&id); err != nil {
+		counts, actionableCounts, a.DistinctCVEs, a.DistinctKEV, a.DistinctEPSSHigh, summary, snapshot, a.Partial, a.LiveScope, a.Unjudged).Scan(&id); err != nil {
 		return 0, fmt.Errorf("history: insert assessment: %w", err)
 	}
 	if err := applyEvents(ctx, tx, id, events); err != nil {
@@ -437,7 +437,7 @@ func (s *Store) Assessments(ctx context.Context, since, until time.Time) ([]hist
 	ctx, cancel := s.ctx(ctx)
 	defer cancel()
 	rows, err := s.pool.Query(ctx, `SELECT id, started_at, finished_at, findings, actionable, items, risk, by_class, by_team,
-		counts, actionable_counts, distinct_cves, distinct_kev, distinct_epss_high, summary, partial
+		counts, actionable_counts, distinct_cves, distinct_kev, distinct_epss_high, summary, partial, live_scope, unjudged
 		FROM assessments WHERE finished_at >= $1 AND finished_at < $2 ORDER BY finished_at, id`, since, until)
 	if err != nil {
 		return nil, fmt.Errorf("history: assessments: %w", err)
@@ -448,7 +448,7 @@ func (s *Store) Assessments(ctx context.Context, since, until time.Time) ([]hist
 		var a history.Assessment
 		var risk, byClass, byTeam, counts, actionableCounts, summary []byte
 		if err := rows.Scan(&a.ID, &a.StartedAt, &a.FinishedAt, &a.Findings, &a.Actionable, &a.ItemCount, &risk, &byClass, &byTeam,
-			&counts, &actionableCounts, &a.DistinctCVEs, &a.DistinctKEV, &a.DistinctEPSSHigh, &summary, &a.Partial); err != nil {
+			&counts, &actionableCounts, &a.DistinctCVEs, &a.DistinctKEV, &a.DistinctEPSSHigh, &summary, &a.Partial, &a.LiveScope, &a.Unjudged); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(risk, &a.Risk); err != nil {

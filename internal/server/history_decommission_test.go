@@ -19,17 +19,20 @@ func TestHistoryCreditsDecommissions(t *testing.T) {
 		f.Actionable, f.Live = false, false
 		return f
 	}
+	both := model.Sources{LiveSource: "kube", LiveClusters: []string{"a", "b"}}
 	for _, tc := range []struct {
 		name     string
 		failures []model.SourceFailure
+		narrowed bool
 		want     int
 	}{
 		{name: "every run complete", want: 1},
 		{name: "a run in the window left a cluster out", failures: []model.SourceFailure{{Stage: model.StageLive, Cluster: "remote", Error: "Unauthorized"}}},
+		{name: "a cluster taken out of the live source in the window", narrowed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newMemStore()
-			a := &partialAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders")}}
+			a := &scopedAssessor{partialAssessor: partialAssessor{findings: []model.Finding{upgradable("acr.io/app:1", "orders")}}, sources: both}
 			s := New(a).WithHistory(store, 30*24*time.Hour).WithLapseAfter(1).WithDecommissionAfter(20 * time.Millisecond)
 			s.Refresh(context.Background())
 			a.findings = []model.Finding{gone()}
@@ -38,8 +41,11 @@ func TestHistoryCreditsDecommissions(t *testing.T) {
 				t.Fatalf("want a lapse, got %v", k)
 			}
 			a.failures = tc.failures
+			if tc.narrowed {
+				a.sources = model.Sources{LiveSource: "kube", LiveClusters: []string{"a"}}
+			}
 			s.Refresh(context.Background())
-			a.failures = nil
+			a.failures, a.sources = nil, both
 			time.Sleep(30 * time.Millisecond)
 			s.Refresh(context.Background())
 			s.Refresh(context.Background())
@@ -53,3 +59,11 @@ func TestHistoryCreditsDecommissions(t *testing.T) {
 		})
 	}
 }
+
+// scopedAssessor reports the live source's clusters, which a test moves between runs.
+type scopedAssessor struct {
+	partialAssessor
+	sources model.Sources
+}
+
+func (s *scopedAssessor) Sources() model.Sources { return s.sources }

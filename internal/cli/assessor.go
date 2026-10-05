@@ -109,6 +109,11 @@ func newAssessor(in assessInputs) (*assessor, error) {
 			return nil, err
 		}
 		liveEnrichers = append(liveEnrichers, enrich.NewLiveness(src))
+		// The configured clusters, so the history record can tell a cluster taken out
+		// of the source from services switched off.
+		if cl, ok := src.(interface{ ClusterLabels() []string }); ok {
+			sources.LiveClusters = cl.ClusterLabels()
+		}
 		if cr, ok := src.(enrich.ClusterFailureReporter); ok {
 			clusters = cr
 		}

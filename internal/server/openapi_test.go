@@ -258,15 +258,17 @@ func TestSpecCoversEverySupportField(t *testing.T) {
 func TestSpecCoversEveryHistoryField(t *testing.T) {
 	spec := loadSpec(t)
 	for name, typ := range map[string]reflect.Type{
-		"HistoryReport":        reflect.TypeOf(history.Report{}),
-		"HistoryMovement":      reflect.TypeOf(history.Movement{}),
-		"HistoryTotals":        reflect.TypeOf(history.RangeTotals{}),
-		"HistoryCVETally":      reflect.TypeOf(history.CVETally{}),
-		"HistoryRiskPoint":     reflect.TypeOf(history.RiskPoint{}),
-		"HistoryTracker":       reflect.TypeOf(history.TrackerSummary{}),
-		"HistoryTicketsPerDay": reflect.TypeOf(ticketsPerDay{}),
-		"HistoryTicketDay":     reflect.TypeOf(ticketDay{}),
-		"HistoryCreatedTicket": reflect.TypeOf(createdTicket{}),
+		"HistoryReport":          reflect.TypeOf(history.Report{}),
+		"HistoryMovement":        reflect.TypeOf(history.Movement{}),
+		"HistoryTotals":          reflect.TypeOf(history.RangeTotals{}),
+		"HistoryCVETally":        reflect.TypeOf(history.CVETally{}),
+		"HistoryDecommissioned":  reflect.TypeOf(history.Decommissioned{}),
+		"HistoryTicketsExcluded": reflect.TypeOf(history.ExcludedTickets{}),
+		"HistoryRiskPoint":       reflect.TypeOf(history.RiskPoint{}),
+		"HistoryTracker":         reflect.TypeOf(history.TrackerSummary{}),
+		"HistoryTicketsPerDay":   reflect.TypeOf(ticketsPerDay{}),
+		"HistoryTicketDay":       reflect.TypeOf(ticketDay{}),
+		"HistoryCreatedTicket":   reflect.TypeOf(createdTicket{}),
 	} {
 		schema, ok := spec.Components.Schemas[name]
 		if !ok {

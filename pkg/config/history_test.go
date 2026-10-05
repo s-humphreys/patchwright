@@ -62,10 +62,11 @@ func TestHistoryConfigLoadsAndValidates(t *testing.T) {
 		{"history:\n  decommissionAfter: 36h\n", 36 * time.Hour, false},
 		{"history:\n  decommissionAfter: 0d\n", 0, true},
 		{"history:\n  decommissionAfter: a week\n", 0, true},
+		{"history:\n  decommissionMaxLapses: -1\n", 0, true},
 	} {
 		cfg, err := Load(write("decom.yaml", c.body))
 		if c.err {
-			if err == nil || !strings.Contains(err.Error(), "history.decommissionAfter") {
+			if err == nil || !strings.Contains(err.Error(), "history.decommission") {
 				t.Errorf("%q: want a decommissionAfter error, got %v", c.body, err)
 			}
 			continue

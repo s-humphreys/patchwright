@@ -1,6 +1,7 @@
 package history
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,20 @@ func TestDecommissions(t *testing.T) {
 		v.Liveness = live
 		return []sink.FindingView{v}
 	}
-	runs := []Assessment{{FinishedAt: since.Add(time.Hour)}, {FinishedAt: since.Add(72 * time.Hour)}}
+	const scope = "kube:a,b"
+	runs := []Assessment{{FinishedAt: since.Add(-time.Hour), LiveScope: scope}, {FinishedAt: since.Add(time.Hour), LiveScope: scope},
+		{FinishedAt: since.Add(72 * time.Hour), LiveScope: scope}}
+	renamed := func() []sink.FindingView {
+		v := view("acr.io/renamed:1", "eng", "orders", "high")
+		v.Digest = "sha256:0123456789abcdef"
+		return []sink.FindingView{v}
+	}
+	withDigest := func(e Event) Event {
+		c := *e.Payload.Closed
+		c.Scan = &Scan{Builds: []string{"sha256:0123456789abcdef"}}
+		e.Payload.Closed = &c
+		return e
+	}
 
 	cases := []struct {
 		name        string
@@ -50,6 +64,8 @@ func TestDecommissions(t *testing.T) {
 		current     []Snapshot
 		views       []sink.FindingView
 		partial     bool
+		scope       *string
+		replaceRuns bool
 		now         time.Time
 		want        bool
 	}{
@@ -71,6 +87,14 @@ func TestDecommissions(t *testing.T) {
 		{name: "an earlier run judged it", assessments: []Assessment{{FinishedAt: since.Add(after + 10*time.Minute)}}},
 		{name: "already decommissioned", extra: []Event{{ItemID: 7, Key: key, Kind: KindDecommissioned, At: since}}},
 		{name: "older than the lookback", now: since.Add(DecommissionLookback(after) + time.Hour)},
+		{name: "a cluster dropped from the live source in the window", assessments: []Assessment{{FinishedAt: since.Add(96 * time.Hour), LiveScope: "kube:a"}}},
+		{name: "this run reads other clusters", scope: ptr("kube:a")},
+		{name: "no run before the disappearance to compare with", replaceRuns: true,
+			assessments: []Assessment{{FinishedAt: since.Add(time.Hour), LiveScope: scope}}},
+		{name: "a run that could not judge does not use up the judgement", want: true,
+			assessments: []Assessment{{FinishedAt: since.Add(after + 10*time.Minute), LiveScope: scope, Unjudged: true}}},
+		{name: "part of a mass lapse", lapse: func(e Event) Event { e.Payload.NotCreditable = "too many"; return e }},
+		{name: "the same image live under another name", lapse: withDigest, views: renamed()},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -82,9 +106,17 @@ func TestDecommissions(t *testing.T) {
 			if !c.now.IsZero() {
 				at = c.now
 			}
+			all := append(append([]Assessment{}, runs...), c.assessments...)
+			if c.replaceRuns {
+				all = c.assessments
+			}
+			current := scope
+			if c.scope != nil {
+				current = *c.scope
+			}
 			got := Decommissions(DecommissionInput{
-				After: after, Events: append([]Event{lapse}, c.extra...), Assessments: append(append([]Assessment{}, runs...), c.assessments...),
-				Current: c.current, Views: c.views, Partial: c.partial, Now: at,
+				After: after, Events: append([]Event{lapse}, c.extra...), Assessments: all,
+				Current: c.current, Views: c.views, Partial: c.partial, LiveScope: current, Now: at,
 			})
 			if !c.want {
 				if len(got) != 0 {
@@ -171,5 +203,34 @@ func TestAggregateCreditsDecommissionsToThePeriodOfDisappearance(t *testing.T) {
 	}
 	if tot.CVEsCleared != 2 || tot.CVEsResolved != 1 {
 		t.Errorf("cleared/resolved = %d/%d, want 2/1: decommissions must not move them", tot.CVEsCleared, tot.CVEsResolved)
+	}
+}
+
+// One run lapsing more not-running items than the limit marks every such lapse
+// uncreditable; at the limit nothing is marked.
+func TestDiffMarksAMassLapse(t *testing.T) {
+	for _, tc := range []struct {
+		items, limit int
+		marked       bool
+	}{{3, 3, false}, {4, 3, true}, {21, 0, true}, {20, 0, false}} {
+		var open []State
+		var views []sink.FindingView
+		for i := 0; i < tc.items; i++ {
+			v := view(fmt.Sprintf("acr.io/app%d:1", i), "eng", "orders", "high")
+			open = append(open, openState(int64(i+1), Snapshots([]sink.FindingView{v}, nil)[0], t0))
+			gone := fixed(v)
+			gone.Liveness = &sink.LivenessView{Live: false}
+			views = append(views, gone)
+		}
+		events, _ := Diff(Input{Open: open, Views: views, LapseAfter: 1, MassLapseLimit: tc.limit, Now: t0})
+		marked := 0
+		for _, e := range events {
+			if e.Kind == KindLapsed && e.Payload.NotCreditable != "" {
+				marked++
+			}
+		}
+		if want := map[bool]int{true: tc.items, false: 0}[tc.marked]; marked != want {
+			t.Errorf("%d lapses, limit %d: %d marked, want %d", tc.items, tc.limit, marked, want)
+		}
 	}
 }

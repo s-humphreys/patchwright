@@ -260,7 +260,8 @@ func newServeCmd() *cobra.Command {
 					excluded = append(excluded, history.TicketScope{Route: sc.Route, Project: sc.Project, Epic: sc.Epic})
 				}
 				srv = srv.WithHistory(store, retention).WithLapseAfter(cfg.History.LapseAfter).
-					WithDecommissionAfter(decommissionAfter).WithTicketExclusions(excluded)
+					WithDecommissionAfter(decommissionAfter).WithMassLapseLimit(cfg.History.DecommissionMaxLapses).
+					WithTicketExclusions(excluded)
 				slog.InfoContext(cmd.Context(), "history enabled",
 					"retention", cfg.History.Retention, "auth", authSummary(cfg.History.Auth))
 			}

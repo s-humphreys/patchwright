@@ -84,6 +84,7 @@ func ExcludeTickets(r Range, events []Event, tickets []TrackerTicket, scopes []T
 			dropped = append(dropped, e)
 			continue
 		}
+		e.Payload.Ticketed = ticketedWithout(e, excluded)
 		keptEvents = append(keptEvents, e)
 	}
 	// Counted the way the report counts them, so the two add up to what it showed
@@ -93,6 +94,29 @@ func ExcludeTickets(r Range, events []Event, tickets []TrackerTicket, scopes []T
 		out.TicketsClosed += m.TicketsClosed
 	}
 	return keptEvents, keptTickets, out
+}
+
+// ticketedWithout is whether a ticket other than an excluded one covered the item an
+// event classifies as ticketed or not. A ticket on an excluded route is not
+// remediation work, so an item only it covered was not ticketed work either, and
+// the ticketed share cannot exceed the tickets the counts keep.
+func ticketedWithout(e Event, excluded map[string]bool) bool {
+	if !e.Payload.Ticketed || len(excluded) == 0 {
+		return e.Payload.Ticketed
+	}
+	tickets := e.Payload.Tickets
+	if (e.Kind == KindResolved || e.Kind == KindLapsed) && e.Payload.Closed != nil {
+		tickets = e.Payload.Closed.Tickets
+	}
+	if len(tickets) == 0 {
+		return true
+	}
+	for _, k := range tickets {
+		if !excluded[k] {
+			return true
+		}
+	}
+	return false
 }
 
 // InAnyScope reports whether a ticket is in any of the scopes.

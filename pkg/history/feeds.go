@@ -106,6 +106,10 @@ func (fs feedStandings) observe(e Event) (becameKEV, decayed bool) {
 			}
 		} else if len(snap.CVEs) > 0 && unscored(nil, present) {
 			st.epss = true
+		} else if len(e.Payload.CVEsRemoved) > 0 {
+			// Which CVEs were above the threshold is not known; one leaving with the
+			// signal is far likelier the high one fixed than a score falling.
+			st.epss = false
 		} else {
 			decayed = true
 			st.epss = false

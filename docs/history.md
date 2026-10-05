@@ -23,6 +23,7 @@ history:
   auth: azure          # optional: mint an Entra token per connection; default password
   lapseAfter: 3        # optional: absent assessments before an item lapses; default 3
   decommissionAfter: 7d # optional: how long a removed item stays gone before it counts as remediated; default 7d
+  decommissionMaxLapses: 20 # optional: more not-running lapses than this in one run are never credited; default 20
 ```
 
 The connection string is the credential, so it comes from the environment and its
@@ -176,19 +177,39 @@ workload anywhere) becomes `decommissioned` when all of these hold:
 
 - it has been gone for `decommissionAfter` (default 7 days), counted from the first
   assessment it was absent from;
-- every assessment in that time read every source: no cluster left out and no
-  enrichment failed, the same test partial clears use, because a cluster nobody read
-  looks exactly like one where nothing runs;
+- every assessment in that time recorded no source failure, the same test partial
+  clears use, because a cluster nobody read looks exactly like one where nothing runs.
+  A workload kind the live source is forbidden to list inside a cluster is not a
+  failure, but it leaves every image not seen running unreconciled, which never lapses
+  as not running;
+- the live source was configured with the same clusters in the run the item was last
+  seen in, in every run since, and in the judging run. Taking a cluster out of the
+  source is no failure, yet every image on it stops running;
 - it has not come back: not reopened under its own key, and its repository not in the
   queue under any other item since;
 - nothing in the estate runs its repository now, under any owner, namespace or
-  cluster, and no finding on it has unknown liveness. The same image live elsewhere is
-  a move or a rename, not a removal.
+  cluster, nor an image with one of the digests it last ran, and no such finding has
+  unknown liveness. The same repository live elsewhere is a move, and the same digest
+  under another repository a rename; neither is a removal.
+
+One assessment lapsing more than `decommissionMaxLapses` items (default 20) as not
+running marks every one of those lapses `not_creditable`, and none is ever credited.
+Services are switched off a few at a time; that many at once is far likelier a change
+in what liveness can see, such as a workload kind no longer counted as running or a
+cluster's grants changing. Neither guard catches a change that affects one service at
+a time, such as one namespace's workloads moving out of the source's reach, or a
+rename that also rebuilt the image: those still look like a removal.
 
 An item that lapsed because the provider stopped reporting it is never a candidate:
 that is coverage lost while the workload may still run. Each lapse is judged once, by
 the first assessment at or after its deadline, so the verdict cannot flip on a later
-run.
+run. A run that cannot read the record it judges from records itself as unjudged and
+the next run judges instead. A lapse no run judges within twice the window and a day
+of disappearing (a worker stopped for longer than that) stays left without a fix.
+
+Assessments recorded before this check existed have no live scope, so a lapse whose
+window began before the upgrade is not credited; the first credits come a window
+after it.
 
 The `decommissioned` event is dated when the workloads disappeared and recorded only
 once the window has passed, so it is credited to the period of the disappearance and
@@ -319,10 +340,13 @@ upgrading reads the tracker in full once to learn the epic of tickets already he
 
 The report's `tickets_excluded` names the routes and says how many tickets it left out
 and what each count would otherwise have included, the caveats say the same, and the
-analytics page and `trend_report` state it beside the figures. Whether an item was
-ticketed (`resolved_ticketed`, `cleared_ticketed`) still counts a ticket on such a
-route: that is a fact about the item, not a count of tickets. Before the tracker has
-been read nothing can be told apart, and the caveat says none was left out.
+analytics page and `trend_report` state it beside the figures. A ticket on such a
+route is not remediation work, so it does not make an item ticketed either:
+`resolved_ticketed`, `cleared_ticketed` and `decommissioned.items_ticketed` count an
+item as ticketed only when a ticket on a counted route covered it, so the ticketed
+share cannot exceed the tickets the counts keep. Before the tracker has been read
+nothing can be told apart, `tickets_excluded` is absent and the caveat says none was
+left out.
 
 ### Total remediation against ticketed work
 

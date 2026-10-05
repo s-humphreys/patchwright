@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/s-humphreys/patchwright/internal/mcp"
 	"github.com/s-humphreys/patchwright/pkg/history"
+	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/ticket"
 )
 
@@ -31,6 +33,7 @@ type historyRecorder struct {
 	retention         time.Duration
 	lapseAfter        int
 	decommissionAfter time.Duration
+	massLapseLimit    int
 
 	mu sync.Mutex
 	// assessmentID and open are from the most recent record, so ticket events
@@ -59,6 +62,15 @@ func (s *Server) WithHistory(store history.Store, retention time.Duration) *Serv
 	}
 	s.history = &historyRecorder{store: store, retention: retention, lapseAfter: history.DefaultLapseAfter,
 		decommissionAfter: history.DefaultDecommissionAfter}
+	return s
+}
+
+// WithMassLapseLimit sets how many items one run may lapse as not running and still
+// have them credited as decommissions later.
+func (s *Server) WithMassLapseLimit(n int) *Server {
+	if s.history != nil && n > 0 {
+		s.history.massLapseLimit = n
+	}
 	return s
 }
 
@@ -165,12 +177,13 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 	events, marks := history.Diff(history.Input{
 		Open: open, Current: current, Views: snap.views, OpenTickets: tickets,
 		ClosedReasons: closedReasons, TicketsUnavailable: snap.ticketsFailed, LapseAfter: rec.lapseAfter,
-		Partial: partial, Now: snap.generatedAt,
+		Partial: partial, MassLapseLimit: rec.massLapseLimit, Now: snap.generatedAt,
 	})
-	decom, recent := rec.decommissions(ctx, snap, current, partial)
+	scope := liveScope(snap.sources)
+	decom, recent, judged := rec.decommissions(ctx, snap, current, partial, scope)
 	events = append(events, decom...)
 	a := history.Summarise(started, snap.generatedAt, snap.views, current, snap.summary)
-	a.Partial = partial
+	a.Partial, a.LiveScope, a.Unjudged = partial, scope, !judged
 	id, err := rec.store.Record(ctx, a, events, marks)
 	if err != nil {
 		rec.fail(ctx, "record assessment", err)
@@ -211,32 +224,53 @@ func (s *Server) recordHistory(ctx context.Context, snap *snapshot, started time
 
 	rec.mu.Lock()
 	rec.assessmentID, rec.open, rec.lastErr, rec.lastRecorded, rec.lastPruned = id, open, "", snap.generatedAt, pruned
-	if recent != nil {
+	if judged {
 		rec.decommissioned = history.DecommissionedRepositories(append(recent, decom...))
 	}
 	rec.mu.Unlock()
 }
 
 // decommissions judges this run's decommission candidates from the recent record,
-// and returns them with the recent events they were judged from. A record that
-// cannot be read credits nothing this run rather than failing it: each lapse is
-// judged by the first run after its deadline that can read the record.
-func (r *historyRecorder) decommissions(ctx context.Context, snap *snapshot, current []history.Snapshot, partial bool) ([]history.Event, []history.Event) {
+// and returns them with the recent events they were judged from, and whether it
+// judged at all. A record that cannot be read credits nothing this run rather than
+// failing it, and the assessment is recorded as unjudged so the next run that can
+// read the record judges the lapses this one could not.
+func (r *historyRecorder) decommissions(ctx context.Context, snap *snapshot, current []history.Snapshot, partial bool, scope string) ([]history.Event, []history.Event, bool) {
 	from := snap.generatedAt.Add(-history.DecommissionLookback(r.decommissionAfter))
 	recent, err := r.store.Events(ctx, from, snap.generatedAt)
 	if err != nil {
-		slog.WarnContext(ctx, "history: recent events could not be read, so no decommission is judged this run", "error", err)
-		return nil, nil
+		slog.WarnContext(ctx, "history: recent events could not be read, so no decommission is judged this run; the next run judges them", "error", err)
+		return nil, nil, false
 	}
-	runs, err := r.store.Assessments(ctx, from, snap.generatedAt)
+	// A day further back for the run each item was last seen in, whose live scope
+	// the window is compared with.
+	runs, err := r.store.Assessments(ctx, from.Add(-24*time.Hour), snap.generatedAt)
 	if err != nil {
-		slog.WarnContext(ctx, "history: recent assessments could not be read, so no decommission is judged this run", "error", err)
-		return nil, nil
+		pending := 0
+		for _, e := range recent {
+			if e.Kind == history.KindLapsed {
+				pending++
+			}
+		}
+		slog.WarnContext(ctx, "history: recent assessments could not be read, so no decommission is judged this run; the next run judges them",
+			"lapses_pending", pending, "error", err)
+		return nil, nil, false
 	}
 	return history.Decommissions(history.DecommissionInput{
 		After: r.decommissionAfter, Events: recent, Assessments: runs,
-		Current: current, Views: snap.views, Partial: partial, Now: snap.generatedAt,
-	}), recent
+		Current: current, Views: snap.views, Partial: partial, LiveScope: scope, Now: snap.generatedAt,
+	}), recent, true
+}
+
+// liveScope names the live source and the clusters it was configured to read. Empty
+// without a live source, where nothing lapses as not running anyway.
+func liveScope(src model.Sources) string {
+	if src.LiveSource == "" {
+		return ""
+	}
+	clusters := slices.Clone(src.LiveClusters)
+	slices.Sort(clusters)
+	return src.LiveSource + ":" + strings.Join(clusters, ",")
 }
 
 // recordTicketWrites attributes successful creates and extends to the open items
@@ -310,6 +344,10 @@ func (s *Server) syncTracker(ctx context.Context) {
 	if err != nil {
 		rec.fail(ctx, "sync tracker tickets", err)
 		return
+	}
+	if res.Unparented > 0 {
+		slog.InfoContext(ctx, "history: tickets were stored before their epic was read; reading the tracker in full once",
+			"unparented", res.Unparented)
 	}
 	slog.InfoContext(ctx, "history: synced tracker tickets",
 		"full", res.Full, "window", res.Window.String(), "fetched", res.Fetched, "matched", res.Matched)
@@ -490,6 +528,10 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		}
 	}
 	events, tickets, excluded := history.ExcludeTickets(rng, events, tickets, s.history.excluded)
+	if idx.Tickets == 0 {
+		// Nothing could be told apart, so nothing was left out; the caveat says why.
+		excluded = nil
+	}
 	rep := history.Aggregate(rng, assessments, events, open, first, now)
 	rep.RetentionDays = int(s.history.retention.Hours() / 24)
 	rep.TicketsExcluded = excluded
@@ -517,7 +559,7 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 		rep.Caveats = append(rep.Caveats, fmt.Sprintf(
 			"the work-item list of %d periods' last assessment could not be read, so those periods carry no open work items by signal", unread))
 	}
-	rep.Caveats = append(rep.Caveats, excludedCaveats(excluded, idx)...)
+	rep.Caveats = append(rep.Caveats, excludedCaveats(s.history.excluded, excluded, idx)...)
 	rep.Caveats = append(rep.Caveats,
 		"counts are work items: one service and the one upgrade that would fix it, classified by how each looked when the record first saw it",
 		"fixed (confirmed), the resolved field, requires evidence the upgrade landed; left without a fix, the lapsed field, is everything else that left the queue, and is never remediation in itself",
@@ -552,12 +594,16 @@ func (s *Server) historyReport(ctx context.Context, rng history.Range, now time.
 
 // excludedCaveats say which routes' tickets the counts leave out and how many, or
 // why none could be told apart.
-func excludedCaveats(ex *history.ExcludedTickets, idx history.TicketIndexState) []string {
-	if ex == nil {
+func excludedCaveats(scopes []history.TicketScope, ex *history.ExcludedTickets, idx history.TicketIndexState) []string {
+	if len(scopes) == 0 {
 		return nil
 	}
-	routes := strings.Join(ex.Routes, "; ")
-	if idx.Tickets == 0 {
+	names := make([]string, 0, len(scopes))
+	for _, sc := range scopes {
+		names = append(names, sc.String())
+	}
+	routes := strings.Join(names, "; ")
+	if ex == nil {
 		return []string{"tickets on " + routes + " are configured to be left out of the ticket counts, but the tracker " +
 			"has not been read, so none could be told apart and none was left out"}
 	}

@@ -71,6 +71,9 @@ type TicketSync struct {
 	Window  time.Duration `json:"window,omitempty"`
 	Fetched int           `json:"fetched"`
 	Matched int           `json:"matched"`
+	// Unparented is the stored tickets whose epic was unknown, which made this a
+	// full read.
+	Unparented int `json:"unparented,omitempty"`
 }
 
 // minTicketWindow is the shortest incremental window. Longer than the refresh
@@ -87,7 +90,7 @@ func SyncTickets(ctx context.Context, store Store, fetch TicketFetcher, full boo
 	if err != nil {
 		return TicketSync{}, err
 	}
-	out := TicketSync{Full: full || idx.Tickets == 0 || idx.Unparented > 0}
+	out := TicketSync{Full: full || idx.Tickets == 0 || idx.Unparented > 0, Unparented: idx.Unparented}
 	if !out.Full {
 		out.Window = minTicketWindow
 		if since := now.Sub(idx.LastSynced) + time.Hour; since > out.Window {

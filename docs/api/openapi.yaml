@@ -884,19 +884,7 @@ components:
             age_days: { type: object, additionalProperties: { type: integer } }
         totals: { $ref: "#/components/schemas/HistoryTotals" }
         tracker: { $ref: "#/components/schemas/HistoryTracker" }
-        tickets_excluded:
-          type: object
-          description: >-
-            Present when jira routes set countInAnalytics false. Their tickets, told apart by project and epic, are
-            left out of tickets_raised, tickets_closed, the tracker counts and cycle times, and the per-day tickets;
-            they are still reconciled. These say how many were left out over the range.
-          properties:
-            routes: { type: array, items: { type: string }, description: Each excluded route with its project and epic }
-            tickets: { type: integer, description: Distinct excluded tickets created or resolved in the range }
-            tickets_raised: { type: integer, description: What tickets_raised would have counted for them }
-            tickets_closed: { type: integer, description: What tickets_closed would have counted for them }
-            tracker_tickets_raised: { type: integer }
-            tracker_tickets_closed: { type: integer }
+        tickets_excluded: { $ref: "#/components/schemas/HistoryTicketsExcluded" }
         caveats: { type: array, items: { type: string } }
     HistoryTotals:
       type: object
@@ -919,12 +907,28 @@ components:
         remediated_cves:
           allOf: [{ $ref: "#/components/schemas/HistoryCVETally" }]
           description: Distinct CVEs cleared or decommissioned in the range, each counted once
+    HistoryTicketsExcluded:
+      type: object
+      description: >-
+        Present when jira routes set countInAnalytics false and the tracker has been read. Their tickets, told apart
+        by project and epic, are left out of tickets_raised, tickets_closed, the tracker counts and cycle times, and
+        the per-day tickets, and do not make an item ticketed (resolved_ticketed, cleared_ticketed,
+        decommissioned.items_ticketed); they are still reconciled. These say how many were left out over the range.
+      properties:
+        routes: { type: array, items: { type: string }, description: Each excluded route with its project and epic }
+        tickets: { type: integer, description: Distinct excluded tickets created or resolved in the range }
+        tickets_raised: { type: integer, description: What tickets_raised would have counted for them }
+        tickets_closed: { type: integer, description: What tickets_closed would have counted for them }
+        tracker_tickets_raised: { type: integer }
+        tracker_tickets_closed: { type: integer }
     HistoryDecommissioned:
       type: object
       description: >-
         Work items remediated by removing their workloads: lapsed as no longer running, then gone for the
-        decommission window (history.decommissionAfter, default 7 days) with every assessment in it reading every
-        source and the image running nowhere else in the estate. Credited to the period the workloads disappeared,
+        decommission window (history.decommissionAfter, default 7 days) with no source failure recorded in it, the
+        live source's configured clusters unchanged from the run it was last seen in, and neither its repository nor
+        one of its digests running anywhere else in the estate. A run lapsing more than
+        history.decommissionMaxLapses items (default 20) as not running credits none of them. Credited to the period the workloads disappeared,
         and recorded only once the window has passed, so a period's figure can still rise for a window after it
         ends. The CVEs are those the item last carried; one the item already cleared is not counted again. Each of
         these items is also in lapsed, which keeps its meaning. Recorded from the release that added it onward;
@@ -1151,7 +1155,9 @@ components:
                   when CVEs left without being credited, `reason` says why. On
                   decommissioned, dated when the workloads disappeared, `closed` is the
                   item as it lapsed, with `opened`, `opened_at`, `missing_since`,
-                  `days_open`, `ticketed`, `tickets` and `evidence`.
+                  `days_open`, `ticketed`, `tickets` and `evidence`. On lapsed,
+                  `not_creditable` says why the lapse can never be credited as a
+                  decommission, when it cannot.
     AssessmentMeta:
       type: object
       required: [generated_at, running]

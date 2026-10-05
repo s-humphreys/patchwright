@@ -31,6 +31,12 @@ type HistoryConfig struct {
 	// running nowhere else, before its removal is credited as remediation. Days
 	// ("7d") or a Go duration. Default 7d.
 	DecommissionAfter string `yaml:"decommissionAfter"`
+	// DecommissionMaxLapses is the most items one assessment may lapse as no longer
+	// running and still have them credited as decommissions. More at once is far
+	// likelier a change in what liveness can see (a cluster dropped from the source, a
+	// workload kind no longer counted) than services switched off, so those lapses are
+	// never credited. Default 20.
+	DecommissionMaxLapses int `yaml:"decommissionMaxLapses"`
 }
 
 // DecommissionDuration parses DecommissionAfter. Zero with no error when unset,
@@ -50,6 +56,9 @@ func (h HistoryConfig) validate() error {
 	}
 	if _, err := parseRetention(h.DecommissionAfter); err != nil {
 		return fmt.Errorf("history.decommissionAfter: %w", err)
+	}
+	if h.DecommissionMaxLapses < 0 {
+		return fmt.Errorf("history.decommissionMaxLapses: %d must be at least 1", h.DecommissionMaxLapses)
 	}
 	if h.LapseAfter < 0 {
 		return fmt.Errorf("history.lapseAfter: %d must be at least 1 (1 lapses on the first absent assessment)", h.LapseAfter)
