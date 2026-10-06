@@ -35,6 +35,22 @@ func outage(v sink.FindingView) sink.FindingView {
 	return deployed(out.Vulns...)
 }
 
+// scannedAs is a complete run's view of acr.io/app as the build digest: assessed by
+// the provider and scanned by the vuln source, carrying vulns.
+func scannedAs(digest string, vulns ...sink.VulnView) sink.FindingView {
+	v := deployed(vulns...)
+	v.Digest, v.ProviderAssessed, v.Scanned = digest, true, true
+	return v
+}
+
+// unscannedAs is the same image in a run whose vuln source could not answer for it:
+// the provider's counts, and no CVE detail, so no KEV flag or EPSS score either.
+func unscannedAs(digest string) sink.FindingView {
+	v := deployed()
+	v.Digest, v.ProviderAssessed, v.ScanError = digest, true, "no resource runs acr.io/app:1"
+	return v
+}
+
 // replay runs each assessment through Diff against the item as a store would hold
 // it, and returns the events, so a test reads the report production would.
 func replay(t *testing.T, runs [][]sink.FindingView) []Event {
@@ -92,7 +108,7 @@ func TestFeedTransitionsCountOncePerTransition(t *testing.T) {
 			rawKEV: 2, rawDecay: 2, kev: 1, decay: 1},
 		{name: "a fixed CVE takes its signals with it, and a new KEV is a new entry",
 			runs: [][]sink.FindingView{
-				{deployed(joins)}, {deployed()}, {deployed(newKEV)},
+				{scannedAs("sha256:a", joins)}, {scannedAs("sha256:b")}, {scannedAs("sha256:c", newKEV)},
 			},
 			rawKEV: 1, rawDecay: 1, kev: 1},
 	}

@@ -4,24 +4,33 @@ package history
 // events a report reads, so that a move into KEV or a decay out of the band is
 // counted once per transition rather than once per changed event.
 //
-// The events alone overcount. A run whose exploit lookup fails keeps every CVE but
-// loses its KEV flags and EPSS scores, so each item drops kev and epss-high and the
-// next complete run adds them back: one outage read as an EPSS decay and a fresh
-// KEV for every exploited item in the estate. A CVE leaving because it was fixed
-// also drops the signal, which is remediation, not decay. So a signal leaving only
-// counts as leaving when the CVEs that carried it went with it (KEV) or are still
-// there with a lower score (EPSS); one whose CVEs are still there unflagged, or
-// unscored, is the feed missing and the item keeps its standing.
+// The events alone overcount, because an item's CVEs and their flags come and go
+// with what the run could see, not only with what changed. A run whose vuln source
+// could not answer for an image records the item without that image's CVEs, and the
+// next run that reaches it adds them back; a run whose exploit lookup failed keeps
+// every CVE but loses its KEV flags and EPSS scores. Read as transitions, each such
+// run is the item leaving KEV and the next a fresh entry.
+//
+// So leaving takes the evidence a cleared CVE takes (see Clearance). The CVEs that
+// carried a signal count as gone only when the image they were last seen on was
+// replaced, both runs scanned by the same source and running; gone any other way,
+// the run could not see them and the item keeps its standing. A CVE still there with
+// the flag removed, or a lower score, has left the signal, unless the item carries
+// no EPSS score at all, which is the exploit feed not answering. A run that missed a
+// source vouches for nothing.
 type feedStanding struct {
 	// known is set once a snapshot of the item has been seen in the range.
 	known bool
 	kev   bool
 	// kevIDs are the CVEs last seen flagged KEV, nil when the item's standing was
-	// learnt from a signal alone.
-	kevIDs map[string]bool
-	epss   bool
+	// learnt from a signal alone, and kevSeen what Clearance needs of the snapshot
+	// they were last seen on.
+	kevIDs  map[string]bool
+	kevSeen *Snapshot
+	epss    bool
 	// epssIDs are the CVEs last seen above the EPSS threshold, nil likewise.
-	epssIDs map[string]bool
+	epssIDs  map[string]bool
+	epssSeen *Snapshot
 }
 
 type itemRef struct {
@@ -77,47 +86,68 @@ func (fs feedStandings) observe(e Event) (becameKEV, decayed bool) {
 		}
 		return byID
 	}
-	// A run that missed a source cannot vouch for anything leaving, so the item
-	// keeps its standing through it, as through an outage.
+	var seen *Snapshot
+	seenHere := func() *Snapshot {
+		if seen == nil {
+			seen = evidenceOf(*snap)
+		}
+		return seen
+	}
 	partial := e.Payload.Reason == reasonPartial
+	// gone reports whether CVEs missing from this snapshot since seen really left.
+	gone := func(seen *Snapshot) bool {
+		return seen != nil && withheld(*seen, *snap, 0, partial) == ""
+	}
+
 	if snap.Has(SignalKnownExploit) {
 		becameKEV = !st.kev && (st.known || added(SignalKnownExploit))
-		st.kev, st.kevIDs = true, flagged(*snap)
+		st.kev, st.kevIDs, st.kevSeen = true, flagged(*snap), seenHere()
 	} else if st.kev || (!st.known && removed(SignalKnownExploit)) {
 		switch still := stillPresent(st.kevIDs, present()); {
 		case partial:
 			st.kev = true
 		case st.kevIDs != nil:
-			st.kev, st.kevIDs = len(still) > 0, still
+			switch {
+			case len(still) < len(st.kevIDs) && !gone(st.kevSeen):
+				st.kev = true
+			case len(still) > 0 && unscored(nil, present()):
+				st.kev, st.kevIDs = true, still
+			default:
+				st.kev, st.kevIDs, st.kevSeen = false, nil, nil
+			}
 		default:
-			// Which CVEs were exploited is not known; a removal that took no CVE with
-			// it can only be the flag going.
-			st.kev = len(e.Payload.CVEsRemoved) == 0
+			// Which CVEs were exploited is not known, nor what scanned them: a removal
+			// that took CVEs with it may be the run not seeing them, and one that took
+			// none is the flag going unless the feed did not answer.
+			st.kev = len(e.Payload.CVEsRemoved) > 0 || unscored(nil, present())
 		}
 	}
 
 	if snap.Has(SignalEPSSHigh) {
-		st.epss, st.epssIDs = true, high(*snap)
+		st.epss, st.epssIDs, st.epssSeen = true, high(*snap), seenHere()
 	} else if st.epss || (!st.known && removed(SignalEPSSHigh)) {
 		if partial {
 			st.epss = true
 		} else if st.epssIDs != nil {
 			still := stillPresent(st.epssIDs, present())
 			switch {
+			case len(still) < len(st.epssIDs) && !gone(st.epssSeen):
+				// Unseen rather than gone: the standing holds.
 			case len(still) == 0:
-				st.epss, st.epssIDs = false, nil
+				st.epss, st.epssIDs, st.epssSeen = false, nil, nil
 			case unscored(still, present()):
 				st.epssIDs = still
 			default:
 				decayed = true
-				st.epss, st.epssIDs = false, nil
+				st.epss, st.epssIDs, st.epssSeen = false, nil, nil
 			}
 		} else if len(snap.CVEs) > 0 && unscored(nil, present()) {
 			st.epss = true
 		} else if len(e.Payload.CVEsRemoved) > 0 {
-			// Which CVEs were above the threshold is not known; one leaving with the
-			// signal is far likelier the high one fixed than a score falling.
-			st.epss = false
+			// Which CVEs were above the threshold is not known, nor what scanned them;
+			// one leaving with the signal is far likelier the high one gone than a
+			// score falling, and nothing says it went rather than went unseen.
+			st.epss = true
 		} else {
 			decayed = true
 			st.epss = false
@@ -129,8 +159,15 @@ func (fs feedStandings) observe(e Event) (becameKEV, decayed bool) {
 
 func (st *feedStanding) set(s Snapshot) {
 	st.known = true
-	st.kev, st.kevIDs = s.Has(SignalKnownExploit), flagged(s)
-	st.epss, st.epssIDs = s.Has(SignalEPSSHigh), high(s)
+	seen := evidenceOf(s)
+	st.kev, st.kevIDs, st.kevSeen = s.Has(SignalKnownExploit), flagged(s), seen
+	st.epss, st.epssIDs, st.epssSeen = s.Has(SignalEPSSHigh), high(s), seen
+}
+
+// evidenceOf keeps what withheld reads of a snapshot, so a standing holds the
+// footprint its CVEs were last seen on without the snapshot's CVE list.
+func evidenceOf(s Snapshot) *Snapshot {
+	return &Snapshot{Accounts: s.Accounts, Namespaces: s.Namespaces, Scan: s.Scan}
 }
 
 // SignalKnownExploit is the queue's signal for a CVE in CISA KEV.

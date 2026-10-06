@@ -1085,12 +1085,15 @@ components:
           type: integer
           description: >-
             Items that left the EPSS bucket by score decay, not by a patch: once per decay. An item whose high-EPSS CVEs
-            left it, or that lost its scores in a run whose exploit lookup failed or that missed a source, did not decay
+            left it, whose CVEs went unseen because the vuln source could not answer, or that lost its scores in a run whose
+            exploit lookup failed or that missed a source, did not decay
         became_known_exploited:
           type: integer
           description: >-
-            Items that moved into KEV while open, once per move: an item counts again only after its exploited CVEs
-            left it. Losing the flag in a run whose exploit lookup failed, or that missed a source, is not leaving
+            Items that moved into KEV while open, once per move: an item counts again only after it left KEV, by its
+            exploited CVEs leaving with a replaced image scanned by the same source, or by a CVE losing the flag. CVEs going
+            unseen because the vuln source could not answer, or losing the flag in a run whose exploit lookup failed or that
+            missed a source, is not leaving
         median_days_to_resolve: { type: number, description: Over resolved items only }
         tracker_tickets_raised:
           type: integer
