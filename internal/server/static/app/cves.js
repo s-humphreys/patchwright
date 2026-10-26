@@ -146,6 +146,13 @@ function fixableCell(g) {
 export function renderCVEs(findings, state) {
   const { groups, scanned, total } = groupByCVE(findings, state);
   const note = $("#cveNote");
+  if (scanned === 0 && S.queueRows.some((f) => f.scanned)) {
+    // The estate was scanned; the filters left nothing that was. Telling this reader to
+    // turn scanning on would send them to fix something that is working.
+    note.textContent = "No scanned finding matches the current filters.";
+    renderTable("cves", CVE_COLUMNS, []);
+    return { groups: [], scanned, total };
+  }
   if (scanned === 0) {
     // Absolutely not "no CVEs found": nothing was looked at.
     note.innerHTML = `<div class="banner">No image was scanned for per-CVE detail, so this
