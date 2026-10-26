@@ -284,3 +284,38 @@ test('an image with no CVEs stops waiting', async () => {
   assert.deepEqual(row.vulns, [], 'scanned and none found is an answer');
   assert.match(document.querySelector('#detail').textContent, /no CVEs were found/);
 });
+
+// A CVE link arrives before any CVE detail does: the queue is fetched without it. Deciding
+// then reported every linked CVE as "not in this assessment".
+test('a CVE link waits for CVE detail before saying the CVE is absent', async () => {
+  setUp();
+  const { openFromURL } = await import('./detail.js');
+  const { cveGroup } = await import('./cves.js');
+  S.queueRows = [summaryRow()];
+  S.filtered = S.queueRows;
+  responder = respondWith([{ id: 'CVE-2019-1010022', severity: 'low' }]);
+
+  const missed = await openFromURL([], cveGroup, new URLSearchParams('cve=CVE-2019-1010022'));
+  assert.equal(missed, '', 'the CVE is there once detail has loaded');
+  assert.equal(document.querySelector('#detail').hidden, false);
+  closeDetail();
+
+  const gone = await openFromURL([], cveGroup, new URLSearchParams('cve=CVE-1999-0001'));
+  assert.match(gone, /not in this assessment/, 'still absent after a successful load');
+  assert.equal(calls, 1, 'one load answers both');
+});
+
+test('a CVE link says the lookup failed rather than that the CVE is absent', async () => {
+  setUp();
+  const { openFromURL } = await import('./detail.js');
+  const { cveGroup } = await import('./cves.js');
+  S.queueRows = [summaryRow()];
+  S.filtered = S.queueRows;
+  responder = async () => {
+    throw new Error('gateway timeout');
+  };
+
+  const missed = await openFromURL([], cveGroup, new URLSearchParams('cve=CVE-2019-1010022'));
+  assert.doesNotMatch(missed, /not in this assessment/);
+  assert.match(missed, /could not be loaded \(gateway timeout\)/);
+});
