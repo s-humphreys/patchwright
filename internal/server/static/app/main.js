@@ -3,7 +3,7 @@ import { initConfig } from './config.js';
 import { initCSV } from './csv.js';
 import { nav } from './nav.js';
 import { renderCoverage, renderDataAge, renderFreshness } from './panels.js';
-import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, shownCVE, shownGroup, shownImage } from './detail.js';
+import { groupByKey, initCVEDetail, initDetail, openCVEDetail, openDetail, openFromURL, openGroupDetail, showLinkMiss, shownCVE, shownGroup, shownImage } from './detail.js';
 import { cveGroup } from './cves.js';
 import { initTabs, show } from './tabs.js';
 import { wireFacets } from './filters.js';
@@ -54,12 +54,7 @@ export async function loadAll() {
       // has already rewritten that.
       // Not awaited: a CVE link waits for CVE detail, and the rest of the page should
       // not wait with it.
-      void openFromURL(S.groupRows, cveGroup, initialQuery()).then((missed) => {
-        if (missed) {
-          $("#queueCount").insertAdjacentHTML("afterend",
-            `<span class="unknown" id="linkMiss"> · ${missed}</span>`);
-        }
-      });
+      void openFromURL(S.groupRows, cveGroup, initialQuery()).then(showLinkMiss);
     }
     renderBreakdown(owners.owners);
     // Re-render an open panel against the new data rather than leaving it showing
