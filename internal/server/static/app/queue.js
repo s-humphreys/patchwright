@@ -1,5 +1,5 @@
 import { GROUP_COLUMNS, groupFindings } from './groups.js';
-import { apply, filterState, populate } from './filters.js';
+import { apply, filterState, looksLikeVulnID, populate } from './filters.js';
 import { renderCVEs } from './cves.js';
 import { current as currentView } from './tabs.js';
 import { writeURL } from './urlstate.js';
@@ -84,14 +84,14 @@ export function renderCurrentView() {
     // The CVE view is the one thing on this page that genuinely needs every CVE, so
     // it is what triggers the load. Until it lands the table says so rather than
     // rendering an empty estate.
-    const state = ensureVulns(() => renderCurrentView());
+    //
+    // Re-filtered rather than just repainted when it lands: a search for a CVE id was
+    // applied before the ids were on the page, so it matched nothing.
+    const state = ensureVulns(() => applyOwnerFilters());
     if (state !== "ready") {
       // An empty table would read as an estate with no CVEs, which is the one thing
       // this page exists not to say.
-      $("#queueCount").textContent = state === "failed"
-        ? `CVE detail could not be loaded: ${S.vulnError}`
-        : "loading CVE detail\u2026";
-      $("#cves tbody").innerHTML = "";
+      showVulnWait(state, "#cves");
       return;
     }
     // The filter state goes in too: narrowing the FINDINGS is not enough here.
@@ -103,7 +103,25 @@ export function renderCurrentView() {
       `${groups.length} CVE${groups.length === 1 ? "" : "s"} across`, total);
     return;
   }
+  // A CVE id can only be matched against per-CVE detail, which the queue is fetched
+  // without. Loaded for that search alone: an ordinary one needs none of it.
+  if (looksLikeVulnID(filterState().q)) {
+    const state = ensureVulns(() => applyOwnerFilters());
+    if (state !== "ready") {
+      // Otherwise the empty table reads as "no image has this CVE".
+      S.groupRows = [];
+      showVulnWait(state, "#findings");
+      return;
+    }
+  }
   renderFindings(S.filtered);
+}
+
+function showVulnWait(state, table) {
+  $("#queueCount").textContent = state === "failed"
+    ? `CVE detail could not be loaded: ${S.vulnError}`
+    : "loading CVE detail\u2026";
+  $(`${table} tbody`).innerHTML = "";
 }
 
 // countText says how much of the estate the number describes, and only mentions the

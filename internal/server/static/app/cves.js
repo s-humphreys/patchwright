@@ -1,5 +1,6 @@
 import { SIGNAL_BADGES, badge } from './badges.js';
 import { epssPercent, fixPath } from './cells.js';
+import { findingHaystack } from './filters.js';
 import { S } from './state.js';
 import { renderTable } from './table.js';
 import { $, UNKNOWN, esc } from './util.js';
@@ -51,6 +52,10 @@ export function cveMatches(v, state) {
  * listed every CVE on them, most of which are not known-exploited. The reader asked
  * for KEV and got 9,457 rows. Signals that describe a CVE are applied to the CVEs
  * as well; the rest describe a finding and are already handled upstream.
+ *
+ * The search box is the same case. A finding that survived only because one of its CVE
+ * ids matched lists that CVE, not the hundreds of others it carries; one matched by its
+ * own fields (team, image) lists them all, since that is what the reader asked about.
  * @returns {{groups: CVEGroup[], scanned: number, total: number}}
  */
 export function groupByCVE(findings, state) {
@@ -60,8 +65,11 @@ export function groupByCVE(findings, state) {
   for (const f of findings) {
     if (!f.scanned) continue;
     scanned++;
+    const q = state && state.q;
+    const idsOnly = q && !findingHaystack(f).includes(q);
     for (const v of f.vulns || []) {
       if (!cveMatches(v, state)) continue;
+      if (idsOnly && !String(v.id).toLowerCase().includes(q)) continue;
       let g = byID.get(v.id);
       if (!g) {
         g = { id: v.id, severity: v.severity || "unknown", cvss: 0, epss: 0, epss_percentile: 0, risk: 0,
