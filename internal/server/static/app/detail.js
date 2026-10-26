@@ -4,7 +4,7 @@ import { epssPercent, fixPath, maxRisk, priorityText, ticketsFor, upgradeCell, u
 import { cveGroup } from './cves.js';
 import { S } from './state.js';
 import { $, esc } from './util.js';
-import { detailFailed, ensureDetail } from './vulns.js';
+import { awaitVulns, detailFailed, ensureDetail } from './vulns.js';
 
 // The detail panel: everything about one finding, on demand.
 //
@@ -639,13 +639,22 @@ export function openGroupDetail(g) {
  * A link naming something no longer in the queue opens nothing and returns why. It
  * must never open the nearest match: quietly showing somebody a different service than
  * the one they clicked through for is worse than showing them the queue.
- * @returns {string} a message when the link could not be honoured, else ""
+ *
+ * Asynchronous because a CVE link can only be answered from per-CVE detail, which the
+ * queue is fetched without: deciding before it lands reported every CVE as absent.
+ * @returns {Promise<string>} a message when the link could not be honoured, else ""
  */
-export function openFromURL(groups, cveLookup, params = new URLSearchParams(location.search)) {
+export async function openFromURL(groups, cveLookup, params = new URLSearchParams(location.search)) {
 
   const cve = params.get("cve");
   if (cve) {
-    const g = cveLookup ? cveLookup(cve) : null;
+    let g = cveLookup ? cveLookup(cve) : null;
+    if (!g && cveLookup) {
+      if (await awaitVulns() === "failed") {
+        return `${cve} could not be looked up: CVE detail could not be loaded (${S.vulnError}).`;
+      }
+      g = cveLookup(cve);
+    }
     if (g) {
       openCVEDetail(g);
       return "";

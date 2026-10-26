@@ -106,11 +106,12 @@ export function filterState() {
   return st;
 }
 
-// haystack is what the search box matches against: the fields someone would plausibly
-// type a fragment of. Ticket keys are included so "PROJ-12" finds every image a grouped
-// ticket covers, and the change target so "bases/event-bus" finds everything one
-// repository and path is responsible for — which is what a grouped ticket links to.
-export function haystack(f) {
+// findingHaystack is what the search box matches against on the finding itself: the
+// fields someone would plausibly type a fragment of. Ticket keys are included so
+// "PROJ-12" finds every image a grouped ticket covers, and the change target so
+// "bases/event-bus" finds everything one repository and path is responsible for —
+// which is what a grouped ticket links to.
+export function findingHaystack(f) {
   const parts = [
     f.image, f.repository, f.registry, f.owner?.team, f.owner?.class, f.priority,
     (f.dimensions?.namespace || []).join(" "),
@@ -122,6 +123,20 @@ export function haystack(f) {
     ticketsFor(f).map((t) => `${t.key} ${t.status}`).join(" "),
   ];
   return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+// haystack adds the CVE ids, so pasting one from an advisory finds what carries it.
+// Kept apart from the finding's own fields because the CVE view needs to know which of
+// the two a search matched: see groupByCVE.
+export function haystack(f) {
+  const ids = (f.vulns || []).map((v) => v.id).join(" ").toLowerCase();
+  return ids ? `${findingHaystack(f)} ${ids}` : findingHaystack(f);
+}
+
+// looksLikeVulnID says whether a search can only be answered from per-CVE detail,
+// which the queue is fetched without.
+export function looksLikeVulnID(q) {
+  return /^(cve|ghsa)-/i.test(q || "");
 }
 
 /**

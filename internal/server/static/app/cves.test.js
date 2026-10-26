@@ -81,11 +81,24 @@ test('unscanned findings are excluded and reported, never counted as clean', () 
 });
 
 test('nothing scanned says why, rather than showing an empty CVE list', () => {
+  S.queueRows = [finding('reg/a:1', 'platform', [], { scanned: false })];
   renderCVEs([finding('reg/a:1', 'platform', [], { scanned: false })]);
   const note = document.querySelector('#cveNote').textContent;
   assert.match(note, /No image was scanned/);
   assert.match(note, /vuln-source/);
   assert.equal(document.querySelectorAll('#cves tbody tr').length, 0);
+});
+
+test('filters that leave nothing do not claim the estate was never scanned', () => {
+  // The estate was scanned; a search that matched nothing emptied the set. Telling the
+  // reader to enable trivy sent them to fix something that was working.
+  S.queueRows = [finding('reg/a:1', 'platform', [{ id: 'CVE-1', severity: 'high' }])];
+  renderCVEs([]);
+  const note = document.querySelector('#cveNote').textContent;
+  assert.doesNotMatch(note, /No image was scanned|vuln-source/);
+  assert.match(note, /matches the current filters/);
+  assert.equal(document.querySelectorAll('#cves tbody tr').length, 0);
+  S.queueRows = [];
 });
 
 test('a CVE with no fix anywhere says so rather than showing 0', () => {

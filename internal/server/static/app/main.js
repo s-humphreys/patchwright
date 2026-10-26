@@ -52,11 +52,14 @@ export async function loadAll() {
       // why it could not be honoured rather than silently showing the whole queue.
       // From the link the page arrived with, not the address bar: the first render
       // has already rewritten that.
-      const missed = openFromURL(S.groupRows, cveGroup, initialQuery());
-      if (missed) {
-        $("#queueCount").insertAdjacentHTML("afterend",
-          `<span class="unknown" id="linkMiss"> · ${missed}</span>`);
-      }
+      // Not awaited: a CVE link waits for CVE detail, and the rest of the page should
+      // not wait with it.
+      void openFromURL(S.groupRows, cveGroup, initialQuery()).then((missed) => {
+        if (missed) {
+          $("#queueCount").insertAdjacentHTML("afterend",
+            `<span class="unknown" id="linkMiss"> · ${missed}</span>`);
+        }
+      });
     }
     renderBreakdown(owners.owners);
     // Re-render an open panel against the new data rather than leaving it showing

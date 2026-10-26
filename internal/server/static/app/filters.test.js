@@ -427,6 +427,94 @@ test('haystack includes the change target, so a grouped ticket can link to its r
   assert.ok(hay.includes('_git/infra'), `source missing from: ${hay}`);
 });
 
+test('haystack includes CVE ids, so pasting one from an advisory finds its images', () => {
+  const hay = haystack(finding({ vulns: [{ id: 'CVE-2019-1010022' }, { id: 'GHSA-abcd-1234' }] }));
+  assert.ok(hay.includes('cve-2019-1010022'), `CVE id missing from: ${hay}`);
+  assert.ok(hay.includes('ghsa-abcd-1234'), `GHSA id missing from: ${hay}`);
+});
+
+/** search types into the box and applies it, the way the input handler does. */
+const search = (q) => {
+  document.querySelector('#search').value = q;
+  applyOwnerFilters();
+};
+
+test('a search for a CVE id lists that CVE, not every CVE on the images carrying it', () => {
+  setUp();
+  S.queueRows = [
+    finding({ team: 'orders', vulns: [
+      { id: 'CVE-2019-1010022', severity: 'low' }, { id: 'CVE-2024-1', severity: 'high' }] }),
+    finding({ team: 'payments', cve: 'CVE-2024-2' }),
+  ];
+  search('CVE-2019-1010');
+  assert.equal(queueRowCount(), 1, 'the queue should keep the finding carrying it');
+
+  show('cves');
+  renderCurrentView();
+  const ids = Array.from(document.querySelectorAll('#cves tbody tr')).map((tr) => tr.dataset.cve);
+  assert.deepEqual(ids, ['CVE-2019-1010022']);
+});
+
+test('a search matching the finding itself still lists all of its CVEs', () => {
+  setUp();
+  search('payments');
+  show('cves');
+  renderCurrentView();
+  assert.equal(cveRowCount(), 2, 'both of the payments findings\' CVEs');
+});
+
+test('a CVE search on the queue loads CVE detail rather than reporting no matches', async () => {
+  setUp();
+  const { resetVulns } = await import('./vulns.js');
+  const realFetch = globalThis.fetch;
+  // What the queue is fetched with: aggregates, no per-CVE arrays.
+  const summary = rows.map(({ vulns, ...rest }) => rest);
+  S.queueRows = summary;
+  S.assessedAt = 'filters-test';
+  resetVulns();
+  /** @type {() => void} */
+  let release = () => {};
+  const landed = new Promise((r) => { release = r; });
+  globalThis.fetch = async () => {
+    await landed;
+    return { ok: true, json: async () => ({ findings: rows.map(({ image, vulns }) => ({ image, vulns })) }) };
+  };
+  try {
+    search('cve-c');
+    assert.match(count(), /loading CVE detail/, 'an empty table here reads as "nothing has it"');
+    assert.equal(queueRowCount(), 0);
+
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(queueRowCount(), 1, 'the search should be re-applied once the ids land');
+    assert.equal(S.filtered[0].owner.team, 'payments');
+  } finally {
+    S.assessedAt = undefined;
+    resetVulns();
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('an ordinary search on the queue does not load CVE detail', async () => {
+  setUp();
+  const { resetVulns } = await import('./vulns.js');
+  const realFetch = globalThis.fetch;
+  S.queueRows = rows.map(({ vulns, ...rest }) => rest);
+  S.assessedAt = 'filters-test';
+  resetVulns();
+  let fetched = 0;
+  globalThis.fetch = async () => { fetched++; return { ok: true, json: async () => ({ findings: [] }) }; };
+  try {
+    search('payments');
+    assert.equal(queueRowCount(), 2);
+    assert.equal(fetched, 0, 'forty megabytes of CVEs for a team name');
+  } finally {
+    S.assessedAt = undefined;
+    resetVulns();
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('the ticket filter separates untracked work from an unreadable Jira', () => {
   setUp();
   S.ticketsByRepo = { 'reg/a': [{ key: 'PROJ-1', status: 'In Progress' }] };

@@ -166,7 +166,7 @@ test('a ticket link opens the work item it names', async () => {
   const groups = groupFindings(findings);
   dom.reconfigure({ url: 'http://x/?service=storefront&team=insights' });
   globalThis.location = dom.window.location;
-  const missed = openFromURL(groups, null);
+  const missed = await openFromURL(groups, null);
   assert.equal(missed, '', 'the link should have opened something');
   assert.equal(document.querySelector('#detail').hidden, false);
   closeDetail();
@@ -179,7 +179,7 @@ test('a link naming something gone says so instead of opening the nearest thing'
   S.queueRows = [];
   dom.reconfigure({ url: 'http://x/?service=deleted-service&team=insights' });
   globalThis.location = dom.window.location;
-  const missed = openFromURL(groupFindings([]), null);
+  const missed = await openFromURL(groupFindings([]), null);
   assert.match(missed, /deleted-service/);
   assert.match(missed, /already be fixed|filter/);
   assert.equal(document.querySelector('#detail').hidden, true);
