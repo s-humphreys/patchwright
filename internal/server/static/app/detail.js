@@ -686,6 +686,17 @@ export async function openFromURL(groups, cveLookup, params = new URLSearchParam
 }
 
 /**
+ * showLinkMiss puts openFromURL's reason beside the count. The reason repeats the link's
+ * own parameters, so it is escaped: unescaped, a crafted link ran script on the page.
+ * @param {string} missed
+ */
+export function showLinkMiss(missed) {
+  if (!missed) return;
+  $("#queueCount").insertAdjacentHTML("afterend",
+    `<span class="unknown" id="linkMiss"> · ${esc(missed)}</span>`);
+}
+
+/**
  * wireDrillRows makes a panel's table rows open the finding they name, recording the
  * way back to the panel they were opened from.
  *

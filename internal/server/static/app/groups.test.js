@@ -11,6 +11,7 @@ import { JSDOM } from 'jsdom';
 const dom = new JSDOM('<!doctype html><html><body>' +
   '<table id="findings"><thead><tr></tr></thead><tbody></tbody></table>' +
   '<aside id="detail" hidden></aside>' +
+  '<span id="queueCount"></span>' +
   '</body></html>', { url: 'http://x/' });
 globalThis.document = dom.window.document;
 globalThis.window = dom.window;
@@ -183,6 +184,21 @@ test('a link naming something gone says so instead of opening the nearest thing'
   assert.match(missed, /deleted-service/);
   assert.match(missed, /already be fixed|filter/);
   assert.equal(document.querySelector('#detail').hidden, true);
+});
+
+test('a link naming something gone cannot inject markup into the page', async () => {
+  // The reason repeats the link's parameters, and a link is something anyone can craft.
+  const { openFromURL, showLinkMiss } = await import('./detail.js');
+  S.queueRows = [];
+  const payload = '<img src=x onerror="globalThis.pwned=1">';
+  dom.reconfigure({ url: 'http://x/?service=' + encodeURIComponent(payload) });
+  globalThis.location = dom.window.location;
+  showLinkMiss(await openFromURL(groupFindings([]), null));
+  const note = document.querySelector('#linkMiss');
+  assert.ok(note, 'the reason should still be shown');
+  assert.match(note.textContent, /<img src=x/);
+  assert.equal(note.querySelector('img'), null);
+  note.remove();
 });
 
 test('one deployment running everywhere claims no environment', async () => {
