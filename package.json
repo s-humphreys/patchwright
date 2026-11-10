@@ -9,7 +9,7 @@
     "test:ui": "playwright test -c test/ui/playwright.config.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0",
+    "@playwright/test": "^1.65.0",
     "jsdom": "^30.0.1",
     "typescript": "^7.0.2"
   }
