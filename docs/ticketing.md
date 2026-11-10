@@ -278,6 +278,37 @@ can take only urgent work while another takes everything. A value that is not on
 ranked ladder (`urgent` > `high` > `medium` > `low`) fails at load: a typo would rank
 below everything and silently ticket the lot.
 
+## Packages the build adds
+
+An image's own build adds packages on top of its base: what the Dockerfile installs,
+and what its dependency manifests declare. An actionable CVE in one of those is the
+owning team's to fix, and no base rebuild removes it. When the image itself was
+scanned (`remediation.baseDiff.scanExploited`) and named every package carrying the
+CVE, each with a fixed version from that same scan, the ticket asks for the package
+move. The provider's own per-CVE fixed version is not used for this: it can belong to
+another ecosystem than the package beside it.
+
+- **Package-only.** No newer base exists, or the one on offer was measured to keep
+  every other actionable CVE. The ticket is the package move (`.Upgrade.Kind` is
+  `package` when one package moves to one version, `.PackageOnly` is true) and says a
+  rebuild will not fix it. Without this, such a finding was skipped for good as
+  "already on the latest" or as an upgrade that clears nothing. Grouped per service,
+  or per team and build repository with `groupBy: campaign`.
+- **Beside a rebuild.** The base move clears at least one actionable CVE. The ticket
+  is the rebuild, as before, with the package moves listed beside it and their CVEs
+  under "Done means".
+
+A CVE in a package the build adds with no fixed version of its own is skipped as before.
+
+The bundled template puts the CVEs in a package ticket's summary (`.SummaryCVEs`).
+With `autoClose`, a ticket whose summary names CVEs is closed (`fix-landed`) once none
+of them is reported on any image it covers, every image still scanned and running; a
+moved package leaves the image's version where it was, so "on the latest version" is
+not evidence either way for it. An open rebuild ticket whose rebuild has landed, with a
+package move left, is rewritten as the package ticket when nobody has picked it up, and
+commented on otherwise. A template that leaves CVEs out of its summary gets neither:
+reconciliation has nothing to read them from.
+
 ## Only ticket what the change fixes
 
 A ticket is raised only when the change it proposes clears at least one of the CVEs
@@ -602,7 +633,9 @@ not a claim that the change clears nothing. Each row carries:
 `.UrgentCleared`, `.UrgentUnknown`, `.UrgentRemaining` and `.UrgentAllCleared` are
 kept for templates written against the earlier contract, when `.Urgent` also held
 CVEs the change left or nobody measured; they are now `len(.Urgent)`, 0, 0 and
-"non-empty". The bundled template renders the list as:
+"non-empty", except on a rebuild ticket that also lists package moves, where
+`.UrgentCleared` counts only what the rebuild clears and `.UrgentRemaining` the package
+rows. The bundled template renders the list as:
 
 ```
 **Done means**

@@ -283,6 +283,28 @@ type VulnView struct {
 	Packages []PackageView `json:"packages,omitempty"`
 }
 
+// FixableInBuild reports a CVE the image's own build adds, with a fix for every
+// package carrying it: work for the team that builds the image, which no base
+// move will do for them.
+//
+// The fix is each package's own FixedIn, never the CVE-level FixedVersion. A scan
+// provider reports one fix per CVE, which can belong to another ecosystem than
+// the package beside it; FixedIn comes from the same scan pass as the package
+// name, so it is a version of that package. Every carrier needs one, because a
+// CVE left in one package is not gone from the image. FixAvailable is required
+// as well, so whatever decides a fix exists at the CVE level still has a say.
+func (v VulnView) FixableInBuild() bool {
+	if !v.FixAvailable || !v.OriginDetermined || v.Origin != "app" || v.FixedByUpgrade || len(v.Packages) == 0 {
+		return false
+	}
+	for _, p := range v.Packages {
+		if p.Name == "" || p.FixedIn == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // PackageView is a package carrying a CVE and the version that fixes it. Both
 // come from the same scan, so the version always belongs to the named package's
 // ecosystem.
@@ -293,6 +315,8 @@ type PackageView struct {
 	// Path is the file declaring a language package, so a ticket can say where
 	// the fix goes. Absent for an OS package.
 	Path string `json:"path,omitempty"`
+	// Installed is the version the scan found, absent when it reported none.
+	Installed string `json:"installed,omitempty"`
 }
 
 // BaseDiffView is what scanning an image's base established.
@@ -570,7 +594,8 @@ func toPackageViews(pkgs []model.AffectedPackage) []PackageView {
 	}
 	out := make([]PackageView, 0, len(pkgs))
 	for _, p := range pkgs {
-		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn, Path: p.Path})
+		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn, Path: p.Path,
+			Installed: p.Installed})
 	}
 	return out
 }

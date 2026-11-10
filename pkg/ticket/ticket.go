@@ -45,6 +45,12 @@ type Draft struct {
 	// unmeasured is why the change could not be judged this run. Such a draft is
 	// never raised either, and nothing open for it is touched.
 	unmeasured string
+
+	// packageOnly marks a draft whose whole change is moving packages in the
+	// images' own build, and cves are the CVEs those moves clear. Reconciliation
+	// reads them to tell when an open ticket was raised for some other change.
+	packageOnly bool
+	cves        []string
 }
 
 // Skip records a finding that will not be ticketed, and why. Skips are reported
@@ -197,6 +203,12 @@ func (p *Planner) Plan(findings []sink.FindingView) (*Plan, error) {
 			}
 			out.Skips = append(out.Skips, Skip{Image: f.Image, Repository: f.Repository, Reason: reason, Policy: true})
 			continue
+		}
+		// Before the skip: the base move this finding offers is either absent or clears
+		// none of what made it actionable, and the skip would say exactly that and stop.
+		// The package its own build has to move is the change, and the ticket's.
+		if packageOnly(f, p.urgentEPSS) {
+			f = asPackageChange(f, p.urgentEPSS)
 		}
 		if reason, ok := p.skipReason(f); ok {
 			out.Skips = append(out.Skips, Skip{
@@ -595,6 +607,19 @@ func groupKey(f sink.FindingView, campaign bool) string {
 	// teams, one ticket, and no single person able to finish it. Grouping by
 	// repository puts every tag of one application together instead, which is the
 	// promotion path through environments: one change, released forward.
+	// A package change is made in the build that produces the image, so it is one
+	// ticket per service, or per team and build repository in a campaign: a team
+	// whose services share a repository makes the change there once.
+	if f.Upgrade.Kind == "package" {
+		if campaign {
+			repo := f.BuildRepo
+			if repo == "" {
+				repo = f.Repository
+			}
+			return f.Owner.Team + " packages in " + repo
+		}
+		return f.Repository + " packages"
+	}
 	if f.Upgrade.Kind == "base" {
 		if campaign {
 			// One ticket per team per base move, listing the services that need it.
@@ -682,6 +707,8 @@ func (p *Planner) render(group ticketGroup, route, disambiguator string) (Draft,
 		Route:       route,
 		clearsNone:  data.clearsNone,
 		unmeasured:  data.unmeasured,
+		packageOnly: data.packageOnly,
+		cves:        data.buildFixCVEs(),
 	}, nil
 }
 

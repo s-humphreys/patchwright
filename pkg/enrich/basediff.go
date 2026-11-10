@@ -288,6 +288,7 @@ func affected(pkgs []basescan.Package) []model.AffectedPackage {
 		seen[key] = true
 		out = append(out, model.AffectedPackage{
 			Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedVersion, Path: p.Path,
+			Installed: p.InstalledVersion,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

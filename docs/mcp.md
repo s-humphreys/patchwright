@@ -78,6 +78,11 @@ unknown  which repository holds the build that sets this
          whether anybody has started
 ```
 
+`fix_plan` and `service_report` carry `build_fixes`: packages the service's own build
+installs or declares that carry its actionable CVEs, with the fixed version from the
+same scan. When the base move clears none of those CVEs, the plan's `do` is the package
+move and `do_not` rules out the rebuild.
+
 Three parts of that are there because of how the answer gets used. The **reason** behind a
 ceiling, because "there is a 3.14, why am I being told 3.12" is the first thing anybody
 asks and the answer was written by a colleague who knew. Whether the change is **yours**,

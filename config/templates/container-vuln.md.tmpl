@@ -35,6 +35,17 @@
                 different repository (for example another registry)
                 .Managed "operator" with .Chart set means an operator picks the
                 image's tag at runtime and the change is the operator's chart
+    .Packages - package moves the images' own build has to make (.Name
+                .Ecosystem .Path .Current .Fixed .CVEs .CVEList): beside a
+                rebuild that leaves them, or the whole change when
+                .PackageOnly is true. .Upgrade.Kind is "package" when the
+                whole group moves one package to one version
+    .PackageOnly - the change is moving .Packages and nothing else: no newer
+                base exists, or the one on offer clears none of what made
+                this actionable, so a rebuild will not fix it
+    .SummaryCVEs - the CVEs the package moves clear, for a summary. A ticket
+                whose summary names CVEs is closed once none of them is
+                reported on its images any more
     .Disambiguator - set ONLY when another ticket in this run renders the same
                 summary, naming what makes this one different. Empty otherwise,
                 so putting it in a summary costs nothing on the tickets that
@@ -42,7 +53,9 @@
 
   This is an EXAMPLE. Edit it to match how your teams actually work.
 */ -}}
-{{- if .Upgrade -}}
+{{- if .PackageOnly -}}
+Summary: {{ with .Upgrade }}Upgrade {{ .Name }} to {{ .Latest }}{{ else }}Upgrade {{ len .Packages }} packages{{ end }} in {{ .ServiceName }} ({{ .SummaryCVEs }}){{ with .Disambiguator }} ({{ . }}){{ end }}
+{{- else if .Upgrade -}}
 Summary: Upgrade {{ .ServiceName }} to {{ .Upgrade.Latest }}{{ with .Disambiguator }} ({{ . }}){{ end }}
 {{- else -}}
 Summary: Upgrade {{ .ServiceName }} {{ .GroupNoun }} ({{ .ImageCount }}) to their latest versions{{ with .Disambiguator }} ({{ . }}){{ end }}
@@ -50,7 +63,9 @@ Summary: Upgrade {{ .ServiceName }} {{ .GroupNoun }} ({{ .ImageCount }}) to thei
 
 **Business objective/requirements**
 
-{{ if .Upgrade -}}
+{{ if .PackageOnly -}}
+Change the build of {{ .ServiceName }} to clear known container vulnerabilities in packages it installs or declares. They are not in the base image, so rebuilding on a newer base will not fix this.
+{{- else if .Upgrade -}}
 Upgrade {{ .ServiceName }} from {{ .Upgrade.Current }} to {{ .Upgrade.Latest }} to clear known container vulnerabilities.
 {{- else -}}
 Upgrade the {{ .ImageCount }} images below to clear known container vulnerabilities. {{ if .Source }}They are grouped because one change covers them all.{{ else }}They are grouped because they are managed together; each is bumped in its own place, listed below.{{ end }}
@@ -66,10 +81,14 @@ This also updates the following, which are not bumped directly:
 {{ range . }}* {{ .Repo }}: {{ .Current }}{{ if .Latest }} -> {{ .Latest }}{{ if eq .LatestFrom "appVersion" }} (appVersion){{ end }}{{ if .LatestRepo }}; the image moves to {{ .LatestRepo }}:{{ .Latest }} (from {{ .Repo }}){{ end }}{{ end }}
 {{ end -}}
 {{- end }}
-{{- if and .Upgrade (eq .Upgrade.Kind "base") }}* Rebuild {{ .ServiceName }}: it is built on top of {{ .Upgrade.Name }}, and moving that to {{ .Upgrade.Latest }} is what the rebuild picks up.{{ if .Urgent }} That alone clears every CVE under "Done means".{{ end }}
+{{- if and .Upgrade (eq .Upgrade.Kind "base") }}* Rebuild {{ .ServiceName }}: it is built on top of {{ .Upgrade.Name }}, and moving that to {{ .Upgrade.Latest }} is what the rebuild picks up.{{ if and .Urgent (not .Packages) }} That alone clears every CVE under "Done means".{{ end }}
 {{ if .BuildRepo }}* Rebuild from {{ .BuildRepo }}.
 {{ end }}* Redeploy the new image everywhere it runs, listed below. A rebuilt image fixes nothing until it is running.
 {{ else }}{{- if .Source }}* Change target: {{ .Source }}{{ if .SourcePath }} (path: {{ .SourcePath }}){{ end }}
+{{ end }}{{ end }}
+{{- with .Packages }}{{ if not $.PackageOnly }}* The rebuild does not touch these: the build adds them, so move them there as well.
+{{ end }}{{ range . }}* {{ .Name }}{{ with .Path }} (in {{ . }}){{ end }}: {{ with .Current }}{{ . }}{{ else }}installed version{{ end }} -> {{ .Fixed }}, clearing {{ .CVEList }}
+{{ end }}{{ if $.PackageOnly }}* Make the change in the Dockerfile or dependency manifest{{ with $.BuildRepo }} in {{ . }}{{ end }}, rebuild, and redeploy everywhere it runs, listed below. A rebuild on a newer base image alone will not fix this.
 {{ end }}{{ end }}
 {{ with .Urgent -}}
 **Done means**
@@ -122,6 +141,8 @@ Fixable critical CVEs, most exploitable first:
 
 {{ if .Urgent -}}
 None of the CVEs under "Done means" remain in the running image, in every environment listed above.
+{{- else if .PackageOnly -}}
+None of {{ .SummaryCVEs }} remain in the running image, in every environment listed above.
 {{- else if .Upgrade -}}
 {{ .ServiceName }} is running {{ .Upgrade.Latest }} in all environments listed above.
 {{- else -}}
