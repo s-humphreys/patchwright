@@ -264,6 +264,7 @@ func (e *BaseDiffEnricher) namePackages(ctx context.Context, img *model.Assessed
 			continue
 		}
 		img.Vulns[i].Packages = affected(res.CVEs[img.Vulns[i].ID])
+		matchFixToPackages(&img.Vulns[i])
 	}
 }
 
@@ -350,6 +351,7 @@ func (e *BaseDiffEnricher) diff(ctx context.Context, img *model.AssessedImage, u
 		// be a guess, and the guess available is the one measured at 66% wrong.
 		if v.Origin == basescan.OriginBase {
 			img.Vulns[i].Packages = affected(built.CVEs[img.Vulns[i].ID])
+			matchFixToPackages(&img.Vulns[i])
 		}
 	}
 
