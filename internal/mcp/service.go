@@ -56,9 +56,11 @@ type ServiceReport struct {
 	// differential measured it. Carried for fix_plan rather than rendered here, where
 	// upgrade.exploited already answers the question in the context of the change.
 	knownExploited []ExploitedCVE
-	// rebuildClears is whether the base move clears any of the CVEs that make the
-	// service actionable. When it does not, BuildFixes are the whole of the work.
-	rebuildClears bool
+	// buildFixOnly is whether BuildFixes are the whole of the work: every deployment
+	// with something actionable is one the ticket planner raises a package ticket
+	// for, by the same rule (sink.FindingView.BuildFixOnly). A deployment it would
+	// raise a rebuild for keeps the rebuild in the plan.
+	buildFixOnly bool
 }
 
 // BuildFix is one package move in the service's own build.
@@ -334,7 +336,7 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	out.Upgrade = upgradeAdvice(mine, lead)
 	out.InProgress = inProgress(lead)
 	out.knownExploited = exploitedAmong(mine)
-	out.BuildFixes, out.rebuildClears = buildFixes(grouped)
+	out.BuildFixes, out.buildFixOnly = buildFixes(grouped)
 	out.Caveats = caveats(a, out)
 	if spans := qualifiedNames(mine); len(spans) > 1 {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
@@ -406,7 +408,7 @@ func qualifiedNames(fs []sink.FindingView) []string {
 }
 
 // buildFixes lists the package moves the service's own build has to make for the CVEs
-// that make it actionable, and reports whether its base move clears any of them.
+// that make it actionable, and reports whether they are all of its work.
 //
 // Actionable is what the ticket planner raises on: the urgent CVEs when there are any,
 // the fixable criticals otherwise. A plan that told a team to rebuild while their
@@ -423,14 +425,17 @@ func buildFixes(fs []sink.FindingView) ([]BuildFix, bool) {
 	}
 	byKey := map[string]*BuildFix{}
 	var keys []string
-	rebuildClears := false
+	only := true
 	for _, f := range fs {
+		picked := false
 		for _, v := range f.Vulns {
-			if !pick(v) {
-				continue
-			}
-			if !v.FixableInBuild() {
-				rebuildClears = rebuildClears || v.FixedByUpgrade
+			picked = picked || pick(v)
+		}
+		if picked && !f.BuildFixOnly(epssUrgent) {
+			only = false
+		}
+		for _, v := range f.Vulns {
+			if !pick(v) || !v.FixableInBuild() {
 				continue
 			}
 			for _, p := range v.Packages {
@@ -458,7 +463,7 @@ func buildFixes(fs []sink.FindingView) ([]BuildFix, bool) {
 		sort.Strings(b.CVEs)
 		out = append(out, b)
 	}
-	return out, rebuildClears
+	return out, only && len(out) > 0
 }
 
 // exploitedAmong lists the service's known-exploited CVEs, worst first and deduped.

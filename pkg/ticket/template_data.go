@@ -194,6 +194,21 @@ func (d TemplateData) buildFixCVEs() []string {
 	return out
 }
 
+// PackageNames are the distinct packages Packages moves, in order. Shorter than
+// Packages when one package needs two versions for two CVEs, which a summary
+// should still call one package.
+func (d TemplateData) PackageNames() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range d.Packages {
+		if !seen[p.Name] {
+			seen[p.Name] = true
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
 // UrgentRemaining is how many of Urgent the ticket clears by moving Packages rather
 // than by its upgrade, which is zero except on a rebuild ticket that lists package
 // moves beside it. Kept for templates written against the earlier contract.

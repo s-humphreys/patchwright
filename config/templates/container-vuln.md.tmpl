@@ -36,7 +36,9 @@
                 .Managed "operator" with .Chart set means an operator picks the
                 image's tag at runtime and the change is the operator's chart
     .Packages - package moves the images' own build has to make (.Name
-                .Ecosystem .Path .Current .Fixed .CVEs .CVEList): beside a
+                .Ecosystem .Path .Current .Fixed .CVEs .CVEList), one per
+                package and fixed version; .PackageNames are the distinct
+                packages, for a summary: beside a
                 rebuild that leaves them, or the whole change when
                 .PackageOnly is true. .Upgrade.Kind is "package" when the
                 whole group moves one package to one version
@@ -54,7 +56,7 @@
   This is an EXAMPLE. Edit it to match how your teams actually work.
 */ -}}
 {{- if .PackageOnly -}}
-Summary: {{ with .Upgrade }}Upgrade {{ .Name }} to {{ .Latest }}{{ else }}Upgrade {{ len .Packages }} packages{{ end }} in {{ .ServiceName }} ({{ .SummaryCVEs }}){{ with .Disambiguator }} ({{ . }}){{ end }}
+Summary: {{ if .Upgrade }}Upgrade {{ .Upgrade.Name }} to {{ .Upgrade.Latest }}{{ else if eq (len .PackageNames) 1 }}Upgrade {{ index .PackageNames 0 }}{{ else }}Upgrade {{ len .PackageNames }} packages{{ end }} in {{ .ServiceName }} ({{ .SummaryCVEs }}){{ with .Disambiguator }} ({{ . }}){{ end }}
 {{- else if .Upgrade -}}
 Summary: Upgrade {{ .ServiceName }} to {{ .Upgrade.Latest }}{{ with .Disambiguator }} ({{ . }}){{ end }}
 {{- else -}}

@@ -300,14 +300,24 @@ another ecosystem than the package beside it.
 
 A CVE in a package the build adds with no fixed version of its own is skipped as before.
 
-The bundled template puts the CVEs in a package ticket's summary (`.SummaryCVEs`).
-With `autoClose`, a ticket whose summary names CVEs is closed (`fix-landed`) once none
-of them is reported on any image it covers, every image still scanned and running; a
-moved package leaves the image's version where it was, so "on the latest version" is
-not evidence either way for it. An open rebuild ticket whose rebuild has landed, with a
-package move left, is rewritten as the package ticket when nobody has picked it up, and
-commented on otherwise. A template that leaves CVEs out of its summary gets neither:
-reconciliation has nothing to read them from.
+Origin is known for an image already on its newest base: the differential scans the
+base as built whatever the move, so a CVE absent from it is the build's. That takes no
+scan beyond the ones the differential and `scanExploited` already make.
+
+The bundled template puts the CVEs in a package ticket's summary (`.SummaryCVEs`), and
+names one package once even when two CVEs need two of its versions (`.PackageNames`).
+Reconciliation never closes a ticket while any image it covers still reports an urgent
+CVE its own build adds, named in the summary or not, and whether or not this run named
+its package: the ticket is held. A moved package leaves the image's version where it
+was, so "on the latest version" is no evidence for it either way, and nothing is
+closed on that without the image having been scanned this run. With `autoClose`, a
+ticket whose summary names CVEs is closed (`fix-landed`) once none of them is reported
+on any image it covers, every image still scanned and running.
+
+An open rebuild ticket whose rebuild has landed, with a package move left, is rewritten
+as the package ticket when nobody has picked it up and the summaries name CVEs to
+compare, and commented on otherwise. A template that leaves CVEs out of its summaries
+gets the comment, once per wording of the package ticket, and never the rewrite.
 
 ## Only ticket what the change fixes
 

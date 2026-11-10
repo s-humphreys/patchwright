@@ -293,8 +293,15 @@ type VulnView struct {
 // name, so it is a version of that package. Every carrier needs one, because a
 // CVE left in one package is not gone from the image. FixAvailable is required
 // as well, so whatever decides a fix exists at the CVE level still has a say.
+//
+// Origin "app" is enough on its own, without OriginDetermined. The differential
+// sets it only after scanning the base as built and not finding the CVE there,
+// which it does whether or not a newer base exists; OriginDetermined says a newer
+// base was scanned too, which is a question about the move, not about where the
+// CVE lives. Requiring it would mean an image already on its newest base, the
+// one place a rebuild can do nothing at all, never had its package ticketed.
 func (v VulnView) FixableInBuild() bool {
-	if !v.FixAvailable || !v.OriginDetermined || v.Origin != "app" || v.FixedByUpgrade || len(v.Packages) == 0 {
+	if !v.FixAvailable || v.Origin != "app" || v.FixedByUpgrade || len(v.Packages) == 0 {
 		return false
 	}
 	for _, p := range v.Packages {
@@ -303,6 +310,50 @@ func (v VulnView) FixableInBuild() bool {
 		}
 	}
 	return true
+}
+
+// BuildFixOnly reports a finding whose whole remedy is moving packages its own
+// build adds: at least one of the CVEs that make it actionable is FixableInBuild,
+// and its base offers nothing for the rest. Either there is no newer base, or the
+// one on offer was measured to keep every other actionable CVE.
+//
+// The actionable CVEs are the urgent ones (a fix, and exploited or an EPSS at or
+// above epss) when the finding carries any, and its fixable criticals otherwise:
+// what the ticket planner raises on. It lives here so the planner and the plan an
+// engineer reads from the MCP server answer with one rule rather than two that
+// drift; they did, and the plan ruled out a rebuild the ticket asked for.
+//
+// Unresolved and operator-chosen versions answer false: what moving them would do
+// is not known, so neither is whether the packages are all the work.
+func (f FindingView) BuildFixOnly(epss float64) bool {
+	u := f.Upgrade
+	if u == nil || u.Kind != "base" || !u.Resolved || u.OperatorChosen {
+		return false
+	}
+	urgent := func(v VulnView) bool { return v.FixAvailable && (v.KEV || v.EPSS >= epss) }
+	pick := func(v VulnView) bool { return v.Severity == "critical" && v.FixAvailable }
+	for _, v := range f.Vulns {
+		if urgent(v) {
+			pick = urgent
+			break
+		}
+	}
+	fixable := false
+	for _, v := range f.Vulns {
+		if !pick(v) {
+			continue
+		}
+		if v.FixableInBuild() {
+			fixable = true
+			continue
+		}
+		// One the move might clear makes this a rebuild, with the package moves
+		// beside it: measured to be cleared, or never measured against the move.
+		if u.Available && (!v.OriginDetermined || v.FixedByUpgrade) {
+			return false
+		}
+	}
+	return fixable
 }
 
 // PackageView is a package carrying a CVE and the version that fixes it. Both

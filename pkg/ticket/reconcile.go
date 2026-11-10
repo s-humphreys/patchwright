@@ -203,11 +203,12 @@ func Reconcile(in ReconcileInput) []Action {
 			})
 			continue
 		}
-		if moved := retargeted(d, lead); moved != "" {
+		if moved, key, rewrite := retargeted(d, lead); moved != "" {
 			// The rebuild a ticket was raised for has landed and what is left is a
 			// package the build adds. Corrected in place when nobody has engaged with
-			// it, as for a moved version, and said in a comment otherwise.
-			if lead.Untouched() {
+			// it, as for a moved version, and said in a comment otherwise. Only said
+			// when the summaries could not be compared on CVEs: see retargeted.
+			if rewrite && lead.Untouched() {
 				actions = append(actions, Action{
 					Kind: ActionUpdate, TicketKey: lead.Key, Draft: d,
 					Why: "what is left is a package change in the image's own build, not the change the " +
@@ -217,9 +218,9 @@ func Reconcile(in ReconcileInput) []Action {
 			}
 			actions = append(actions, Action{
 				Kind: ActionNoteStale, TicketKey: lead.Key, Message: moved,
-				Dedupe: "note-retarget:" + strings.Join(d.cves, ","),
+				Dedupe: "note-retarget:" + key,
 				Why: "what is left is a package change in the image's own build, not the change the ticket " +
-					"was raised for, and someone has already picked it up so it was not edited",
+					"was raised for; commented on rather than edited",
 			})
 			continue
 		}
@@ -297,6 +298,22 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 					Kind: ActionHold, TicketKey: t.Key, Reason: ReasonUnmeasured,
 					Why: "the change could not be measured this run, so nothing was raised or changed: " +
 						strings.Join(held, "; "),
+				})
+				continue
+			}
+
+			// Before anything that might close: an image still reporting an urgent CVE
+			// its own build adds has work outstanding that no version check can see. A
+			// package ticket's image is on its newest base from the day it is raised,
+			// so "on the latest version" proves nothing about it; and with no draft
+			// claiming the ticket this run (the image scan that names packages lapsed,
+			// a threshold now excludes it) nothing here can tell a package ticket from
+			// a rebuild one. Either way the CVE is still there, so the ticket is held.
+			if carried := buildOwned(images, byRepo(in.Findings), in.Config.UrgentEPSS); len(carried) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key,
+					Why: "still outstanding: its images still report urgent CVEs their own build adds, " +
+						"which no base version settles: " + strings.Join(carried, "; "),
 				})
 				continue
 			}
@@ -474,13 +491,28 @@ func summaryCVEs(summary string) []string {
 
 // retargeted reports, as a comment, that a package-only draft has landed on a ticket
 // raised for some other change: a rebuild that has since landed, with a package
-// its build adds still carrying what made it actionable. Read off the summaries,
-// so only when the draft's own summary names its CVEs: a template that leaves them
-// out gives nothing to compare, and comparing anyway would rewrite the ticket every
-// run.
-func retargeted(d Draft, t Existing) string {
-	if !d.packageOnly || t.Summary == "" || len(summaryCVEs(d.Summary)) == 0 {
-		return ""
+// its build adds still carrying what made it actionable. It also returns the key
+// the comment is posted once under, and whether the ticket may be rewritten.
+//
+// Read off the summaries. When the draft's summary names its CVEs, a ticket naming
+// none of them was raised for something else, and rewriting it converges: the
+// rewritten summary names them. When it names none, the summaries are compared
+// whole, which cannot tell a rebuild ticket from a package ticket worded by an
+// older template, so it is only ever a comment: a rewrite on that comparison could
+// change somebody's ticket every time the wording did. Silence is not an option
+// either, since the ticket would go on asking for a rebuild that has landed.
+func retargeted(d Draft, t Existing) (message, key string, rewrite bool) {
+	if !d.packageOnly || t.Summary == "" {
+		return "", "", false
+	}
+	message = "What is left on this ticket has changed: " + d.Summary + ". That is a package the image's " +
+		"own build installs or declares, so a rebuild on a newer base image will not remove it; the " +
+		"package has to move in the Dockerfile or dependency manifest. The ticket has not been edited."
+	if len(summaryCVEs(d.Summary)) == 0 {
+		if t.Summary == d.Summary {
+			return "", "", false
+		}
+		return message, d.Summary, false
 	}
 	mine := map[string]bool{}
 	for _, id := range d.cves {
@@ -488,12 +520,37 @@ func retargeted(d Draft, t Existing) string {
 	}
 	for _, id := range summaryCVEs(t.Summary) {
 		if mine[id] {
-			return ""
+			return "", "", false
 		}
 	}
-	return "What is left on this ticket has changed: " + d.Summary + ". That is a package the image's " +
-		"own build installs or declares, so a rebuild on a newer base image will not remove it; the " +
-		"package has to move in the Dockerfile or dependency manifest. The ticket has not been edited."
+	return message, strings.Join(d.cves, ","), true
+}
+
+// buildOwned lists the urgent CVEs a ticket's images still report that their own
+// builds add, by image. Origin "app" alone decides it, not whether a package was
+// named: the scan naming packages failing for a run does not move the CVE.
+func buildOwned(images []string, byRepo map[string][]sink.FindingView, epss float64) []string {
+	if epss <= 0 {
+		epss = DefaultUrgentEPSS
+	}
+	var out []string
+	for _, img := range images {
+		seen := map[string]bool{}
+		var ids []string
+		for _, f := range byRepo[img] {
+			for _, v := range f.Vulns {
+				if v.Origin == "app" && isUrgent(v, epss) && !seen[v.ID] {
+					seen[v.ID] = true
+					ids = append(ids, v.ID)
+				}
+			}
+		}
+		if len(ids) > 0 {
+			sort.Strings(ids)
+			out = append(out, img+" ("+strings.Join(ids, ", ")+")")
+		}
+	}
+	return out
 }
 
 // cvesGone reports whether none of the named CVEs is reported on any image a ticket
@@ -822,7 +879,9 @@ func byRepo(findings []sink.FindingView) map[string][]sink.FindingView {
 //   - no finding for the repository may still have an upgrade available, which is
 //     what catches an old tag still running somewhere,
 //   - liveness must have been reconciled, so "everywhere" is a checked claim about
-//     running workloads rather than an assumption about the whole estate.
+//     running workloads rather than an assumption about the whole estate,
+//   - the image must have been scanned this run, or the buildOwned hold before this
+//     had no CVEs to look at and "nothing outstanding" is only "nothing seen".
 func upgradeComplete(images []string, byRepo map[string][]sink.FindingView) (bool, string) {
 	if len(images) == 0 {
 		return false, ""
@@ -843,7 +902,7 @@ func upgradeComplete(images []string, byRepo map[string][]sink.FindingView) (boo
 			if f.Upgrade.Available || f.Upgrade.OperatorChosen {
 				return false, ""
 			}
-			if f.Liveness == nil {
+			if f.Liveness == nil || !f.Scanned || f.ScanError != "" {
 				return false, ""
 			}
 		}

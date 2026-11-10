@@ -92,6 +92,12 @@ func urgent(group []sink.FindingView, epss float64) []UrgentVuln {
 				// of it, and only FixedIn is sure to be one: see FixableInBuild.
 				if u.FixedVersion == "" || v.FixableInBuild() {
 					u.FixedVersion = p.FixedIn
+					// Every carrier has to move or the CVE stays, so the row names them
+					// all when one instruction covers them: same ecosystem, same file,
+					// same version. Otherwise it names the first, and Packages has the rest.
+					if names := sameMove(v.Packages); len(names) > 1 {
+						u.Package = strings.Join(names, ", ")
+					}
 				}
 			}
 		}
@@ -159,39 +165,17 @@ func actionable(group []sink.FindingView, epss float64) func(sink.VulnView) bool
 }
 
 // packageOnly reports a finding whose whole ticket is moving packages in its own
-// build: at least one of the CVEs that make it actionable is FixableInBuild, and
-// its base offers nothing for the rest. Either there is no newer base, or the one
-// on offer was measured to keep every other actionable CVE.
+// build, by sink.FindingView.BuildFixOnly, the rule the MCP plan uses too.
 //
 // Without this such a finding is skipped for good, as "already on the latest" or
 // as an upgrade that clears nothing, and an exploited CVE in a package somebody's
 // Dockerfile installs sits in the queue with no ticket and no owner. A rebuild
 // ticket is the wrong one for it: the rebuild is work that changes nothing.
-//
-// Unresolved and operator-chosen versions are left to the skips they have: what
-// moving them would do is not known, so neither is whether this is all the work.
 func packageOnly(f sink.FindingView, epss float64) bool {
-	u := f.Upgrade
-	if u == nil || u.Kind != "base" || !u.Resolved || u.OperatorChosen {
-		return false
+	if epss <= 0 {
+		epss = DefaultUrgentEPSS
 	}
-	pick := actionable([]sink.FindingView{f}, epss)
-	fixable := false
-	for _, v := range f.Vulns {
-		if !pick(v) {
-			continue
-		}
-		if v.FixableInBuild() {
-			fixable = true
-			continue
-		}
-		// One the move might clear makes this a rebuild ticket, which lists the
-		// package moves beside the rebuild instead.
-		if u.Available && (!v.OriginDetermined || v.FixedByUpgrade) {
-			return false
-		}
-	}
-	return fixable
+	return f.BuildFixOnly(epss)
 }
 
 // asPackageChange gives a package-only finding the package change as its upgrade,
@@ -372,6 +356,18 @@ func unmeasured(group []sink.FindingView, epss float64) string {
 		}
 	}
 	return reason
+}
+
+// sameMove returns the names of pkgs when one instruction moves them all, else nil.
+func sameMove(pkgs []sink.PackageView) []string {
+	names := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		if p.Ecosystem != pkgs[0].Ecosystem || p.Path != pkgs[0].Path || p.FixedIn != pkgs[0].FixedIn {
+			return nil
+		}
+		names = append(names, p.Name)
+	}
+	return names
 }
 
 func carries(group []sink.FindingView, pick func(sink.VulnView) bool) bool {

@@ -183,7 +183,7 @@ func fixPlan(a Assessment, name string) (FixPlan, bool) {
 	// What made this actionable is in what the build adds, and the base move clears
 	// none of it - or there is none. The package move is the change; the rebuild would
 	// be work that fixes nothing, and the plan says so rather than leading with it.
-	if len(r.BuildFixes) > 0 && !r.rebuildClears {
+	if r.buildFixOnly {
 		if p.Do != nil && u.Kind == "base" {
 			p.DoNot = append(p.DoNot, fmt.Sprintf("Do not rebuild on %s for this: it clears none of the CVEs "+
 				"that make this actionable. They are in packages the build installs or declares, not in the base.",

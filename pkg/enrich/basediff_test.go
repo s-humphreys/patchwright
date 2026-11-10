@@ -8,11 +8,13 @@ import (
 
 	"github.com/s-humphreys/patchwright/pkg/basescan"
 	"github.com/s-humphreys/patchwright/pkg/model"
+	"github.com/s-humphreys/patchwright/pkg/sink"
 )
 
 type stubScanner struct {
 	byRef map[string][]string // ref -> CVE ids
 	fail  map[string]bool
+	fixed map[string]string // CVE id -> the fixed version of the package carrying it
 
 	// Guarded: two different base references are scanned concurrently, so an
 	// unsynchronised counter is a race the detector would only sometimes catch.
@@ -42,7 +44,7 @@ func (s *stubScanner) ScanRef(_ context.Context, ref string) (*basescan.Result, 
 	r := &basescan.Result{Ref: ref, OSFamily: "debian",
 		Ecosystems: map[string]bool{"debian": true}, CVEs: map[string][]basescan.Package{}}
 	for _, c := range cves {
-		r.CVEs[c] = []basescan.Package{{Name: "pkg", Ecosystem: "debian"}}
+		r.CVEs[c] = []basescan.Package{{Name: "pkg", Ecosystem: "debian", FixedVersion: s.fixed[c]}}
 	}
 	return r, nil
 }
@@ -112,6 +114,34 @@ func TestEnrichLeavesTheUpgradeUndeterminedWithoutACandidate(t *testing.T) {
 	}
 	if images[0].Vulns[0].OriginDetermined {
 		t.Error("per-CVE determination must agree with the summary")
+	}
+}
+
+// An image already on its newest base has no candidate to scan, but the base as
+// built is scanned all the same, so an exploited CVE its own build adds is still
+// known to be the team's, and with the image scanned it carries the package fix a
+// ticket needs. The two scans it takes are the ones the run already made.
+func TestAnImageOnItsNewestBaseStillHasItsBuildFixes(t *testing.T) {
+	s := &stubScanner{
+		byRef: map[string][]string{"base@sha256:aaa": {"CVE-BASE"}, "app:1": {"CVE-BASE", "CVE-KEV"}},
+		fixed: map[string]string{"CVE-KEV": "1.2"},
+	}
+	e := &BaseDiffEnricher{Resolver: &basescan.Resolver{Scanner: s}, ScanExploited: true}
+	img := image("CVE-BASE", "CVE-KEV")
+	img.Upgrade.ToRef = ""
+	img.Vulns[1].KEV, img.Vulns[1].FixAvailable = true, true
+	images := []model.AssessedImage{img}
+
+	if err := e.EnrichImages(context.Background(), images); err != nil {
+		t.Fatal(err)
+	}
+	v := sink.ToFindingView(model.Finding{Image: images[0].Image, Vulns: images[0].Vulns}).Vulns[1]
+	if v.Origin != "app" || v.OriginDetermined || !v.FixableInBuild() {
+		t.Errorf("CVE-KEV = origin %q determined %v fixable in build %v, want app, false, true",
+			v.Origin, v.OriginDetermined, v.FixableInBuild())
+	}
+	if s.count() != 2 {
+		t.Errorf("scans = %d, want 2 (the base as built, and the image)", s.count())
 	}
 }
 
