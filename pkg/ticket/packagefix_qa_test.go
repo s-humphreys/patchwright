@@ -45,6 +45,20 @@ func TestQAPackageTicketWithCVELessSummaryIsNotClosedWhileTheCVEIsReported(t *te
 			return ReconcileInput{Drafts: next.Drafts, Skipped: next.Skips,
 				Findings: []sink.FindingView{stillCarrying("acme/scoring")}}
 		},
+		// The likeliest route in prod: the ticket was raised while a newer base was on
+		// offer, then a base bump (Renovate) moved the image onto its newest base. The
+		// CVE is still in the app layer, but with no ToRef the differential leaves
+		// OriginDetermined false, so no package draft claims the ticket.
+		"base bumped, package not moved": func() ReconcileInput {
+			f := onNewestBase("acme/scoring", brotli)
+			f.Vulns[0].OriginDetermined = false
+			f.Scanned, f.ProviderAssessed, f.Liveness = true, true, &sink.LivenessView{Live: true}
+			next, err := newTestPlanner(t, "").Plan([]sink.FindingView{f})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ReconcileInput{Drafts: next.Drafts, Skipped: next.Skips, Findings: []sink.FindingView{f}}
+		},
 		"priority threshold now excludes it": func() ReconcileInput {
 			f := onNewestBase("acme/scoring", brotli)
 			f.Scanned, f.ProviderAssessed, f.Liveness = true, true, &sink.LivenessView{Live: true}
