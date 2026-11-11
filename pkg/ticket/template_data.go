@@ -1,6 +1,7 @@
 package ticket
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -31,6 +32,9 @@ type TemplateData struct {
 	// grouped images do NOT share one target version: a ticket covering six Flux
 	// controllers cannot honestly say "upgrade to 1.6.3" when that is one
 	// controller's version. Use Upgrades in that case.
+	//
+	// Kind "package" is a package the images' own build installs or declares, moved
+	// to the version that clears what made them actionable: see PackageOnly.
 	Upgrade *UpgradeData
 	// Upgrades is the version move(s) to APPLY. For a chain-merged ticket this is
 	// the managing component only, since bumping it is the whole action. An image
@@ -123,11 +127,20 @@ type TemplateData struct {
 	// which says nothing about what the change clears and must not be worded as
 	// if it did.
 	Urgent []UrgentVuln
-	// UrgentCleared is len(Urgent) and UrgentUnknown is zero, now that Urgent holds
-	// only what the change clears. Kept so a template written against the earlier
-	// contract still renders, and renders only true statements.
+	// UrgentCleared is how many of Urgent the ticket's upgrade clears, and
+	// UrgentUnknown is zero, now that Urgent holds only what the change clears.
+	// Kept so a template written against the earlier contract still renders, and
+	// renders only true statements. A rebuild ticket that also lists package moves
+	// counts only what the rebuild clears, since an older template words this as
+	// what "the rebuild alone" does; on a package-only ticket it is len(Urgent).
 	UrgentCleared int
 	UrgentUnknown int
+
+	// Packages are the package moves the images' own build has to make: one per
+	// package and fixed version, with the actionable CVEs each clears. They sit
+	// beside a rebuild that leaves them, or are the whole change on a ticket where
+	// PackageOnly is true. Empty when nothing the build adds has a known fix.
+	Packages []PackageFix
 
 	// clearsNone is set when the change was measured to clear none of the CVEs
 	// that make this group actionable, which means there is no ticket to raise.
@@ -135,17 +148,78 @@ type TemplateData struct {
 	// unmeasured is why the change could not be judged this run, when it could
 	// not: a measurement that would have decided it failed. See unmeasured.
 	unmeasured string
+	// packageOnly is set when the whole change is moving Packages.
+	packageOnly bool
 }
 
-// UrgentRemaining is always zero: Urgent lists only what the change clears. Kept
-// for templates written against the earlier contract.
+// PackageOnly reports a ticket whose change is moving Packages in the images' own
+// build and nothing else: no newer base exists, or the one on offer clears none of
+// what made them actionable. A template should say a rebuild will not fix it.
+func (d TemplateData) PackageOnly() bool { return d.packageOnly }
+
+// SummaryCVEs names the CVEs the package moves clear, for a summary: the first
+// three, worst first, and how many more. Reconciliation reads CVE identifiers in
+// an open ticket's summary to tell when that work is done, so a template that
+// puts this in its summary gets a ticket closed on the CVEs being gone.
+func (d TemplateData) SummaryCVEs() string {
+	ids := d.buildFixCVEs()
+	const shown = 3
+	if len(ids) <= shown {
+		return strings.Join(ids, ", ")
+	}
+	return strings.Join(ids[:shown], ", ") + fmt.Sprintf(" and %d more", len(ids)-shown)
+}
+
+// buildFixCVEs is every CVE the package moves clear, in Urgent's order where it
+// lists them and then in the order of Packages.
+func (d TemplateData) buildFixCVEs() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, u := range d.Urgent {
+		if u.Origin == "app" {
+			add(u.ID)
+		}
+	}
+	for _, p := range d.Packages {
+		for _, id := range p.CVEs {
+			add(id)
+		}
+	}
+	return out
+}
+
+// PackageNames are the distinct packages Packages moves, in order. Shorter than
+// Packages when one package needs two versions for two CVEs, which a summary
+// should still call one package.
+func (d TemplateData) PackageNames() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range d.Packages {
+		if !seen[p.Name] {
+			seen[p.Name] = true
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
+// UrgentRemaining is how many of Urgent the ticket clears by moving Packages rather
+// than by its upgrade, which is zero except on a rebuild ticket that lists package
+// moves beside it. Kept for templates written against the earlier contract.
 func (d TemplateData) UrgentRemaining() int {
 	return len(d.Urgent) - d.UrgentCleared - d.UrgentUnknown
 }
 
-// UrgentAllCleared reports that there is a measured list and the change clears
-// all of it, which is true whenever Urgent is non-empty. Kept for templates
-// written against the earlier contract.
+// UrgentAllCleared reports that there is a measured list and the ticket's upgrade
+// clears all of it, which is true whenever Urgent is non-empty and no row is
+// cleared by moving a package instead. Kept for templates written against the
+// earlier contract.
 func (d TemplateData) UrgentAllCleared() bool {
 	return len(d.Urgent) > 0 && d.UrgentCleared == len(d.Urgent)
 }
@@ -243,7 +317,8 @@ type ImageUpgrade struct {
 
 // UpgradeData is the version move a ticket asks for.
 type UpgradeData struct {
-	// Kind is "chart" or "image": the sort of artefact whose version moves.
+	// Kind is "chart", "image", "base" or "package": the sort of artefact whose
+	// version moves.
 	Kind    string
 	Name    string
 	Current string
@@ -265,12 +340,17 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 	group := tg.all()
 	d := TemplateData{}
 
+	d.packageOnly = group[0].Upgrade != nil && group[0].Upgrade.Kind == "package"
 	for _, u := range urgent(group, urgentEPSS) {
-		if u.Cleared {
-			d.Urgent = append(d.Urgent, u)
+		if !u.Cleared {
+			continue
+		}
+		d.Urgent = append(d.Urgent, u)
+		if d.packageOnly || u.Origin != "app" {
+			d.UrgentCleared++
 		}
 	}
-	d.UrgentCleared = len(d.Urgent)
+	d.Packages = buildFixes(group, urgentEPSS)
 	d.clearsNone = clearsNone(group, urgentEPSS)
 	d.unmeasured = unmeasured(group, urgentEPSS)
 
@@ -359,6 +439,12 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 			Direct: u.Actionable,
 		}
 	}
+	// A package change moves no image, so it has no Upgrades to share a target; it
+	// has one version to promise when the whole group moves one package to one.
+	if d.packageOnly && len(d.Packages) == 1 {
+		p := d.Packages[0]
+		d.Upgrade = &UpgradeData{Kind: "package", Name: p.Name, Current: p.Current, Latest: p.Fixed, Direct: true}
+	}
 	// Filtered only now: whether the group shares one source and one target is a
 	// question about the change, which the images it leaves alone are still part of.
 	d.Upgrades = moving(d.Upgrades)
@@ -404,7 +490,8 @@ func imageUpgrades(findings []sink.FindingView) []ImageUpgrade {
 	out := make([]ImageUpgrade, 0, len(findings))
 	for _, f := range findings {
 		u := f.Upgrade
-		if u == nil {
+		// A package change is not a version move of the image: its rows are Packages.
+		if u == nil || u.Kind == "package" {
 			continue
 		}
 		up := ImageUpgrade{

@@ -97,7 +97,7 @@ one as a lapse.
 | `changed` | Its rule, priority, signals, target or CVEs moved while open. CVEs that left with evidence of remediation are recorded as cleared on it |
 | `reassigned` | Its owner changed but the service and target did not. Not a close and an open |
 | `ticket_raised` | Reconciliation created or extended a ticket covering it |
-| `ticket_closed` | A ticket that covered it is no longer open, with whether patchwright had evidence the work was done at the time, and the reason when patchwright closed it itself (`upgrade-landed`, `not-running`, `no-longer-actionable`, `upgrade-clears-nothing`, `decommissioned`) |
+| `ticket_closed` | A ticket that covered it is no longer open, with whether patchwright had evidence the work was done at the time, and the reason when patchwright closed it itself (`upgrade-landed`, `fix-landed`, `not-running`, `no-longer-actionable`, `upgrade-clears-nothing`, `decommissioned`) |
 | `resolved` | It left the queue **with evidence**: every image still reported, checked for a newer version, on the latest, with liveness reconciled. The test auto-close uses |
 | `lapsed` | It left the queue without that evidence: no longer reported, no longer running, or the data to judge it missing |
 | `decommissioned` | A lapsed item whose workloads were removed and stayed gone: see [remediated by decommissioning](#remediated-by-decommissioning). Dated when they disappeared |

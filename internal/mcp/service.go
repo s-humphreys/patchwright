@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -42,6 +43,11 @@ type ServiceReport struct {
 	Upgrade         *UpgradeAdvice `json:"upgrade,omitempty"`
 	InProgress      *InProgress    `json:"in_progress,omitempty"`
 
+	// BuildFixes are the packages the service's own build installs or declares that
+	// carry the CVEs making it actionable, each with the version that clears them.
+	// Work for the team, and work no base move does: these are not in the base.
+	BuildFixes []BuildFix `json:"build_fixes,omitempty"`
+
 	// Caveats are the things this answer cannot support. Present in the payload so
 	// they survive being summarised.
 	Caveats []string `json:"caveats,omitempty"`
@@ -50,6 +56,29 @@ type ServiceReport struct {
 	// differential measured it. Carried for fix_plan rather than rendered here, where
 	// upgrade.exploited already answers the question in the context of the change.
 	knownExploited []ExploitedCVE
+	// buildFixOnly is whether BuildFixes are the whole of the work: every deployment
+	// with something actionable is one the ticket planner raises a package ticket
+	// for, by the same rule (sink.FindingView.BuildFixOnly). A deployment it would
+	// raise a rebuild for keeps the rebuild in the plan.
+	buildFixOnly bool
+}
+
+// BuildFix is one package move in the service's own build.
+//
+// To is the package's own fixed version, from the same scan that named it, never the
+// provider's per-CVE one, which can belong to another ecosystem: see
+// sink.VulnView.FixableInBuild.
+type BuildFix struct {
+	Package   string `json:"package"`
+	Ecosystem string `json:"ecosystem,omitempty"`
+	// Path is the file declaring a language package; absent for an OS package, which
+	// the Dockerfile installs.
+	Path string `json:"path,omitempty"`
+	From string `json:"from,omitempty"`
+	To   string `json:"to"`
+	// CVEs are the actionable CVEs this move clears.
+	CVEs           []string `json:"cves"`
+	KnownExploited bool     `json:"known_exploited,omitempty"`
 }
 
 // Deployment is one running tag of the service.
@@ -307,6 +336,7 @@ func serviceReport(a Assessment, name string) (ServiceReport, bool) {
 	out.Upgrade = upgradeAdvice(mine, lead)
 	out.InProgress = inProgress(lead)
 	out.knownExploited = exploitedAmong(mine)
+	out.BuildFixes, out.buildFixOnly = buildFixes(grouped)
 	out.Caveats = caveats(a, out)
 	if spans := qualifiedNames(mine); len(spans) > 1 {
 		out.Caveats = append(out.Caveats, fmt.Sprintf(
@@ -375,6 +405,65 @@ func qualifiedNames(fs []sink.FindingView) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// buildFixes lists the package moves the service's own build has to make for the CVEs
+// that make it actionable, and reports whether they are all of its work.
+//
+// Actionable is what the ticket planner raises on: the urgent CVEs when there are any,
+// the fixable criticals otherwise. A plan that told a team to rebuild while their
+// ticket asked them to move a package would be two instructions for one piece of work.
+func buildFixes(fs []sink.FindingView) ([]BuildFix, bool) {
+	urgent := func(v sink.VulnView) bool { return v.FixAvailable && (v.KEV || v.EPSS >= epssUrgent) }
+	pick := func(v sink.VulnView) bool { return v.Severity == "critical" && v.FixAvailable }
+	for _, f := range fs {
+		for _, v := range f.Vulns {
+			if urgent(v) {
+				pick = urgent
+			}
+		}
+	}
+	byKey := map[string]*BuildFix{}
+	var keys []string
+	only := true
+	for _, f := range fs {
+		picked := false
+		for _, v := range f.Vulns {
+			picked = picked || pick(v)
+		}
+		if picked && !f.BuildFixOnly(epssUrgent) {
+			only = false
+		}
+		for _, v := range f.Vulns {
+			if !pick(v) || !v.FixableInBuild() {
+				continue
+			}
+			for _, p := range v.Packages {
+				key := p.Ecosystem + "\x00" + p.Name + "\x00" + p.Path + "\x00" + p.FixedIn
+				b := byKey[key]
+				if b == nil {
+					b = &BuildFix{Package: p.Name, Ecosystem: p.Ecosystem, Path: p.Path, To: p.FixedIn}
+					byKey[key] = b
+					keys = append(keys, key)
+				}
+				if b.From == "" {
+					b.From = p.Installed
+				}
+				if !slices.Contains(b.CVEs, v.ID) {
+					b.CVEs = append(b.CVEs, v.ID)
+				}
+				b.KnownExploited = b.KnownExploited || v.KEV
+			}
+		}
+	}
+	sort.Strings(keys)
+	out := make([]BuildFix, 0, len(keys))
+	for _, k := range keys {
+		b := *byKey[k]
+		sort.Strings(b.CVEs)
+		out = append(out, b)
+	}
+	return out, only && len(out) > 0
 }
 
 // exploitedAmong lists the service's known-exploited CVEs, worst first and deduped.

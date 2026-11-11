@@ -184,3 +184,17 @@ func TestParseRecordsTheDeclaringFileForLanguagePackagesOnly(t *testing.T) {
 		t.Errorf("language package = %+v, want path app/requirements.txt in pip", p)
 	}
 }
+
+// The installed version is what a ticket says the package moves from.
+func TestParseRecordsTheInstalledVersion(t *testing.T) {
+	const rep = `{"Results": [{"Type": "ubuntu", "Class": "os-pkgs", "Vulnerabilities": [
+	  {"VulnerabilityID": "CVE-1", "PkgName": "libbrotli1", "InstalledVersion": "1.1.0-2", "FixedVersion": "1.1.0-2ubuntu0.1"}
+	]}]}`
+	got, err := parseRefReport("app:1", []byte(rep))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := got.CVEs["CVE-1"][0]; p.InstalledVersion != "1.1.0-2" || p.FixedVersion != "1.1.0-2ubuntu0.1" {
+		t.Errorf("package = %+v, want installed 1.1.0-2 fixed in 1.1.0-2ubuntu0.1", p)
+	}
+}

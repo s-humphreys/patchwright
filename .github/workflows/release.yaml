@@ -71,7 +71,7 @@ jobs:
 
       - name: Run Semantic Release
         id: semantic
-        uses: cycjimmy/semantic-release-action@v6.0.0
+        uses: cycjimmy/semantic-release-action@v8.1.4
         with:
           extra_plugins: |
             conventional-changelog-conventionalcommits@9.1.0
@@ -206,7 +206,7 @@ jobs:
       # and a bare v4 does not, which is what failed the first release.
       - name: Install cosign
         if: steps.semantic.outputs.new_release_published == 'true'
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@v4.1.3
 
       - name: Cosign keyless signature
         if: steps.semantic.outputs.new_release_published == 'true'

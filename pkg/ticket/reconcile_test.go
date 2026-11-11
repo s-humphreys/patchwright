@@ -448,8 +448,8 @@ func TestApplyPerformsUpdates(t *testing.T) {
 }
 
 // onLatest builds a finding for a repository that is demonstrably already on its
-// latest version: remediation checked, versions resolved, nothing available, and
-// liveness reconciled.
+// latest version: remediation checked, versions resolved, nothing available,
+// scanned this run, and liveness reconciled.
 // autoCloseCfg is the minimum configuration that permits closing.
 func autoCloseCfg() config.JiraConfig {
 	return config.JiraConfig{Project: "PROJ", AutoClose: true}
@@ -457,7 +457,7 @@ func autoCloseCfg() config.JiraConfig {
 
 func onLatest(repo, version string) sink.FindingView {
 	return sink.FindingView{
-		Repository: repo, Tag: version, ProviderAssessed: true, RemediationChecked: true,
+		Repository: repo, Tag: version, ProviderAssessed: true, Scanned: true, RemediationChecked: true,
 		Liveness: &sink.LivenessView{Live: true},
 		Upgrade: &sink.UpgradeView{
 			Kind: "image", Current: version, Latest: version, Resolved: true, Available: false,

@@ -44,6 +44,9 @@ type Package struct {
 	Name         string
 	Ecosystem    string // "debian", "alpine", "azurelinux", "gobinary", "dotnet-core", ...
 	FixedVersion string
+	// InstalledVersion is the version the scan found, so a ticket can say what it
+	// moves from. Empty when the scanner did not report one.
+	InstalledVersion string
 	// Path is the file that declares a language package ("app/requirements.txt",
 	// "package-lock.json"), which is where the fix gets made. Empty for an OS
 	// package: those are installed by a package manager, not declared in a file.

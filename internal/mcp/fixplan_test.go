@@ -227,6 +227,92 @@ func TestAPlanSaysWhyTheRepositoryIsMissing(t *testing.T) {
 	}
 }
 
+// appKEV is an exploited CVE in a package the Dockerfile installs on top of the base,
+// with the fix the image scan gave for that package.
+var appKEV = sink.VulnView{
+	ID: "CVE-2026-7", Severity: "high", KEV: true, EPSS: 0.83, FixAvailable: true,
+	Origin: "app", OriginDetermined: true,
+	Packages: []sink.PackageView{{Name: "libbrotli1", Ecosystem: "ubuntu", Installed: "1.1.0-2", FixedIn: "1.1.0-2ubuntu0.1"}},
+}
+
+// withAppKEV adds appKEV to every deployment and, when the rebuild clears nothing,
+// takes away what the base move cleared.
+func withAppKEV(a Assessment, rebuildClears bool) Assessment {
+	for i := range a.Findings {
+		vs := append([]sink.VulnView{}, a.Findings[i].Vulns...)
+		for j := range vs {
+			vs[j].FixedByUpgrade = vs[j].FixedByUpgrade && rebuildClears
+		}
+		a.Findings[i].Vulns = append(vs, appKEV)
+	}
+	return a
+}
+
+// The case this exists for: the only move on offer is a rebuild that clears none of
+// what makes the service urgent, and the exploited CVE is in a package the build
+// installs. Telling the team to rebuild is telling them to do work that fixes nothing.
+func TestAPlanForAnAppLayerCVEIsThePackageMove(t *testing.T) {
+	a := withAppKEV(fixture(), false)
+	other := a.Findings[0]
+	other.Image, other.Repository = "reg.example/apps/pricing:2.0.0", "apps/pricing"
+	a.Findings = append(a.Findings, other)
+
+	p, ok := fixPlan(a, "storefront")
+	if !ok || p.Do == nil {
+		t.Fatalf("want a plan with an action, got %+v", p)
+	}
+	if p.Do.Kind != "package change in your own build" || !p.Do.Yours ||
+		p.Do.From != "1.1.0-2" || p.Do.To != "1.1.0-2ubuntu0.1" || !strings.Contains(p.Do.Change, "libbrotli1") {
+		t.Errorf("want the package move as the action: %+v", p.Do)
+	}
+	if !strings.Contains(strings.Join(p.DoNot, " "), "Do not rebuild on mcr/dotnet/aspnet:10.0") {
+		t.Errorf("want the rebuild ruled out by name: %v", p.DoNot)
+	}
+	if len(p.BuildFixes) != 1 || p.BuildFixes[0].CVEs[0] != "CVE-2026-7" || !p.BuildFixes[0].KnownExploited {
+		t.Errorf("want the package move detailed: %+v", p.BuildFixes)
+	}
+	if p.Result != nil {
+		t.Errorf("the differential describes the rebuild, which is not the change: %+v", p.Result)
+	}
+	if len(p.AlsoTakes) != 1 || p.AlsoTakes[0] != "apps/pricing" {
+		t.Errorf("also_takes = %v, want the other service carrying the same package move", p.AlsoTakes)
+	}
+
+	r, _ := serviceReport(a, "storefront")
+	if len(r.BuildFixes) != 1 {
+		t.Errorf("service_report should carry the package move too: %+v", r.BuildFixes)
+	}
+}
+
+// A rebuild that clears an exploited CVE is still the change, with the package move
+// listed beside it rather than replacing it.
+func TestAPlanKeepsARebuildThatClearsAndListsThePackageBesideIt(t *testing.T) {
+	p, _ := fixPlan(withAppKEV(fixture(), true), "storefront")
+	if p.Do == nil || !strings.Contains(p.Do.Change, "base image") {
+		t.Fatalf("want the rebuild as the action, got %+v", p.Do)
+	}
+	if len(p.BuildFixes) != 1 || p.Result == nil {
+		t.Errorf("want the package listed and the rebuild's result kept: %+v, %+v", p.BuildFixes, p.Result)
+	}
+	if strings.Contains(strings.Join(p.DoNot, " "), "Do not rebuild") {
+		t.Errorf("a rebuild that clears an exploited CVE must not be ruled out: %v", p.DoNot)
+	}
+}
+
+// A package with no fix of its own is not a move anybody can make.
+func TestAPlanIgnoresAPackageWithNoKnownFix(t *testing.T) {
+	a := fixture()
+	noFix := appKEV
+	noFix.Packages = []sink.PackageView{{Name: "openssl", Ecosystem: "azurelinux"}}
+	for i := range a.Findings {
+		a.Findings[i].Vulns = append(append([]sink.VulnView{}, a.Findings[i].Vulns...), noFix)
+	}
+	p, _ := fixPlan(a, "storefront")
+	if len(p.BuildFixes) != 0 || p.Do == nil || !strings.Contains(p.Do.Change, "base image") {
+		t.Errorf("want today's plan unchanged: do %+v, build fixes %+v", p.Do, p.BuildFixes)
+	}
+}
+
 // An exploited CVE the change does NOT clear must be named too: a ticket that lists only
 // the wins leaves somebody believing the service is clean of them afterwards.
 func TestAPlanNamesTheExploitedCVEsItDoesNotClear(t *testing.T) {
@@ -250,5 +336,23 @@ func TestAPlanNamesTheExploitedCVEsItDoesNotClear(t *testing.T) {
 	if cleared != 1 || stays != 1 {
 		t.Errorf("want one cleared and one surviving, got %d and %d: %+v",
 			cleared, stays, p.Result.KnownExploited)
+	}
+}
+
+// An exploited CVE whose origin the differential could not determine might be
+// cleared by the rebuild, so the ticket planner (ticket.packageOnly) keeps the
+// rebuild ticket. fix_plan must not tell the same team not to rebuild.
+func TestAPlanDoesNotRuleOutARebuildThatMightClear(t *testing.T) {
+	a := withAppKEV(fixture(), false)
+	unknown := sink.VulnView{ID: "CVE-2026-99", Severity: "critical", KEV: true, FixAvailable: true}
+	for i := range a.Findings {
+		a.Findings[i].Vulns = append(a.Findings[i].Vulns, unknown)
+	}
+	p, ok := fixPlan(a, "storefront")
+	if !ok {
+		t.Fatal("no plan")
+	}
+	if strings.Contains(strings.Join(p.DoNot, " "), "Do not rebuild") {
+		t.Errorf("rebuild ruled out although %s may be in the base: do %+v, do_not %v", unknown.ID, p.Do, p.DoNot)
 	}
 }

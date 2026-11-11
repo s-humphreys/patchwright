@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -96,8 +97,8 @@ type Action struct {
 	// history records the reason.
 	NoLongerActionable bool
 	// Reason is the machine-readable cause of a close, a done-note or a hold:
-	// upgrade-landed, not-running, no-longer-actionable, upgrade-clears-nothing,
-	// operator-chosen, unmeasured, decommissioned.
+	// upgrade-landed, fix-landed, not-running, no-longer-actionable,
+	// upgrade-clears-nothing, operator-chosen, unmeasured, decommissioned.
 	Reason string
 	// Dedupe identifies a comment's content so it is posted once rather than on
 	// every run. Empty means "always post".
@@ -202,6 +203,27 @@ func Reconcile(in ReconcileInput) []Action {
 			})
 			continue
 		}
+		if moved, key, rewrite := retargeted(d, lead); moved != "" {
+			// The rebuild a ticket was raised for has landed and what is left is a
+			// package the build adds. Corrected in place when nobody has engaged with
+			// it, as for a moved version, and said in a comment otherwise. Only said
+			// when the summaries could not be compared on CVEs: see retargeted.
+			if rewrite && lead.Untouched() {
+				actions = append(actions, Action{
+					Kind: ActionUpdate, TicketKey: lead.Key, Draft: d,
+					Why: "what is left is a package change in the image's own build, not the change the " +
+						"ticket was raised for, and nobody has picked it up, so it was corrected rather than commented on",
+				})
+				continue
+			}
+			actions = append(actions, Action{
+				Kind: ActionNoteStale, TicketKey: lead.Key, Message: moved,
+				Dedupe: "note-retarget:" + key,
+				Why: "what is left is a package change in the image's own build, not the change the ticket " +
+					"was raised for; commented on rather than edited",
+			})
+			continue
+		}
 		actions = append(actions, Action{
 			Kind: ActionSkip, TicketKey: lead.Key,
 			Why: "already covers this change",
@@ -280,11 +302,39 @@ func doneActions(in ReconcileInput, claimed map[string]bool) []Action {
 				continue
 			}
 
+			// Before anything that might close: an image still reporting an urgent CVE
+			// its own build adds has work outstanding that no version check can see. A
+			// package ticket's image is on its newest base from the day it is raised,
+			// so "on the latest version" proves nothing about it; and with no draft
+			// claiming the ticket this run (the image scan that names packages lapsed,
+			// a threshold now excludes it) nothing here can tell a package ticket from
+			// a rebuild one. Either way the CVE is still there, so the ticket is held.
+			if carried := buildOwned(images, byRepo(in.Findings), in.Config.UrgentEPSS); len(carried) > 0 {
+				out = append(out, Action{
+					Kind: ActionHold, TicketKey: t.Key,
+					Why: "still outstanding: its images still report urgent CVEs their own build adds, " +
+						"which no base version settles: " + strings.Join(carried, "; "),
+				})
+				continue
+			}
+
 			// The one case where closing is defensible: not "the finding went
 			// away" but "the images are still here, we checked, and they are all
 			// on the latest version already". Someone merged the Renovate PR and
 			// rolled it out without ever seeing the ticket.
-			if in.Config.ForProject(projectOf(t.Key)).AutoClose {
+			//
+			// A ticket whose summary names CVEs is judged on those instead. A package
+			// moved in the build leaves the image's version where it was, so "on the
+			// latest version" is no evidence for it either way: an image already on its
+			// newest base would otherwise read as done with the package still in it.
+			named := summaryCVEs(t.Summary)
+			if in.Config.ForProject(projectOf(t.Key)).AutoClose && len(named) > 0 {
+				if done, evidence := cvesGone(images, named, byRepo(in.Findings)); done {
+					out = append(out, fixLandedAction(t, evidence))
+					continue
+				}
+			}
+			if in.Config.ForProject(projectOf(t.Key)).AutoClose && len(named) == 0 {
 				if done, evidence := upgradeComplete(images, byRepo(in.Findings)); done {
 					// A ticket somebody has picked up is theirs to close, even when the
 					// upgrade is proven to have landed: they may have QA or a rollout of
@@ -405,6 +455,9 @@ const (
 	ReasonUpgradeLanded      = "upgrade-landed"
 	ReasonNotRunning         = "not-running"
 	ReasonNoLongerActionable = "no-longer-actionable"
+	// ReasonFixLanded is a ticket whose summary names CVEs none of its images is
+	// reported to carry any more, with every image still scanned and running.
+	ReasonFixLanded = "fix-landed"
 	// ReasonUpgradeClearsNothing is a ticket whose proposed upgrade was measured to
 	// clear none of the vulnerabilities that raised it.
 	ReasonUpgradeClearsNothing = "upgrade-clears-nothing"
@@ -418,6 +471,145 @@ const (
 	// removed from every cluster for its decommission window.
 	ReasonDecommissioned = "decommissioned"
 )
+
+// cveID matches a CVE identifier, which is how a ticket's summary says which CVEs
+// it is for. The format is fixed, so reading one back is not guessing at prose.
+var cveID = regexp.MustCompile(`CVE-\d{4}-\d{4,}`)
+
+// summaryCVEs returns the CVEs a ticket's summary names, in order and deduplicated.
+func summaryCVEs(summary string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, id := range cveID.FindAllString(summary, -1) {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// retargeted reports, as a comment, that a package-only draft has landed on a ticket
+// raised for some other change: a rebuild that has since landed, with a package
+// its build adds still carrying what made it actionable. It also returns the key
+// the comment is posted once under, and whether the ticket may be rewritten.
+//
+// Read off the summaries. When the draft's summary names its CVEs, a ticket naming
+// none of them was raised for something else, and rewriting it converges: the
+// rewritten summary names them. When it names none, the summaries are compared
+// whole, which cannot tell a rebuild ticket from a package ticket worded by an
+// older template, so it is only ever a comment: a rewrite on that comparison could
+// change somebody's ticket every time the wording did. Silence is not an option
+// either, since the ticket would go on asking for a rebuild that has landed.
+func retargeted(d Draft, t Existing) (message, key string, rewrite bool) {
+	if !d.packageOnly || t.Summary == "" {
+		return "", "", false
+	}
+	message = "What is left on this ticket has changed: " + d.Summary + ". That is a package the image's " +
+		"own build installs or declares, so a rebuild on a newer base image will not remove it; the " +
+		"package has to move in the Dockerfile or dependency manifest. The ticket has not been edited."
+	if len(summaryCVEs(d.Summary)) == 0 {
+		if t.Summary == d.Summary {
+			return "", "", false
+		}
+		return message, d.Summary, false
+	}
+	mine := map[string]bool{}
+	for _, id := range d.cves {
+		mine[id] = true
+	}
+	for _, id := range summaryCVEs(t.Summary) {
+		if mine[id] {
+			return "", "", false
+		}
+	}
+	return message, strings.Join(d.cves, ","), true
+}
+
+// buildOwned lists the urgent CVEs a ticket's images still report that their own
+// builds add, by image. Origin "app" alone decides it, not whether a package was
+// named: the scan naming packages failing for a run does not move the CVE.
+func buildOwned(images []string, byRepo map[string][]sink.FindingView, epss float64) []string {
+	if epss <= 0 {
+		epss = DefaultUrgentEPSS
+	}
+	var out []string
+	for _, img := range images {
+		seen := map[string]bool{}
+		var ids []string
+		for _, f := range byRepo[img] {
+			for _, v := range f.Vulns {
+				if v.Origin == "app" && isUrgent(v, epss) && !seen[v.ID] {
+					seen[v.ID] = true
+					ids = append(ids, v.ID)
+				}
+			}
+		}
+		if len(ids) > 0 {
+			sort.Strings(ids)
+			out = append(out, img+" ("+strings.Join(ids, ", ")+")")
+		}
+	}
+	return out
+}
+
+// cvesGone reports whether none of the named CVEs is reported on any image a ticket
+// covers, and the evidence for saying so.
+//
+// The same guards as upgradeComplete, for the same reason: absence only counts
+// where something looked. Every image must still be reported, by a scan that
+// listed CVEs (a provider that never assessed an image reports none of them), and
+// liveness must have been reconciled so "the deployed images" is a checked claim.
+func cvesGone(images, cves []string, byRepo map[string][]sink.FindingView) (bool, string) {
+	if len(images) == 0 || len(cves) == 0 {
+		return false, ""
+	}
+	named := map[string]bool{}
+	for _, id := range cves {
+		named[id] = true
+	}
+	for _, img := range images {
+		found := byRepo[img]
+		if len(found) == 0 {
+			return false, ""
+		}
+		for _, f := range found {
+			if !f.Scanned || f.ScanError != "" || !(f.ProviderAssessed || len(f.Vulns) > 0) || f.Liveness == nil {
+				return false, ""
+			}
+			for _, v := range f.Vulns {
+				if named[v.ID] {
+					return false, ""
+				}
+			}
+		}
+	}
+	return true, fmt.Sprintf("%s no longer reported on %s.", strings.Join(cves, ", "), strings.Join(images, ", "))
+}
+
+// fixLandedAction closes a ticket whose named CVEs are gone, on the same terms as
+// an upgrade that landed: closed as not-worked when nobody picked it up, and said
+// rather than done when somebody did, since the decision to finish is theirs.
+func fixLandedAction(t Existing, evidence string) Action {
+	const why = "none of the CVEs it names is reported on its images any more"
+	if !t.Untouched() {
+		return Action{
+			Kind: ActionNoteDone, TicketKey: t.Key, Reason: ReasonFixLanded,
+			Message: "patchwright no longer sees the vulnerabilities this ticket names on anything it covers: " +
+				evidence + "\n\nLeft open because someone is working it: close it once you are satisfied.",
+			Dedupe: "note-done:" + ReasonFixLanded,
+			Why:    why + "; left for whoever is working it to close",
+		}
+	}
+	return Action{
+		Kind: ActionClose, TicketKey: t.Key, Unworked: true, Reason: ReasonFixLanded,
+		Message: "Closing: the vulnerabilities this ticket names are no longer reported. " + evidence +
+			"\n\nNobody picked this ticket up, so the fix landed by another route. It is being closed as " +
+			"not-worked rather than as completed work, which is the accurate record.\n\nChecked, not " +
+			"assumed: every image is still scanned and running. Reopen if this is wrong.",
+		Why: why + ", and nobody picked the ticket up",
+	}
+}
 
 // decommissioned reports that every image a ticket covers has been credited as
 // decommissioned and that nothing in this assessment shows one running, or with
@@ -687,7 +879,9 @@ func byRepo(findings []sink.FindingView) map[string][]sink.FindingView {
 //   - no finding for the repository may still have an upgrade available, which is
 //     what catches an old tag still running somewhere,
 //   - liveness must have been reconciled, so "everywhere" is a checked claim about
-//     running workloads rather than an assumption about the whole estate.
+//     running workloads rather than an assumption about the whole estate,
+//   - the image must have been scanned this run, or the buildOwned hold before this
+//     had no CVEs to look at and "nothing outstanding" is only "nothing seen".
 func upgradeComplete(images []string, byRepo map[string][]sink.FindingView) (bool, string) {
 	if len(images) == 0 {
 		return false, ""
@@ -708,7 +902,7 @@ func upgradeComplete(images []string, byRepo map[string][]sink.FindingView) (boo
 			if f.Upgrade.Available || f.Upgrade.OperatorChosen {
 				return false, ""
 			}
-			if f.Liveness == nil {
+			if f.Liveness == nil || !f.Scanned || f.ScanError != "" {
 				return false, ""
 			}
 		}

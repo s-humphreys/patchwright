@@ -41,8 +41,13 @@ type FixPlan struct {
 	// Result is what the change achieves, for the ticket.
 	Result *FixResult `json:"result,omitempty"`
 	// AlsoTakes are other services on the same move: doing them together tests the base
-	// once rather than once each.
+	// once rather than once each. For a package move, the services carrying the same
+	// package at the same fixed version.
 	AlsoTakes []string `json:"also_takes,omitempty"`
+	// BuildFixes are the package moves the service's own build has to make. The whole
+	// of Do when no base move clears what made the service actionable; beside a
+	// rebuild otherwise, which does not touch them.
+	BuildFixes []BuildFix `json:"build_fixes,omitempty"`
 	// Exploited names the known-exploited CVEs the service carries when there is no
 	// change to make, and so no Result to carry them.
 	//
@@ -173,12 +178,84 @@ func fixPlan(a Assessment, name string) (FixPlan, bool) {
 	if u.Measured {
 		p.Result = fixResult(r, u)
 	}
+	p.AlsoTakes = alsoTakes(a, r, u)
+	p.BuildFixes = r.BuildFixes
+	// What made this actionable is in what the build adds, and the base move clears
+	// none of it - or there is none. The package move is the change; the rebuild would
+	// be work that fixes nothing, and the plan says so rather than leading with it.
+	if r.buildFixOnly {
+		if p.Do != nil && u.Kind == "base" {
+			p.DoNot = append(p.DoNot, fmt.Sprintf("Do not rebuild on %s for this: it clears none of the CVEs "+
+				"that make this actionable. They are in packages the build installs or declares, not in the base.",
+				p.Do.To))
+		}
+		if u.State == "latest" {
+			p.Decide = nil
+		}
+		p.Do = buildFixAction(r)
+		// The differential describes the rebuild, which is no longer the change.
+		p.Result = nil
+		p.AlsoTakes = alsoMoves(a, r)
+	}
 	if p.Result == nil {
 		p.Exploited = r.knownExploited
 	}
-	p.AlsoTakes = alsoTakes(a, r, u)
 	p.Unknown = append(p.Unknown, unknowns(r, u)...)
 	return p, true
+}
+
+// buildFixAction is the change when it is package moves in the service's own build.
+func buildFixAction(r ServiceReport) *FixAction {
+	out := &FixAction{
+		Kind: "package change in your own build", Yours: true, Repository: r.BuildRepo,
+		Deployments: len(r.Deployments), Where: places(r),
+	}
+	if len(r.BuildFixes) == 1 {
+		b := r.BuildFixes[0]
+		out.Change = fmt.Sprintf("the %s package %s, in the Dockerfile or dependency manifest", b.Ecosystem, b.Package)
+		if b.Path != "" {
+			out.Change = fmt.Sprintf("the %s package %s, in %s", b.Ecosystem, b.Package, b.Path)
+		}
+		out.From, out.To = b.From, b.To
+		return out
+	}
+	out.Change = fmt.Sprintf("%d packages in the Dockerfile or dependency manifests, listed in build_fixes",
+		len(r.BuildFixes))
+	return out
+}
+
+// alsoMoves finds the other services whose builds carry one of the same package moves,
+// so a team sharing a build repository makes the change once.
+func alsoMoves(a Assessment, r ServiceReport) []string {
+	want := map[string]bool{}
+	for _, b := range r.BuildFixes {
+		want[b.Ecosystem+"\x00"+b.Package+"\x00"+b.To] = true
+	}
+	seen := map[string]bool{r.Service: true}
+	var out []string
+	for _, f := range a.Findings {
+		if seen[f.Repository] || f.Suppressed {
+			continue
+		}
+		for _, v := range f.Vulns {
+			if !v.FixableInBuild() || seen[f.Repository] {
+				continue
+			}
+			for _, p := range v.Packages {
+				if want[p.Ecosystem+"\x00"+p.Name+"\x00"+p.FixedIn] {
+					seen[f.Repository] = true
+					out = append(out, f.Repository)
+					break
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	if len(out) > maxNamed {
+		rest := len(out) - maxNamed
+		out = append(out[:maxNamed], fmt.Sprintf("and %d more - see worst_first", rest))
+	}
+	return out
 }
 
 func why(r ServiceReport) string {

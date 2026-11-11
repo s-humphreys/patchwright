@@ -283,6 +283,79 @@ type VulnView struct {
 	Packages []PackageView `json:"packages,omitempty"`
 }
 
+// FixableInBuild reports a CVE the image's own build adds, with a fix for every
+// package carrying it: work for the team that builds the image, which no base
+// move will do for them.
+//
+// The fix is each package's own FixedIn, never the CVE-level FixedVersion. A scan
+// provider reports one fix per CVE, which can belong to another ecosystem than
+// the package beside it; FixedIn comes from the same scan pass as the package
+// name, so it is a version of that package. Every carrier needs one, because a
+// CVE left in one package is not gone from the image. FixAvailable is required
+// as well, so whatever decides a fix exists at the CVE level still has a say.
+//
+// Origin "app" is enough on its own, without OriginDetermined. The differential
+// sets it only after scanning the base as built and not finding the CVE there,
+// which it does whether or not a newer base exists; OriginDetermined says a newer
+// base was scanned too, which is a question about the move, not about where the
+// CVE lives. Requiring it would mean an image already on its newest base, the
+// one place a rebuild can do nothing at all, never had its package ticketed.
+func (v VulnView) FixableInBuild() bool {
+	if !v.FixAvailable || v.Origin != "app" || v.FixedByUpgrade || len(v.Packages) == 0 {
+		return false
+	}
+	for _, p := range v.Packages {
+		if p.Name == "" || p.FixedIn == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// BuildFixOnly reports a finding whose whole remedy is moving packages its own
+// build adds: at least one of the CVEs that make it actionable is FixableInBuild,
+// and its base offers nothing for the rest. Either there is no newer base, or the
+// one on offer was measured to keep every other actionable CVE.
+//
+// The actionable CVEs are the urgent ones (a fix, and exploited or an EPSS at or
+// above epss) when the finding carries any, and its fixable criticals otherwise:
+// what the ticket planner raises on. It lives here so the planner and the plan an
+// engineer reads from the MCP server answer with one rule rather than two that
+// drift; they did, and the plan ruled out a rebuild the ticket asked for.
+//
+// Unresolved and operator-chosen versions answer false: what moving them would do
+// is not known, so neither is whether the packages are all the work.
+func (f FindingView) BuildFixOnly(epss float64) bool {
+	u := f.Upgrade
+	if u == nil || u.Kind != "base" || !u.Resolved || u.OperatorChosen {
+		return false
+	}
+	urgent := func(v VulnView) bool { return v.FixAvailable && (v.KEV || v.EPSS >= epss) }
+	pick := func(v VulnView) bool { return v.Severity == "critical" && v.FixAvailable }
+	for _, v := range f.Vulns {
+		if urgent(v) {
+			pick = urgent
+			break
+		}
+	}
+	fixable := false
+	for _, v := range f.Vulns {
+		if !pick(v) {
+			continue
+		}
+		if v.FixableInBuild() {
+			fixable = true
+			continue
+		}
+		// One the move might clear makes this a rebuild, with the package moves
+		// beside it: measured to be cleared, or never measured against the move.
+		if u.Available && (!v.OriginDetermined || v.FixedByUpgrade) {
+			return false
+		}
+	}
+	return fixable
+}
+
 // PackageView is a package carrying a CVE and the version that fixes it. Both
 // come from the same scan, so the version always belongs to the named package's
 // ecosystem.
@@ -293,6 +366,8 @@ type PackageView struct {
 	// Path is the file declaring a language package, so a ticket can say where
 	// the fix goes. Absent for an OS package.
 	Path string `json:"path,omitempty"`
+	// Installed is the version the scan found, absent when it reported none.
+	Installed string `json:"installed,omitempty"`
 }
 
 // BaseDiffView is what scanning an image's base established.
@@ -570,7 +645,8 @@ func toPackageViews(pkgs []model.AffectedPackage) []PackageView {
 	}
 	out := make([]PackageView, 0, len(pkgs))
 	for _, p := range pkgs {
-		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn, Path: p.Path})
+		out = append(out, PackageView{Name: p.Name, Ecosystem: p.Ecosystem, FixedIn: p.FixedIn, Path: p.Path,
+			Installed: p.Installed})
 	}
 	return out
 }

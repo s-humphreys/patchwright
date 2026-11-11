@@ -88,8 +88,16 @@ func urgent(group []sink.FindingView, epss float64) []UrgentVuln {
 			if u.Package == "" && len(v.Packages) > 0 {
 				p := v.Packages[0]
 				u.Package, u.Ecosystem, u.Path = p.Name, p.Ecosystem, p.Path
-				if u.FixedVersion == "" {
+				// A row that tells somebody to move this package has to name a version
+				// of it, and only FixedIn is sure to be one: see FixableInBuild.
+				if u.FixedVersion == "" || v.FixableInBuild() {
 					u.FixedVersion = p.FixedIn
+					// Every carrier has to move or the CVE stays, so the row names them
+					// all when one instruction covers them: same ecosystem, same file,
+					// same version. Otherwise it names the first, and Packages has the rest.
+					if names := sameMove(v.Packages); len(names) > 1 {
+						u.Package = strings.Join(names, ", ")
+					}
 				}
 			}
 		}
@@ -128,11 +136,133 @@ func isFixableCritical(v sink.VulnView) bool {
 // image, and if so whether it removes it. Two things measure it: a base
 // differential, which scanned the base being moved onto, and an upgrade that
 // provably leaves the image exactly as it is, which removes nothing from it.
+//
+// A CVE the image's own build adds, with a fix for every package carrying it, is
+// cleared by the ticket whatever its upgrade is: the ticket names the package and
+// the version to move it to, so that move is part of the change it asks for.
 func verdict(f sink.FindingView, v sink.VulnView) (measured, fixed bool) {
 	if unmoved(f) {
 		return true, false
 	}
+	if v.FixableInBuild() {
+		return true, true
+	}
 	return v.OriginDetermined, v.FixedByUpgrade
+}
+
+// actionable picks the CVEs that make a group actionable: its urgent ones when it
+// carries any, since those are what the shipped rules raise a ticket for, and its
+// fixable criticals otherwise, for a group a coarser rule made actionable.
+func actionable(group []sink.FindingView, epss float64) func(sink.VulnView) bool {
+	if epss <= 0 {
+		epss = DefaultUrgentEPSS
+	}
+	pick := func(v sink.VulnView) bool { return isUrgent(v, epss) }
+	if !carries(group, pick) {
+		return isFixableCritical
+	}
+	return pick
+}
+
+// packageOnly reports a finding whose whole ticket is moving packages in its own
+// build, by sink.FindingView.BuildFixOnly, the rule the MCP plan uses too.
+//
+// Without this such a finding is skipped for good, as "already on the latest" or
+// as an upgrade that clears nothing, and an exploited CVE in a package somebody's
+// Dockerfile installs sits in the queue with no ticket and no owner. A rebuild
+// ticket is the wrong one for it: the rebuild is work that changes nothing.
+func packageOnly(f sink.FindingView, epss float64) bool {
+	if epss <= 0 {
+		epss = DefaultUrgentEPSS
+	}
+	return f.BuildFixOnly(epss)
+}
+
+// asPackageChange gives a package-only finding the package change as its upgrade,
+// so grouping, the priority threshold, rendering and reconciliation take it through
+// the same path as any other change. The base move it replaces fixes none of what
+// made it actionable, so it has nothing to say on this ticket.
+func asPackageChange(f sink.FindingView, epss float64) sink.FindingView {
+	up := &sink.UpgradeView{Kind: "package", Available: true, Resolved: true, Actionable: true}
+	if fixes := buildFixes([]sink.FindingView{f}, epss); len(fixes) == 1 {
+		up.Name, up.Current, up.Latest = fixes[0].Name, fixes[0].Current, fixes[0].Fixed
+	}
+	f.Upgrade = up
+	return f
+}
+
+// PackageFix is one package an image's own build has to move, and what that clears.
+type PackageFix struct {
+	Name      string
+	Ecosystem string
+	// Path is the file declaring a language package; empty for an OS package.
+	Path string
+	// Current is the version the scan found installed, empty when it reported none.
+	// Fixed is the version that clears CVEs, from the same scan as the name.
+	Current string
+	Fixed   string
+	// CVEs are the actionable CVEs this move clears, exploited first.
+	CVEs []string
+}
+
+// CVEList is CVEs as one string, for a template.
+func (p PackageFix) CVEList() string { return strings.Join(p.CVEs, ", ") }
+
+// buildFixes lists the package moves that clear the group's actionable CVEs which
+// its images' own builds add. One row per package and fixed version: two CVEs
+// fixed in different versions of one package are two versions to know about, and
+// which is later is not something every ecosystem's version strings say.
+func buildFixes(group []sink.FindingView, epss float64) []PackageFix {
+	pick := actionable(group, epss)
+	type rank struct {
+		kev  bool
+		epss float64
+	}
+	ranks := map[string]rank{}
+	byKey := map[string]*PackageFix{}
+	seen := map[string]bool{}
+	var keys []string
+	for _, f := range group {
+		for _, v := range f.Vulns {
+			if !pick(v) || !v.FixableInBuild() {
+				continue
+			}
+			ranks[v.ID] = rank{v.KEV, v.EPSS}
+			for _, p := range v.Packages {
+				key := p.Ecosystem + "\x00" + p.Name + "\x00" + p.Path + "\x00" + p.FixedIn
+				pf := byKey[key]
+				if pf == nil {
+					pf = &PackageFix{Name: p.Name, Ecosystem: p.Ecosystem, Path: p.Path, Fixed: p.FixedIn}
+					byKey[key] = pf
+					keys = append(keys, key)
+				}
+				if pf.Current == "" {
+					pf.Current = p.Installed
+				}
+				if !seen[key+"\x00"+v.ID] {
+					seen[key+"\x00"+v.ID] = true
+					pf.CVEs = append(pf.CVEs, v.ID)
+				}
+			}
+		}
+	}
+	sort.Strings(keys)
+	out := make([]PackageFix, 0, len(keys))
+	for _, k := range keys {
+		pf := *byKey[k]
+		sort.Slice(pf.CVEs, func(i, j int) bool {
+			a, b := ranks[pf.CVEs[i]], ranks[pf.CVEs[j]]
+			if a.kev != b.kev {
+				return a.kev
+			}
+			if a.epss != b.epss {
+				return a.epss > b.epss
+			}
+			return pf.CVEs[i] < pf.CVEs[j]
+		})
+		out = append(out, pf)
+	}
+	return out
 }
 
 // unmoved reports that the finding's upgrade was measured to leave its image on
@@ -179,13 +309,7 @@ func clearsNone(group []sink.FindingView, epss float64) bool {
 	if !moved {
 		return true
 	}
-	if epss <= 0 {
-		epss = DefaultUrgentEPSS
-	}
-	pick := func(v sink.VulnView) bool { return isUrgent(v, epss) }
-	if !carries(group, pick) {
-		pick = isFixableCritical
-	}
+	pick := actionable(group, epss)
 	picked := false
 	for _, f := range group {
 		for _, v := range f.Vulns {
@@ -215,13 +339,7 @@ func clearsNone(group []sink.FindingView, epss float64) bool {
 // A change some image was measured to clear stands on that measurement and is not
 // held: whatever the unmeasured images would have said, the ticket is justified.
 func unmeasured(group []sink.FindingView, epss float64) string {
-	if epss <= 0 {
-		epss = DefaultUrgentEPSS
-	}
-	pick := func(v sink.VulnView) bool { return isUrgent(v, epss) }
-	if !carries(group, pick) {
-		pick = isFixableCritical
-	}
+	pick := actionable(group, epss)
 	reason := ""
 	for _, f := range group {
 		for _, v := range f.Vulns {
@@ -238,6 +356,18 @@ func unmeasured(group []sink.FindingView, epss float64) string {
 		}
 	}
 	return reason
+}
+
+// sameMove returns the names of pkgs when one instruction moves them all, else nil.
+func sameMove(pkgs []sink.PackageView) []string {
+	names := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		if p.Ecosystem != pkgs[0].Ecosystem || p.Path != pkgs[0].Path || p.FixedIn != pkgs[0].FixedIn {
+			return nil
+		}
+		names = append(names, p.Name)
+	}
+	return names
 }
 
 func carries(group []sink.FindingView, pick func(sink.VulnView) bool) bool {
@@ -365,6 +495,14 @@ func describe(u UrgentVuln) (where, action string) {
 	name := u.Package
 
 	switch {
+	case u.Cleared && u.Origin == "app":
+		// Cleared by moving the package rather than by the upgrade: where it lives is
+		// worded as for any package the build adds, and what to do is the move.
+		plain := u
+		plain.Cleared = false
+		where, _ = describe(plain)
+		return where, buildFixAction(u)
+
 	case u.Cleared:
 		if name != "" {
 			return fmt.Sprintf("The base image (%s)", name), "Nothing extra. The rebuild above removes it."
@@ -407,6 +545,26 @@ func describe(u UrgentVuln) (where, action string) {
 	}
 	return fmt.Sprintf("The %s %s, declared in %s", eco.noun, name, declared),
 		fmt.Sprintf("Move %s to %s in %s and refresh the lockfile.", name, fixed, declared)
+}
+
+// buildFixAction says how to move a package the build adds to the version that
+// clears a CVE, and that a rebuild on a newer base will not: the ticket exists
+// because the base move on offer was the instruction, and it fixes nothing here.
+func buildFixAction(u UrgentVuln) string {
+	const notBase = " A base image rebuild will not remove it: it is not in the base."
+	eco, known := ecosystems[strings.ToLower(u.Ecosystem)]
+	switch {
+	case known && eco.os:
+		return fmt.Sprintf("Upgrade %s to %s in your Dockerfile: run `%s` after your install step, or remove %s if only the build needs it.",
+			u.Package, u.FixedVersion, eco.upgrade, u.Package) + notBase
+	case known:
+		declared := eco.where
+		if u.Path != "" {
+			declared = u.Path
+		}
+		return fmt.Sprintf("Move %s to %s in %s and refresh the lockfile.", u.Package, u.FixedVersion, declared) + notBase
+	}
+	return fmt.Sprintf("Move %s to %s where your build declares it.", u.Package, u.FixedVersion) + notBase
 }
 
 // buildOnlyKind matches a package to the build-only table, including versioned

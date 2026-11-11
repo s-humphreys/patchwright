@@ -433,6 +433,8 @@ type AffectedPackage struct {
 	FixedIn   string
 	// Path is the file declaring a language package, empty for an OS package.
 	Path string
+	// Installed is the version the scan found, empty when it reported none.
+	Installed string
 }
 
 // BaseDiff is what scanning an image's base established: how much of its
