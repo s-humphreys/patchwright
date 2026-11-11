@@ -140,12 +140,6 @@ func item(k string, members []sink.FindingView) Item {
 		it.Workloads += f.WorkloadCount
 		if f.ProviderAssessed {
 			it.AssessedImages++
-			if c := f.Counts["critical"]; c > it.Critical {
-				it.Critical = c
-			}
-			if h := f.Counts["high"]; h > it.High {
-				it.High = h
-			}
 		}
 		if f.Scanned {
 			it.ScannedImages++
@@ -163,10 +157,35 @@ func item(k string, members []sink.FindingView) Item {
 			namespaces.add(n)
 		}
 	}
+	it.Critical, it.High = WorstCounts(members)
 	it.Signals, it.Accounts, it.Namespaces = signals.sorted(), accounts.sorted(), namespaces.sorted()
 	sort.Strings(it.Tags)
 	sort.Strings(it.Images)
 	return it
+}
+
+// WorstCounts is the provider's critical and high counts for the worst single
+// deployment among findings, which is what "how bad is this service" means to
+// somebody who has to patch it.
+//
+// Never a sum: the tags of one service share most of their CVEs, so three tags in
+// flight would report roughly three times what any of them carries, and a ticket
+// citing that number describes no image that exists. Each severity is the worst
+// on its own, so on a group whose tags disagree the two can come from different
+// images; that is the same rule the queue and the service report use, and a
+// ticket saying something different from both would be the one nobody trusts.
+//
+// Only assessed findings count. An unassessed one is zero through ignorance, and
+// its zero must not be read as the worst being clean.
+func WorstCounts(findings []sink.FindingView) (critical, high int) {
+	for _, f := range findings {
+		if !f.ProviderAssessed {
+			continue
+		}
+		critical = max(critical, f.Counts["critical"])
+		high = max(high, f.Counts["high"])
+	}
+	return critical, high
 }
 
 type set struct{ m map[string]struct{} }

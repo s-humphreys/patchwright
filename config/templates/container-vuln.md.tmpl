@@ -9,7 +9,9 @@
     .ServiceName .Images .ImageCount .GroupNoun .Refs .Priority
     .Source .SourcePath - the shared change target, present on grouped tickets too
     .Accounts .Namespaces .Teams .WorkloadCount
-    .CriticalCount .HighCount .ProviderAssessed
+    .CriticalCount .HighCount - the worst single running image's counts,
+                each severity on its own; never a sum across tags
+    .ProviderAssessed
     .FixableCriticals (.ID .CVSS .EPSS .FixedVersion .KEV) .MaxEPSS .KnownExploited
     .Urgent   - the CVEs the proposed change was measured to clear (exploited,
                 or EPSS at or above jira.urgentEPSS, with a fix), each with .Why
@@ -110,12 +112,12 @@ The change above was measured to clear each of these. This ticket closes when no
 {{ range .Deployments }}| `{{ .Repo }}` | `{{ .Tag }}` | {{ range $i, $n := .Namespaces }}{{ if $i }}, {{ end }}{{ $n }}{{ end }} | {{ range $i, $a := .Accounts }}{{ if $i }}, {{ end }}{{ $a }}{{ end }} |
 {{ end }}
 {{ end -}}
-{{ .WorkloadCount }} workload(s) affected. Rows are ordered by how far through an environment sequence they look, which is a guess from the account and namespace names.
+{{ .WorkloadCount }} workload(s) affected. Rows are ordered by the furthest environment each tag has reached, which is a guess from the account and namespace names.
 
 **Why this is prioritised**
 
 {{ if .ProviderAssessed -}}
-Scanner counts: {{ .CriticalCount }} critical, {{ .HighCount }} high. Assessment priority: {{ .Priority }}.
+Scanner counts for the most affected running image: {{ .CriticalCount }} critical, {{ .HighCount }} high. Assessment priority: {{ .Priority }}.
 {{- else -}}
 NOTE: the scan provider has not assessed these images, so severity counts are unavailable rather than zero. Assessment priority: {{ .Priority }}.
 {{- end }}

@@ -599,15 +599,22 @@ environments:
     match: [production, live, shared infrastructure]
 ```
 
-Order is the sequence and the matching order both. `preproduction` contains
-`prod`, so a list with production first labels pre-production as production, and
-a ticket then asks for a release in the wrong order.
+Order is the sequence and the matching order both. Each account is matched on
+its own and takes the first environment whose word it contains. `preproduction`
+contains `prod`, so a list with production first labels pre-production as
+production, and a ticket then asks for a release in the wrong order.
 
-The match is a guess and collapses a span: one tag running in every environment
-takes the earliest name that matches. That is what makes it useful for ordering
-and wrong as a description, so a template should show the accounts beside it
-rather than the name alone — which is why the bundled template's table lists
-accounts and not this.
+A tag running in several environments is labelled with the **latest** it reaches,
+and rows are ordered by that: one tag running in development, pre-production and
+production is a production row, and sorts after a tag that has only reached
+pre-production. Namespaces are matched only when none of a tag's accounts is
+recognised, since namespace names contain the words by accident (`delivery`
+contains `live`) and an estate's accounts are where its environments are drawn.
+
+The match is a guess and names one environment of a span, so a template should
+show the accounts beside it rather than the name alone, which is why the bundled
+template's table lists accounts and not this. `.Disambiguator` is the exception
+that names the span: every environment any of the ticket's tags reaches.
 
 ## Template
 
@@ -615,6 +622,13 @@ Go `text/template`: first line `Summary: ...`, then a blank line, then the
 description. See
 [`config/templates/container-vuln.md.tmpl`](../config/templates/container-vuln.md.tmpl)
 for the available fields.
+
+`.CriticalCount` and `.HighCount` are the scan provider's counts for the worst
+single running image on the ticket, each severity taken on its own, by the same
+rule as the queue and the MCP service report (`critical_worst_deployment`,
+`high_worst_deployment`). They are never a sum: the tags of one service share most
+of their CVEs, and a three-tag ticket would otherwise cite roughly three times what
+any image carries.
 
 ### Done means
 
