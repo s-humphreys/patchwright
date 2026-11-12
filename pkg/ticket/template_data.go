@@ -2,10 +2,12 @@ package ticket
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/s-humphreys/patchwright/pkg/config"
+	grouping "github.com/s-humphreys/patchwright/pkg/group"
 	"github.com/s-humphreys/patchwright/pkg/model"
 	"github.com/s-humphreys/patchwright/pkg/sink"
 )
@@ -97,10 +99,20 @@ type TemplateData struct {
 	// WorkloadCount is the total number of workloads affected.
 	WorkloadCount int
 
-	// CriticalCount is the provider's critical count, and ProviderAssessed
-	// reports whether the provider assessed these images at all. When false the
-	// counts are zero through ignorance, so a template should not present them
-	// as evidence.
+	// CriticalCount and HighCount are the provider's counts for the worst single
+	// running image on this ticket, by the rule in group.WorstCounts: each severity
+	// is the worst any assessed image reports, never a sum across them.
+	//
+	// They were a sum, and a ticket covering three tags of one service reported
+	// roughly three times what any of them carries, since the tags share most of
+	// their CVEs. A template saying "the running image carries N critical" then
+	// named a number no image had, and disagreed with the queue and the service
+	// report, which both use the worst. On a single-image ticket worst and sum are
+	// the same number.
+	//
+	// ProviderAssessed reports whether the provider assessed any of these images at
+	// all. When false the counts are zero through ignorance, so a template should
+	// not present them as evidence.
 	CriticalCount    int
 	HighCount        int
 	ProviderAssessed bool
@@ -150,6 +162,9 @@ type TemplateData struct {
 	unmeasured string
 	// packageOnly is set when the whole change is moving Packages.
 	packageOnly bool
+	// envs is the release sequence Deployments were placed in, kept to name the
+	// positions environmentSpan collects.
+	envs []config.Environment
 }
 
 // PackageOnly reports a ticket whose change is moving Packages in the images' own
@@ -241,11 +256,19 @@ type Deployment struct {
 	// them matched). A guess, and labelled as one: it orders the list and must not
 	// be read as a fact about the estate.
 	//
-	// It collapses a span to its earliest member, so one tag running in every
-	// environment reads as "development". That is right for ordering and wrong as
-	// a description, which is why the accounts are carried alongside it and why
-	// the bundled template shows those rather than this.
+	// A tag running in several environments is labelled with the LATEST it reaches,
+	// so one running in development, pre-production and production reads as
+	// "production". It used to be the earliest, which labelled a tag already in
+	// production "development": the opposite of what a reader planning a release
+	// needs, which is how far this tag has got. The accounts are still carried
+	// alongside it, because the label names one environment of a span and the
+	// accounts name all of it.
 	Environment string
+
+	// reaches is the position of every environment this tag was recognised in, so
+	// the span a ticket covers can be stated without being read off the labels,
+	// which name only the last of each row.
+	reaches []int
 }
 
 // searchTerm is what to search the queue for when there is no single service to
@@ -354,6 +377,7 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 	d.clearsNone = clearsNone(group, urgentEPSS)
 	d.unmeasured = unmeasured(group, urgentEPSS)
 
+	d.envs = orDefault(envs)
 	d.Deployments = deployments(group, envs)
 
 	accounts, namespaces, teams, buildRepos := &set{}, &set{}, &set{}, &set{}
@@ -376,8 +400,6 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 			buildRepos.add(f.BuildRepo)
 		}
 		d.WorkloadCount += f.WorkloadCount
-		d.CriticalCount += f.Counts["critical"]
-		d.HighCount += f.Counts["high"]
 		if f.ProviderAssessed {
 			d.ProviderAssessed = true
 		}
@@ -403,6 +425,7 @@ func newTemplateData(tg ticketGroup, envs []config.Environment, urgentEPSS float
 		}
 	}
 
+	d.CriticalCount, d.HighCount = grouping.WorstCounts(group)
 	d.Images, d.Refs = images.sorted(), refs.sorted()
 	d.ImageCount = len(d.Images)
 	d.Accounts, d.Namespaces, d.Teams = accounts.sorted(), namespaces.sorted(), teams.sorted()
@@ -633,33 +656,88 @@ var defaultEnvironments = []config.Environment{
 }
 
 // environmentOf guesses where in a release sequence a deployment sits, returning
-// the name and its position for ordering.
+// the name and position of the LATEST environment it reaches, which labels a row
+// and orders it among the others.
 //
-// The guess collapses a span to its earliest member: a tag running in every
-// environment reads as the first one. Right for ordering rows into a promotion
-// sequence, wrong as a description, which is why a ticket should show the
-// accounts beside it rather than this alone.
+// Each account is classified on its own and the furthest along wins. Joining them
+// into one string and taking the first environment that matched, as this used to,
+// labelled a tag running in development, pre-production and production as
+// "development", because development is tested first. Testing production first
+// instead is not the fix: see classify.
+//
+// Namespaces are consulted only when no account is recognised. Accounts are where
+// an estate draws its environment boundaries; namespace names are free text the
+// tokens match inside of by accident ("delivery" contains "live", "devices"
+// contains "dev"). While the earliest match won, a stray hit like that was usually
+// outranked by the account. With the latest winning, a "delivery" namespace in a
+// development account would label the row production. An estate whose accounts
+// say nothing about environment, one shared account with environments by
+// namespace, still gets its answer from the namespaces.
 func environmentOf(envs []config.Environment, accounts, namespaces []string) (string, int) {
-	if len(envs) == 0 {
-		envs = defaultEnvironments
+	envs = orDefault(envs)
+	at := reaches(envs, accounts, namespaces)
+	if len(at) == 0 {
+		return "", len(envs)
 	}
-	haystack := strings.ToLower(strings.Join(append(append([]string{}, accounts...), namespaces...), " "))
-	// Earliest match wins, and the order matters for one specific reason:
-	// "preproduction" contains "prod", so staging has to be tested before production
-	// or a ticket tells somebody to release to pre-production after production.
+	last := at[len(at)-1]
+	return envs[last].Name, last
+}
+
+// reaches is the position of every environment the accounts are recognised in,
+// or failing those the namespaces, by the rule environmentOf describes. Ascending
+// and de-duplicated; empty when nothing was recognised.
+func reaches(envs []config.Environment, accounts, namespaces []string) []int {
+	at := classifyAll(envs, accounts)
+	if len(at) == 0 {
+		at = classifyAll(envs, namespaces)
+	}
+	return at
+}
+
+func classifyAll(envs []config.Environment, names []string) []int {
+	var at []int
+	for _, n := range names {
+		if i := classify(envs, n); i >= 0 && !slices.Contains(at, i) {
+			at = append(at, i)
+		}
+	}
+	slices.Sort(at)
+	return at
+}
+
+// classify is the position of the environment one account or namespace name
+// belongs to, or -1 when it matches none.
+//
+// The FIRST environment whose token matches wins, and the order matters for one
+// specific reason: "preproduction" contains "prod", so staging has to be tested
+// before production or a pre-production account is labelled production and a
+// ticket tells somebody to release to pre-production after production. That is
+// why a span takes the latest across names classified one at a time, rather than
+// reversing this order over all of them at once.
+func classify(envs []config.Environment, name string) int {
+	name = strings.ToLower(name)
 	for i, env := range envs {
 		for _, tok := range env.Match {
-			if strings.Contains(haystack, strings.ToLower(tok)) {
-				return env.Name, i
+			if strings.Contains(name, strings.ToLower(tok)) {
+				return i
 			}
 		}
 	}
-	return "", len(envs)
+	return -1
+}
+
+func orDefault(envs []config.Environment) []config.Environment {
+	if len(envs) == 0 {
+		return defaultEnvironments
+	}
+	return envs
 }
 
 // deployments lists each grouped tag with where it runs, ordered by release
-// sequence so a ticket reads as a promotion rather than a set.
+// sequence so a ticket reads as a promotion rather than a set: by the latest
+// environment each reaches, so the tag furthest along is last.
 func deployments(group []sink.FindingView, envs []config.Environment) []Deployment {
+	envs = orDefault(envs)
 	out := make([]Deployment, 0, len(group))
 	rank := map[string]int{}
 	for _, f := range group {
@@ -671,6 +749,7 @@ func deployments(group []sink.FindingView, envs []config.Environment) []Deployme
 		d := Deployment{
 			Ref: f.Image, Repo: f.Repository, Tag: f.Tag,
 			Accounts: accounts, Namespaces: namespaces, Environment: env,
+			reaches: reaches(envs, accounts, namespaces),
 		}
 		rank[f.Image] = r
 		out = append(out, d)
@@ -695,15 +774,24 @@ func (d TemplateData) BuildRepo() string {
 
 // environmentSpan is the distinct environments this ticket covers, in promotion
 // order. Empty when none were recognised.
+//
+// Every environment each tag reaches, not the rows' labels: a label names only the
+// latest, so a ticket for one tag running in development and pre-production covers
+// both, and a disambiguated summary saying "(staging)" would hide the half that
+// moves first.
 func (d TemplateData) environmentSpan() []string {
-	seen := map[string]bool{}
-	var out []string
+	var at []int
 	for _, dep := range d.Deployments {
-		if dep.Environment == "" || seen[dep.Environment] {
-			continue
+		for _, i := range dep.reaches {
+			if !slices.Contains(at, i) {
+				at = append(at, i)
+			}
 		}
-		seen[dep.Environment] = true
-		out = append(out, dep.Environment)
+	}
+	slices.Sort(at)
+	out := make([]string, 0, len(at))
+	for _, i := range at {
+		out = append(out, d.envs[i].Name)
 	}
 	return out
 }
